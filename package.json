@@ -1,0 +1,30 @@
+{
+  "name": "nodejs_express_postgres_orders",
+  "version": "1.0.0",
+  "description": "Order REST API using NodeJS, Express, Postgresql",
+  "main": "app.js",
+  "scripts": {
+    "test": "jest tests",
+    "start": "node app.js",
+    "dev": "nodemon app.js",
+    "seed": "node seed.js"
+  },
+  "author": "Shyam Vadikari",
+  "license": "ISC",
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "body-parser": "^1.20.3",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "joi": "^17.13.3",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.1",
+    "razorpay": "^2.9.6",
+    "sequelize": "^6.37.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9",
+    "supertest": "^7.0.0"
+  }
+}

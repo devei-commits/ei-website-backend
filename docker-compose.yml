@@ -1,0 +1,39 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16
+    container_name: orders_postgres
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${POSTGRES_PORT-5432}:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+  app:
+    image: node:20
+    container_name: orders_app
+    working_dir: /usr/src/app
+    depends_on:
+      - db
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: development
+      # Inside Docker, override DATABASE_URL to use the db service hostname
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:${POSTGRES_PORT}/${POSTGRES_DB}
+    volumes:
+      - ./:/usr/src/app
+    command: sh -c "npm install && npm run dev"
+    ports:
+      - "${PORT-3000}:3000"
+
+volumes:
+  db_data:
+

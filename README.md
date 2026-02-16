@@ -1,4 +1,4 @@
-# Node.js Express + PostgreSQL Orders API
+# ei-website-backend
 
 Order management backend API with user authentication, product/process orders, payment gateway integration (Razorpay), and role-based access control.
 
@@ -121,4 +121,4 @@ Key variables in `.env`:
 - Access tokens expire in 15 minutes
 - Refresh tokens expire in 5 minutes
 - Protected routes require `Authorization: Bearer <token>` header
-# ei-website-backend
+
