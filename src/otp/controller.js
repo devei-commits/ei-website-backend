@@ -5,37 +5,37 @@ const sendmail = require('../utils/mail');
 
 const generateOtp = async (args) => {
   try {
-    const { phone } = args;
+    const { phone, email } = args;
 
-    const user = await User.findOne({ where: { mobile: phone } });
+    const user = email
+      ? await User.findOne({ where: { email } })
+      : await User.findOne({ where: { mobile: phone } });
 
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      return { error: 'User not found' };
     }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-
     const created = new Date();
     const expired = new Date(created.getTime() + 5 * 60 * 1000);
 
     await Authentication.create({
       user_id: user.userid,
-      phone,
+      phone: user.mobile || '',
       otp,
       created,
       expired
     });
 
-    // TODO: send SMS here
-    const res = await sendmail(user.email, otp);
+    // TODO: send SMS when phone present; email otherwise
+    await sendmail(user.email, otp);
 
     return {
       status: 'OTP_SENT',
       otp // remove in production
     };
-
   } catch (err) {
-    return { error: err.message }
+    return { error: err.message };
   }
 };
 

@@ -1,16 +1,10 @@
 ## API Documentation
 
-<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
-POSTMAN collection here: https://blue-meteor-763804.postman.co/workspace/express_tut~9c90693b-4141-418d-9b12-1a8d60bfd8bd/collection/16450904-e4edddec-c4bc-4762-8b2b-1123094f0871?action=share&creator=16450904&active-environment=16450904-57161246-ed0a-4965-b74c-90c30f8b5e84
-
-
-<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
+POSTMAN collection: https://blue-meteor-763804.postman.co/workspace/express_tut~9c90693b-4141-418d-9b12-1a8d60bfd8bd/collection/16450904-e4edddec-c4bc-4762-8b2b-1123094f0871?action=share&creator=16450904&active-environment=16450904-57161246-ed0a-4965-b74c-90c30f8b5e84
 
 Base URL: `http://<host>:<PORT>/api/v1` (default `http://localhost:3000/api/v1`)
 
-- Public routes: `/api/v1/health`, `/api/v1/users/*` (including `/api/v1/users/token` and `/api/v1/users/logout`)
+- Public routes: `/api/v1/health`, `/api/v1/users/*` (including `/api/v1/users/token` and `/api/v1/users/logout`), `/api/v1/otp/*`
 - Protected routes (require `Authorization: Bearer <access_token>`): `/api/v1/orders/*`, `/api/v1/products/*`, `/api/v1/payments/*`
 
 ---
@@ -126,6 +120,118 @@ Base URL: `http://<host>:<PORT>/api/v1` (default `http://localhost:3000/api/v1`)
 
 ---
 
+### GET `/api/v1/users/me`
+
+**Purpose**: Get the current user's own profile (from access token). Used for payment terms (advance %), mobile, and addresses.
+
+**Auth**: Requires `Authorization: Bearer <access_token>`.
+
+**Request**: No body.
+
+**Responses**:
+
+- `200`
+  ```json
+  {
+    "userid": 4,
+    "fname": "Client",
+    "lname": "One",
+    "display_name": "Client One",
+    "email": "client1@example.com",
+    "mobile": "+919876543211",
+    "usertype": "customer",
+    "status": null,
+    "verify_status": null,
+    "advance_payment": true,
+    "advance_amount": "50.00",
+    "created_at": "2025-01-15T10:00:00.000Z",
+    "addresses": [
+      {
+        "address_id": 5,
+        "address_type": "billing",
+        "address_line1": "Client1 Billing, Mumbai, MH, 400001",
+        "city_text": "Mumbai",
+        "state_text": "MH",
+        "country_text": "India",
+        "pincode": "400001",
+        "phone": null
+      },
+      {
+        "address_id": 6,
+        "address_type": "shipping",
+        "address_line1": "Client1 Shipping, Mumbai, MH, 400002",
+        "city_text": "Mumbai",
+        "state_text": "MH",
+        "country_text": "India",
+        "pincode": "400002",
+        "phone": null
+      }
+    ]
+  }
+  ```
+- `404`  
+  `{ "error": "User not found" }`
+- `401` / `403`  
+  Missing or invalid token.
+
+---
+
+### POST `/api/v1/users/addresses`
+
+**Purpose**: Create an address for the current user (e.g. from cart checkout). User is taken from the JWT.
+
+**Auth**: Requires `Authorization: Bearer <access_token>`.
+
+**Body (JSON)**:
+
+```json
+{
+  "address_line1": "Client1 Billing, Mumbai, MH, 400001",
+  "address_line2": "",
+  "city_text": "Mumbai",
+  "state_text": "MH",
+  "country_text": "India",
+  "pincode": "400001",
+  "address_type": "billing",
+  "first_name": "Client",
+  "last_name": "One",
+  "phone": "+919876543211"
+}
+```
+
+- `address_line1` (string, required)
+- `address_line2` (string, optional)
+- `city_text`, `state_text`, `country_text`, `pincode` (string, optional; `country_text` defaults to `"India"`)
+- `address_type` (string, optional; default `"billing"`) – e.g. `billing`, `shipping`
+- `first_name`, `last_name`, `phone` (string, optional)
+
+**Responses**:
+
+- `201`  
+  Created address object:
+  ```json
+  {
+    "address_id": 7,
+    "user_id": 4,
+    "address_line1": "Client1 Billing, Mumbai, MH, 400001",
+    "address_line2": "",
+    "city_text": "Mumbai",
+    "state_text": "MH",
+    "country_text": "India",
+    "pincode": "400001",
+    "address_type": "billing",
+    "first_name": "Client",
+    "last_name": "One",
+    "phone": "+919876543211"
+  }
+  ```
+- `400`  
+  `{ "error": "address_line1 and user context required" }`
+- `500`  
+  `{ "error": "<message>" }`
+
+---
+
 ### GET `/api/v1/users`
 
 **Purpose**: Admin-only list of all users.
@@ -159,61 +265,37 @@ Base URL: `http://<host>:<PORT>/api/v1` (default `http://localhost:3000/api/v1`)
 
 ---
 
-### PUT `/api/v1/users/:id/payment-terms`
+## OTP
 
-**Purpose**: Admin-approved update of a user's `paymentTerms`.
+> `/api/v1/otp/*` routes are public (no Bearer token required).
 
-**Auth**:
+### POST `/api/v1/otp/verifyotp`
 
-- Requires `Authorization: Bearer <token>`
-- Token user must have role in: `super_admin`, `admin`, `bd_manager`.
+**Purpose**: Verify the OTP sent to the user (e.g. after login or forgot-password). On success, sets `refreshToken` cookie and returns access token (same shape as login).
 
 **Body (JSON)**:
 
 ```json
 {
-  "paymentTerms": "50% advance / 50% on delivery"
+  "userid": 4,
+  "otp": "123456"
 }
 ```
 
-- `paymentTerms` (string, required; e.g. `"100% advance"`, `"Net 30 days"`)
+- `userid` (integer, required) – user ID (e.g. from login / generate OTP response)
+- `otp` (string, required) – 6-digit OTP received by email/SMS
 
 **Responses**:
 
-- `200`  
-  `{ "id": <userId>, "email": "<email>", "paymentTerms": "<terms>" }`
+- `200`
+  - Sets `refreshToken` HTTP-only cookie
+  - Body: `{ "token": "<access_jwt>" }`
 - `400`  
-  `{ "error": "paymentTerms is required and must be a string" }`
-- `403`  
-  If caller's role is not allowed.
+  `{ "error": "Invalid OTP or expired" }`
 - `404`  
-  `{ "error": "User not found" }`
-
----
-
-### GET `/api/v1/users/me`
-
-**Purpose**: Get the current user's own profile (from access token).
-
-**Auth**: Requires `Authorization: Bearer <access_token>`.
-
-**Responses**:
-
-- `200`  
-  ```json
-  {
-    "id": 1,
-    "name": "Client One",
-    "email": "client1@example.com",
-    "gstNumber": "27BBBBB1111B2Z6",
-    "billingAddress": "Client1 Billing, Mumbai, MH, 400001",
-    "shippingAddress": "Client1 Shipping, Mumbai, MH, 400002",
-    "paymentTerms": "50% advance / 50% on delivery",
-    "role": "customer"
-  }
-  ```
-- `404`  
-  `{ "error": "User not found" }`
+  `{ "error": "OTP not found" }` or `{ "error": "User not found" }`
+- `500`  
+  `{ "error": "<message>" }`
 
 ---
 
@@ -222,6 +304,7 @@ Base URL: `http://<host>:<PORT>/api/v1` (default `http://localhost:3000/api/v1`)
 > All `/api/v1/orders/*` require `Authorization: Bearer <access_token>`.
 >
 > **Scoping by role**: The token's user `id` and `role` are used to scope data:
+>
 > - **Admin roles** (`super_admin`, `admin`, `bd_manager`): can list and access all orders.
 > - **Other roles**: can only list and access their own orders (`userId` = token user id).
 
@@ -242,88 +325,122 @@ Order model (key fields):
 
 ### POST `/api/v1/orders`
 
-**Purpose**: Create a new order (product or process).
+**Purpose**: Create a new order. Uses address IDs (from GET `/users/me` addresses or POST `/users/addresses`) and line items with tax. Order total = subtotal + tax_total + shipping_total - discount_total.
 
 **Body (JSON)**:
 
 ```json
 {
-  "shippingAddress": "Client1 Shipping, Mumbai, MH, 400002",
-  "shippingCity": "Mumbai",
-  "shippingState": "MH",
-  "shippingZip": "400002",
-  "status": "pending",
-  "orderType": "product",
-  "userId": 2,
-  "orderItems": [
+  "billing_address_id": 5,
+  "shipping_address_id": 6,
+  "order_items": [
     {
-      "productId": 1,
-      "quantity": 1,
-      "price": 1000.0
-    }
-  ]
-}
-```
-
-Process order example:
-
-```json
-{
-  "shippingAddress": "Factory Unit 5, Pune, MH, 411001",
-  "shippingCity": "Pune",
-  "shippingState": "MH",
-  "shippingZip": "411001",
-  "status": "pending",
-  "orderType": "process",
-  "customRequirements": "Custom machining per drawing DRW-2024-001; material: SS304; finish: brushed; tolerance ±0.05mm.",
-  "userId": 2,
-  "orderItems": [
-    {
-      "productId": 3,
+      "product_id": 1,
       "quantity": 2,
-      "price": 2500.0
+      "unit_price": 1000.0,
+      "tax_amount": 180.0,
+      "discount_amount": 0
     }
-  ]
+  ],
+  "shipping_total": 0,
+  "discount_total": 100.0
 }
 ```
 
-- `shippingAddress` (string, required)
-- `shippingCity` (string, required)
-- `shippingState` (string, required)
-- `shippingZip` (string, required)
-- `orderDate` (date, optional; default now)
-- `status` (`pending|processing|shipped|delivered|cancelled|refunded`, optional; default `pending`)
-- `orderType` (`"product"` or `"process"`, optional; default `"product"`)
-- `customRequirements` (string; **required** if `orderType === "process"`)
-- `userId` (integer, required)
-- `orderItems` (array, required, min 1):
-  - Each: `{ quantity: number, productId: number, price: number }`
+- `billing_address_id` (integer, required)
+- `shipping_address_id` (integer, required)
+- `order_items` (array, required, min 1):
+  - `product_id` (integer, required)
+  - `quantity` (integer, required)
+  - `unit_price` (number, required)
+  - `tax_amount` (number, optional; default 0) – per-line tax for net-price consistency
+  - `discount_amount` (number, optional; default 0)
+- `shipping_total` (number, optional; default 0)
+- `discount_total` (number, optional; default 0)
 
 **Behavior**:
 
-- Computes `total` from `orderItems`.
-- `paymentStatus` defaults to `pending`.
-- Creates initial `OrderStatusHistory`:
-  - `step: "PI"` for process orders.
-  - `step: "CREATED"` for product orders.
+- Validates that all `product_id`s exist.
+- Computes `subtotal`, `tax_total` from `order_items`, then `grand_total = subtotal + tax_total + shipping_total - discount_total`.
+- Creates order with `order_status: "pending"`, `payment_status: "pending"`.
+- Creates `order_items` records.
 
 **Responses**:
 
 - `201`  
-  Full order JSON including `id`, `total`, `orderItems`, etc.
+  Order with items, e.g.:
+  ```json
+  {
+    "order_id": 10,
+    "user_id": 4,
+    "billing_address_id": 5,
+    "shipping_address_id": 6,
+    "order_status": "pending",
+    "payment_status": "pending",
+    "subtotal": "2000.00",
+    "discount_total": "100.00",
+    "tax_total": "360.00",
+    "shipping_total": "0.00",
+    "grand_total": "2260.00",
+    "created_at": "2025-02-18T12:00:00.000Z",
+    "order_items": [
+      {
+        "order_item_id": 1,
+        "order_id": 10,
+        "product_id": 1,
+        "quantity": 2,
+        "unit_price": "1000.00",
+        "tax_amount": "180.00",
+        "line_total": "2000.00"
+      }
+    ]
+  }
+  ```
 - `400`  
-  `{ "errors": [ "<validation message>", ... ] }` or `{ "error": "<message>" }`
+  `{ "error": "order_items is required and must be a non-empty array" }` or  
+  `{ "error": "One or more products in your cart are no longer available.", "invalidProductIds": [2, 3] }`
+- `500`  
+  `{ "error": "<message>" }`
 
 ---
 
 ### GET `/api/v1/orders`
 
-**Purpose**: List orders. Admins see all orders; other users see only their own (by token user id).
+**Purpose**: List orders. Admins see all orders; other users see only their own (by token user id). Each order includes `payments` so the client can show cash-on-delivery (sum of `payments[].remainingAmount`).
+
+**Request**: No body. Optional query: `?status=pending` (or `processing`, `shipped`, etc.) to filter.
 
 **Responses**:
 
 - `200`  
-  `[{ ...order, orderItems: [...] }, ...]`
+  Array of orders, each with `order_items` and `payments`:
+  ```json
+  [
+    {
+      "order_id": 10,
+      "user_id": 4,
+      "billing_address_id": 5,
+      "shipping_address_id": 6,
+      "order_status": "pending",
+      "payment_status": "paid",
+      "subtotal": "2000.00",
+      "discount_total": "100.00",
+      "tax_total": "360.00",
+      "shipping_total": "0.00",
+      "grand_total": "2260.00",
+      "created_at": "2025-02-18T12:00:00.000Z",
+      "order_items": [ ... ],
+      "payments": [
+        { "remainingAmount": "0.00" },
+        { "remainingAmount": "1130.00" }
+      ]
+    }
+  ]
+  ```
+
+  - `payments[].remainingAmount`: balance due (e.g. cash on delivery). Sum these to show “Cash on delivery” total.
+- `500`  
+  `{ "error": "<message>" }`
 
 ---
 
@@ -575,6 +692,85 @@ Payment model (key fields):
   `{ "error": "Payment record not found" }`
 - `500`  
   `{ "error": "<message>" }`
+
+---
+
+### POST `/api/v1/payments/approve-cheque`
+
+**Purpose**: Admin-only. After the team has manually confirmed that a cheque payment was received, call this to mark the order as paid. Updates the order’s `payment_status` to `paid` and creates or updates a `cheque` payment record. The frontend payment icon for that order will show as paid on next load.
+
+**Auth**: Requires `Authorization: Bearer <access_token>` and role in: `super_admin`, `admin`, `bd_manager`.
+
+**Body (JSON)**:
+
+```json
+{
+  "orderId": 12
+}
+```
+
+- `orderId` (integer, required) – the order whose cheque payment is being approved.
+
+**Responses**:
+
+- `200`
+  ```json
+  {
+    "message": "Cheque payment approved",
+    "order": {
+      "order_id": 12,
+      "payment_status": "paid"
+    },
+    "payment": {
+      "id": 5,
+      "gateway": "cheque",
+      "status": "completed"
+    }
+  }
+  ```
+- `400`  
+  `{ "error": "orderId is required" }` or  
+  `{ "error": "Order is already marked as paid" }`
+- `403`  
+  Caller’s role is not allowed.
+- `404`  
+  `{ "error": "Order not found" }`
+- `500`  
+  `{ "error": "<message>" }`
+
+---
+
+### PUT `/api/v1/users/:id/payment-terms`
+
+**Purpose**: Admin-approved update of a user's payment terms (advance payment flag and amount).
+
+**Auth**:
+
+- Requires `Authorization: Bearer <token>`
+- Token user must have role in: `super_admin`, `admin`, `bd_manager`.
+
+**Body (JSON)**:
+
+```json
+{
+  "advancePayment": true,
+  "advanceAmount": 50
+}
+```
+
+- `advancePayment` (boolean, optional) – whether advance payment is required
+- `advanceAmount` (number, optional) – advance amount (e.g. percentage or fixed value). At least one of `advancePayment` or `advanceAmount` is required.
+
+**Responses**:
+
+- `200`  
+  `{ "id": <userId>, "email": "<email>", "advancePayment": <bool>, "advanceAmount": <number|null> }`
+- `400`  
+  `{ "error": "At least one of advancePayment or advanceAmount is required" }`
+- `403`  
+  If caller's role is not allowed.
+- `404`  
+  `{ "error": "User not found" }`
 
 ---
 

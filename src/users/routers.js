@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { createUser, userLogin, updateUserPaymentTerms, getAllUsers, getMe } = require('./controller');
+const { createUser, userLogin, updateUserPaymentTerms, getAllUsers, getMe, createAddress } = require('./controller');
 const { isAuthenticated, authorizeRoles, token, deleteToken } = require('../middleware/security');
 
 router.post('/', createUser);
@@ -10,6 +10,7 @@ router.get('/logout', deleteToken);
 
 // Current user's own details (must be before /:id)
 router.get('/me', isAuthenticated, getMe);
+router.post('/addresses', isAuthenticated, createAddress);
 
 // Admin-only: get all users
 router.get(

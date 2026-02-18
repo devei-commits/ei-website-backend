@@ -19,10 +19,13 @@ cp .env.example .env
 ```
 
 Edit `.env` and set:
+- `DEV` - Set to `true` (or use `NODE_ENV=development`) to skip OTP for `client1@example.com` and return a JWT on login (no Mailtrap needed). Other users still require OTP.
 - `RAZORPAY_KEY_ID` - Your Razorpay API key ID
 - `RAZORPAY_KEY_SECRET` - Your Razorpay API key secret
 - `ACCESS_TOKEN_SECRET` - A secure random string for JWT access tokens
 - `REFRESH_TOKEN_SECRET` - A secure random string for JWT refresh tokens
+- `MAIL_TOKEN` - Mailtrap sending API token (for OTP emails; optional—if missing, OTP is still returned in the login response for dev)
+- `SENDER_MAIL` - Sender email for Mailtrap (e.g. your verified domain)
 - Database credentials (if different from defaults)
 
 ### 2. Install Dependencies

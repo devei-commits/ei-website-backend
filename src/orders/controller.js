@@ -1,4 +1,6 @@
 const { Order, OrderItem } = require('./models');
+const { Product } = require('../products/models');
+const { Payment } = require('../payments/models');
 const { Address } = require('../models/Addresses');
 const db = require('../../db');
 // const { orderSchema, updateOrderSchema } = require('./schemas');
@@ -7,13 +9,25 @@ const db = require('../../db');
 const saveOrder = async (req, res) => {
     const t = await db.transaction();
     try {
-        // const { error } = orderSchema.validate(req.body, { abortEarly: false })
-        // if (error) {
-        //     return res.status(400).json({ errors: error.details.map(e => e.message) });
-        // };
-
         const { billing_address_id, shipping_address_id, order_items, shipping_total = 0, discount_total = 0 } = req.body;
         const user_id = req.user.id;
+
+        if (!order_items || !Array.isArray(order_items) || order_items.length === 0) {
+            await t.rollback();
+            return res.status(400).json({ error: 'order_items is required and must be a non-empty array' });
+        }
+
+        const productIds = [...new Set(order_items.map((item) => Number(item.product_id)).filter(Boolean))];
+        const existingProducts = await Product.findAll({ where: { product_id: productIds }, attributes: ['product_id'] });
+        const existingIds = new Set(existingProducts.map((p) => Number(p.product_id)));
+        const missingIds = productIds.filter((id) => !existingIds.has(id));
+        if (missingIds.length > 0) {
+            await t.rollback();
+            return res.status(400).json({
+                error: 'One or more products in your cart are no longer available.',
+                invalidProductIds: missingIds,
+            });
+        }
 
         const subtotal = order_items.reduce((acc, item) => acc + (item.unit_price * item.quantity), 0);
         const tax_total = order_items.reduce((acc, item) => acc + (item.tax_amount || 0), 0);
@@ -33,9 +47,13 @@ const saveOrder = async (req, res) => {
         }, { transaction: t });
 
         const orderItemsToCreate = order_items.map(item => ({
-            ...item,
+            product_id: Number(item.product_id),
+            quantity: Number(item.quantity),
+            unit_price: Number(item.unit_price),
+            discount_amount: Number(item.discount_amount || 0),
+            tax_amount: Number(item.tax_amount || 0),
             order_id: order.order_id,
-            line_total: item.unit_price * item.quantity
+            line_total: Number(item.unit_price) * Number(item.quantity),
         }));
 
         await OrderItem.bulkCreate(orderItemsToCreate, { transaction: t });
@@ -66,7 +84,13 @@ const getAllOrders = async (req, res) => {
             where.order_status = status;
         }
 
-        const orders = await Order.findAll({ where, include: [OrderItem] });
+        const orders = await Order.findAll({
+            where,
+            include: [
+                OrderItem,
+                { model: Payment, as: 'payments', required: false, attributes: ['remainingAmount'] },
+            ],
+        });
         return res.json(orders);
     } catch (err) {
         return res.status(500).json({ error: err.message });

@@ -1,9 +1,10 @@
 require('dotenv').config();
 const db = require('./db');
-const { User } = require('./src/users/models');
-const { Product, Category } = require('./src/products/models');
-const { Order, OrderItem, OrderStatusHistory } = require('./src/orders/models');
+const { User, RefreshToken, DoctorProfile } = require('./src/users/models');
+const { Product } = require('./src/products/models');
+const { Order, OrderItem } = require('./src/orders/models');
 const { Payment } = require('./src/payments/models');
+const Address = require('./src/models/Addresses');
 const bcrypt = require('bcrypt');
 
 async function seed() {
@@ -11,203 +12,254 @@ async function seed() {
     console.log('Syncing database...');
     await db.sync({ alter: true });
 
+    console.log('Clearing existing seed data...');
+    await Payment.destroy({ where: {} });
+    await OrderItem.destroy({ where: {} });
+    await Order.destroy({ where: {} });
+    await Address.destroy({ where: {} });
+    await Product.destroy({ where: {} });
+    await RefreshToken.destroy({ where: {} });
+    await DoctorProfile.destroy({ where: {} });
+    await User.destroy({ where: {} });
+
     console.log('Seeding users...');
     const superAdmin = await User.create({
-      name: 'Super Admin',
+      fname: 'Super',
+      lname: 'Admin',
+      display_name: 'Super Admin',
       email: 'superadmin@example.com',
+      mobile: '+919876543201',
       password: bcrypt.hashSync('SuperAdmin@123', 10),
-      gstNumber: '11AAAAA0000A1Z5',
-      billingAddress: 'Super Admin Billing Address, City, State, 111111',
-      shippingAddress: 'Super Admin Shipping Address, City, State, 111111',
-      paymentTerms: '100% advance',
-      role: 'super_admin',
+      usertype: 'super_admin',
+      advance_payment: true,
+      advance_amount: 100,
     });
 
     const admin = await User.create({
-      name: 'Admin User',
+      fname: 'Admin',
+      lname: 'User',
+      display_name: 'Admin User',
       email: 'admin@example.com',
+      mobile: '+919876543202',
       password: bcrypt.hashSync('Admin@123', 10),
-      gstNumber: '22AAAAA0000A1Z5',
-      billingAddress: 'Admin Billing Address, City, State, 123456',
-      shippingAddress: 'Admin Shipping Address, City, State, 123456',
-      paymentTerms: '100% advance',
-      role: 'admin',
+      usertype: 'admin',
+      advance_payment: true,
+      advance_amount: 100,
     });
 
     const bdManager = await User.create({
-      name: 'BD Manager',
+      fname: 'BD',
+      lname: 'Manager',
+      display_name: 'BD Manager',
       email: 'bdmanager@example.com',
+      mobile: '+919876543203',
       password: bcrypt.hashSync('BDManager@123', 10),
-      gstNumber: '33AAAAA0000A1Z5',
-      billingAddress: 'BD Manager Billing Address, City, State, 333333',
-      shippingAddress: 'BD Manager Shipping Address, City, State, 333333',
-      paymentTerms: 'Net 30 days',
-      role: 'bd_manager',
+      usertype: 'bd_manager',
+      advance_payment: true,
+      advance_amount: 50,
     });
 
     const client1 = await User.create({
-      name: 'Client One',
+      fname: 'Client',
+      lname: 'One',
+      display_name: 'Client One',
       email: 'client1@example.com',
+      mobile: '+919876543211',
       password: bcrypt.hashSync('Client1@123', 10),
-      gstNumber: '27BBBBB1111B2Z6',
-      billingAddress: 'Client1 Billing, Mumbai, MH, 400001',
-      shippingAddress: 'Client1 Shipping, Mumbai, MH, 400002',
-      paymentTerms: '50% advance / 50% on delivery',
-      role: 'customer',
+      usertype: 'customer',
+      advance_payment: true,
+      advance_amount: 50,
     });
 
     const client2 = await User.create({
-      name: 'Client Two',
+      fname: 'Client',
+      lname: 'Two',
+      display_name: 'Client Two',
       email: 'client2@example.com',
+      mobile: '+919876543212',
       password: bcrypt.hashSync('Client2@123', 10),
-      gstNumber: '29CCCCC2222C3Z7',
-      billingAddress: 'Client2 Billing, Bengaluru, KA, 560001',
-      shippingAddress: 'Client2 Shipping, Bengaluru, KA, 560002',
-      paymentTerms: 'Net 30 days',
-      role: 'customer',
+      usertype: 'customer',
+      advance_payment: false,
+      advance_amount: 0,
+    });
+
+    console.log('Seeding addresses...');
+    const superAdminBilling = await Address.create({
+      user_id: superAdmin.userid,
+      address_type: 'billing',
+      is_default_billing: true,
+      first_name: 'Super',
+      last_name: 'Admin',
+      address_line1: 'Super Admin Billing Address, City, State, 111111',
+      city_text: 'City',
+      state_text: 'State',
+      country_text: 'India',
+      pincode: '111111',
+    });
+    const superAdminShipping = await Address.create({
+      user_id: superAdmin.userid,
+      address_type: 'shipping',
+      is_default_shipping: true,
+      first_name: 'Super',
+      last_name: 'Admin',
+      address_line1: 'Super Admin Shipping Address, City, State, 111111',
+      city_text: 'City',
+      state_text: 'State',
+      country_text: 'India',
+      pincode: '111111',
+    });
+
+    const adminBilling = await Address.create({
+      user_id: admin.userid,
+      address_type: 'billing',
+      is_default_billing: true,
+      first_name: 'Admin',
+      last_name: 'User',
+      address_line1: 'Admin Billing Address, City, State, 123456',
+      city_text: 'City',
+      state_text: 'State',
+      country_text: 'India',
+      pincode: '123456',
+    });
+    const adminShipping = await Address.create({
+      user_id: admin.userid,
+      address_type: 'shipping',
+      is_default_shipping: true,
+      first_name: 'Admin',
+      last_name: 'User',
+      address_line1: 'Admin Shipping Address, City, State, 123456',
+      city_text: 'City',
+      state_text: 'State',
+      country_text: 'India',
+      pincode: '123456',
+    });
+
+    const client1Billing = await Address.create({
+      user_id: client1.userid,
+      address_type: 'billing',
+      is_default_billing: true,
+      first_name: 'Client',
+      last_name: 'One',
+      address_line1: 'Client1 Billing, Mumbai, MH, 400001',
+      city_text: 'Mumbai',
+      state_text: 'MH',
+      country_text: 'India',
+      pincode: '400001',
+    });
+    const client1Shipping = await Address.create({
+      user_id: client1.userid,
+      address_type: 'shipping',
+      is_default_shipping: true,
+      first_name: 'Client',
+      last_name: 'One',
+      address_line1: 'Client1 Shipping, Mumbai, MH, 400002',
+      city_text: 'Mumbai',
+      state_text: 'MH',
+      country_text: 'India',
+      pincode: '400002',
+    });
+
+    const client2Billing = await Address.create({
+      user_id: client2.userid,
+      address_type: 'billing',
+      is_default_billing: true,
+      first_name: 'Client',
+      last_name: 'Two',
+      address_line1: 'Client2 Billing, Bengaluru, KA, 560001',
+      city_text: 'Bengaluru',
+      state_text: 'KA',
+      country_text: 'India',
+      pincode: '560001',
+    });
+    const client2Shipping = await Address.create({
+      user_id: client2.userid,
+      address_type: 'shipping',
+      is_default_shipping: true,
+      first_name: 'Client',
+      last_name: 'Two',
+      address_line1: 'Client2 Shipping, Bengaluru, KA, 560002',
+      city_text: 'Bengaluru',
+      state_text: 'KA',
+      country_text: 'India',
+      pincode: '560002',
     });
 
     console.log('Seeding categories and products...');
-    const catChem = await Category.create({ name: 'Chemicals' });
-    const catServices = await Category.create({ name: 'Custom Processes' });
-
     const productA = await Product.create({
-      name: 'Product A',
-      description: 'Standard product with full advance payment.',
-      price: 1000.0,
-      stock: 100,
-      categoryId: catChem.id,
+      product_name: 'Product A',
+      product_description: 'Standard product with full advance payment.',
+      mrp_price: 1000.0,
+      buy_price: 900.0,
+      category: 'Chemicals',
     });
 
     const productB = await Product.create({
-      name: 'Product B',
-      description: 'Bulk product, shipped via logistics partner.',
-      price: 5000.0,
-      stock: 50,
-      categoryId: catChem.id,
+      product_name: 'Product B',
+      product_description: 'Bulk product, shipped via logistics partner.',
+      mrp_price: 5000.0,
+      buy_price: 4500.0,
+      category: 'Chemicals',
     });
 
     const processCustom = await Product.create({
-      name: 'Custom Process X',
-      description: 'Customized processing service (process order).',
-      price: 20000.0,
-      stock: 9999,
-      categoryId: catServices.id,
+      product_name: 'Custom Process X',
+      product_description: 'Customized processing service (process order).',
+      mrp_price: 20000.0,
+      buy_price: 18000.0,
+      category: 'Custom Processes',
     });
 
     console.log('Seeding orders (product and process)...');
-    // Product order: full advance, fully paid
-    const orderProduct = await Order.create(
-      {
-        userId: client1.id,
-        shippingAddress: client1.shippingAddress,
-        shippingCity: 'Mumbai',
-        shippingState: 'MH',
-        shippingZip: '400002',
-        total: 1000.0,
-        status: 'shipped',
-        paymentStatus: 'paid',
-        orderType: 'product',
-        customRequirements: null,
-        rdStatus: null,
-        rdNotes: null,
-        orderItems: [
-          {
-            productId: productA.id,
-            quantity: 1,
-            price: 1000.0,
-          },
-        ],
-      },
-      { include: 'orderItems' }
-    );
+    const orderProduct = await Order.create({
+      user_id: client1.userid,
+      billing_address_id: client1Billing.address_id,
+      shipping_address_id: client1Shipping.address_id,
+      order_status: 'shipped',
+      payment_status: 'paid',
+      subtotal: 1000.0,
+      discount_total: 0,
+      tax_total: 0,
+      shipping_total: 0,
+      grand_total: 1000.0,
+    });
 
-    await OrderStatusHistory.bulkCreate([
-      {
-        orderId: orderProduct.id,
-        status: 'pending',
-        step: 'CREATED',
-        note: 'Product order created, awaiting payment.',
-      },
-      {
-        orderId: orderProduct.id,
-        status: 'paid',
-        step: 'INVOICED',
-        note: 'Invoice generated and payment received.',
-      },
-      {
-        orderId: orderProduct.id,
-        status: 'shipped',
-        step: 'SHIPPED',
-        note: 'Shipped via Shiprocket.',
-      },
-    ]);
+    await OrderItem.create({
+      order_id: orderProduct.order_id,
+      product_id: productA.product_id,
+      quantity: 1,
+      unit_price: 1000.0,
+      discount_amount: 0,
+      tax_amount: 0,
+      line_total: 1000.0,
+    });
 
-    // Process order: based on payment terms with customization + R&D workflow
-    const orderProcess = await Order.create(
-      {
-        userId: client2.id,
-        shippingAddress: client2.shippingAddress,
-        shippingCity: 'Bengaluru',
-        shippingState: 'KA',
-        shippingZip: '560002',
-        total: 20000.0,
-        status: 'processing',
-        paymentStatus: 'pending',
-        orderType: 'process',
-        customRequirements:
-          'Customize Product X with fragrance-free base, sensitive-skin compliant ingredients, and matte finish.',
-        rdStatus: 'under_review',
-        rdNotes: 'Initial requirements received; R&D evaluating feasibility and stability.',
-        orderItems: [
-          {
-            productId: processCustom.id,
-            quantity: 1,
-            price: 20000.0,
-          },
-        ],
-      },
-      { include: 'orderItems' }
-    );
+    const orderProcess = await Order.create({
+      user_id: client2.userid,
+      billing_address_id: client2Billing.address_id,
+      shipping_address_id: client2Shipping.address_id,
+      order_status: 'processing',
+      payment_status: 'pending',
+      subtotal: 20000.0,
+      discount_total: 0,
+      tax_total: 0,
+      shipping_total: 0,
+      grand_total: 20000.0,
+    });
 
-    await OrderStatusHistory.bulkCreate([
-      {
-        orderId: orderProcess.id,
-        status: 'pending',
-        step: 'PI',
-        note: 'Purchase Indent raised.',
-      },
-      {
-        orderId: orderProcess.id,
-        status: 'pending',
-        step: 'PO',
-        note: 'Purchase Order created.',
-      },
-      {
-        orderId: orderProcess.id,
-        status: 'pending',
-        step: 'SO',
-        note: 'Sales Order generated.',
-      },
-      {
-        orderId: orderProcess.id,
-        status: 'processing',
-        step: 'MANUFACTURING',
-        note: 'Manufacturing in progress.',
-      },
-      {
-        orderId: orderProcess.id,
-        status: 'processing',
-        step: 'GR',
-        note: 'Goods Receipt recorded internally.',
-      },
-    ]);
+    await OrderItem.create({
+      order_id: orderProcess.order_id,
+      product_id: processCustom.product_id,
+      quantity: 1,
+      unit_price: 20000.0,
+      discount_amount: 0,
+      tax_amount: 0,
+      line_total: 20000.0,
+    });
 
     console.log('Seeding payments (Razorpay confirmed/denied, cheque)...');
-    // Mock Razorpay confirmed payment
     await Payment.create({
-      orderId: orderProduct.id,
-      userId: client1.id,
+      orderOrderId: orderProduct.order_id,
+      UserUserid: client1.userid,
       paymentId: 'pay_mock_confirmed_123',
       razorpayOrderId: 'order_mock_123',
       gateway: 'razorpay',
@@ -218,10 +270,9 @@ async function seed() {
       status: 'completed',
     });
 
-    // Mock Razorpay denied/failed payment
     await Payment.create({
-      orderId: orderProduct.id,
-      userId: client1.id,
+      orderOrderId: orderProduct.order_id,
+      UserUserid: client1.userid,
       paymentId: 'pay_mock_failed_456',
       razorpayOrderId: 'order_mock_456',
       gateway: 'razorpay',
@@ -232,10 +283,9 @@ async function seed() {
       status: 'failed',
     });
 
-    // Mock cheque payment pending verification
     await Payment.create({
-      orderId: orderProcess.id,
-      userId: client2.id,
+      orderOrderId: orderProcess.order_id,
+      UserUserid: client2.userid,
       paymentId: 'cheque_789',
       razorpayOrderId: null,
       gateway: 'cheque',
@@ -255,4 +305,3 @@ async function seed() {
 }
 
 seed();
-

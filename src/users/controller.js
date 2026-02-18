@@ -3,8 +3,12 @@ const { User, DoctorProfile } = require("../models/index");
 const bcrypt = require("bcrypt");
 const { loginSchema, userSchema } = require("./schemas");
 const { generateOtp } = require("../otp/controller");
+const { generateToken } = require("../middleware/security");
 const Address = require("../models/Addresses");
 const db = require("../../db");
+
+const isDev = process.env.DEV === "true" || process.env.NODE_ENV === "development";
+const DEV_BYPASS_EMAIL = "client1@example.com";
 
 const createUser = async (req, res) => {
   // const { error } = userSchema.validate(req.body, { abortEarly: false });
@@ -127,43 +131,54 @@ const userLogin = async (req, res) => {
   const { email, password } = req.body;
   const user = await User.findOne({ where: { email: email } });
   
-  if (!user ){
-    res.status(404).json({ error: "Invalid credentials!" });
-  } else {
-    const compare = await bcrypt.compare(password, user.password)
-    if (!compare) {
-     return res.status(404).json({ error: "Invalid credentials!" });
-    }
-    //send otp to number and store
-    const otp = await generateOtp({ phone: user.mobile });
-    // const refreshToken = await generateRefreshToken(user);
-    // res.cookie('refreshToken', refreshToken, { httpOnly: true });
-    // res.status(200).json({ token: generateToken(user) });
-    res.status(200).json({ success:true,otp });
+  if (!user) {
+    return res.status(404).json({ error: "Invalid credentials!" });
   }
+  const compare = await bcrypt.compare(password, user.password);
+  if (!compare) {
+    return res.status(404).json({ error: "Invalid credentials!" });
+  }
+
+  // DEV: skip OTP for test user and return token directly
+  if (isDev && user.email === DEV_BYPASS_EMAIL) {
+    return res.status(200).json({
+      success: true,
+      token: generateToken(user),
+      skipOtp: true,
+    });
+  }
+
+  // Normal flow: send OTP and return userid for verify step
+  const otpResult = await generateOtp({ phone: user.mobile, email: user.email });
+  if (otpResult && otpResult.error) {
+    return res.status(500).json({ error: otpResult.error });
+  }
+  return res.status(200).json({ success: true, userid: user.userid, otp: otpResult });
 };
 
-// Admin-only: update a user's payment terms
+// Admin-only: update a user's payment terms (advancePayment, advanceAmount)
 const updateUserPaymentTerms = async (req, res) => {
   try {
     const user = await User.findByPk(req.params.id);
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
-    const { paymentTerms } = req.body;
-    if (!paymentTerms || typeof paymentTerms !== "string") {
-      return res
-        .status(400)
-        .json({ error: "paymentTerms is required and must be a string" });
+    const { advancePayment, advanceAmount } = req.body;
+    const updates = {};
+    if (typeof advancePayment === "boolean") updates.advance_payment = advancePayment;
+    if (advanceAmount !== undefined && advanceAmount !== null) {
+      updates.advance_amount = Number(advanceAmount);
     }
-    await user.update({ paymentTerms });
-    res
-      .status(200)
-      .json({
-        id: user.id,
-        email: user.email,
-        paymentTerms: user.paymentTerms,
-      });
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: "At least one of advancePayment or advanceAmount is required" });
+    }
+    await user.update(updates);
+    res.status(200).json({
+      id: user.userid,
+      email: user.email,
+      advancePayment: !!user.advance_payment,
+      advanceAmount: user.advance_amount != null ? Number(user.advance_amount) : null,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -183,6 +198,8 @@ const getMe = async (req, res) => {
         "usertype",
         "status",
         "verify_status",
+        "advance_payment",
+        "advance_amount",
         "created_at",
       ],
       include: [
@@ -190,6 +207,7 @@ const getMe = async (req, res) => {
           model: Address,
           as: "addresses",
           attributes: [
+            "address_id",
             "address_type",
             "address_line1",
             "city_text",
@@ -228,6 +246,7 @@ const getAllUsers = async (req, res) => {
           model: Address,
           as: "addresses",
           attributes: [
+            "address_id",
             "address_type",
             "address_line1",
             "city_text",
@@ -247,10 +266,37 @@ const getAllUsers = async (req, res) => {
 };
 
 
+// Create address for current user (e.g. from cart checkout)
+const createAddress = async (req, res) => {
+  try {
+    const { address_line1, address_line2, city_text, state_text, country_text, pincode, address_type, first_name, last_name, phone } = req.body;
+    if (!address_line1 || !req.user?.id) {
+      return res.status(400).json({ error: "address_line1 and user context required" });
+    }
+    const address = await Address.create({
+      user_id: req.user.id,
+      address_line1: address_line1 || '',
+      address_line2: address_line2 || '',
+      city_text: city_text || '',
+      state_text: state_text || '',
+      country_text: country_text || 'India',
+      pincode: pincode || '',
+      address_type: address_type || 'billing',
+      first_name: first_name || '',
+      last_name: last_name || '',
+      phone: phone || '',
+    });
+    return res.status(201).json(address);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
 module.exports = {
   createUser,
   userLogin,
   updateUserPaymentTerms,
   getAllUsers,
   getMe,
+  createAddress,
 };

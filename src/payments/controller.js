@@ -35,14 +35,14 @@ const createPaymentOrder = async (req, res) => {
     const razorpayOrder = await razorpay.orders.create(options);
 
     const payment = await Payment.create({
-      orderId: order.id,
-      userId: order.userId,
+      orderOrderId: order.order_id,
+      UserUserid: order.user_id,
       razorpayOrderId: razorpayOrder.id,
       gateway: 'razorpay',
       gatewayReference: razorpayOrder.id,
       paidAmount: 0,
       remainingAmount: amount,
-      currency,
+      currency: currency || 'INR',
       status: 'pending',
     });
 
@@ -74,7 +74,7 @@ const verifyPayment = async (req, res) => {
       currency,
     } = req.body;
 
-    const payment = await Payment.findOne({ where: { razorpayOrderId, orderId } });
+    const payment = await Payment.findOne({ where: { razorpayOrderId, orderOrderId: orderId } });
     if (!payment) {
       return res.status(404).json({ error: 'Payment record not found' });
     }
@@ -89,20 +89,37 @@ const verifyPayment = async (req, res) => {
       return res.status(400).json({ error: 'Invalid payment signature' });
     }
 
+    const previousRemaining = Number(payment.remainingAmount);
     await payment.update({
       paymentId: razorpayPaymentId,
       gateway: 'razorpay',
       gatewayReference: razorpayPaymentId,
       paidAmount,
-      remainingAmount: payment.remainingAmount - paidAmount,
+      remainingAmount: Math.max(0, previousRemaining - Number(paidAmount)),
       currency,
       status: 'completed',
     });
 
-    // Optionally, update related order paymentStatus when fully paid
     const order = await Order.findByPk(orderId);
-    if (order && Number(payment.remainingAmount) <= 0 && order.paymentStatus === 'pending') {
-      await order.update({ paymentStatus: 'paid' });
+    if (order) {
+      if (Number(paidAmount) >= previousRemaining && order.payment_status === 'pending') {
+        await order.update({ payment_status: 'paid' });
+      }
+      // When payment terms dictate a balance due on delivery, log it as a COD record
+      const grandTotal = Number(order.grand_total);
+      const balanceDue = grandTotal - Number(paidAmount);
+      if (balanceDue > 0) {
+        await Payment.create({
+          orderOrderId: order.order_id,
+          UserUserid: order.user_id,
+          gateway: 'cod',
+          gatewayReference: `balance_after_razorpay_${razorpayPaymentId}`,
+          paidAmount: 0,
+          remainingAmount: balanceDue,
+          currency: currency || 'INR',
+          status: 'pending',
+        });
+      }
     }
 
     return res.status(200).json({ message: 'Payment verified', payment });
@@ -112,8 +129,65 @@ const verifyPayment = async (req, res) => {
   }
 };
 
+// Admin-only: confirm cheque payment after manual verification; updates order and payment record
+const approveChequePayment = async (req, res) => {
+  try {
+    const orderId = Number(req.body?.orderId ?? req.params?.orderId);
+    if (!orderId && orderId !== 0) {
+      return res.status(400).json({ error: 'orderId is required' });
+    }
+
+    const order = await Order.findByPk(orderId);
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    if (order.payment_status === 'paid') {
+      return res.status(400).json({ error: 'Order is already marked as paid' });
+    }
+
+    const grandTotal = Number(order.grand_total);
+
+    // Create or update cheque payment record for audit trail
+    let payment = await Payment.findOne({
+      where: { orderOrderId: orderId, gateway: 'cheque' },
+    });
+    if (payment) {
+      await payment.update({
+        paidAmount: grandTotal,
+        remainingAmount: 0,
+        status: 'completed',
+        gatewayReference: payment.gatewayReference || `approved_${Date.now()}`,
+      });
+    } else {
+      payment = await Payment.create({
+        orderOrderId: order.order_id,
+        UserUserid: order.user_id,
+        gateway: 'cheque',
+        gatewayReference: `approved_${Date.now()}`,
+        paidAmount: grandTotal,
+        remainingAmount: 0,
+        currency: 'INR',
+        status: 'completed',
+      });
+    }
+
+    await order.update({ payment_status: 'paid' });
+
+    return res.status(200).json({
+      message: 'Cheque payment approved',
+      order: { order_id: orderId, payment_status: 'paid' },
+      payment: { id: payment.id, gateway: payment.gateway, status: payment.status },
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: err.message });
+  }
+};
+
 module.exports = {
   createPaymentOrder,
   verifyPayment,
+  approveChequePayment,
 };
 

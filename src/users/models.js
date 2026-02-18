@@ -61,6 +61,17 @@ User.init({
     allowNull: true
   },
 
+  advance_payment: {
+    type: DataTypes.BOOLEAN,
+    allowNull: true,
+    defaultValue: false
+  },
+
+  advance_amount: {
+    type: DataTypes.DECIMAL(10, 2),
+    allowNull: true
+  },
+
   created_at: {
     type: DataTypes.DATE,
     allowNull: true
