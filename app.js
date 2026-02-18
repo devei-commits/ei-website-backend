@@ -5,14 +5,33 @@ const orderRouters = require('./src/orders/routers');
 const userRouters = require('./src/users/routers');
 const productRouters = require('./src/products/routers');
 const paymentRouters = require('./src/payments/routers');
+const otpRouters = require('./src/otp/routers');
 const errorHandler = require('./src/middleware/error_handler');
 const logginHandler = require('./src/middleware/logging')
 const { isAuthenticated } = require('./src/middleware/security')
+const dotenv = require('dotenv');
+const cors = require('cors');
+dotenv.config();
+
 
 const app = express();
 const port = process.env.PORT || 3000;
 
 // Middleware
+const allowedOrigins = [
+    'http://localhost:5173'
+];
+const corsOptions = {
+    origin: (origin, callback) => {
+        if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
+    credentials: true,
+};
+app.use(cors(corsOptions));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cookieParser())
@@ -25,6 +44,7 @@ app.get(`${apiPrefix}/health`, (req, res) => {
 });
 
 app.use(`${apiPrefix}/users`, userRouters);
+app.use(`${apiPrefix}/otp`, otpRouters);
 app.use(`${apiPrefix}/orders`, isAuthenticated, orderRouters);
 app.use(`${apiPrefix}/products`, isAuthenticated, productRouters);
 app.use(`${apiPrefix}/payments`, isAuthenticated, paymentRouters);

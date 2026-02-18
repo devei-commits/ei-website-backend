@@ -13,7 +13,7 @@ router.get('/me', isAuthenticated, getMe);
 
 // Admin-only: get all users
 router.get(
-  '/',
+  '/getusers',
   isAuthenticated,
   authorizeRoles('super_admin', 'admin', 'bd_manager'),
   getAllUsers

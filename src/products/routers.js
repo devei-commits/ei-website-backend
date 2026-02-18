@@ -6,9 +6,9 @@ const { getAllProducts, saveProduct, getProductById, updateProduct, deleteProduc
 const adminRoles = ['super_admin', 'admin', 'bd_manager'];
 
 router.get('/', getAllProducts);
-router.get('/:id([0-9]+)', getProductById);
+router.get('/:id', getProductById);
 router.post('/', authorizeRoles(...adminRoles), saveProduct);
-router.put('/:id([0-9]+)', authorizeRoles(...adminRoles), updateProduct);
+router.put('/:id', authorizeRoles(...adminRoles), updateProduct);
 router.delete('/:id([0-9]+)', authorizeRoles(...adminRoles), deleteProduct);
 router.get('/categories', getCategory);
 router.post('/categories', authorizeRoles(...adminRoles), saveCategory);

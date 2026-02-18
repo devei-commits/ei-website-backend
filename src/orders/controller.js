@@ -1,26 +1,53 @@
-const { Order, OrderStatusHistory } = require('./models');
-const { orderSchema, updateOrderSchema } = require('./schemas');
+const { Order, OrderItem } = require('./models');
+const { Address } = require('../models/Addresses');
+const db = require('../../db');
+// const { orderSchema, updateOrderSchema } = require('./schemas');
 
 
 const saveOrder = async (req, res) => {
+    const t = await db.transaction();
     try {
-        const { error } = orderSchema.validate(req.body, { abortEarly: false })
-        if (error) {
-            return res.status(400).json({ errors: error.details.map(e => e.message) });
-        };
-        req.body.total = req.body.orderItems.reduce((acc, item) => acc + item.price * item.quantity, 0);
-        const order = await Order.create(req.body, { include: 'orderItems', validate: false });
+        // const { error } = orderSchema.validate(req.body, { abortEarly: false })
+        // if (error) {
+        //     return res.status(400).json({ errors: error.details.map(e => e.message) });
+        // };
 
-        // Create initial status history entry
-        await OrderStatusHistory.create({
-            orderId: order.id,
-            status: order.status,
-            step: req.body.orderType === 'process' ? 'PI' : 'CREATED',
-            note: 'Order created'
-        });
+        const { billing_address_id, shipping_address_id, order_items, shipping_total = 0, discount_total = 0 } = req.body;
+        const user_id = req.user.id;
 
-        return res.status(201).json(order);
+        const subtotal = order_items.reduce((acc, item) => acc + (item.unit_price * item.quantity), 0);
+        const tax_total = order_items.reduce((acc, item) => acc + (item.tax_amount || 0), 0);
+        const grand_total = subtotal + tax_total + shipping_total - discount_total;
+
+        const order = await Order.create({
+            user_id,
+            billing_address_id,
+            shipping_address_id,
+            order_status: 'pending',
+            payment_status: 'pending',
+            subtotal,
+            discount_total,
+            tax_total,
+            shipping_total,
+            grand_total
+        }, { transaction: t });
+
+        const orderItemsToCreate = order_items.map(item => ({
+            ...item,
+            order_id: order.order_id,
+            line_total: item.unit_price * item.quantity
+        }));
+
+        await OrderItem.bulkCreate(orderItemsToCreate, { transaction: t });
+
+
+
+        await t.commit();
+
+        const result = await Order.findByPk(order.order_id, { include: [OrderItem] });
+        return res.status(201).json(result);
     } catch (err) {
+        await t.rollback();
         return res.status(400).json({ error: err.message });
     }
 };
@@ -32,8 +59,14 @@ const getAllOrders = async (req, res) => {
     try {
         const userId = Number(req.user?.id);
         const isAdmin = req.user && ORDER_ADMIN_ROLES.includes(req.user.role);
-        const where = isAdmin ? {} : { userId };
-        const orders = await Order.findAll({ where, include: 'orderItems' });
+        const { status } = req.query;
+
+        const where = isAdmin ? {} : { user_id: userId };
+        if (status) {
+            where.order_status = status;
+        }
+
+        const orders = await Order.findAll({ where, include: [OrderItem] });
         return res.json(orders);
     } catch (err) {
         return res.status(500).json({ error: err.message });
@@ -41,12 +74,12 @@ const getAllOrders = async (req, res) => {
 };
 const getOrderById = async (req, res) => {
     try {
-        const order = await Order.findByPk(req.params.id, { include: 'orderItems' });
+        const order = await Order.findByPk(req.params.id, { include: [OrderItem] });
         if (!order) {
             return res.status(404).json({ error: 'Order not found' });
         }
         const isAdmin = req.user && ORDER_ADMIN_ROLES.includes(req.user.role);
-        if (!isAdmin && order.userId !== req.user.id) {
+        if (!isAdmin && order.user_id !== req.user.id) {
             return res.status(403).json({ error: 'Not allowed to view this order' });
         }
         res.json(order);
@@ -57,30 +90,22 @@ const getOrderById = async (req, res) => {
 
 const updateOrder = async (req, res) => {
     try {
-        const { error } = updateOrderSchema.validate(req.body, { abortEarly: false });
-        if (error) {
-            return res.status(400).json({ errors: error.details.map(e => e.message) });
-        };
+        // const { error } = updateOrderSchema.validate(req.body, { abortEarly: false });
+        // if (error) {
+        //     return res.status(400).json({ errors: error.details.map(e => e.message) });
+        // };
         const order = await Order.findByPk(req.params.id);
         if (!order) {
             return res.status(404).json({ error: 'Order not found' });
         }
         const isAdmin = req.user && ORDER_ADMIN_ROLES.includes(req.user.role);
-        if (!isAdmin && order.userId !== req.user.id) {
+        if (!isAdmin && order.user_id !== req.user.id) {
             return res.status(403).json({ error: 'Not allowed to update this order' });
         }
-        const previousStatus = order.status;
+        const previousStatus = order.order_status;
         await order.update(req.body);
 
-        // If status or orderType changed, append to history
-        if (req.body.status || req.body.orderType) {
-            await OrderStatusHistory.create({
-                orderId: order.id,
-                status: order.status,
-                step: req.body.step || null,
-                note: req.body.note || `Order updated from status ${previousStatus} to ${order.status}`
-            });
-        }
+
         res.status(200).json(order);
     } catch (err) {
         console.log(err);
@@ -95,50 +120,13 @@ const deleteOrder = async (req, res) => {
             return res.status(404).json({ error: 'Order not found' });
         }
         const isAdmin = req.user && ORDER_ADMIN_ROLES.includes(req.user.role);
-        if (!isAdmin && order.userId !== req.user.id) {
+        if (!isAdmin && order.user_id !== req.user.id) {
             return res.status(403).json({ error: 'Not allowed to delete this order' });
         }
         await order.destroy();
         res.json({ message: 'Order deleted' });
     } catch (err) {
         res.status(500).json({ error: err.message });
-    }
-};
-
-// Update R&D status for process orders (submitted -> under_review -> approved/rejected)
-const updateProcessRDStatus = async (req, res) => {
-    try {
-        const { rdStatus, rdNotes } = req.body;
-        const allowedStatuses = ['submitted', 'under_review', 'approved', 'rejected'];
-        if (!rdStatus || !allowedStatuses.includes(rdStatus)) {
-            return res.status(400).json({ error: `rdStatus must be one of: ${allowedStatuses.join(', ')}` });
-        }
-
-        const order = await Order.findByPk(req.params.id);
-        if (!order) {
-            return res.status(404).json({ error: 'Order not found' });
-        }
-        if (order.orderType !== 'process') {
-            return res.status(400).json({ error: 'R&D status can only be updated for process orders' });
-        }
-
-        await order.update({
-            rdStatus,
-            rdNotes: rdNotes || order.rdNotes
-        });
-
-        // Record R&D decision in history
-        await OrderStatusHistory.create({
-            orderId: order.id,
-            status: order.status,
-            step: `RND_${rdStatus.toUpperCase()}`,
-            note: rdNotes || `R&D status updated to ${rdStatus}`
-        });
-
-        return res.status(200).json(order);
-    } catch (err) {
-        console.error(err);
-        return res.status(500).json({ error: err.message });
     }
 };
 
@@ -149,42 +137,37 @@ const getOrderStatus = async (req, res) => {
             return res.status(404).json({ error: 'Order not found' });
         }
         const isAdmin = req.user && ORDER_ADMIN_ROLES.includes(req.user.role);
-        if (!isAdmin && order.userId !== req.user.id) {
+        if (!isAdmin && order.user_id !== req.user.id) {
             return res.status(403).json({ error: 'Not allowed to view this order' });
         }
-        res.json({ id: order.id, status: order.status, orderType: order.orderType });
+        res.json({ id: order.order_id, status: order.order_status });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 };
 
-const getOrderHistory = async (req, res) => {
+const getOrdersByUserId = async (req, res) => {
     try {
-        const order = await Order.findByPk(req.params.id);
-        if (!order) {
-            return res.status(404).json({ error: 'Order not found' });
-        }
+        const requestedUserId = Number(req.params.userId);
         const isAdmin = req.user && ORDER_ADMIN_ROLES.includes(req.user.role);
-        if (!isAdmin && order.userId !== req.user.id) {
-            return res.status(403).json({ error: 'Not allowed to view this order' });
+        if (!isAdmin && req.user?.id !== requestedUserId) {
+            return res.status(403).json({ error: 'Not allowed to view orders for this user' });
         }
-        const history = await OrderStatusHistory.findAll({
-            where: { orderId: order.id },
-            order: [['changedAt', 'ASC']]
-        });
-        res.json(history);
+        const orders = await Order.findAll({ where: { user_id: requestedUserId }, include: [OrderItem] });
+        res.json(orders);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 };
+
+
 
 module.exports = {
     saveOrder,
     getAllOrders,
     getOrderById,
+    getOrdersByUserId,
     updateOrder,
     deleteOrder,
     getOrderStatus,
-    getOrderHistory,
-    updateProcessRDStatus,
 };

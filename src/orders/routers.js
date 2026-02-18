@@ -4,20 +4,32 @@ const {
     getAllOrders,
     saveOrder,
     getOrderById,
+    getOrdersByUserId,
     updateOrder,
     deleteOrder,
-    getOrderStatus,
-    getOrderHistory,
-    updateProcessRDStatus
+    getOrderStatus
 } = require('./controller');
 
-router.post('/', saveOrder);
-router.get('/', getAllOrders);
-router.get('/:id', getOrderById);
-router.get('/:id/status', getOrderStatus);
-router.get('/:id/history', getOrderHistory);
-router.put('/:id', updateOrder);
-router.put('/:id/rd-status', updateProcessRDStatus);
-router.delete('/:id', deleteOrder);
+// Routes for /
+router.route('/')
+    .get(getAllOrders)
+    .post(saveOrder);
+
+// Routes for /:id
+// Routes for /user/:userId
+router.route('/user/:userId')
+    .get(getOrdersByUserId);
+
+// Routes for /:id
+router.route('/:id')
+    .get(getOrderById)
+    .put(updateOrder)
+    .delete(deleteOrder);
+
+// Routes for /:id/status
+router.route('/:id/status')
+    .get(getOrderStatus);
+
+
 
 module.exports = router;

@@ -7,9 +7,9 @@ const { where } = require('sequelize');
 function generateToken(user) {
     // Include role in the token payload for authorization checks
     return jwt.sign(
-        { email: user.email, role: user.role || 'customer' },
+        { email: user.email, role: user.usertype || 'customer' },
         process.env.ACCESS_TOKEN_SECRET,
-        { expiresIn: '15m' }
+        { expiresIn: '7d' }
     );
 }
 
@@ -41,9 +41,9 @@ const isAuthenticated = async (req, res, next) => {
             return res.sendStatus(401);
         }
         req.user = {
-            id: user.id,
+            id: user.userid,
             email: user.email,
-            role: user.role
+            role: user.usertype
         };
         next();
     } catch (err) {

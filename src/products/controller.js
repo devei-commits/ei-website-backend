@@ -1,28 +1,31 @@
-const { Product, Category } = require('./models');
+const { Product } = require('./models');
 const { productSchema, productUpdateSchema, categorySchema, categoryUpdateSchema } = require('./schemas');
 const { Op } = require('sequelize');
 
-
 const saveProduct = async (req, res) => {
-    try {
-        const { error } = productSchema.validate(req.body, { abortEarly: false });
-        if (error) {
-            return res.status(400).json({ errors: error.details.map(e => e.message) });
-        }
-        await Product.findOne({ where: { name: req.body.name } }).then(product => {
-            if (product) {
-                return res.status(400).json({ error: 'Product already exists!' });
-            } else {
-                Product.create(req.body).then(product => {
-                    res.json(product);
-                }).catch(err => {
-                    return res.status(500).json({ error: err.message });
-                });
-            }
-        });
-    } catch (err) {
-        res.status(400).json({ error: err.message });
+  try {
+    const { product_name } = req.body;
+
+    if (!product_name) {
+      return res.status(400).json({ error: "product_name is required" });
     }
+
+    // check existing
+    const existing = await Product.findOne({
+      where: { product_name },
+    });
+
+    if (existing) {
+      return res.status(409).json({ error: "Product already exists!" });
+    }
+
+    // create product
+    const product = await Product.create(req.body);
+
+    return res.status(201).json(product);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 };
 
 const getAllProducts = async (req, res) => {
@@ -35,7 +38,7 @@ const getAllProducts = async (req, res) => {
 
 const getProductById = async (req, res) => {
     try {
-        const product = await Product.findByPk(req.params.id, { include: Category });
+        const product = await Product.findByPk(req.params.id);
         if (!product) {
             return res.status(404).json({ error: 'Product not found' });
         }
@@ -46,28 +49,41 @@ const getProductById = async (req, res) => {
 };
 
 const updateProduct = async (req, res) => {
-    try {
-        const { error } = productUpdateSchema.validate(req.body, { abortEarly: false });
-        if (error) {
-            return res.status(400).json({ errors: error.details.map(e => e.message) });
-        }
-        const product = await Product.findByPk(req.params.id);
-        if (!product) {
-            return res.status(404).json({ error: 'Product not found' });
-        }
-        if (req.body.name) {
-            const existing = await Product.findOne({
-                where: { name: req.body.name, id: { [Op.ne]: req.params.id } }
-            });
-            if (existing) {
-                return res.status(400).json({ error: 'Product name already in use' });
-            }
-        }
-        await product.update(req.body);
-        res.json(product);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
+  try {
+    const productId = req.params.id;
+
+    const product = await Product.findByPk(productId);
+
+    if (!product) {
+      return res.status(404).json({ error: "Product not found" });
     }
+
+    // if product_name is being changed → check duplicate
+    if (req.body.product_name) {
+      const existing = await Product.findOne({
+        where: {
+          product_name: req.body.product_name,
+          product_id: { [Op.ne]: productId },
+        },
+      });
+
+      if (existing) {
+        return res
+          .status(409)
+          .json({ error: "Product name already in use" });
+      }
+    }
+
+    // update with updated_at
+    await product.update({
+      ...req.body,
+      updated_at: new Date(),
+    });
+
+    return res.json(product);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 };
 
 const deleteProduct = async (req, res) => {
