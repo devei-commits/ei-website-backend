@@ -91,6 +91,11 @@ Product.init(
       type: DataTypes.STRING,
       allowNull: true,
     },
+
+    advance_percentage: {
+      type: DataTypes.DECIMAL(5, 2),
+      allowNull: true,
+    },
   },
   {
     sequelize: db,

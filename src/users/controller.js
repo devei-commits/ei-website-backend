@@ -122,19 +122,24 @@ const createUser = async (req, res) => {
 };
 
 const userLogin = async (req, res) => {
+  console.log('Login attempt', { email: req.body.email });
   const { error } = loginSchema.validate(req.body, { abortEarly: false });
   if (error) {
+    console.log(error);
+    
     return res
       .status(400)
       .json({ errors: error.details.map((e) => e.message) });
   }
   const { email, password } = req.body;
   const user = await User.findOne({ where: { email: email } });
+  console.log('user object:', user);
   
   if (!user) {
     return res.status(404).json({ error: "Invalid credentials!" });
   }
   const compare = await bcrypt.compare(password, user.password);
+  console.log('password comparison result:', compare);
   if (!compare) {
     return res.status(404).json({ error: "Invalid credentials!" });
   }
@@ -150,6 +155,7 @@ const userLogin = async (req, res) => {
 
   // Normal flow: send OTP and return userid for verify step
   const otpResult = await generateOtp({ phone: user.mobile, email: user.email });
+  console.log('otpResult', otpResult);
   if (otpResult && otpResult.error) {
     return res.status(500).json({ error: otpResult.error });
   }
@@ -196,6 +202,7 @@ const getMe = async (req, res) => {
         "email",
         "mobile",
         "usertype",
+        "doctor_id_legacy",
         "status",
         "verify_status",
         "advance_payment",

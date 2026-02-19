@@ -22,6 +22,19 @@ const createPaymentOrder = async (req, res) => {
     if (!order) {
       return res.status(404).json({ error: 'Order not found' });
     }
+    console.log(order);
+    console.log(amount);
+    // Enforce payment terms: if advance is required, amount must match
+    const advanceDue = Number(order.advance_amount_due + ((order.advance_amount_due * 18)/100));
+    if (advanceDue > 0) {
+      const requestedAmount = Number(amount);
+      if (Math.abs(requestedAmount - advanceDue) > 0.01) {
+        return res.status(400).json({
+          error: `Payment terms require an advance of ₹${advanceDue}. Requested amount ₹${requestedAmount} does not match.`,
+          advance_amount_due: advanceDue,
+        });
+      }
+    }
 
     const options = {
       amount: Math.round(amount * 100), // Razorpay expects amount in paise
@@ -36,7 +49,7 @@ const createPaymentOrder = async (req, res) => {
 
     const payment = await Payment.create({
       orderOrderId: order.order_id,
-      UserUserid: order.user_id,
+      UserUserid: req.user.id,
       razorpayOrderId: razorpayOrder.id,
       gateway: 'razorpay',
       gatewayReference: razorpayOrder.id,
@@ -132,7 +145,7 @@ const verifyPayment = async (req, res) => {
 // Admin-only: confirm cheque payment after manual verification; updates order and payment record
 const approveChequePayment = async (req, res) => {
   try {
-    const orderId = Number(req.body?.orderId ?? req.params?.orderId);
+    const orderId = Number(req.body?.orderId);
     if (!orderId && orderId !== 0) {
       return res.status(400).json({ error: 'orderId is required' });
     }

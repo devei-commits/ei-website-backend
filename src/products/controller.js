@@ -20,7 +20,10 @@ const saveProduct = async (req, res) => {
     }
 
     // create product
-    const product = await Product.create(req.body);
+    const product = await Product.create({
+      ...req.body,
+      created_at: new Date(),
+    });
 
     return res.status(201).json(product);
   } catch (err) {

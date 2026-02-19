@@ -1,8 +1,15 @@
 const { DataTypes, Model } = require('sequelize');
+const jwt = require('jsonwebtoken');
 const db = require('../../db');
 const Address = require('../models/Addresses');
 
-class User extends Model {}
+class User extends Model {
+  generateToken() {
+    return jwt.sign({ id: this.userid, role: this.usertype }, process.env.JWT_SECRET, {
+      expiresIn: '1h',
+    });
+  }
+}
 User.init({
   userid: {
     type: DataTypes.INTEGER,

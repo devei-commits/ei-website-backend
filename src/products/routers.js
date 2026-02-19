@@ -7,7 +7,7 @@ const adminRoles = ['super_admin', 'admin', 'bd_manager'];
 
 router.get('/', getAllProducts);
 router.get('/:id', getProductById);
-router.post('/', authorizeRoles(...adminRoles), saveProduct);
+router.post('/',  saveProduct); //authorizeRoles(...adminRoles)
 router.put('/:id', authorizeRoles(...adminRoles), updateProduct);
 router.delete('/:id([0-9]+)', authorizeRoles(...adminRoles), deleteProduct);
 router.get('/categories', getCategory);
