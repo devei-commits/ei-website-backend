@@ -22,10 +22,11 @@ const createPaymentOrder = async (req, res) => {
     if (!order) {
       return res.status(404).json({ error: 'Order not found' });
     }
-    console.log(order);
-    console.log(amount);
+
     // Enforce payment terms: if advance is required, amount must match
-    const advanceDue = Number(order.advance_amount_due + ((order.advance_amount_due * 18)/100));
+    const gstpercent =  (Number(order.advance_amount_due.split('.')[0])*18)/100
+    const advanceDue = Number(order.advance_amount_due + gstpercent.toFixed(2));
+   
     if (advanceDue > 0) {
       const requestedAmount = Number(amount);
       if (Math.abs(requestedAmount - advanceDue) > 0.01) {
