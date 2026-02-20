@@ -16,15 +16,18 @@ services:
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-postgres}"]
-      interval: 2s
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 5
       start_period: 10s
+    networks:
+      - app-network
 
   app:
-    build: .
+    image: node:20
     container_name: orders_app
+    working_dir: /usr/src/app
     depends_on:
       db:
         condition: service_healthy
@@ -32,9 +35,19 @@ services:
       - .env
     environment:
       NODE_ENV: development
-      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:${POSTGRES_PORT}/${POSTGRES_DB}
+      # Inside Docker, use the internal service name for database connection
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    volumes:
+      - ./:/usr/src/app
+    command: sh -c "npm install && npm run dev"
     ports:
       - "${PORT-3000}:3000"
+    networks:
+      - app-network
 
 volumes:
   db_data:
+
+networks:
+  app-network:
+    driver: bridge
