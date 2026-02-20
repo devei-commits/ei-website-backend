@@ -16,7 +16,7 @@ services:
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -35,11 +35,10 @@ services:
       - .env
     environment:
       NODE_ENV: development
-      # Inside Docker, use the internal service name for database connection
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
     volumes:
       - ./:/usr/src/app
-    command: sh -c "npm install && npm run dev"
+    command: sh -c "npm install && chmod +x /usr/src/app/entrypoint.sh && /usr/src/app/entrypoint.sh"
     ports:
       - "${PORT-3000}:3000"
     networks:

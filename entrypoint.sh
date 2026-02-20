@@ -13,7 +13,7 @@ PID=$!
 echo "Waiting for server at ${HEALTH_URL}..."
 i=0
 while [ $i -lt $MAX_ATTEMPTS ]; do
-  if wget -q -O /dev/null "$HEALTH_URL" 2>/dev/null; then
+  if curl -s -f "$HEALTH_URL" > /dev/null 2>&1; then
     echo "Server is healthy. Running seed..."
     node seed.js
     wait $PID
