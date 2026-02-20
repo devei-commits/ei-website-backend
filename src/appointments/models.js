@@ -15,7 +15,7 @@ Appointment.init({
     allowNull: false,
     references: {
       model: User,
-      key: 'user_id'    
+      key: 'userid'
     }
   },
   doctor_id: {
@@ -23,7 +23,7 @@ Appointment.init({
     allowNull: false,
     references: {
       model: User,
-      key: 'user_id'
+      key: 'userid'
     }
   },
   clinic_name: {

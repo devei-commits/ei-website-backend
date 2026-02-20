@@ -5,6 +5,9 @@ const { Product } = require('./src/products/models');
 const { Order, OrderItem } = require('./src/orders/models');
 const { Payment } = require('./src/payments/models');
 const Address = require('./src/models/Addresses');
+const Appointment = require('./src/appointments/models');
+const Newdevelopment = require('./src/newdevelopments/models');
+const ProductCustomization = require('./src/customizations/models');
 const bcrypt = require('bcrypt');
 
 async function seed() {
@@ -13,6 +16,9 @@ async function seed() {
     await db.sync({ alter: true });
 
     console.log('Clearing existing seed data...');
+    await ProductCustomization.destroy({ where: {} });
+    await Newdevelopment.destroy({ where: {} });
+    await Appointment.destroy({ where: {} });
     await Payment.destroy({ where: {} });
     await OrderItem.destroy({ where: {} });
     await Order.destroy({ where: {} });
@@ -294,6 +300,67 @@ async function seed() {
       remainingAmount: 10000.0,
       currency: 'INR',
       status: 'pending',
+    });
+
+    console.log('Seeding Appointments...');
+    await Appointment.create({
+      user_id: client1.userid,
+      doctor_id: superAdmin.userid,
+      clinic_name: 'Main Clinic',
+      email: client1.email,
+      phone: client1.mobile,
+      address: '123 Client St',
+      city: 'Mumbai',
+      state: 'MH',
+      pincode: '400001',
+      reason: 'General consultation',
+      mode: 'online',
+      status: 'pending',
+      lifecycle_status: 'active',
+      slot1_date: '2026-03-01',
+      slot1_time: '10:00',
+      created_at: new Date(),
+      updated_at: new Date()
+    });
+
+    console.log('Seeding New Developments...');
+    await Newdevelopment.create({
+      user_id: client1.userid,
+      application_type: 'Skin Care',
+      condition_type: 'Dry Skin',
+      fragrance_preference: 'Lavender',
+      ingredients_preference: 'Organic',
+      ph_range: '5.5',
+      product_category: 'Face Care',
+      product_type: 'Cream',
+      request_status: 'Pending',
+      specifications: ['Sulphate Free', 'Paraben Free'],
+      submitted_date: '20 Feb 2026',
+      target_area: 'Face',
+      created_at: new Date(),
+      updated_at: new Date()
+    });
+
+    console.log('Seeding Product Customizations...');
+    await ProductCustomization.create({
+      product_id: productA.product_id,
+      user_id: client1.userid,
+      formulation: 'Customized Oil-based',
+      packaging: 'Glass Bottle 50ml',
+      product_category: 'Face Care',
+      sub_category: 'Oil',
+      sub_sub_category: 'Anti-aging',
+      product_sku: 'PA-CUSTOM-001',
+      product_description: 'Custom formulation for client 1',
+      application_area: 'Face',
+      skin_type: 'Combination',
+      fragrance: 'Sandalwood',
+      color: 'Clear',
+      ph_range: '6.0',
+      status: 'Pending',
+      life_cycle_status: 'active',
+      created_at: new Date(),
+      updated_at: new Date()
     });
 
     console.log('Seeding complete.');
