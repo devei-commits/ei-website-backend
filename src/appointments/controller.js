@@ -24,7 +24,8 @@ const createAppointment = async (req, res, next) => {
       ...value,
       user_id: req.user.id,
       lifecycle_status: 'active',
-      created_at: now
+      created_at: now,
+      updated_at: now
     };
 
     const appointment = await Appointment.create(appointmentData);

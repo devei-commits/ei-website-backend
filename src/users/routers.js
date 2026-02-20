@@ -1,15 +1,17 @@
 const express = require('express');
 const router = express.Router();
-const { createUser, userLogin, updateUserPaymentTerms, getAllUsers, getMe, createAddress } = require('./controller');
+const { createUser, userLogin, updateUserPaymentTerms, getAllUsers, getMe, updateMe, createAddress } = require('./controller');
 const { isAuthenticated, authorizeRoles, token, deleteToken } = require('../middleware/security');
 
+// Authentication routes
 router.post('/', createUser);
 router.post('/login', userLogin);
 router.get('/token', token);
 router.get('/logout', deleteToken);
 
-// Current user's own details (must be before /:id)
+// Current user's own details
 router.get('/me', isAuthenticated, getMe);
+router.put('/me', isAuthenticated, updateMe);
 router.post('/addresses', isAuthenticated, createAddress);
 
 // Admin-only: get all users

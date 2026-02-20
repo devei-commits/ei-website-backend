@@ -7,6 +7,8 @@ const productRouters = require('./src/products/routers');
 const paymentRouters = require('./src/payments/routers');
 const otpRouters = require('./src/otp/routers');
 const appointmentRouters = require('./src/appointments/routers');
+const newdevelopmentsRouters = require('./src/newdevelopments/routers');
+const customizationRouters = require('./src/customizations/routers');
 const errorHandler = require('./src/middleware/error_handler');
 const logginHandler = require('./src/middleware/logging')
 const { isAuthenticated } = require('./src/middleware/security')
@@ -49,7 +51,9 @@ app.use(`${apiPrefix}/otp`, otpRouters);
 app.use(`${apiPrefix}/orders`, isAuthenticated, orderRouters);
 app.use(`${apiPrefix}/products`, isAuthenticated, productRouters);
 app.use(`${apiPrefix}/payments`, isAuthenticated, paymentRouters);
-app.use(`${apiPrefix}/appointments`, appointmentRouters);
+app.use(`${apiPrefix}/appointments`,isAuthenticated, appointmentRouters);
+app.use(`${apiPrefix}/newdevelopments`,isAuthenticated, newdevelopmentsRouters);
+app.use(`${apiPrefix}/customizations`, isAuthenticated, customizationRouters);
 
 app.use(errorHandler);
 

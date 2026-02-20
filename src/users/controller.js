@@ -1,7 +1,7 @@
 const { User, DoctorProfile } = require("../models/index");
 
 const bcrypt = require("bcrypt");
-const { loginSchema, userSchema } = require("./schemas");
+const { loginSchema, userSchema, updateUserSchema } = require("./schemas");
 const { generateOtp } = require("../otp/controller");
 const { generateToken } = require("../middleware/security");
 const Address = require("../models/Addresses");
@@ -63,6 +63,7 @@ const createUser = async (req, res) => {
     await DoctorProfile.create(
       {
         user_id: user.userid,
+        doctor_id: doctor_id,
         clinic_name: clinic_address.clinic_name,
         city: clinic_address.city,
         state: clinic_address.state,
@@ -178,6 +179,7 @@ const updateUserPaymentTerms = async (req, res) => {
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: "At least one of advancePayment or advanceAmount is required" });
     }
+    updates.updated_at = new Date();
     await user.update(updates);
     res.status(200).json({
       id: user.userid,
@@ -224,6 +226,19 @@ const getMe = async (req, res) => {
             "phone",
           ],
         },
+        {
+          model: DoctorProfile,
+          as: "doctorProfile",
+          attributes: [
+            "doctor_id",
+            "clinic_name",
+            "clinic_address",
+            "city",
+            "state",
+            "country",
+            "pincode",
+          ],
+        }
       ],
     });
 
@@ -299,11 +314,117 @@ const createAddress = async (req, res) => {
   }
 };
 
+// Update current user's profile
+const updateMe = async (req, res) => {
+  const { error, value } = updateUserSchema.validate(req.body, { abortEarly: false });
+  if (error) {
+    return res.status(400).json({ errors: error.details.map((e) => e.message) });
+  }
+
+  const userId = req.user.id;
+  const t = await db.transaction();
+
+  try {
+    const user = await User.findByPk(userId, { transaction: t });
+    if (!user) {
+      await t.rollback();
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // Separate User and DoctorProfile fields
+    const userFields = ['fname', 'lname', 'display_name', 'email', 'mobile'];
+    const userUpdates = {};
+    const now = new Date();
+
+    userFields.forEach(field => {
+      if (value[field] !== undefined) {
+        userUpdates[field] = value[field];
+      }
+    });
+
+    // Update User
+    if (Object.keys(userUpdates).length > 0) {
+      userUpdates.updated_at = now;
+      await user.update(userUpdates, { transaction: t });
+    }
+
+    // Update or Create DoctorProfile
+    if (value.clinic_details) {
+      const doctorDataWithTime = { ...value.clinic_details, user_id: userId, updated_at: now };
+      const [profile, created] = await DoctorProfile.findOrCreate({
+        where: { user_id: userId },
+        defaults: doctorDataWithTime,
+        transaction: t
+      });
+
+      if (!created) {
+        await profile.update(doctorDataWithTime, { transaction: t });
+      }
+    }
+
+    // Update or Create Addresses
+    const handleAddressUpdate = async (type, addressData) => {
+      if (!addressData) return;
+      
+      const mappedData = {
+        first_name: addressData.first_name,
+        last_name: addressData.last_name,
+        address_line1: addressData.address_line1,
+        address_line2: addressData.address_line2,
+        city_text: addressData.city,
+        state_text: addressData.state,
+        country_text: addressData.country,
+        pincode: addressData.pincode,
+        phone: addressData.phone,
+        updated_at: now // Manual timestamp update
+      };
+
+      const [address, created] = await Address.findOrCreate({
+        where: { user_id: userId, address_type: type },
+        defaults: { ...mappedData, user_id: userId, address_type: type },
+        transaction: t
+      });
+
+      if (!created) {
+        await address.update(mappedData, { transaction: t });
+      }
+    };
+
+    if (value.shipping_address) {
+      await handleAddressUpdate('shipping', value.shipping_address);
+    }
+    if (value.billing_address) {
+      await handleAddressUpdate('billing', value.billing_address);
+    }
+
+    await t.commit();
+
+    // Fetch updated user with profile and addresses
+    const updatedUser = await User.findByPk(userId, {
+      include: [
+        { model: DoctorProfile, as: 'doctorProfile' },
+        { model: Address, as: 'addresses' }
+      ]
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Profile updated successfully",
+      data: updatedUser
+    });
+
+  } catch (err) {
+    if (t) await t.rollback();
+    return res.status(500).json({ error: err.message });
+  }
+};
+
 module.exports = {
   createUser,
   userLogin,
   updateUserPaymentTerms,
   getAllUsers,
   getMe,
+  updateMe,
   createAddress,
 };

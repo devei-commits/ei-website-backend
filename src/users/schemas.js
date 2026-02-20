@@ -45,7 +45,39 @@ const userSchema = Joi.object({
     gstNumber: Joi.string().optional(),
     billingAddress: Joi.string().optional(),
     shippingAddress: Joi.string().optional(),
-    // paymentTerms is admin-approved; not accepted at registration time
 });
 
-module.exports = { loginSchema, userSchema };
+const addressUpdateSchema = Joi.object({
+    first_name: Joi.string().allow('', null),
+    last_name: Joi.string().allow('', null),
+    address_line1: Joi.string().allow('', null),
+    address_line2: Joi.string().allow('', null),
+    city: Joi.string().allow('', null),
+    state: Joi.string().allow('', null),
+    country: Joi.string().allow('', null),
+    pincode: Joi.string().allow('', null),
+    phone: Joi.string().allow('', null),
+});
+
+const clinicUpdateSchema = Joi.object({
+    doctor_id: Joi.string().allow('', null),
+    clinic_name: Joi.string().allow('', null),
+    clinic_address: Joi.string().allow('', null),
+    city: Joi.string().allow('', null),
+    state: Joi.string().allow('', null),
+    country: Joi.string().allow('', null),
+    pincode: Joi.string().allow('', null),
+});
+
+const updateUserSchema = Joi.object({
+    fname: Joi.string().allow('', null),
+    lname: Joi.string().allow('', null),
+    display_name: Joi.string().allow('', null),
+    email: Joi.string().email().allow('', null),
+    mobile: Joi.string().allow('', null),
+    clinic_details: clinicUpdateSchema,
+    shipping_address: addressUpdateSchema,
+    billing_address: addressUpdateSchema,
+});
+
+module.exports = { loginSchema, userSchema, updateUserSchema };
