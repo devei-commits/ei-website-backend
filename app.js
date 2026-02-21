@@ -22,15 +22,15 @@ const port = process.env.PORT || 3000;
 
 // Middleware
 const allowedOrigins = [
-    'http://localhost:5173'
+    'http://localhost:5173',
+    'https://esthetic-insights-website.vercel.app',
 ];
 const corsOptions = {
     origin: (origin, callback) => {
-        if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
-            callback(null, true);
-        } else {
-            callback(new Error('Not allowed by CORS'));
-        }
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.indexOf(origin) !== -1) return callback(null, true);
+        if (origin.endsWith('.vercel.app')) return callback(null, true);
+        callback(new Error('Not allowed by CORS'));
     },
     credentials: true,
 };
