@@ -62,16 +62,11 @@ app.use((req, res) => {
 });
 
 db.authenticate().then(async () => {
-
-    //@comment: Auto sync the database based on models
-    await db.sync({alter: true}).then(() => {
-        console.log('Database is synced');
-    }).catch(err => {
-        console.error('Failed to sync the database', err);
-    });
+    // Database will be synced by seed.js before the server starts
     app.listen(port, () => {
         console.log(`Server is running on port ${port}`);
     });
 }).catch(err => {
     console.error('Failed to connect to the database', err);
+    process.exit(1);
 });

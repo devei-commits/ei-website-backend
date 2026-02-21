@@ -5,9 +5,13 @@ const db = new Sequelize(process.env.DATABASE_URL, {
   pool: {
     max: 5,
     min: 0,
-    acquire: 30000,
+    acquire: 120000,
     idle: 10000
   },
+  requestTimeout: 120000,
+  dialectOptions: {
+    connectTimeout: 120000,
+  }
 });
 
 module.exports = db;
