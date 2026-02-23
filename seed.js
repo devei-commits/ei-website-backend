@@ -1,6 +1,7 @@
 require('dotenv').config();
 const db = require('./db');
 const { User, RefreshToken, DoctorProfile } = require('./src/users/models');
+const { Role, StaffProfile } = require('./src/models/index');
 const { Product } = require('./src/products/models');
 const { Order, OrderItem } = require('./src/orders/models');
 const { Payment } = require('./src/payments/models');
@@ -9,6 +10,24 @@ const Appointment = require('./src/appointments/models');
 const Newdevelopment = require('./src/newdevelopments/models');
 const ProductCustomization = require('./src/customizations/models');
 const bcrypt = require('bcrypt');
+
+const DEFAULT_ROLES = [
+  { role_code: 'super_admin', role_name: 'Super Admin', level: 'admin' },
+  { role_code: 'admin', role_name: 'Admin', level: 'admin' },
+  { role_code: 'bd_manager', role_name: 'BD Manager', level: 'manager' },
+  { role_code: 'qa_manager', role_name: 'QA Manager', level: 'manager' },
+  { role_code: 'rnd_lead', role_name: 'R&D Lead', level: 'manager' },
+  { role_code: 'procurement', role_name: 'Procurement', level: 'staff' },
+  { role_code: 'manufacturing', role_name: 'Manufacturing and Production', level: 'staff' },
+  { role_code: 'sales', role_name: 'Sales', level: 'staff' },
+  { role_code: 'logistics', role_name: 'Logistics', level: 'staff' },
+  { role_code: 'design', role_name: 'Design', level: 'staff' },
+  { role_code: 'rnd_staff', role_name: 'R&D Staff', level: 'staff' },
+  { role_code: 'qa_staff', role_name: 'QA Staff', level: 'staff' },
+  { role_code: 'bd_staff', role_name: 'BD Staff', level: 'staff' },
+  { role_code: 'doctor', role_name: 'Doctor', level: 'client' },
+  { role_code: 'customer', role_name: 'Customer', level: 'client' },
+];
 
 async function seed() {
   try {
@@ -27,6 +46,7 @@ async function seed() {
     await Product.destroy({ where: {} });
     await RefreshToken.destroy({ where: {} });
     await DoctorProfile.destroy({ where: {} });
+    await StaffProfile.destroy({ where: {} });
     await User.destroy({ where: {} });
 
     const now = new Date();

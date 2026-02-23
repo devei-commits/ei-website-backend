@@ -2,7 +2,7 @@ require('dotenv').config()
 const jwt = require('jsonwebtoken');
 const bycrypt = require('bcrypt');
 const { RefreshToken, User } = require('../users/models');
-const { where } = require('sequelize');
+const { StaffProfile, Role, Permission, RolePermission } = require('../models/index');
 
 function generateToken(user) {
     // Include role in the token payload for authorization checks
@@ -45,6 +45,17 @@ const isAuthenticated = async (req, res, next) => {
             email: user.email,
             role: user.usertype
         };
+        // For staff (admin dashboard RBAC): attach roleId, roleName, roleLevel from staff_profiles + roles
+        const staffProfile = await StaffProfile.findOne({
+            where: { user_id: user.userid },
+            include: [{ model: Role, as: 'role', attributes: ['role_id', 'role_name', 'level'] }]
+        });
+        if (staffProfile && staffProfile.role) {
+            req.user.roleId = staffProfile.role.role_id;
+            req.user.roleName = staffProfile.role.role_name;
+            req.user.roleLevel = staffProfile.role.level;
+            req.user.department = staffProfile.department;
+        }
         next();
     } catch (err) {
         return res.sendStatus(403);
@@ -58,6 +69,32 @@ const authorizeRoles = (...allowedRoles) => {
             return res.sendStatus(403);
         }
         next();
+    };
+};
+
+/**
+ * Optional RBAC: require (resource, action) from role_permissions + permissions.
+ * Call after isAuthenticated. Super_admin/admin (by usertype or roleName) bypass.
+ * Otherwise checks Permission(resource, action) linked to user's role via RolePermission.
+ */
+const requirePermission = (resource, action) => {
+    return async (req, res, next) => {
+        if (!req.user) return res.sendStatus(403);
+        if (req.user.role === 'super_admin' || req.user.role === 'admin' || req.user.roleName === 'Super Admin' || req.user.roleName === 'Admin') {
+            return next();
+        }
+        if (!req.user.roleId) return res.sendStatus(403);
+        try {
+            const perm = await Permission.findOne({ where: { resource, action } });
+            if (!perm) return res.sendStatus(403);
+            const has = await RolePermission.findOne({
+                where: { role_id: req.user.roleId, permission_id: perm.permission_id }
+            });
+            if (!has) return res.sendStatus(403);
+            next();
+        } catch (err) {
+            return res.sendStatus(500);
+        }
     };
 };
 
@@ -106,5 +143,6 @@ module.exports = {
     generateRefreshToken,
     token,
     deleteToken,
-    authorizeRoles
+    authorizeRoles,
+    requirePermission,
 }

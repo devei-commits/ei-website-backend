@@ -1,9 +1,9 @@
-const { User, DoctorProfile } = require("../models/index");
+const { User, DoctorProfile, StaffProfile, Role } = require("../models/index");
 
 const bcrypt = require("bcrypt");
 const { loginSchema, userSchema, updateUserSchema } = require("./schemas");
 const { generateOtp } = require("../otp/controller");
-const { generateToken } = require("../middleware/security");
+const { generateToken, generateRefreshToken } = require("../middleware/security");
 const Address = require("../models/Addresses");
 const db = require("../../db");
 
@@ -145,6 +145,18 @@ const userLogin = async (req, res) => {
     return res.status(404).json({ error: "Invalid credentials!" });
   }
 
+  // Staff (admin dashboard): skip OTP and return token directly so internal team can log in
+  const staffProfile = await StaffProfile.findOne({ where: { user_id: user.userid } });
+  if (staffProfile) {
+    const refreshToken = await generateRefreshToken(user);
+    res.cookie("refreshToken", refreshToken, { httpOnly: true });
+    return res.status(200).json({
+      success: true,
+      token: generateToken(user),
+      skipOtp: true,
+    });
+  }
+
   // DEV: skip OTP for test user and return token directly
   if (isDev && user.email === DEV_BYPASS_EMAIL) {
     return res.status(200).json({
@@ -192,7 +204,7 @@ const updateUserPaymentTerms = async (req, res) => {
   }
 };
 
-// Current user's own profile (from token)
+// Current user's own profile (from token). For staff: includes roleId, roleName, roleLevel, department.
 const getMe = async (req, res) => {
   try {
     const user = await User.findByPk(req.user.id, {
@@ -246,42 +258,100 @@ const getMe = async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    return res.status(200).json(user);
+    const payload = user.toJSON();
+    if (payload.staffProfile && payload.staffProfile.role) {
+      payload.roleId = payload.staffProfile.role.role_id;
+      payload.roleName = payload.staffProfile.role.role_name;
+      payload.roleLevel = payload.staffProfile.role.level;
+      payload.department = payload.staffProfile.department;
+    }
+    delete payload.staffProfile;
+    return res.status(200).json(payload);
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
 };
 
-// Admin-only: list all users
+// Admin-only: list all users. ?staffOnly=true returns only users with staff_profiles (role_id, role_name, department).
 const getAllUsers = async (req, res) => {
   try {
+    const staffOnly = req.query.staffOnly === "true" || req.query.staffOnly === "1";
+    const includeStaff = [
+      {
+        model: Address,
+        as: "addresses",
+        attributes: [
+          "address_id",
+          "address_type",
+          "address_line1",
+          "city_text",
+          "state_text",
+          "country_text",
+          "pincode",
+          "phone",
+        ],
+      },
+    ];
+    if (staffOnly) {
+      includeStaff.push({
+        model: StaffProfile,
+        as: "staffProfile",
+        required: true,
+        include: [{ model: Role, as: "role", attributes: ["role_id", "role_code", "role_name", "level"] }],
+      });
+    }
     const users = await User.findAll({
-      attributes: [
-        "userid",
-        "display_name",
-        "email",
-        "usertype"
-      ],
-
-      include: [
-        {
-          model: Address,
-          as: "addresses",
-          attributes: [
-            "address_id",
-            "address_type",
-            "address_line1",
-            "city_text",
-            "state_text",
-            "country_text",
-            "pincode",
-            "phone",
-          ],
-        },
-      ],
+      attributes: ["userid", "display_name", "email", "mobile", "usertype", "status", "created_at"],
+      include: includeStaff,
     });
 
-    res.status(200).json(users);
+    const list = users.map((u) => {
+      const row = u.toJSON();
+      if (row.staffProfile && row.staffProfile.role) {
+        row.role_id = row.staffProfile.role.role_id;
+        row.role_name = row.staffProfile.role.role_name;
+        row.department = row.staffProfile.department;
+      }
+      delete row.staffProfile;
+      if (staffOnly) {
+        row.id = row.userid;
+      }
+      return row;
+    });
+    res.status(200).json(list);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Admin-only: update a user's role and department (staff_profiles). Creates or updates staff_profile.
+const updateUserRole = async (req, res) => {
+  try {
+    const user = await User.findByPk(req.params.id);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    const { roleId, department } = req.body;
+    if (roleId == null) {
+      return res.status(400).json({ error: "roleId is required" });
+    }
+    const role = await Role.findByPk(roleId);
+    if (!role) {
+      return res.status(400).json({ error: "Invalid roleId" });
+    }
+    const [staffProfile] = await StaffProfile.findOrCreate({
+      where: { user_id: user.userid },
+      defaults: { role_id: roleId, department: department || null },
+    });
+    if (!staffProfile.isNewRecord) {
+      await staffProfile.update({ role_id: roleId, department: department !== undefined ? department : staffProfile.department });
+    }
+    res.status(200).json({
+      id: user.userid,
+      role_id: role.role_id,
+      role_name: role.role_name,
+      department: staffProfile.department,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -427,4 +497,5 @@ module.exports = {
   getMe,
   updateMe,
   createAddress,
+  updateUserRole,
 };

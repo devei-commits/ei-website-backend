@@ -5,7 +5,8 @@ POSTMAN collection: https://blue-meteor-763804.postman.co/workspace/express_tut~
 Base URL: `http://<host>:<PORT>/api/v1` (default `http://localhost:3000/api/v1`)
 
 - Public routes: `/api/v1/health`, `/api/v1/users/*` (including `/api/v1/users/token` and `/api/v1/users/logout`), `/api/v1/otp/*`
-- Protected routes (require `Authorization: Bearer <access_token>`): `/api/v1/orders/*`, `/api/v1/products/*`, `/api/v1/payments/*`
+- Protected routes (require `Authorization: Bearer <access_token>`): `/api/v1/orders/*`, `/api/v1/products/*`, `/api/v1/payments/*`, `/api/v1/users/me`, `/api/v1/users/addresses`
+- Admin-only routes (Bearer token + role `super_admin`|`admin`|`bd_manager`): `/api/v1/users/getusers`, `/api/v1/users/:id/role`, `/api/v1/users/:id/payment-terms`, `/api/v1/roles/*`
 
 ---
 
@@ -122,7 +123,7 @@ Base URL: `http://<host>:<PORT>/api/v1` (default `http://localhost:3000/api/v1`)
 
 ### GET `/api/v1/users/me`
 
-**Purpose**: Get the current user's own profile (from access token). Used for payment terms (advance %), mobile, and addresses.
+**Purpose**: Get the current user's own profile (from access token). Used for payment terms (advance %), mobile, and addresses. For **staff** (users with a `staff_profiles` row), the response also includes `roleId`, `roleName`, `roleLevel`, and `department` for admin-dashboard RBAC.
 
 **Auth**: Requires `Authorization: Bearer <access_token>`.
 
@@ -173,6 +174,41 @@ Base URL: `http://<host>:<PORT>/api/v1` (default `http://localhost:3000/api/v1`)
   `{ "error": "User not found" }`
 - `401` / `403`  
   Missing or invalid token.
+
+---
+
+### GET `/api/v1/users/getusers`
+
+**Purpose**: List users. Admin-only. Optional query `?staffOnly=true` returns only users that have a staff profile (internal team), with `role_id`, `role_name`, and `department` included for each.
+
+**Auth**: `Authorization: Bearer <access_token>` and role `super_admin`, `admin`, or `bd_manager`.
+
+**Responses**:
+
+- `200`  
+  Array of users. With `staffOnly=true`, each item includes `id` (same as `userid`), `role_id`, `role_name`, `department`.
+
+---
+
+### PATCH `/api/v1/users/:id/role`
+
+**Purpose**: Set or update a user's staff role and department (creates or updates `staff_profiles`). Admin-only.
+
+**Auth**: `Authorization: Bearer <access_token>` and role `super_admin`, `admin`, or `bd_manager`.
+
+**Body (JSON)**:
+
+- `roleId` (integer, required) — role_id from roles table
+- `department` (string, optional) — one of `sales`, `rnd`, `quality_assurance`, `logistics`, `marketing`, `finance`
+
+**Responses**:
+
+- `200`  
+  `{ "id": <userid>, "role_id": <role_id>, "role_name": "<name>", "department": "<department>" }`
+- `400`  
+  `{ "error": "roleId is required" }` or `{ "error": "Invalid roleId" }`
+- `404`  
+  `{ "error": "User not found" }`
 
 ---
 
@@ -262,6 +298,115 @@ Base URL: `http://<host>:<PORT>/api/v1` (default `http://localhost:3000/api/v1`)
   If caller's role is not allowed.
 - `500`  
   `{ "error": "<message>" }`
+
+---
+
+## Roles (Admin dashboard RBAC)
+
+> All `/api/v1/roles/*` require `Authorization: Bearer <access_token>` and role `super_admin` or `admin`. Used by the admin dashboard for role and permission management (staff only; clients have no staff_profile).
+
+### GET `/api/v1/roles`
+
+**Purpose**: List all roles. No full permissions in list; each item includes `permissionsSet` (boolean) indicating whether the role has any granted permission keys stored.
+
+**Responses**: `200` — Array of role objects: `role_id`, `role_code`, `role_name`, `description`, `level`, `status`, `userCount`, `permissionsSet`, `createdAt`.
+
+---
+
+### GET `/api/v1/roles/module-definitions`
+
+**Purpose**: Static list of modules/submodules/columns for the Permission Matrix UI (same structure as dashboard DEFAULT_MODULE_PERMISSIONS). Returns `{ modules, globalSettings }`.
+
+**Responses**: `200` — `{ "modules": [ ... ], "globalSettings": { ... } }`
+
+---
+
+### GET `/api/v1/roles/:id`
+
+**Purpose**: Get one role with permissions (minimal state: `granted` keys + `globalSettings`). Used by Edit Role, Role Details popup, and Permission Matrix.
+
+**Responses**: `200` — Role object with `permissions: { granted: string[], globalSettings? }` (minimal state only; module tree is defined in the frontend). `404` if not found.
+
+---
+
+### POST `/api/v1/roles`
+
+**Purpose**: Create a role. Backend stores only permission **state** (`granted` keys + optional `globalSettings`); the module tree is defined in the frontend so frontend changes do not require backend or API changes.
+
+**Auth**: `Authorization: Bearer <access_token>` and role `super_admin`, `admin`, or `bd_manager`.
+
+
+```json
+{
+  "role_code": "sales_lead",
+  "role_name": "Sales Lead",
+  "description": "Leads sales team and approvals",
+  "level": "manager",
+  "status": "active",
+  "permissions": {
+    "granted": [
+      "dashboard.dashboard-overview.action.view",
+      "dashboard.dashboard-overview.action.export",
+      "dashboard.dashboard-overview.column.stats-cards.view",
+      "order-management.orders-list.action.view"
+    ],
+    "globalSettings": {
+      "accessToAllModules": false,
+      "allowLogin": true,
+      "allowMultipleSessions": false,
+      "canChangePassword": true,
+      "enableAuditLog": false,
+      "canExportData": true,
+      "canImportData": false,
+      "canAccessReports": true,
+      "canAccessSettings": false,
+      "sessionTimeout": 30
+    }
+  }
+}
+```
+
+**Responses**: `201` — Created role (body includes `role_id`, `role_code`, `role_name`, `description`, `level`, `status`, `permissions: { granted, globalSettings }`, `created_at`). `409` if `role_code` already exists. `400` if required fields missing.
+
+---
+
+### PUT `/api/v1/roles/:id`
+
+**Purpose**: Update role. Same body shape as POST. `permissions` (if sent) replaces existing; only `granted` and `globalSettings` are stored.
+
+**Auth**: `Authorization: Bearer <access_token>` and role `super_admin`, `admin`, or `bd_manager`.
+
+**Body (JSON)**: Same as POST. All fields optional; `permissions` must use minimal state (`granted` array, optional `globalSettings`).
+
+**Example** (update name and status only):
+
+```json
+{
+  "role_name": "Sales Lead (Updated)",
+  "status": "inactive"
+}
+```
+
+**Example** (update permissions state):
+
+```json
+{
+  "permissions": {
+    "granted": ["dashboard.dashboard-overview.action.view", "order-management.orders-list.action.view"],
+    "globalSettings": { "allowLogin": true, "sessionTimeout": 30 }
+  }
+}
+```
+
+**Responses**: `200` — Updated role. `404` if role not found.
+
+---
+
+### DELETE `/api/v1/roles/:id`
+
+**Purpose**: Delete role only if no staff_profiles reference it.
+
+**Responses**: `204` on success. `400` if role is in use.
 
 ---
 

@@ -14,12 +14,20 @@ router.get('/me', isAuthenticated, getMe);
 router.put('/me', isAuthenticated, updateMe);
 router.post('/addresses', isAuthenticated, createAddress);
 
-// Admin-only: get all users
+// Admin-only: get all users (?staffOnly=true for staff with role/department)
 router.get(
   '/getusers',
   isAuthenticated,
   authorizeRoles('super_admin', 'admin', 'bd_manager'),
   getAllUsers
+);
+
+// Admin-only: update user role and department (staff_profiles)
+router.patch(
+  '/:id/role',
+  isAuthenticated,
+  authorizeRoles('super_admin', 'admin', 'bd_manager'),
+  updateUserRole
 );
 
 // Admin-approved payment terms update

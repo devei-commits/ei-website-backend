@@ -3,6 +3,7 @@ const cookieParser = require('cookie-parser');
 const db = require('./db');
 const orderRouters = require('./src/orders/routers');
 const userRouters = require('./src/users/routers');
+const roleRouters = require('./src/roles/routers');
 const productRouters = require('./src/products/routers');
 const paymentRouters = require('./src/payments/routers');
 const otpRouters = require('./src/otp/routers');
@@ -47,6 +48,7 @@ app.get(`${apiPrefix}/health`, (req, res) => {
 });
 
 app.use(`${apiPrefix}/users`, userRouters);
+app.use(`${apiPrefix}/roles`, roleRouters);
 app.use(`${apiPrefix}/otp`, otpRouters);
 app.use(`${apiPrefix}/orders`, isAuthenticated, orderRouters);
 app.use(`${apiPrefix}/products`, isAuthenticated, productRouters);
