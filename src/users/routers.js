@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { createUser, userLogin, updateUserPaymentTerms, getAllUsers, getMe, updateMe, createAddress } = require('./controller');
+const { createUser, userLogin, updateUserPaymentTerms, getAllUsers, getMe, updateMe, createAddress, updateUserRole } = require('./controller');
 const { isAuthenticated, authorizeRoles, token, deleteToken } = require('../middleware/security');
 
 // Authentication routes
