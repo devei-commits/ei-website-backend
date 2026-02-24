@@ -207,11 +207,11 @@ describe('Payment Flow', () => {
 
   // ─── Payment Terms Tests ──────────────────────────────────────────────────
 
-  test('product-level advance_percentage sets advance_amount_due on order', async () => {
-    // Product with 50% advance required
-    const advProduct = await Product.create({
-      product_name: 'Advance Product',
-      advance_percentage: 50,
+  test('user-level advance terms set advance_amount_due on order', async () => {
+    await user.update({ advance_payment: true, advance_amount: 200 });
+
+    const plainProduct = await Product.create({
+      product_name: 'Plain Product',
     });
 
     const orderData = {
@@ -219,7 +219,7 @@ describe('Payment Flow', () => {
       shipping_address_id: address.address_id,
       order_items: [
         {
-          product_id: advProduct.product_id,
+          product_id: plainProduct.product_id,
           quantity: 2,
           unit_price: 200,
           tax_amount: 0,
@@ -235,17 +235,16 @@ describe('Payment Flow', () => {
       .set('Authorization', `Bearer ${token}`);
 
     expect(orderRes.statusCode).toEqual(201);
-    // subtotal = 400, 50% advance = 200
     expect(parseFloat(orderRes.body.advance_amount_due)).toEqual(200);
+
+    await user.update({ advance_payment: false, advance_amount: null });
   });
 
-  test('user-level terms apply when product has no advance_percentage', async () => {
-    // User with advance_payment = true, advance_amount = 150
+  test('user-level terms apply when user has advance_payment and advance_amount', async () => {
     await user.update({ advance_payment: true, advance_amount: 150 });
 
     const plainProduct = await Product.create({
       product_name: 'Plain Product',
-      advance_percentage: null,
     });
 
     const orderData = {
@@ -271,50 +270,14 @@ describe('Payment Flow', () => {
     expect(orderRes.statusCode).toEqual(201);
     expect(parseFloat(orderRes.body.advance_amount_due)).toEqual(150);
 
-    // Reset user terms
-    await user.update({ advance_payment: false, advance_amount: null });
-  });
-
-  test('product terms override user payment terms', async () => {
-    // User has large advance_amount, but product dictates 25%
-    await user.update({ advance_payment: true, advance_amount: 9999 });
-
-    const pctProduct = await Product.create({
-      product_name: 'Percent Product',
-      advance_percentage: 25,
-    });
-
-    const orderData = {
-      billing_address_id: address.address_id,
-      shipping_address_id: address.address_id,
-      order_items: [
-        {
-          product_id: pctProduct.product_id,
-          quantity: 1,
-          unit_price: 400,
-          tax_amount: 0,
-        },
-      ],
-      shipping_total: 0,
-      discount_total: 0,
-    };
-
-    const orderRes = await request(app)
-      .post('/orders/save')
-      .send(orderData)
-      .set('Authorization', `Bearer ${token}`);
-
-    expect(orderRes.statusCode).toEqual(201);
-    // 25% of 400 = 100, NOT 9999
-    expect(parseFloat(orderRes.body.advance_amount_due)).toEqual(100);
-
     await user.update({ advance_payment: false, advance_amount: null });
   });
 
   test('POST /payments/create rejects amount that does not match advance_amount_due', async () => {
+    await user.update({ advance_payment: true, advance_amount: 150 });
+
     const advProd = await Product.create({
       product_name: 'Adv Guard Product',
-      advance_percentage: 50,
     });
 
     const orderRes = await request(app)
@@ -330,9 +293,8 @@ describe('Payment Flow', () => {
 
     expect(orderRes.statusCode).toEqual(201);
     const advOrder = orderRes.body;
-    // advance_amount_due = 150 (50% of 300)
 
-    // Attempt to pay the full grand_total instead of the advance
+    // Attempt to pay the full grand_total instead of the advance (150)
     const badPaymentRes = await request(app)
       .post('/payments/create')
       .send({ orderId: advOrder.order_id, amount: 300, currency: 'INR' })
@@ -340,6 +302,8 @@ describe('Payment Flow', () => {
 
     expect(badPaymentRes.statusCode).toEqual(400);
     expect(badPaymentRes.body.advance_amount_due).toEqual(150);
+
+    await user.update({ advance_payment: false, advance_amount: null });
   });
 
   // ─────────────────────────────────────────────────────────────────────────

@@ -213,7 +213,6 @@ async function seed() {
       buy_price: 1200.00,
       category: 'Skin Care',
       lifecycle_status: 'active',
-      advance_percentage: 50.00,
       created_at: now,
       updated_at: now
     });
@@ -304,17 +303,14 @@ async function seed() {
     console.log('Seeding New Developments...');
     await Newdevelopment.create({
       user_id: client1.userid,
-      application_type: 'Cream',
-      condition_type: 'Acne',
-      fragrance_preference: 'None',
-      ingredients_preference: 'Natural',
-      ph_range: '5.5-6.0',
+      status: 'Pending',
       product_category: 'Face',
-      product_type: 'Night Cream',
-      request_status: 'Pending',
-      specifications: { text: 'Must be oil-free' },
-      submitted_date: '2026-02-21',
-      target_area: 'Face',
+      product_description: 'Night cream for oily skin',
+      product_sku: 'ND-SKU-001',
+      application_area: 'Face',
+      skin_type: 'Oily',
+      phrange: '5.5-6.0',
+      fragrance: 'None',
       created_at: now,
       updated_at: now
     });

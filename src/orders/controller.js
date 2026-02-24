@@ -21,7 +21,7 @@ const saveOrder = async (req, res) => {
         const productIds = [...new Set(order_items.map((item) => Number(item.product_id)).filter(Boolean))];
         const existingProducts = await Product.findAll({
             where: { product_id: productIds },
-            attributes: ['product_id', 'advance_percentage'],
+            attributes: ['product_id'],
         });
         const existingIds = new Set(existingProducts.map((p) => Number(p.product_id)));
         const missingIds = productIds.filter((id) => !existingIds.has(id));
@@ -37,41 +37,14 @@ const saveOrder = async (req, res) => {
         const tax_total = order_items.reduce((acc, item) => acc + (item.tax_amount || 0), 0);
         const grand_total = subtotal + tax_total + shipping_total - discount_total;
 
-        // --- Payment terms resolution ---
-        // Build map: product_id -> advance_percentage
-        const productAdvanceMap = {};
-        existingProducts.forEach((p) => {
-            if (p.advance_percentage != null) {
-                productAdvanceMap[Number(p.product_id)] = Number(p.advance_percentage);
-            }
-        });
-
-        const hasProductTerms = order_items.some(
-            (item) => productAdvanceMap[Number(item.product_id)] != null
-        );
-
+        // Payment terms: use user-level advance_payment / advance_amount only
         let advance_amount_due = 0;
-
-        if (hasProductTerms) {
-            // Product-level terms take priority — sum per-line advances
-            advance_amount_due = order_items.reduce((acc, item) => {
-                const pct = productAdvanceMap[Number(item.product_id)];
-                if (pct != null) {
-                    const lineTotal = Number(item.unit_price) * Number(item.quantity);
-                    return acc + (lineTotal * pct) / 100;
-                }
-                return acc; // no advance for lines without product terms
-            }, 0);
+        const user = await User.findByPk(user_id, {
+            attributes: ['advance_payment', 'advance_amount'],
+        });
+        if (user && user.advance_payment && user.advance_amount != null) {
+            advance_amount_due = Math.min(Number(user.advance_amount), grand_total);
             advance_amount_due = Math.round(advance_amount_due * 100) / 100;
-        } else {
-            // Fallback to user-level payment terms
-            const user = await User.findByPk(user_id, {
-                attributes: ['advance_payment', 'advance_amount'],
-            });
-            if (user && user.advance_payment && user.advance_amount != null) {
-                advance_amount_due = Math.min(Number(user.advance_amount), grand_total);
-                advance_amount_due = Math.round(advance_amount_due * 100) / 100;
-            }
         }
 
         const order = await Order.create({

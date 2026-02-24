@@ -5,7 +5,7 @@ const { User } = require('../users/models');
 class Newdevelopment extends Model {}
 
 Newdevelopment.init({
-  Newdevelopments_id: {
+  product_id: {
     type: DataTypes.INTEGER,
     primaryKey: true,
     autoIncrement: true
@@ -18,23 +18,39 @@ Newdevelopment.init({
       key: 'userid'
     }
   },
-  application_type: {
+  status: {
     type: DataTypes.STRING,
     allowNull: true
   },
-  condition_type: {
+  customization: {
     type: DataTypes.STRING,
     allowNull: true
   },
-  fragrance_preference: {
+  sale: {
     type: DataTypes.STRING,
     allowNull: true
   },
-  ingredients_preference: {
+  hsn_code: {
     type: DataTypes.STRING,
     allowNull: true
   },
-  ph_range: {
+  product_status: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  product_code: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  generic_name: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  brand_name: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  super_category: {
     type: DataTypes.STRING,
     allowNull: true
   },
@@ -42,24 +58,136 @@ Newdevelopment.init({
     type: DataTypes.STRING,
     allowNull: true
   },
-  product_type: {
+  sub_category: {
     type: DataTypes.STRING,
     allowNull: true
   },
-  request_status: {
-    type: DataTypes.STRING,
-    defaultValue: 'Pending'
-  },
-  specifications: {
-    type: DataTypes.JSON,
-    allowNull: true
-  },
-  submitted_date: {
+  sub_sub_category: {
     type: DataTypes.STRING,
     allowNull: true
   },
-  target_area: {
+  product_sku: {
     type: DataTypes.STRING,
+    allowNull: true
+  },
+  label_claims: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  product_description_cust: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  product_description: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  product_price: {
+    type: DataTypes.DECIMAL(12, 2),
+    allowNull: true
+  },
+  tax_rate: {
+    type: DataTypes.DECIMAL(6, 2),
+    allowNull: true
+  },
+  gst_input: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  product_cover_image: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  product_cover_image_customization: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  product_ingrediants: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  excepients: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  indications: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  usage: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  cautions: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  application_area: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  dosage_form_type: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  phrange: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  color: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  fragrance: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  vascosity: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  other_specs: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  technology_used: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  recomendedproducts: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  packing_recommendations: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  batch_no: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  sub_cat_char: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  grid_sub_cat: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  skin_type: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  product_specializations: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  usage_time: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  application_specifications: {
+    type: DataTypes.TEXT,
     allowNull: true
   },
   created_at: {

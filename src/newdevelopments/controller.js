@@ -64,7 +64,7 @@ const getNewdevelopments = async (req, res, next) => {
 };
 
 /**
- * Get a specific development by Newdevelopments_id
+ * Get a specific development by product_id
  */
 const getNewdevelopmentById = async (req, res, next) => {
   try {
@@ -73,7 +73,7 @@ const getNewdevelopmentById = async (req, res, next) => {
 
     const development = await Newdevelopment.findOne({
       where: { 
-        Newdevelopments_id: id,
+        product_id: id,
         user_id: userId
       }
     });
