@@ -233,7 +233,7 @@ async function seed() {
     });
 
     console.log('Seeding Doctor Profiles...');
-    
+
     // Doctor Profile for Admin
     await DoctorProfile.create({
       user_id: admin.userid,

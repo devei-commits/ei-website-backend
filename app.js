@@ -28,10 +28,9 @@ const allowedOrigins = [
 ];
 const corsOptions = {
     origin: (origin, callback) => {
+        // Allow requests with no origin (like mobile apps or curl requests)
         if (!origin) return callback(null, true);
-        if (allowedOrigins.indexOf(origin) !== -1) return callback(null, true);
-        if (origin.endsWith('.vercel.app')) return callback(null, true);
-        callback(new Error('Not allowed by CORS'));
+        return callback(null, true); // Allow all origins for development
     },
     credentials: true,
 };
