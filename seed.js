@@ -8,7 +8,8 @@ const { Payment } = require('./src/payments/models');
 const Address = require('./src/models/Addresses');
 const Appointment = require('./src/appointments/models');
 const Newdevelopment = require('./src/newdevelopments/models');
-const ProductCustomization = require('./src/customizations/models');
+const Customization = require('./src/customizations/models');
+const ProductCustomization = require('./src/productCustomizations/models');
 const { ModuleDefinition, Permission, RolePermission } = require('./src/models/index');
 const { StaffProfile } = require('./src/roles/models');
 const defaultModuleDef = require('./src/roles/defaultModuleDefinition');
@@ -32,8 +33,32 @@ const ROLE_PERMISSIONS_MAP = {
   customer: [],
 };
 
+async function ensureFormulationJsonColumn() {
+  if (db.getDialect() !== 'postgres') return;
+  const [rows] = await db.query(
+    `SELECT data_type FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'product_customizations' AND column_name = 'formulation'`,
+    { raw: true }
+  );
+  if (!rows || rows.length === 0) return;
+  const dataType = (rows[0].data_type || '').toLowerCase();
+  if (dataType !== 'text' && dataType !== 'character varying') return;
+  console.log('Converting product_customizations.formulation to JSON (clearing existing rows first)...');
+  await db.query('DELETE FROM product_customizations', { raw: true });
+  await db.query(
+    `ALTER TABLE product_customizations
+     ALTER COLUMN formulation DROP NOT NULL, ALTER COLUMN formulation DROP DEFAULT`,
+    { raw: true }
+  );
+  await db.query(
+    `ALTER TABLE product_customizations ALTER COLUMN formulation TYPE JSON USING (NULL::json)`,
+    { raw: true }
+  );
+}
+
 async function seed() {
   try {
+    await ensureFormulationJsonColumn();
     console.log('Syncing database...');
     await db.sync({ alter: true });
 
@@ -82,6 +107,7 @@ async function seed() {
 
     console.log('Clearing existing seed data...');
     // Delete in order of dependency to avoid foreign key constraints
+    await Customization.destroy({ where: {} });
     await ProductCustomization.destroy({ where: {} });
     await Newdevelopment.destroy({ where: {} });
     await Appointment.destroy({ where: {} });
@@ -429,22 +455,28 @@ async function seed() {
       updated_at: now
     });
 
+    console.log('Seeding Customizations...');
+    const customizationsSeedData = require('./src/customizations/seedData');
+    await Customization.bulkCreate(customizationsSeedData);
+
     console.log('Seeding Product Customizations...');
     await ProductCustomization.create({
-      product_id: productA.product_id,
       user_id: client1.userid,
-      formulation: 'Custom Active Ingredient X',
-      packaging: 'Pumper Bottle',
-      product_category: 'Skin Care',
-      sub_category: 'Serum',
-      sub_sub_category: 'Anti-Acne',
-      product_sku: 'CUSTOM-SKU-001',
-      product_description: 'Modified Advanced Face Serum',
-      application_area: 'Face',
-      skin_type: 'Oily',
-      fragrance: 'Rose',
-      color: 'Light Pink',
-      ph_range: '5.8',
+      product_id: productA.product_id,
+      category: 'Sun Protectant',
+      formulation: {
+        Active: 'Niacinamide 10%',
+        Cleanser: 'Oil Cleanser',
+        Moisturizer: 'Shea Butter Ultra',
+        Others: 'Argan Oil',
+        Serum: 'B5 Hydration',
+        'Sun Protectant': 'Tinted Mineral'
+      },
+      formulationSummary: 'Niacinamide 10% - Oil Cleanser - Shea Butter Ultra - Argan Oil - B5 Hydration - Tinted Mineral',
+      care: 'SKIN CARE',
+      packagingType: 'standard',
+      packaging_image: null,
+      userNotes: 'Sample product customization notes',
       status: 'Pending',
       life_cycle_status: 'active',
       created_at: now,

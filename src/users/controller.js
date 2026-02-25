@@ -267,14 +267,14 @@ const getMe = async (req, res) => {
     });
 
     if (!user) {
-      return res.status(404).json({ error: "User not found" });
+      return res.status(404).json({ success: false, error: "User not found" });
     }
 
     const payload = user.toJSON ? user.toJSON() : { ...user.get() };
     payload.allowedModules = getAllowedModules(user.usertype);
-    return res.status(200).json(payload);
+    return res.status(200).json({ success: true, data: payload });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ success: false, error: err.message });
   }
 };
 
