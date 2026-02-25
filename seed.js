@@ -202,6 +202,8 @@ async function seed() {
     const productA = await Product.create({
       product_name: 'Advanced Face Serum',
       product_description: 'A highly effective face serum for daily use.',
+      incredients: 'Hyaluronic Acid, Niacinamide, Vitamin C, Aloe Vera, Green Tea Extract',
+      how_to_use: 'Apply 2-3 drops to clean, dry skin morning and evening. Gently pat into face and neck. Follow with moisturizer and sunscreen during the day.',
       product_code: 'SERUM-001',
       product_sku: 'SKU-SERUM-01',
       status: 'active',

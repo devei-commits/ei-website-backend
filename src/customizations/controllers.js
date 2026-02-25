@@ -43,7 +43,7 @@ const getMyCustomizations = async (req, res, next) => {
     const userId = req.user.id;
     const customizations = await ProductCustomization.findAll({
       where: { user_id: userId },
-      include: [{ model: Product, as: 'product', attributes: ['product_name', 'product_sku'] }],
+      include: [{ model: Product, as: 'product', attributes: ['product_name', 'product_sku', 'incredients', 'how_to_use'] }],
       order: [['created_at', 'DESC']]
     });
 

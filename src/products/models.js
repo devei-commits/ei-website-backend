@@ -57,6 +57,16 @@ Product.init(
       allowNull: true,
     },
 
+    incredients: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+
+    how_to_use: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+
     created_at: {
       type: DataTypes.DATE,
       allowNull: true,
