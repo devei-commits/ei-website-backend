@@ -1,7 +1,7 @@
 require('dotenv').config();
 const db = require('./db');
 const { User, RefreshToken, DoctorProfile } = require('./src/users/models');
-const { Role, StaffProfile } = require('./src/models/index');
+const { Role } = require('./src/models/index');
 const { Product } = require('./src/products/models');
 const { Order, OrderItem } = require('./src/orders/models');
 const { Payment } = require('./src/payments/models');
@@ -9,7 +9,8 @@ const Address = require('./src/models/Addresses');
 const Appointment = require('./src/appointments/models');
 const Newdevelopment = require('./src/newdevelopments/models');
 const ProductCustomization = require('./src/customizations/models');
-const { ModuleDefinition, Role, Permission, RolePermission } = require('./src/models/index');
+const { ModuleDefinition, Permission, RolePermission } = require('./src/models/index');
+const { StaffProfile } = require('./src/roles/models');
 const defaultModuleDef = require('./src/roles/defaultModuleDefinition');
 const bcrypt = require('bcrypt');
 
@@ -35,6 +36,12 @@ async function seed() {
   try {
     console.log('Syncing database...');
     await db.sync({ alter: true });
+
+    // Ensure permissions.updated_at exists (model expects it for audit)
+    await db.query(
+      `ALTER TABLE permissions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NULL`,
+      { raw: true }
+    ).catch(() => {});
 
     console.log('Seeding module definitions (if empty)...');
     await ModuleDefinition.findOrCreate({

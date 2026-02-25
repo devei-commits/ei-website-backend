@@ -5,7 +5,7 @@
 const { DataTypes, Model } = require('sequelize');
 const db = require('../../db');
 
-class Permission extends Model {}
+class Permission extends Model { }
 
 Permission.init(
   {

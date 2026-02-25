@@ -107,13 +107,17 @@ Permission.init({
     type: DataTypes.DATE,
     allowNull: true,
   },
+  updated_at: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
 }, {
   sequelize: db,
   modelName: 'Permission',
   tableName: 'permissions',
   timestamps: true,
   createdAt: 'created_at',
-  updatedAt: false,
+  updatedAt: 'updated_at',
 });
 
 class RolePermission extends Model {}

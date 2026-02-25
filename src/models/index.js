@@ -4,6 +4,7 @@ const Role = require("./Role");
 const Permission = require("./Permission");
 const RolePermission = require("./RolePermission");
 const ModuleDefinition = require("./ModuleDefinition");
+const { StaffProfile } = require("../roles/models");
 
 // associations
 User.hasMany(Address, {
@@ -33,6 +34,9 @@ DoctorProfile.belongsTo(User, {
 Role.belongsToMany(Permission, { through: RolePermission, foreignKey: "role_id", otherKey: "permission_id" });
 Permission.belongsToMany(Role, { through: RolePermission, foreignKey: "permission_id", otherKey: "role_id" });
 
+// StaffProfile (from roles/models) used by isAuthenticated for /me and admin RBAC
+StaffProfile.belongsTo(Role, { foreignKey: "role_id", as: "role" });
+
 module.exports = {
   User,
   Address,
@@ -42,4 +46,5 @@ module.exports = {
   Permission,
   RolePermission,
   ModuleDefinition,
+  StaffProfile,
 };
