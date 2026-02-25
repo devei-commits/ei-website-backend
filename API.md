@@ -268,36 +268,268 @@ Base URL: `http://<host>:<PORT>/api/v1` (default `http://localhost:3000/api/v1`)
 
 ---
 
-### GET `/api/v1/users`
+### GET `/api/v1/users/getusers`
 
-**Purpose**: Admin-only list of all users.
+**Purpose**: Admin-only list of users. Use `?staffOnly=true` for User Management: returns users whose `usertype` matches any role in the roles table, with `role_id`, `role_name`, `department` (dynamic).
 
-**Auth**:
+**Auth**: `Authorization: Bearer <token>`; role must be `super_admin`, `admin`, or `bd_manager`.
 
-- Requires `Authorization: Bearer <token>`
-- Token user must have role in: `super_admin`, `admin`, `bd_manager`.
+**Query**:
 
-**Responses**:
+- `staffOnly` (optional): if `true`, returns only staff users with shape below. Otherwise returns all users with addresses (legacy).
 
-- `200`
-  ```json
-  [
-    {
-      "id": 1,
-      "name": "Admin User",
-      "email": "admin@example.com",
-      "gstNumber": "22AAAAA0000A1Z5",
-      "billingAddress": "Admin Billing Address, City, State, 123456",
-      "shippingAddress": "Admin Shipping Address, City, State, 123456",
-      "paymentTerms": "100% advance",
-      "role": "admin"
-    }
-  ]
-  ```
-- `403`  
-  If caller's role is not allowed.
-- `500`  
-  `{ "error": "<message>" }`
+**Response (when staffOnly=true)**:
+
+- `200` — Array of:
+  - `userid`, `id`, `display_name`, `email`, `mobile`, `role_id`, `role_name`, `department`, `status`, `created_at`
+
+**Response (when staffOnly omitted)**:
+
+- `200` — Array of users with `addresses` (legacy).
+
+---
+
+### POST `/api/v1/users/create`
+
+**Purpose**: Admin-only; create a staff user. Role is resolved from the roles table by `roleId` (dynamic). Requires `user-management` module.
+
+**Auth**: `Authorization: Bearer <token>`; `requireModule('user-management')`.
+
+**Body (JSON)**:
+
+- `firstName` (string, optional), `lastName` (string, optional)
+- `display_name` (string, optional) — if omitted, derived from firstName + lastName
+- `email` (string, required)
+- `mobile` (string, optional)
+- `password` (string, required, min 6 characters)
+- `roleId` (number, required) — id from roles table (any role)
+- `department` (string, optional)
+- `status` (string, optional) — default `"active"`
+
+**Request example**:
+
+```json
+{
+  "firstName": "Jane",
+  "lastName": "Doe",
+  "email": "jane@example.com",
+  "mobile": "+1234567890",
+  "password": "SecurePass123",
+  "roleId": 6,
+  "department": "Research & Development",
+  "status": "active"
+}
+```
+
+**Response**: `201` — Created user (same shape as getusers item). `400` — Validation error or invalid roleId. `409` — Email already in use.
+
+---
+
+### GET `/api/v1/users/:id`
+
+**Purpose**: Admin-only; get one user by id for User Management view/edit. Same shape as one element of getusers with staffOnly=true.
+
+**Auth**: `Authorization: Bearer <token>`; role `super_admin`, `admin`, or `bd_manager`.
+
+**Responses**: `200` — User object. `404` — User not found.
+
+---
+
+### PATCH `/api/v1/users/:id/role`
+
+**Purpose**: Admin-only; update a user's role (usertype) and department. `roleId` is resolved from the roles table (dynamic).
+
+**Auth**: `Authorization: Bearer <token>`; requires `user-management` module.
+
+**Body (JSON)**:
+
+- `roleId` (number): id from roles table.
+- `department` (string, optional): e.g. `"Research & Development"`.
+
+**Responses**: `200` — `{ "id", "role_id", "role_name", "department" }`. `404` — User not found.
+
+---
+
+### PATCH `/api/v1/users/:id`
+
+**Purpose**: Admin-only; update user profile (name, email, mobile, status).
+
+**Auth**: `Authorization: Bearer <token>`; role `super_admin`, `admin`, or `bd_manager`.
+
+**Body (JSON)** (all optional): `display_name` or `name`, `email`, `mobile`, `status`.
+
+**Responses**: `200` — Updated user (same shape as getusers item). `404` — User not found.
+
+---
+
+### DELETE `/api/v1/users/:id`
+
+**Purpose**: Admin-only; delete a user and related data (orders, order items, payments, addresses, doctor profile, refresh token). Requires `user-management` module.
+
+**Auth**: `Authorization: Bearer <token>`; module `user-management`.
+
+**Request**: No body. `:id` = user id.
+
+**Response**:
+- `200` — `{ "message": "User deleted" }`
+- `404` — `{ "error": "User not found" }`
+- `500` — `{ "error": "<message>" }`
+
+---
+
+## Roles
+
+All `/api/v1/roles/*` require `Authorization: Bearer <token>` and module `role-management`. Data is stored in `roles`, `permissions`, and `role_permissions` tables.
+
+### GET `/api/v1/roles`
+
+**Purpose**: List all roles from DB for dropdowns (User Management, Role Management). `userCount` = users with that `usertype`; `permissionsSet` = role has at least one permission. Role ids 1–5 are system roles (match user usertypes).
+
+**Request**: None.
+
+**Response** `200`:
+```json
+[
+  { "role_id": 1, "role_code": "super_admin", "role_name": "Super Admin", "description": null, "level": "admin", "status": "active", "userCount": 1, "permissionsSet": true, "createdAt": "2025-01-15" },
+  { "role_id": 2, "role_code": "admin", "role_name": "Admin", "description": null, "level": "admin", "status": "active", "userCount": 2, "permissionsSet": true, "createdAt": "2025-01-15" }
+]
+```
+- `500` — `{ "error": "<message>" }`
+
+---
+
+### GET `/api/v1/roles/module-definitions`
+
+**Purpose**: Permission UI tree (modules + globalSettings). Loaded from `module_definitions` table; filtered by current user’s role (only modules the role has permission for).
+
+**Request**: None.
+
+**Response** `200`:
+```json
+{
+  "modules": [
+    { "moduleId": "dashboard", "moduleName": "Dashboard", "icon": "chart", "description": "...", "subModules": [{ "subModuleId": "dashboard-overview", "subModuleName": "Overview", "actions": { "view": false, "create": false, ... }, "columns": [...] }] }
+  ],
+  "globalSettings": { "accessToAllModules": false, "allowLogin": true, "sessionTimeout": 30, ... }
+}
+```
+- `500` — `{ "error": "<message>" }`
+
+---
+
+### GET `/api/v1/roles/:id`
+
+**Purpose**: Get one role by id from DB (for Role Details / permission display). `permissions.granted` is built from the role’s permissions (e.g. `"dashboard.view"`, `"user-management.view"`).
+
+**Request**: None. `:id` = role_id.
+
+**Response** `200`:
+```json
+{
+  "role_id": 1,
+  "role_code": "super_admin",
+  "role_name": "Super Admin",
+  "description": null,
+  "level": "admin",
+  "status": "active",
+  "created_at": "2025-01-15T10:00:00.000Z",
+  "updated_at": "2025-01-15T10:00:00.000Z",
+  "permissions": { "granted": ["dashboard.view", "user-management.view", "role-management.view", "order-management.view"], "globalSettings": { "accessToAllModules": false, "allowLogin": true, ... } }
+}
+```
+- `404` — `{ "error": "Role not found" }`
+- `500` — `{ "error": "<message>" }`
+
+---
+
+### POST `/api/v1/roles`
+
+**Purpose**: Create a role in DB and optionally assign permissions. `permissions.granted` can be module IDs (e.g. `"dashboard"`) or keys (e.g. `"dashboard.view"`); each creates/links a permission with `resource` = first segment, `action` = `view`.
+
+**Request**:
+```json
+{
+  "role_code": "custom",
+  "role_name": "Custom Role",
+  "level": "staff",
+  "description": null,
+  "status": "active",
+  "permissions": { "granted": ["dashboard", "user-management"], "globalSettings": {} }
+}
+```
+
+**Response** `201`:
+```json
+{
+  "role_id": 6,
+  "role_code": "custom",
+  "role_name": "Custom Role",
+  "description": null,
+  "level": "staff",
+  "status": "active",
+  "created_at": "2025-01-15T10:00:00.000Z",
+  "updated_at": "2025-01-15T10:00:00.000Z",
+  "permissions": { "granted": ["dashboard.view", "user-management.view"], "globalSettings": { ... } }
+}
+```
+- `400` — `{ "error": "role_code, role_name, and level are required" }`
+- `409` — `{ "error": "Role with this role_code already exists" }`
+- `500` — `{ "error": "<message>" }`
+
+---
+
+### PUT `/api/v1/roles/:id`
+
+**Purpose**: Update a role in DB. All fields optional. If `permissions.granted` is sent, role’s permissions are replaced with the given list (same semantics as POST for each entry). Each granted key can be a module ID (treated as `resource.view`) or a full key `resource.action` with `action` one of `view`, `create`, `edit`, `delete`.
+
+**Request** (basic — module-level access):
+```json
+{
+  "role_code": "custom",
+  "role_name": "Custom Role Updated",
+  "description": "Optional description",
+  "level": "staff",
+  "status": "active",
+  "permissions": { "granted": ["dashboard", "role-management"], "globalSettings": {} }
+}
+```
+
+**Request** (granular — per-resource view/create/edit/delete):
+```json
+{
+  "role_name": "Editor Role",
+  "permissions": {
+    "granted": [
+      "dashboard.view",
+      "user-management.view",
+      "user-management.edit",
+      "user-management.create",
+      "role-management.view",
+      "order-management.view",
+      "order-management.edit"
+    ],
+    "globalSettings": {}
+  }
+}
+```
+
+**Response** `200`: Same shape as GET `/roles/:id` with updated fields and `permissions.granted` reflecting current role_permissions.
+- `404` — `{ "error": "Role not found" }`
+- `500` — `{ "error": "<message>" }`
+
+---
+
+### DELETE `/api/v1/roles/:id`
+
+**Purpose**: Delete a role from DB. Removes all `role_permissions` for that role, then deletes the role. System roles (id 1–5) cannot be deleted.
+
+**Request**: None. `:id` = role_id.
+
+**Response**:
+- `200` — `{ "message": "Role deleted" }`
+- `403` — `{ "error": "System roles cannot be deleted" }`
+- `404` — `{ "error": "Role not found" }`
+- `500` — `{ "error": "<message>" }`
 
 ---
 

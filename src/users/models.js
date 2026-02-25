@@ -53,6 +53,11 @@ User.init({
     allowNull: true
   },
 
+  department: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+
   status: {
     type: DataTypes.STRING,
     allowNull: true

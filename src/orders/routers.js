@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const { requireModule } = require('../middleware/security');
 const {
     getAllOrders,
     saveOrder,
@@ -9,6 +10,8 @@ const {
     deleteOrder,
     getOrderStatus
 } = require('./controller');
+
+router.use(requireModule('order-management', 'order-list'));
 
 // Routes for /
 router.route('/')
