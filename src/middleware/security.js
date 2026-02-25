@@ -4,6 +4,31 @@ const bycrypt = require('bcrypt');
 const { RefreshToken, User } = require('../users/models');
 const { StaffProfile, Role, Permission, RolePermission } = require('../models/index');
 
+/** Module IDs that match frontend sidebar. '*' = all modules. */
+const USERTYPE_ALLOWED_MODULES = {
+  super_admin: ['*'],
+  admin: ['*'],
+  bd_manager: ['dashboard', 'user-management', 'order-list', 'order-management', 'coupon-management', 'discount-management'],
+  doctor: ['dashboard'],
+  customer: [],
+};
+
+function getAllowedModules(usertype) {
+  return USERTYPE_ALLOWED_MODULES[usertype] || [];
+}
+
+/** Middleware: require one of the given module IDs. Use after isAuthenticated. req.user.allowedModules set in isAuthenticated. */
+function requireModule(...moduleIds) {
+  return (req, res, next) => {
+    if (!req.user) return res.sendStatus(401);
+    const allowed = req.user.allowedModules || [];
+    if (allowed.includes('*')) return next();
+    const hasAccess = moduleIds.some(m => allowed.includes(m));
+    if (!hasAccess) return res.sendStatus(403);
+    next();
+  };
+}
+
 function generateToken(user) {
     // Include role in the token payload for authorization checks
     return jwt.sign(
@@ -43,7 +68,8 @@ const isAuthenticated = async (req, res, next) => {
         req.user = {
             id: user.userid,
             email: user.email,
-            role: user.usertype
+            role: user.usertype,
+            allowedModules: getAllowedModules(user.usertype)
         };
         // For staff (admin dashboard RBAC): attach roleId, roleName, roleLevel from staff_profiles + roles
         const staffProfile = await StaffProfile.findOne({
@@ -144,5 +170,6 @@ module.exports = {
     token,
     deleteToken,
     authorizeRoles,
-    requirePermission,
+    requireModule,
+    getAllowedModules,
 }

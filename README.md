@@ -64,23 +64,17 @@ This creates:
 
 ### 5. Test Credentials
 
-After seeding, you can log in with:
+After seeding, you can log in with (staff bypass OTP and get token directly):
 
-**Super Admin:**
-- Email: `superadmin@example.com`
-- Password: `SuperAdmin@123`
-
-**Admin:**
-- Email: `admin@example.com`
-- Password: `Admin@123`
-
-**BD Manager:**
-- Email: `bdmanager@example.com`
-- Password: `BDManager@123`
-
-**Customer:**
-- Email: `client1@example.com`
-- Password: `Client1@123`
+| Role         | Email                   | Password      |
+|-------------|-------------------------|---------------|
+| Super Admin | `superadmin@example.com` | `SuperAdmin@123` |
+| Admin       | `admin@example.com`      | `Admin@123`   |
+| Admin       | `admin2@example.com`    | `Admin2@123`  |
+| BD Manager  | `bdmanager@example.com` | `BDManager@123` |
+| Doctor      | `dr.sarah@example.com`  | `Doctor@123`  |
+| Customer    | `client1@example.com`   | `Client1@123` |
+| Customer    | `client2@example.com`   | `Client2@123` |
 
 ## API Documentation
 

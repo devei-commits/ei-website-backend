@@ -1,7 +1,20 @@
 const express = require('express');
 const router = express.Router();
-const { createUser, userLogin, updateUserPaymentTerms, getAllUsers, getMe, updateMe, createAddress, updateUserRole } = require('./controller');
-const { isAuthenticated, authorizeRoles, token, deleteToken } = require('../middleware/security');
+const {
+  createUser,
+  createStaffUser,
+  userLogin,
+  updateUserPaymentTerms,
+  getAllUsers,
+  getUserById,
+  updateUserRole,
+  updateUserProfile,
+  deleteUser,
+  getMe,
+  updateMe,
+  createAddress,
+} = require('./controller');
+const { isAuthenticated, requireModule, token, deleteToken } = require('../middleware/security');
 
 // Authentication routes
 router.post('/', createUser);
@@ -14,27 +27,53 @@ router.get('/me', isAuthenticated, getMe);
 router.put('/me', isAuthenticated, updateMe);
 router.post('/addresses', isAuthenticated, createAddress);
 
-// Admin-only: get all users (?staffOnly=true for staff with role/department)
+// Admin: require user-management module permission
 router.get(
   '/getusers',
   isAuthenticated,
-  authorizeRoles('super_admin', 'admin', 'bd_manager'),
+  requireModule('user-management'),
   getAllUsers
 );
 
-// Admin-only: update user role and department (staff_profiles)
+router.post(
+  '/create',
+  isAuthenticated,
+  requireModule('user-management'),
+  createStaffUser
+);
+
+router.get(
+  '/:id',
+  isAuthenticated,
+  requireModule('user-management'),
+  getUserById
+);
+
 router.patch(
   '/:id/role',
   isAuthenticated,
-  authorizeRoles('super_admin', 'admin', 'bd_manager'),
+  requireModule('user-management'),
   updateUserRole
 );
 
-// Admin-approved payment terms update
+router.patch(
+  '/:id',
+  isAuthenticated,
+  requireModule('user-management'),
+  updateUserProfile
+);
+
+router.delete(
+  '/:id',
+  isAuthenticated,
+  requireModule('user-management'),
+  deleteUser
+);
+
 router.put(
   '/:id/payment-terms',
   isAuthenticated,
-  authorizeRoles('super_admin', 'admin', 'bd_manager'),
+  requireModule('user-management'),
   updateUserPaymentTerms
 );
 

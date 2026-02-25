@@ -9,30 +9,69 @@ const Address = require('./src/models/Addresses');
 const Appointment = require('./src/appointments/models');
 const Newdevelopment = require('./src/newdevelopments/models');
 const ProductCustomization = require('./src/customizations/models');
+const { ModuleDefinition, Role, Permission, RolePermission } = require('./src/models/index');
+const defaultModuleDef = require('./src/roles/defaultModuleDefinition');
 const bcrypt = require('bcrypt');
 
-const DEFAULT_ROLES = [
+const ROLES_TO_SEED = [
   { role_code: 'super_admin', role_name: 'Super Admin', level: 'admin' },
   { role_code: 'admin', role_name: 'Admin', level: 'admin' },
   { role_code: 'bd_manager', role_name: 'BD Manager', level: 'manager' },
-  { role_code: 'qa_manager', role_name: 'QA Manager', level: 'manager' },
-  { role_code: 'rnd_lead', role_name: 'R&D Lead', level: 'manager' },
-  { role_code: 'procurement', role_name: 'Procurement', level: 'staff' },
-  { role_code: 'manufacturing', role_name: 'Manufacturing and Production', level: 'staff' },
-  { role_code: 'sales', role_name: 'Sales', level: 'staff' },
-  { role_code: 'logistics', role_name: 'Logistics', level: 'staff' },
-  { role_code: 'design', role_name: 'Design', level: 'staff' },
-  { role_code: 'rnd_staff', role_name: 'R&D Staff', level: 'staff' },
-  { role_code: 'qa_staff', role_name: 'QA Staff', level: 'staff' },
-  { role_code: 'bd_staff', role_name: 'BD Staff', level: 'staff' },
-  { role_code: 'doctor', role_name: 'Doctor', level: 'client' },
+  { role_code: 'doctor', role_name: 'Doctor', level: 'staff' },
   { role_code: 'customer', role_name: 'Customer', level: 'client' },
 ];
+
+const MODULE_IDS = ['dashboard', 'user-management', 'role-management', 'order-management'];
+
+const ROLE_PERMISSIONS_MAP = {
+  super_admin: MODULE_IDS,
+  admin: MODULE_IDS,
+  bd_manager: ['dashboard', 'user-management', 'order-management'],
+  doctor: ['dashboard'],
+  customer: [],
+};
 
 async function seed() {
   try {
     console.log('Syncing database...');
     await db.sync({ alter: true });
+
+    console.log('Seeding module definitions (if empty)...');
+    await ModuleDefinition.findOrCreate({
+      where: { name: 'default' },
+      defaults: { definition_json: defaultModuleDef },
+    });
+
+    console.log('Seeding roles and permissions...');
+    await RolePermission.destroy({ where: {} });
+    const roles = {};
+    for (const r of ROLES_TO_SEED) {
+      const [row] = await Role.findOrCreate({
+        where: { role_code: r.role_code },
+        defaults: { role_name: r.role_name, level: r.level, status: 'active' },
+      });
+      roles[r.role_code] = row;
+    }
+    const perms = {};
+    for (const moduleId of MODULE_IDS) {
+      const [row] = await Permission.findOrCreate({
+        where: { resource: moduleId, action: 'view' },
+        defaults: { resource: moduleId, action: 'view' },
+      });
+      perms[moduleId] = row;
+    }
+    for (const [roleCode, moduleIds] of Object.entries(ROLE_PERMISSIONS_MAP)) {
+      const role = roles[roleCode];
+      if (!role) continue;
+      for (const moduleId of moduleIds) {
+        const perm = perms[moduleId];
+        if (!perm) continue;
+        await RolePermission.findOrCreate({
+          where: { role_id: role.role_id, permission_id: perm.permission_id },
+          defaults: { role_id: role.role_id, permission_id: perm.permission_id },
+        });
+      }
+    }
 
     console.log('Clearing existing seed data...');
     // Delete in order of dependency to avoid foreign key constraints
@@ -52,7 +91,15 @@ async function seed() {
     const now = new Date();
 
     console.log('Seeding users...');
-    
+    // Test credentials (admin dashboard login):
+    //   superadmin@example.com  / SuperAdmin@123  (Super Admin, Administration)
+    //   admin@example.com       / Admin@123       (Admin, Administration)
+    //   admin2@example.com      / Admin2@123      (Admin, Administration)
+    //   bdmanager@example.com   / BDManager@123  (BD Manager, Business Development)
+    //   dr.sarah@example.com    / Doctor@123      (Doctor)
+    //   client1@example.com     / Client1@123     (Customer)
+    //   client2@example.com     / Client2@123     (Customer)
+
     // 1. Super Admin
     const superAdmin = await User.create({
       fname: 'Super',
@@ -62,6 +109,7 @@ async function seed() {
       mobile: '+919876543201',
       password: bcrypt.hashSync('SuperAdmin@123', 10),
       usertype: 'super_admin',
+      department: 'Administration',
       status: 'active',
       verify_status: 'verified',
       advance_payment: true,
@@ -80,6 +128,7 @@ async function seed() {
       password: bcrypt.hashSync('Admin@123', 10),
       doctor_id_legacy: 'DOC-ADM-001',
       usertype: 'admin',
+      department: 'Administration',
       status: 'active',
       verify_status: 'verified',
       advance_payment: true,
@@ -88,7 +137,43 @@ async function seed() {
       updated_at: now
     });
 
-    // 3. Dedicated Doctor User
+    // 3. BD Manager (staff – can access dashboard, User Management, etc.)
+    const bdManager = await User.create({
+      fname: 'Priya',
+      lname: 'Sharma',
+      display_name: 'Priya Sharma',
+      email: 'bdmanager@example.com',
+      mobile: '+919876543203',
+      password: bcrypt.hashSync('BDManager@123', 10),
+      usertype: 'bd_manager',
+      department: 'Business Development',
+      status: 'active',
+      verify_status: 'verified',
+      advance_payment: false,
+      advance_amount: null,
+      created_at: now,
+      updated_at: now
+    });
+
+    // 4. Second Admin (for testing multiple admins)
+    const admin2 = await User.create({
+      fname: 'Vijay',
+      lname: 'Kumar',
+      display_name: 'Vijay Kumar',
+      email: 'admin2@example.com',
+      mobile: '+919876543204',
+      password: bcrypt.hashSync('Admin2@123', 10),
+      usertype: 'admin',
+      department: 'Administration',
+      status: 'active',
+      verify_status: 'verified',
+      advance_payment: true,
+      advance_amount: 100,
+      created_at: now,
+      updated_at: now
+    });
+
+    // 5. Dedicated Doctor User
     const doctor = await User.create({
       fname: 'Sarah',
       lname: 'Smith',
@@ -98,6 +183,7 @@ async function seed() {
       password: bcrypt.hashSync('Doctor@123', 10),
       doctor_id_legacy: 'DOC-SAR-101',
       usertype: 'doctor',
+      department: null,
       status: 'active',
       verify_status: 'verified',
       advance_payment: true,
@@ -106,7 +192,7 @@ async function seed() {
       updated_at: now
     });
 
-    // 4. Client User
+    // 6. Client / Customer users
     const client1 = await User.create({
       fname: 'Client',
       lname: 'One',
@@ -119,6 +205,22 @@ async function seed() {
       verify_status: 'verified',
       advance_payment: true,
       advance_amount: 50,
+      created_at: now,
+      updated_at: now
+    });
+
+    const client2 = await User.create({
+      fname: 'Meera',
+      lname: 'Nair',
+      display_name: 'Meera Nair',
+      email: 'client2@example.com',
+      mobile: '+919876543212',
+      password: bcrypt.hashSync('Client2@123', 10),
+      usertype: 'customer',
+      status: 'active',
+      verify_status: 'verified',
+      advance_payment: false,
+      advance_amount: null,
       created_at: now,
       updated_at: now
     });
@@ -154,8 +256,11 @@ async function seed() {
     const users = [
       { obj: superAdmin, city: 'Delhi', state: 'Delhi', zip: '110001' },
       { obj: admin, city: 'Delhi', state: 'Delhi', zip: '110001' },
+      { obj: bdManager, city: 'Bangalore', state: 'Karnataka', zip: '560001' },
+      { obj: admin2, city: 'Chennai', state: 'Tamil Nadu', zip: '600001' },
       { obj: doctor, city: 'Mumbai', state: 'Maharashtra', zip: '400050' },
-      { obj: client1, city: 'Mumbai', state: 'Maharashtra', zip: '400001' }
+      { obj: client1, city: 'Mumbai', state: 'Maharashtra', zip: '400001' },
+      { obj: client2, city: 'Kochi', state: 'Kerala', zip: '682001' }
     ];
 
     for (const u of users) {
