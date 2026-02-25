@@ -22,12 +22,14 @@ Role.init({
     allowNull: true,
   },
   level: {
-    type: DataTypes.ENUM('admin', 'manager', 'staff', 'client'),
+    // type: DataTypes.ENUM('admin', 'manager', 'staff', 'client'),
+    type: DataTypes.STRING(50),
     allowNull: false,
     defaultValue: 'staff',
   },
   status: {
-    type: DataTypes.ENUM('active', 'inactive'),
+    // type: DataTypes.ENUM('active', 'inactive'),
+    type: DataTypes.STRING(20),
     allowNull: false,
     defaultValue: 'active',
   },

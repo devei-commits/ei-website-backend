@@ -11,27 +11,23 @@ const {
     getOrderStatus
 } = require('./controller');
 
-router.use(requireModule('order-management', 'order-list'));
+const requireOrderModule = requireModule('order-management', 'order-list');
 
-// Routes for /
+// Create and view own orders: any authenticated user
 router.route('/')
     .get(getAllOrders)
     .post(saveOrder);
 
-// Routes for /:id
-// Routes for /user/:userId
-router.route('/user/:userId')
-    .get(getOrdersByUserId);
+// View another user's orders: require order-management/order-list
+router.get('/user/:userId', requireOrderModule, getOrdersByUserId);
 
-// Routes for /:id
-router.route('/:id')
-    .get(getOrderById)
-    .put(updateOrder)
-    .delete(deleteOrder);
+// View own order by id and status: any authenticated user (controller enforces ownership)
+router.get('/:id', getOrderById);
+router.get('/:id/status', getOrderStatus);
 
-// Routes for /:id/status
-router.route('/:id/status')
-    .get(getOrderStatus);
+// Update/delete: require order module
+router.put('/:id', requireOrderModule, updateOrder);
+router.delete('/:id', requireOrderModule, deleteOrder);
 
 
 
