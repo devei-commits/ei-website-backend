@@ -24,7 +24,8 @@
     "pg": "^8.13.1",
     "razorpay": "^2.9.6",
     "sequelize": "^6.37.5",
-    "sequelize-cli": "^6.6.5"
+    "sequelize-cli": "^6.6.5",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "jest": "^30.2.0",

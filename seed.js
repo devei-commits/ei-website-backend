@@ -10,6 +10,15 @@ const Appointment = require('./src/appointments/models');
 const Newdevelopment = require('./src/newdevelopments/models');
 const Customization = require('./src/customizations/models');
 const ProductCustomization = require('./src/productCustomizations/models');
+const Enquiry = require('./src/enquiries/models');
+const { Item, excelRowToItem } = require('./src/items/models');
+const itemsSeedDataRaw = require('./src/items/itemsSeedData');
+const { Vendor, contactRowToVendor } = require('./src/vendors/models');
+const contactsSeedDataRaw = require('./src/vendors/contactsSeedData');
+const { Contact, customerRowToModel } = require('./src/Contacts/models');
+const seedContactData = require('./src/Contacts/seedContact');
+const { CompositeItem, compositeRowToModel } = require('./src/compositeItems/models');
+const compositeItemsSeedData = require('./src/compositeItems/compositeItemsSeedData');
 const { ModuleDefinition, Permission, RolePermission } = require('./src/models/index');
 const { StaffProfile } = require('./src/roles/models');
 const defaultModuleDef = require('./src/roles/defaultModuleDefinition');
@@ -33,32 +42,46 @@ const ROLE_PERMISSIONS_MAP = {
   customer: [],
 };
 
-async function ensureFormulationJsonColumn() {
-  if (db.getDialect() !== 'postgres') return;
-  const [rows] = await db.query(
-    `SELECT data_type FROM information_schema.columns
-     WHERE table_schema = 'public' AND table_name = 'product_customizations' AND column_name = 'formulation'`,
-    { raw: true }
-  );
-  if (!rows || rows.length === 0) return;
-  const dataType = (rows[0].data_type || '').toLowerCase();
-  if (dataType !== 'text' && dataType !== 'character varying') return;
-  console.log('Converting product_customizations.formulation to JSON (clearing existing rows first)...');
-  await db.query('DELETE FROM product_customizations', { raw: true });
-  await db.query(
-    `ALTER TABLE product_customizations
-     ALTER COLUMN formulation DROP NOT NULL, ALTER COLUMN formulation DROP DEFAULT`,
-    { raw: true }
-  );
-  await db.query(
-    `ALTER TABLE product_customizations ALTER COLUMN formulation TYPE JSON USING (NULL::json)`,
-    { raw: true }
-  );
+/**
+ * Drop entire public schema and recreate it so all tables (including unused/orphan ones)
+ * are permanently removed. Then sync will create only current model tables.
+ */
+async function dropEntireDatabase() {
+  const dialect = db.getDialect();
+  if (dialect === 'postgres') {
+    console.log('Dropping entire public schema (all tables)...');
+    await db.query('DROP SCHEMA public CASCADE', { raw: true });
+    await db.query('CREATE SCHEMA public', { raw: true });
+    await db.query('GRANT ALL ON SCHEMA public TO public', { raw: true });
+    console.log('Public schema recreated (empty).');
+    return;
+  }
+  if (dialect === 'mysql') {
+    await db.query('SET FOREIGN_KEY_CHECKS = 0', { raw: true });
+    const [tables] = await db.query('SHOW TABLES', { raw: true });
+    const key = Object.keys((tables && tables[0]) || {})[0] || 'Tables_in_db';
+    for (const row of tables || []) {
+      const name = row[key];
+      if (name) await db.query(`DROP TABLE IF EXISTS \`${name}\``, { raw: true }).catch(() => {});
+    }
+    await db.query('SET FOREIGN_KEY_CHECKS = 1', { raw: true });
+    console.log('All tables dropped.');
+    return;
+  }
+  if (dialect === 'sqlite') {
+    const [rows] = await db.query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'", { raw: true });
+    for (const row of rows || []) {
+      if (row.name) await db.query(`DROP TABLE IF EXISTS "${row.name}"`, { raw: true }).catch(() => {});
+    }
+    console.log('All tables dropped.');
+    return;
+  }
+  console.log('Unknown dialect; sync will create/alter known tables only.');
 }
 
 async function seed() {
   try {
-    await ensureFormulationJsonColumn();
+    await dropEntireDatabase();
     console.log('Syncing database...');
     await db.sync({ alter: true });
 
@@ -104,22 +127,6 @@ async function seed() {
         });
       }
     }
-
-    console.log('Clearing existing seed data...');
-    // Delete in order of dependency to avoid foreign key constraints
-    await Customization.destroy({ where: {} });
-    await ProductCustomization.destroy({ where: {} });
-    await Newdevelopment.destroy({ where: {} });
-    await Appointment.destroy({ where: {} });
-    await Payment.destroy({ where: {} });
-    await OrderItem.destroy({ where: {} });
-    await Order.destroy({ where: {} });
-    await Address.destroy({ where: {} });
-    await Product.destroy({ where: {} });
-    await RefreshToken.destroy({ where: {} });
-    await DoctorProfile.destroy({ where: {} });
-    await StaffProfile.destroy({ where: {} });
-    await User.destroy({ where: {} });
 
     const now = new Date();
 
@@ -458,6 +465,22 @@ async function seed() {
     console.log('Seeding Customizations...');
     const customizationsSeedData = require('./src/customizations/seedData');
     await Customization.bulkCreate(customizationsSeedData);
+
+    console.log('Seeding Items...');
+    const itemsSeedData = itemsSeedDataRaw.map((row) => excelRowToItem(row));
+    await Item.bulkCreate(itemsSeedData);
+
+    console.log('Seeding Vendors...');
+    const vendorsSeedData = contactsSeedDataRaw.map((row) => contactRowToVendor(row));
+    await Vendor.bulkCreate(vendorsSeedData);
+
+    console.log('Seeding Customers (contacts)...');
+    const customersSeedData = seedContactData.map((row) => customerRowToModel(row));
+    await Customer.bulkCreate(customersSeedData);
+
+    console.log('Seeding Composite Items...');
+    const compositeItemsData = compositeItemsSeedData.map((row) => compositeRowToModel(row));
+    await CompositeItem.bulkCreate(compositeItemsData);
 
     console.log('Seeding Product Customizations...');
     await ProductCustomization.create({

@@ -11,6 +11,7 @@ const appointmentRouters = require('./src/appointments/routers');
 const newdevelopmentsRouters = require('./src/newdevelopments/routers');
 const customizationRouters = require('./src/customizations/routers');
 const productCustomizationRouters = require('./src/productCustomizations/routers');
+const enquiryRouters = require('./src/enquiries/routers');
 const errorHandler = require('./src/middleware/error_handler');
 const logginHandler = require('./src/middleware/logging')
 const { isAuthenticated } = require('./src/middleware/security')
@@ -57,6 +58,7 @@ app.use(`${apiPrefix}/appointments`,isAuthenticated, appointmentRouters);
 app.use(`${apiPrefix}/newdevelopments`,isAuthenticated, newdevelopmentsRouters);
 app.use(`${apiPrefix}/customizations`, isAuthenticated, customizationRouters);
 app.use(`${apiPrefix}/productCustomizations`, isAuthenticated, productCustomizationRouters);
+app.use(`${apiPrefix}/enquiries`, isAuthenticated, enquiryRouters);
 
 app.use(errorHandler);
 
