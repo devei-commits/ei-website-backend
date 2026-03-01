@@ -138,6 +138,7 @@ async function createVendorClient(req, res) {
       lead_time: payload.lead_time,
       data: payload.data,
     });
+    console.log('[vendor-client] Created', type, 'id=', row.id, 'entity_code=', row.entity_code);
     res.status(201).json(formatRow(row));
   } catch (err) {
     console.error('createVendorClient error', err);

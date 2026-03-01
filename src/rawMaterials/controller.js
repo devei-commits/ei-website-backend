@@ -79,9 +79,10 @@ async function getRawMaterialById(req, res) {
   }
 }
 
-/** Extract list-view fields + form_data from frontend form payload. */
-function payloadToListFields(b) {
+/** Extract list-view fields + form_data from frontend form payload. omitGroupIfUnset: when true, do not set group if not in payload (so item-groups remains source of truth). */
+function payloadToListFields(b, omitGroupIfUnset = false) {
   const fd = b.form_data || b;
+  const hasGroup = fd.group !== undefined || b.group !== undefined;
   const listFields = {
     code: fd.rmSku ?? fd.code ?? '',
     name: fd.inciName ?? fd.tradeCommercialName ?? fd.name ?? '',
@@ -94,7 +95,7 @@ function payloadToListFields(b) {
     shelf: fd.shelfLife ?? fd.retestPeriod ?? fd.shelf ?? null,
     status: (fd.status && String(fd.status).toLowerCase() === 'inactive') ? 'inactive' : 'active',
     products: Array.isArray(fd.products) ? fd.products : [],
-    group: fd.group ?? null,
+    ...(omitGroupIfUnset && !hasGroup ? {} : { group: fd.group ?? b.group ?? null }),
   };
   const form_data = b.form_data !== undefined ? b.form_data : (typeof fd.rmSku !== 'undefined' || typeof fd.inciName !== 'undefined' ? fd : null);
   return { ...listFields, form_data };
@@ -123,7 +124,7 @@ async function updateRawMaterial(req, res) {
     const row = await RawMaterial.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Raw material not found' });
     const b = req.body || {};
-    const fields = payloadToListFields(b);
+    const fields = payloadToListFields(b, true);
     await row.update(fields);
     res.json(formatRawMaterialFull(row));
   } catch (err) {

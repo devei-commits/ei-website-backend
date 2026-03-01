@@ -3,6 +3,7 @@ const router = express.Router();
 const { isAuthenticated, requireModule } = require('../middleware/security');
 const {
   listItemGroups,
+  getNextCode,
   getItemGroupById,
   createItemGroup,
   updateItemGroup,
@@ -12,6 +13,7 @@ const {
 const guard = [isAuthenticated, requireModule('item-groups')];
 
 router.get('/', guard, listItemGroups);
+router.get('/next-code', guard, getNextCode);
 router.get('/:id', guard, getItemGroupById);
 router.post('/', guard, createItemGroup);
 router.put('/:id', guard, updateItemGroup);

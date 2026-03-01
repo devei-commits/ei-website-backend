@@ -4,9 +4,9 @@ const bycrypt = require('bcrypt');
 const { RefreshToken, User } = require('../users/models');
 const { StaffProfile, Role, Permission, RolePermission } = require('../models/index');
 
-/** Module IDs that match frontend sidebar. '*' = all modules. Vendor/Client routes are accounts-team only. */
+/** Module IDs that match frontend sidebar. '*' = all modules. */
 const ALL_MODULE_IDS = ['dashboard', 'user-management', 'role-management', 'order-management', 'coupon-management', 'discount-management', 'packaging-management', 'raw-materials-management', 'items-master', 'vendor-client', 'sales-purchase', 'universal-swap', 'item-groups'];
-const ADMIN_MODULE_IDS = ALL_MODULE_IDS.filter((m) => m !== 'vendor-client');
+const ADMIN_MODULE_IDS = [...ALL_MODULE_IDS];
 
 const USERTYPE_ALLOWED_MODULES = {
   super_admin: ['*'],

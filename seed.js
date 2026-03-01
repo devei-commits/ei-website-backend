@@ -46,8 +46,8 @@ const ROLES_TO_SEED = [
 
 const MODULE_IDS = ['dashboard', 'user-management', 'role-management', 'order-management', 'packaging-management', 'raw-materials-management', 'items-master', 'vendor-client', 'sales-purchase', 'universal-swap', 'item-groups'];
 
-/** Admin has all modules except vendor-client (reserved for accounts_team). */
-const ADMIN_MODULE_IDS = MODULE_IDS.filter((m) => m !== 'vendor-client');
+/** Admin has all modules (including vendor-client). */
+const ADMIN_MODULE_IDS = [...MODULE_IDS];
 
 const ROLE_PERMISSIONS_MAP = {
   super_admin: MODULE_IDS,
