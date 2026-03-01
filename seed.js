@@ -25,6 +25,8 @@ const RawMaterial = require('./src/rawMaterials/models');
 const BOM = require('./src/bom/models');
 const ItemMaster = require('./src/itemsMaster/models');
 const VendorClient = require('./src/vendorClient/models');
+const SalesOrder = require('./src/salesOrders/models');
+const PurchaseOrder = require('./src/purchaseOrders/models');
 const { ModuleDefinition, Permission, RolePermission } = require('./src/models/index');
 const { StaffProfile } = require('./src/roles/models');
 const defaultModuleDef = require('./src/roles/defaultModuleDefinition');
@@ -39,7 +41,7 @@ const ROLES_TO_SEED = [
   { role_code: 'customer', role_name: 'Customer', level: 'client' },
 ];
 
-const MODULE_IDS = ['dashboard', 'user-management', 'role-management', 'order-management', 'packaging-management', 'raw-materials-management', 'items-master', 'vendor-client'];
+const MODULE_IDS = ['dashboard', 'user-management', 'role-management', 'order-management', 'packaging-management', 'raw-materials-management', 'items-master', 'vendor-client', 'sales-purchase'];
 
 /** Admin has all modules except vendor-client (reserved for accounts_team). */
 const ADMIN_MODULE_IDS = MODULE_IDS.filter((m) => m !== 'vendor-client');
@@ -47,7 +49,7 @@ const ADMIN_MODULE_IDS = MODULE_IDS.filter((m) => m !== 'vendor-client');
 const ROLE_PERMISSIONS_MAP = {
   super_admin: MODULE_IDS,
   admin: ADMIN_MODULE_IDS,
-  bd_manager: ['dashboard', 'user-management', 'order-management', 'packaging-management', 'raw-materials-management', 'items-master'],
+  bd_manager: ['dashboard', 'user-management', 'order-management', 'packaging-management', 'raw-materials-management', 'items-master', 'sales-purchase'],
   accounts_team: ['dashboard', 'vendor-client'],
   doctor: ['dashboard'],
   customer: [],
@@ -625,6 +627,74 @@ async function seed() {
       { entity_code: 'EI-CLI-00002', type: 'client', name: 'SCULPT PLASTIC SURGERY HYDERABAD LLP', email: '', phone: '+91-9700222661', location: 'Telangana', country: 'India', city: 'Hyderabad', category: 'BUSINESS', status: 'active', payment_terms: '0', notes: 'Customer CUS-00051', rating: 4, moq: '—', lead_time: '—', data: { setupType: 'CLIENT', setupPrefix: 'CLI', setupCategory: 'BUSINESS', legalName: 'SCULPT PLASTIC SURGERY HYDERABAD LLP', tradeName: 'SCULPT PLASTIC SURGERY', billingAddress: '7-1-69/1/25, Shobhanadri Apartment, Ameerpet', state: 'Telangana', country: 'India', gstin: '36AFDFS7869B1ZP', documents: [], pocs: [], banks: [], productInterests: [] }, created_at: now, updated_at: now },
     ];
     await VendorClient.bulkCreate(vendorClientSeed);
+
+    console.log('Seeding Sales Orders and Purchase Orders...');
+    await SalesOrder.destroy({ where: {} });
+    await PurchaseOrder.destroy({ where: {} });
+    await SalesOrder.bulkCreate([
+      {
+        order_id: 'SO-00001',
+        customer_name: 'Customer 1',
+        branch: 'Branch A',
+        order_date: '2026-02-01',
+        expected_shipment_date: '2026-02-15',
+        reference: 'REF-SO-001',
+        payment_terms: 'NET 30',
+        status: 'Submitted',
+        order_status: { orderStatus: 'processing', invoiced: 'pending', payment: 'pending', packed: 'pending', shipped: 'pending', deliveryMethod: 'road' },
+        form_data: { customerName: 'Customer 1', branch: 'Branch A', orderId: 'SO-00001', reference: 'REF-SO-001', orderDate: '2026-02-01', expectedShipmentDate: '2026-02-15', paymentTerms: 'NET 30', discount: '0', shippingCharges: '0', roundOff: '0' },
+        items: [{ itemName: 'Product A', batchNumber: 'B001', quantity: '10', rate: '100', tax: '18' }],
+        created_at: now,
+        updated_at: now,
+      },
+      {
+        order_id: 'SO-00002',
+        customer_name: 'Customer 2',
+        branch: 'Branch B',
+        order_date: '2026-02-10',
+        expected_shipment_date: null,
+        reference: '',
+        payment_terms: 'NET 60',
+        status: 'Draft',
+        order_status: {},
+        form_data: { customerName: 'Customer 2', branch: 'Branch B', orderId: 'SO-00002', orderDate: '2026-02-10', paymentTerms: 'NET 60' },
+        items: [],
+        created_at: now,
+        updated_at: now,
+      },
+    ]);
+    await PurchaseOrder.bulkCreate([
+      {
+        order_id: 'PO-00001',
+        vendor_name: 'Vendor 1',
+        branch: 'Branch A',
+        order_date: '2026-02-05',
+        expected_shipment_date: '2026-02-20',
+        reference: 'REF-PO-001',
+        payment_terms: 'NET 30',
+        status: 'Submitted',
+        order_status: { orderStatus: 'pending', invoiced: 'pending', payment: 'pending', packed: 'pending', shipped: 'pending', deliveryMethod: 'road' },
+        form_data: { vendorName: 'Vendor 1', branch: 'Branch A', poNumber: 'PO-00001', orderId: 'PO-00001', orderDate: '2026-02-05', expectedShipmentDate: '2026-02-20', paymentTerms: 'NET 30', discount: '0', shippingCharges: '0', roundOff: '0' },
+        items: [{ itemName: 'Raw Material X', batchNumber: 'B002', quantity: '50', rate: '200', tax: '12' }],
+        created_at: now,
+        updated_at: now,
+      },
+      {
+        order_id: 'PO-00002',
+        vendor_name: 'Vendor 2',
+        branch: 'Branch B',
+        order_date: '2026-02-12',
+        expected_shipment_date: null,
+        reference: '',
+        payment_terms: 'COD',
+        status: 'Draft',
+        order_status: {},
+        form_data: { vendorName: 'Vendor 2', branch: 'Branch B', poNumber: 'PO-00002', orderId: 'PO-00002', orderDate: '2026-02-12', paymentTerms: 'COD' },
+        items: [],
+        created_at: now,
+        updated_at: now,
+      },
+    ]);
 
     console.log('Seeding Product Customizations...');
     await ProductCustomization.create({
