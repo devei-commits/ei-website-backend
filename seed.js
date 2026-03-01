@@ -24,6 +24,7 @@ const PackMaterial = require('./src/packMaterials/models');
 const RawMaterial = require('./src/rawMaterials/models');
 const BOM = require('./src/bom/models');
 const ItemMaster = require('./src/itemsMaster/models');
+const VendorClient = require('./src/vendorClient/models');
 const { ModuleDefinition, Permission, RolePermission } = require('./src/models/index');
 const { StaffProfile } = require('./src/roles/models');
 const defaultModuleDef = require('./src/roles/defaultModuleDefinition');
@@ -33,16 +34,21 @@ const ROLES_TO_SEED = [
   { role_code: 'super_admin', role_name: 'Super Admin', level: 'admin' },
   { role_code: 'admin', role_name: 'Admin', level: 'admin' },
   { role_code: 'bd_manager', role_name: 'BD Manager', level: 'manager' },
+  { role_code: 'accounts_team', role_name: 'Accounts Team', level: 'manager' },
   { role_code: 'doctor', role_name: 'Doctor', level: 'staff' },
   { role_code: 'customer', role_name: 'Customer', level: 'client' },
 ];
 
-const MODULE_IDS = ['dashboard', 'user-management', 'role-management', 'order-management', 'packaging-management', 'raw-materials-management', 'items-master'];
+const MODULE_IDS = ['dashboard', 'user-management', 'role-management', 'order-management', 'packaging-management', 'raw-materials-management', 'items-master', 'vendor-client'];
+
+/** Admin has all modules except vendor-client (reserved for accounts_team). */
+const ADMIN_MODULE_IDS = MODULE_IDS.filter((m) => m !== 'vendor-client');
 
 const ROLE_PERMISSIONS_MAP = {
   super_admin: MODULE_IDS,
-  admin: MODULE_IDS,
+  admin: ADMIN_MODULE_IDS,
   bd_manager: ['dashboard', 'user-management', 'order-management', 'packaging-management', 'raw-materials-management', 'items-master'],
+  accounts_team: ['dashboard', 'vendor-client'],
   doctor: ['dashboard'],
   customer: [],
 };
@@ -140,6 +146,7 @@ async function seed() {
     //   superadmin@example.com  / SuperAdmin@123  (Super Admin, Administration)
     //   admin@example.com       / Admin@123       (Admin, Administration)
     //   admin2@example.com      / Admin2@123      (Admin, Administration)
+    //   accounts@example.com    / Accounts@123    (Accounts Team, vendor/client only)
     //   bdmanager@example.com   / BDManager@123  (BD Manager, Business Development)
     //   dr.sarah@example.com    / Doctor@123      (Doctor)
     //   client1@example.com     / Client1@123     (Customer)
@@ -214,6 +221,24 @@ async function seed() {
       verify_status: 'verified',
       advance_payment: true,
       advance_amount: 100,
+      created_at: now,
+      updated_at: now
+    });
+
+    // 4b. Accounts Team (vendor/client master access only)
+    const accountsTeam = await User.create({
+      fname: 'Accounts',
+      lname: 'User',
+      display_name: 'Accounts User',
+      email: 'accounts@example.com',
+      mobile: '+919876543205',
+      password: bcrypt.hashSync('Accounts@123', 10),
+      usertype: 'accounts_team',
+      department: 'Accounts',
+      status: 'active',
+      verify_status: 'verified',
+      advance_payment: false,
+      advance_amount: null,
       created_at: now,
       updated_at: now
     });
@@ -303,6 +328,7 @@ async function seed() {
       { obj: admin, city: 'Delhi', state: 'Delhi', zip: '110001' },
       { obj: bdManager, city: 'Bangalore', state: 'Karnataka', zip: '560001' },
       { obj: admin2, city: 'Chennai', state: 'Tamil Nadu', zip: '600001' },
+      { obj: accountsTeam, city: 'Hyderabad', state: 'Telangana', zip: '500001' },
       { obj: doctor, city: 'Mumbai', state: 'Maharashtra', zip: '400050' },
       { obj: client1, city: 'Mumbai', state: 'Maharashtra', zip: '400001' },
       { obj: client2, city: 'Kochi', state: 'Kerala', zip: '682001' }
@@ -588,6 +614,17 @@ async function seed() {
       { code: 'IM-PROD-002', name: 'Face Wash 150ml', type: 'product', status: 'Active', bom_ids: b2 ? [b2] : [], raw_material_ids: [], pack_material_ids: p1 ? [p1] : [], created_at: now, updated_at: now },
       { code: 'IM-PROD-003', name: 'Serum with multiple RMs', type: 'product', status: 'Active', bom_ids: b1 ? [b1] : [], raw_material_ids: [r1, r2].filter(Boolean), pack_material_ids: p1 && p2 ? [p1, p2] : (p1 ? [p1] : []), created_at: now, updated_at: now },
     ]);
+
+    console.log('Seeding Vendor / Client master...');
+    await VendorClient.destroy({ where: {} });
+    const vendorClientSeed = [
+      { entity_code: 'EI-VEN-00001', type: 'vendor', name: 'ELEMENTS BIOTECH', email: 'azad@elementsbiotech.com', phone: '+91-9004730372', location: 'Malad West', country: 'India', city: 'Mumbai Suburban', category: 'COGS-RAW MATERIAL', status: 'active', payment_terms: '—', notes: 'Wholesale business, GST registered', rating: 4, moq: '—', lead_time: '—', data: { setupType: 'VENDOR', setupPrefix: 'VEN', setupCategory: 'COGS-RAW MATERIAL', legalName: 'ELEMENTS BIOTECH', tradeName: 'ELEMENTS BIOTECH', primaryEmail: 'azad@elementsbiotech.com', primaryPhone: '+91-9004730372', billingAddress: 'Kemp Plaza, Chincholi Bunder Road, Malad West', shippingAddress: 'Kemp Plaza, Malad West', state: 'Maharashtra', country: 'India', gstin: '27AALFE7652H1Z3', documents: [], pocs: [], banks: [], vendorItems: [] }, created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00002', type: 'vendor', name: 'NUPLANET VENTURES INDIA PRIVATE LIMITED', email: 'shadab.khan@rawble.com', phone: '+91-93191 54361', location: 'New Delhi', country: 'India', city: 'South East Delhi', category: 'RAW MATERIAL', status: 'active', payment_terms: '—', notes: 'Raw material supplier, GST registered', rating: 4, moq: '—', lead_time: '—', data: { setupType: 'VENDOR', setupPrefix: 'VEN', setupCategory: 'RAW MATERIAL', legalName: 'NUPLANET VENTURES INDIA PRIVATE LIMITED', tradeName: 'NUPLANET VENTURES', primaryEmail: 'shadab.khan@rawble.com', primaryPhone: '+91-93191 54361', billingAddress: 'B-51, Okhla Industrial Phase 1, New Delhi', state: 'Delhi', country: 'India', gstin: '07AAFCN9850K1ZX', documents: [], pocs: [], banks: [], vendorItems: [] }, created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00003', type: 'vendor', name: 'VIVEKANANDA PRINTERS', email: 'Marketing@vivekanandaprinters.com', phone: '+91-9392083487', location: 'Hyderabad', country: 'India', city: 'Medchal Malkajgiri', category: 'PACKAGING', status: 'active', payment_terms: '—', notes: 'Secondary packaging supplier', rating: 4, moq: '—', lead_time: '—', data: { setupType: 'VENDOR', setupPrefix: 'VEN', setupCategory: 'PACKAGING', legalName: 'VIVEKANANDA PRINTERS', tradeName: 'VIVEKANANDA PRINTERS', primaryEmail: 'Marketing@vivekanandaprinters.com', primaryPhone: '+91-9392083487', billingAddress: '2-158/11, Suraram, Hyderabad', state: 'Telangana', country: 'India', gstin: '36AALFV4539Q1Z8', documents: [], pocs: [], banks: [], vendorItems: [] }, created_at: now, updated_at: now },
+      { entity_code: 'EI-CLI-00001', type: 'client', name: 'Dr. SUVIDHA GANDRA', email: '', phone: '+91-7702693939', location: 'TS', country: 'India', city: '', category: 'BUSINESS', status: 'active', payment_terms: '60', notes: 'Customer CUS-00050', rating: 4, moq: '—', lead_time: '—', data: { setupType: 'CLIENT', setupPrefix: 'CLI', setupCategory: 'BUSINESS', legalName: 'Dr. SUVIDHA GANDRA', tradeName: 'Dr. SUVIDHA GANDRA', primaryPhone: '+91-7702693939', state: 'Telangana', country: 'India', gstin: '36CPYPG1900C1Z2', documents: [], pocs: [], banks: [], productInterests: [] }, created_at: now, updated_at: now },
+      { entity_code: 'EI-CLI-00002', type: 'client', name: 'SCULPT PLASTIC SURGERY HYDERABAD LLP', email: '', phone: '+91-9700222661', location: 'Telangana', country: 'India', city: 'Hyderabad', category: 'BUSINESS', status: 'active', payment_terms: '0', notes: 'Customer CUS-00051', rating: 4, moq: '—', lead_time: '—', data: { setupType: 'CLIENT', setupPrefix: 'CLI', setupCategory: 'BUSINESS', legalName: 'SCULPT PLASTIC SURGERY HYDERABAD LLP', tradeName: 'SCULPT PLASTIC SURGERY', billingAddress: '7-1-69/1/25, Shobhanadri Apartment, Ameerpet', state: 'Telangana', country: 'India', gstin: '36AFDFS7869B1ZP', documents: [], pocs: [], banks: [], productInterests: [] }, created_at: now, updated_at: now },
+    ];
+    await VendorClient.bulkCreate(vendorClientSeed);
 
     console.log('Seeding Product Customizations...');
     await ProductCustomization.create({
