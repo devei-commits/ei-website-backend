@@ -23,6 +23,7 @@ const Packaging = require('./src/packaging/models');
 const PackMaterial = require('./src/packMaterials/models');
 const RawMaterial = require('./src/rawMaterials/models');
 const BOM = require('./src/bom/models');
+const ItemMaster = require('./src/itemsMaster/models');
 const { ModuleDefinition, Permission, RolePermission } = require('./src/models/index');
 const { StaffProfile } = require('./src/roles/models');
 const defaultModuleDef = require('./src/roles/defaultModuleDefinition');
@@ -36,12 +37,12 @@ const ROLES_TO_SEED = [
   { role_code: 'customer', role_name: 'Customer', level: 'client' },
 ];
 
-const MODULE_IDS = ['dashboard', 'user-management', 'role-management', 'order-management', 'packaging-management', 'raw-materials-management'];
+const MODULE_IDS = ['dashboard', 'user-management', 'role-management', 'order-management', 'packaging-management', 'raw-materials-management', 'items-master'];
 
 const ROLE_PERMISSIONS_MAP = {
   super_admin: MODULE_IDS,
   admin: MODULE_IDS,
-  bd_manager: ['dashboard', 'user-management', 'order-management', 'packaging-management', 'raw-materials-management'],
+  bd_manager: ['dashboard', 'user-management', 'order-management', 'packaging-management', 'raw-materials-management', 'items-master'],
   doctor: ['dashboard'],
   customer: [],
 };
@@ -569,6 +570,23 @@ async function seed() {
         pm_lines: [{ code: 'EI-PM-BTL-001', name: '150ml PET Pump Bottle', cat: 'Primary', qty: 1, uom: 'PCS', notes: '' }],
         created_at: now, updated_at: now,
       },
+    ]);
+
+    console.log('Seeding Items Master (linked BOMs, Raw Materials, Pack Materials as arrays)...');
+    await ItemMaster.destroy({ where: {} });
+    const bomsForItems = await BOM.findAll({ where: { bom_code: ['BOM-FG-001', 'BOM-FG-002'] }, order: [['bom_code']], attributes: ['id', 'bom_code', 'name'] });
+    const pmsForItems = await PackMaterial.findAll({ where: { code: ['EI-PM-BTL-001', 'EI-PM-TUB-001'] }, order: [['code']], attributes: ['id', 'code', 'description'] });
+    const rmsForItems = await RawMaterial.findAll({ where: { code: ['EI-RM-ACT-001', 'EI-RM-BASE-001'] }, order: [['code']], attributes: ['id', 'code', 'name'] });
+    const b1 = bomsForItems[0]?.id ?? null;
+    const b2 = bomsForItems[1]?.id ?? null;
+    const p1 = pmsForItems[0]?.id ?? null;
+    const p2 = pmsForItems[1]?.id ?? null;
+    const r1 = rmsForItems[0]?.id ?? null;
+    const r2 = rmsForItems[1]?.id ?? null;
+    await ItemMaster.bulkCreate([
+      { code: 'IM-PROD-001', name: 'Vitamin C Serum 30ml', type: 'product', status: 'Active', bom_ids: b1 ? [b1] : [], raw_material_ids: [], pack_material_ids: p1 ? [p1] : [], created_at: now, updated_at: now },
+      { code: 'IM-PROD-002', name: 'Face Wash 150ml', type: 'product', status: 'Active', bom_ids: b2 ? [b2] : [], raw_material_ids: [], pack_material_ids: p1 ? [p1] : [], created_at: now, updated_at: now },
+      { code: 'IM-PROD-003', name: 'Serum with multiple RMs', type: 'product', status: 'Active', bom_ids: b1 ? [b1] : [], raw_material_ids: [r1, r2].filter(Boolean), pack_material_ids: p1 && p2 ? [p1, p2] : (p1 ? [p1] : []), created_at: now, updated_at: now },
     ]);
 
     console.log('Seeding Product Customizations...');
