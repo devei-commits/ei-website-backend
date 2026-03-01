@@ -21,6 +21,8 @@ const vendorClientRouters = require('./src/vendorClient/routers');
 const salesOrdersRouters = require('./src/salesOrders/routers');
 const purchaseOrdersRouters = require('./src/purchaseOrders/routers');
 const universalSwapRouters = require('./src/universalSwap/routers');
+const itemGroupsRouters = require('./src/itemGroups/routers');
+const itemsListRouters = require('./src/itemsList/routers');
 const errorHandler = require('./src/middleware/error_handler');
 const logginHandler = require('./src/middleware/logging')
 const { isAuthenticated } = require('./src/middleware/security')
@@ -77,6 +79,8 @@ app.use(`${apiPrefix}/vendor-client`, isAuthenticated, vendorClientRouters);
 app.use(`${apiPrefix}/sales-orders`, isAuthenticated, salesOrdersRouters);
 app.use(`${apiPrefix}/purchase-orders`, isAuthenticated, purchaseOrdersRouters);
 app.use(`${apiPrefix}/universal-swap`, isAuthenticated, universalSwapRouters);
+app.use(`${apiPrefix}/item-groups`, isAuthenticated, itemGroupsRouters);
+app.use(`${apiPrefix}/items-list`, isAuthenticated, itemsListRouters);
 
 app.use(errorHandler);
 

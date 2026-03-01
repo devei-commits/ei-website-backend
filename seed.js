@@ -28,6 +28,8 @@ const VendorClient = require('./src/vendorClient/models');
 const SalesOrder = require('./src/salesOrders/models');
 const PurchaseOrder = require('./src/purchaseOrders/models');
 const UniversalSwapHistory = require('./src/universalSwap/models');
+const ItemGroup = require('./src/itemGroups/models');
+const { ItemsList, ItemListVendorRate, ItemListTier } = require('./src/itemsList/models');
 const { ModuleDefinition, Permission, RolePermission } = require('./src/models/index');
 const { StaffProfile } = require('./src/roles/models');
 const defaultModuleDef = require('./src/roles/defaultModuleDefinition');
@@ -42,7 +44,7 @@ const ROLES_TO_SEED = [
   { role_code: 'customer', role_name: 'Customer', level: 'client' },
 ];
 
-const MODULE_IDS = ['dashboard', 'user-management', 'role-management', 'order-management', 'packaging-management', 'raw-materials-management', 'items-master', 'vendor-client', 'sales-purchase', 'universal-swap'];
+const MODULE_IDS = ['dashboard', 'user-management', 'role-management', 'order-management', 'packaging-management', 'raw-materials-management', 'items-master', 'vendor-client', 'sales-purchase', 'universal-swap', 'item-groups'];
 
 /** Admin has all modules except vendor-client (reserved for accounts_team). */
 const ADMIN_MODULE_IDS = MODULE_IDS.filter((m) => m !== 'vendor-client');
@@ -50,7 +52,7 @@ const ADMIN_MODULE_IDS = MODULE_IDS.filter((m) => m !== 'vendor-client');
 const ROLE_PERMISSIONS_MAP = {
   super_admin: MODULE_IDS,
   admin: ADMIN_MODULE_IDS,
-  bd_manager: ['dashboard', 'user-management', 'order-management', 'packaging-management', 'raw-materials-management', 'items-master', 'sales-purchase', 'universal-swap'],
+  bd_manager: ['dashboard', 'user-management', 'order-management', 'packaging-management', 'raw-materials-management', 'items-master', 'sales-purchase', 'universal-swap', 'item-groups'],
   accounts_team: ['dashboard', 'vendor-client'],
   doctor: ['dashboard'],
   customer: [],
@@ -600,6 +602,70 @@ async function seed() {
         created_at: now, updated_at: now,
       },
     ]);
+
+    console.log('Seeding Item Groups (RM/PM groups with member_ids from raw_materials/pack_materials)...');
+    await ItemGroup.destroy({ where: {} });
+    const rmByCode = await RawMaterial.findAll({ attributes: ['id', 'code'] }).then(rows => new Map(rows.map(r => [r.code, r.id])));
+    const pmByCode = await PackMaterial.findAll({ attributes: ['id', 'code'] }).then(rows => new Map(rows.map(r => [r.code, r.id])));
+    const igSeed = [
+      { code: 'IG-001', icon: '💧', type: 'RM', name: 'Emulsion Base Water Phase', description: 'Purified water sources — mutually interchangeable at same %', purpose: 'Water phase for emulsions', status: 'Active', notes: 'Only one water source currently; group for future expansion', member_ids: [rmByCode.get('EI-RM-BASE-001')].filter(Boolean), proposed_alternates: [], created_at: now, updated_at: now },
+      { code: 'IG-002', icon: '☀️', type: 'RM', name: 'Broad-Spectrum UV Filter Pack', description: 'UV filters approved for sunscreen formula', purpose: 'Sunscreen actives', status: 'Active', notes: 'SPF must be re-verified', member_ids: ['EI-RM-UVF-001', 'EI-RM-UVF-002', 'EI-RM-UVF-003', 'EI-RM-UVF-004'].map(c => rmByCode.get(c)).filter(Boolean), proposed_alternates: [], created_at: now, updated_at: now },
+      { code: 'IG-003', icon: '🔄', type: 'RM', name: 'Emulsifiers', description: 'Oil & water phase binders — compatibility tested', purpose: 'Emulsion stabilizers', status: 'Active', notes: 'Both emulsifiers work as a pair', member_ids: ['EI-RM-EMUL-001', 'EI-RM-EMUL-002'].map(c => rmByCode.get(c)).filter(Boolean), proposed_alternates: [{ id: '1', name: 'Glyceryl Stearate SE', notes: 'Not yet approved — R&D trial pending', status: 'proposed' }], created_at: now, updated_at: now },
+      { code: 'IG-004', icon: '🧊', type: 'RM', name: 'Carbomer Rheology Modifier', description: 'Carbomer 980 and Carbopol 940 interchangeable at same %', purpose: 'Viscosity adjusters', status: 'Active', notes: '980 preferred for sunscreen, 940 for facewash', member_ids: ['EI-RM-POLY-001', 'EI-RM-POLY-002'].map(c => rmByCode.get(c)).filter(Boolean), proposed_alternates: [], created_at: now, updated_at: now },
+      { code: 'IG-005', icon: '🛡️', type: 'RM', name: 'Preservative System', description: 'Phenoxyethanol primary', purpose: 'Preservative actives', status: 'Active', notes: 'Primary preservative at 0.8%', member_ids: [rmByCode.get('EI-RM-PRES-001')].filter(Boolean), proposed_alternates: [{ id: '1', name: 'Phenoxyethanol + Ethylhexylglycerin', notes: 'Cosmos-approved alternative', status: 'proposed' }], created_at: now, updated_at: now },
+      { code: 'IG-006', icon: '🍋', type: 'RM', name: 'Vitamin C Derivatives', description: 'Ascorbyl Glucoside and Sodium Ascorbyl Phosphate', purpose: 'Antioxidant actives', status: 'Active', notes: 'Use at same % if supply disrupted', member_ids: [rmByCode.get('EI-RM-ACT-003')].filter(Boolean), proposed_alternates: [{ id: '1', name: 'Sodium Ascorbyl Phosphate', notes: 'Stability assessment pending', status: 'proposed' }], created_at: now, updated_at: now },
+      { code: 'IG-007', icon: '🫧', type: 'RM', name: 'Anionic Surfactant', description: 'Primary SLES; SCI can partially replace', purpose: 'Cleansing agents', status: 'Active', notes: 'SCI replaces SLES at 90% ratio', member_ids: ['EI-RM-SURF-001', 'EI-RM-SURF-003'].map(c => rmByCode.get(c)).filter(Boolean), proposed_alternates: [], created_at: now, updated_at: now },
+      { code: 'IG-008', icon: '🫧', type: 'RM', name: 'Amphoteric Co-Surfactant', description: 'CAPB primary amphoteric', purpose: 'Conditioning agents', status: 'Active', notes: '1:1 swap possible', member_ids: [rmByCode.get('EI-RM-SURF-002')].filter(Boolean), proposed_alternates: [{ id: '1', name: 'Sodium Lauroamphoacetate', notes: 'Milder; trial batch needed', status: 'proposed' }], created_at: now, updated_at: now },
+      { code: 'IG-PM-001', icon: '🧴', type: 'PM', name: '50g Sunscreen Primary Pack Tube', description: 'Tube options for 50g sunscreen', purpose: 'Primary packaging', status: 'Active', notes: 'Aluminium laminate preferred', member_ids: [pmByCode.get('EI-PM-TUB-001')].filter(Boolean), proposed_alternates: [{ id: '1', name: '50g HDPE Squeeze Tube', notes: 'Backup option; artwork re-approval needed', status: 'proposed' }], created_at: now, updated_at: now },
+      { code: 'IG-PM-002', icon: '🍶', type: 'PM', name: '150ml Facewash Bottle', description: '150ml pump bottle — PET options', purpose: 'Primary packaging', status: 'Active', notes: 'PET transparent preferred', member_ids: [pmByCode.get('EI-PM-BTL-001')].filter(Boolean), proposed_alternates: [{ id: '1', name: '150ml HDPE Opaque Pump Bottle', notes: 'Backup vendor; same neck finish 28/410', status: 'proposed' }], created_at: now, updated_at: now },
+    ];
+    await ItemGroup.bulkCreate(igSeed);
+
+    console.log('Seeding Items List (vendor pricing view: RM/PM in list with rates and tiers)...');
+    await ItemListTier.destroy({ where: {} });
+    await ItemListVendorRate.destroy({ where: {} });
+    await ItemsList.destroy({ where: {} });
+    const itemsListSeed = [];
+    const codesFromFrontend = [
+      'EI-RM-BASE-001', 'EI-RM-UVF-001', 'EI-RM-UVF-002', 'EI-RM-UVF-003', 'EI-RM-UVF-004', 'EI-RM-EMUL-001', 'EI-RM-EMUL-002',
+      'EI-RM-ACT-001', 'EI-RM-ACT-002', 'EI-RM-ACT-003', 'EI-PM-TUB-001', 'EI-PM-BTL-001', 'EI-PM-LBL-001',
+    ];
+    for (const code of codesFromFrontend) {
+      const rmId = rmByCode.get(code);
+      const pmId = pmByCode.get(code);
+      if (rmId) itemsListSeed.push({ type: 'RM', raw_material_id: rmId, pack_material_id: null, status: 'Active', created_at: now, updated_at: now });
+      else if (pmId) itemsListSeed.push({ type: 'PM', raw_material_id: null, pack_material_id: pmId, status: 'Active', created_at: now, updated_at: now });
+    }
+    await ItemsList.bulkCreate(itemsListSeed);
+    const vendors = await VendorClient.findAll({ where: { type: 'vendor' }, order: [['id']], attributes: ['id'] });
+    const v1 = vendors[0]?.id;
+    const v2 = vendors[1]?.id;
+    const itemsListRows = await ItemsList.findAll({ order: [['id']] });
+    const firstRm = itemsListRows.find(r => r.type === 'RM');
+    const secondRm = itemsListRows.find((r, i) => r.type === 'RM' && i > 0);
+    if (firstRm && v1) {
+      const rate1 = await ItemListVendorRate.create({ items_list_id: firstRm.id, vendor_id: v1, default_rate: 1200, default_moq: 10, currency: 'INR', status: 'active', created_at: now, updated_at: now });
+      await ItemListTier.bulkCreate([
+        { item_list_vendor_rate_id: rate1.id, moq_min: 1, moq_max: 99, price_per_unit: 1250, created_at: now, updated_at: now },
+        { item_list_vendor_rate_id: rate1.id, moq_min: 100, moq_max: 499, price_per_unit: 1200, created_at: now, updated_at: now },
+        { item_list_vendor_rate_id: rate1.id, moq_min: 500, moq_max: null, price_per_unit: 1150, created_at: now, updated_at: now },
+      ]);
+    }
+    if (secondRm && v2) {
+      const rate2 = await ItemListVendorRate.create({ items_list_id: secondRm.id, vendor_id: v2, default_rate: 1450, default_moq: 5, currency: 'INR', status: 'active', created_at: now, updated_at: now });
+      await ItemListTier.bulkCreate([
+        { item_list_vendor_rate_id: rate2.id, moq_min: 1, moq_max: 49, price_per_unit: 1480, created_at: now, updated_at: now },
+        { item_list_vendor_rate_id: rate2.id, moq_min: 50, moq_max: null, price_per_unit: 1450, created_at: now, updated_at: now },
+      ]);
+    }
+    const firstPm = itemsListRows.find(r => r.type === 'PM');
+    if (firstPm && v1) {
+      const ratePm = await ItemListVendorRate.create({ items_list_id: firstPm.id, vendor_id: v1, default_rate: 4.2, default_moq: 5000, currency: 'INR', status: 'active', created_at: now, updated_at: now });
+      await ItemListTier.bulkCreate([
+        { item_list_vendor_rate_id: ratePm.id, moq_min: 1000, moq_max: 4999, price_per_unit: 4.5, created_at: now, updated_at: now },
+        { item_list_vendor_rate_id: ratePm.id, moq_min: 5000, moq_max: null, price_per_unit: 4.2, created_at: now, updated_at: now },
+      ]);
+    }
 
     console.log('Seeding Items Master (linked BOMs, Raw Materials, Pack Materials as arrays)...');
     await ItemMaster.destroy({ where: {} });
