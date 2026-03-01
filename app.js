@@ -14,6 +14,8 @@ const productCustomizationRouters = require('./src/productCustomizations/routers
 const enquiryRouters = require('./src/enquiries/routers');
 const packagingRouters = require('./src/packaging/routers');
 const packMaterialsRouters = require('./src/packMaterials/routers');
+const rawMaterialsRouters = require('./src/rawMaterials/routers');
+const bomRouters = require('./src/bom/routers');
 const errorHandler = require('./src/middleware/error_handler');
 const logginHandler = require('./src/middleware/logging')
 const { isAuthenticated } = require('./src/middleware/security')
@@ -63,6 +65,8 @@ app.use(`${apiPrefix}/productCustomizations`, isAuthenticated, productCustomizat
 app.use(`${apiPrefix}/enquiries`, isAuthenticated, enquiryRouters);
 app.use(`${apiPrefix}/packaging`, isAuthenticated, packagingRouters);
 app.use(`${apiPrefix}/pack-materials`, isAuthenticated, packMaterialsRouters);
+app.use(`${apiPrefix}/raw-materials`, isAuthenticated, rawMaterialsRouters);
+app.use(`${apiPrefix}/bom`, isAuthenticated, bomRouters);
 
 app.use(errorHandler);
 

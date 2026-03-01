@@ -21,6 +21,8 @@ const { CompositeItem, compositeRowToModel } = require('./src/compositeItems/mod
 const compositeItemsSeedData = require('./src/compositeItems/compositeItemsSeedData');
 const Packaging = require('./src/packaging/models');
 const PackMaterial = require('./src/packMaterials/models');
+const RawMaterial = require('./src/rawMaterials/models');
+const BOM = require('./src/bom/models');
 const { ModuleDefinition, Permission, RolePermission } = require('./src/models/index');
 const { StaffProfile } = require('./src/roles/models');
 const defaultModuleDef = require('./src/roles/defaultModuleDefinition');
@@ -34,12 +36,12 @@ const ROLES_TO_SEED = [
   { role_code: 'customer', role_name: 'Customer', level: 'client' },
 ];
 
-const MODULE_IDS = ['dashboard', 'user-management', 'role-management', 'order-management', 'packaging-management'];
+const MODULE_IDS = ['dashboard', 'user-management', 'role-management', 'order-management', 'packaging-management', 'raw-materials-management'];
 
 const ROLE_PERMISSIONS_MAP = {
   super_admin: MODULE_IDS,
   admin: MODULE_IDS,
-  bd_manager: ['dashboard', 'user-management', 'order-management', 'packaging-management'],
+  bd_manager: ['dashboard', 'user-management', 'order-management', 'packaging-management', 'raw-materials-management'],
   doctor: ['dashboard'],
   customer: [],
 };
@@ -502,6 +504,71 @@ async function seed() {
       { code: 'EI-PM-LBL-001', description: 'Facewash Front Label 100×80mm', type: 'Label', level: 'Primary', group: 'Primary +1', material: 'BOPP Self Adhesive', size_spec: '100mm × 80mm', price_per_pc: 0.65, moq: 10000, lead_time_days: 14, print_status: 'Approved', products: ['PR-002'], created_at: now, updated_at: now },
       { code: 'EI-PM-PMP-001', description: '24/410 Lotion Pump White', type: 'Pump', level: 'Primary', group: null, material: 'PP/PE', size_spec: '24/410 / 33mm dia', price_per_pc: 2.2, moq: 5000, lead_time_days: 14, print_status: 'N/A', products: ['PR-002'], created_at: now, updated_at: now },
       { code: 'EI-PM-TUB-001', description: '50g Aluminium Laminated Tube', type: 'Tube', level: 'Primary', group: 'Primary +1', material: 'Aluminium/Plastic Laminate', size_spec: '50g / 82mm × 32mm', price_per_pc: 4.2, moq: 5000, lead_time_days: 21, print_status: 'Artwork approved', products: ['PR-002'], created_at: now, updated_at: now },
+    ]);
+
+    console.log('Seeding Raw Materials...');
+    await RawMaterial.destroy({ where: {} });
+    await RawMaterial.bulkCreate([
+      { code: 'EI-RM-ACT-001', name: 'Glycerin', inci: 'Glycerin', category: 'ACTIVE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 55, gst: 12, shelf: '36M', status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-ACT-002', name: 'Niacinamide', inci: 'Niacinamide', category: 'ACTIVE', rm_type: 'Solid', uom: 'KG', price_per_kg: 1450, gst: 12, shelf: '24M', status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-ACT-003', name: 'Ascorbyl Glucoside', inci: 'Ascorbyl Glucoside', category: 'ACTIVE', rm_type: 'Solid', uom: 'KG', price_per_kg: 4800, gst: 12, shelf: '18M', status: 'Active', products: ['PR-001'], group: 'Primary', created_at: now, updated_at: now },
+      { code: 'EI-RM-ACT-004', name: 'Allantoin', inci: 'Allantoin', category: 'ACTIVE', rm_type: 'Solid', uom: 'KG', price_per_kg: 780, gst: 12, shelf: '36M', status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-ACT-005', name: 'Tocopheryl Acetate', inci: 'Tocopheryl Acetate', category: 'ACTIVE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 2200, gst: 12, shelf: '24M', status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-ACT-006', name: 'Aloe Vera Extract', inci: 'Aloe Barbadensis Leaf Juice', category: 'BOTANICAL', rm_type: 'Liquid', uom: 'KG', price_per_kg: 280, gst: 5, shelf: '18M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-BASE-001', name: 'Aqua (Purified Water)', inci: 'Aqua', category: 'BASE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 8.85, gst: 8, shelf: '24M', status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-EMUL-001', name: 'Cetearyl Alcohol', inci: 'Cetearyl Alcohol', category: 'EMULSIFIER', rm_type: 'Solid', uom: 'KG', price_per_kg: 185, gst: 12, shelf: '36M', status: 'Active', products: ['PR-001'], group: 'Primary +1', created_at: now, updated_at: now },
+      { code: 'EI-RM-EMUL-002', name: 'Ceteareth-20', inci: 'Ceteareth-20', category: 'EMULSIFIER', rm_type: 'Solid', uom: 'KG', price_per_kg: 310, gst: 12, shelf: '24M', status: 'Active', products: ['PR-001'], group: 'Alt +1', created_at: now, updated_at: now },
+      { code: 'EI-RM-EXCIP-001', name: 'Sodium Hydroxide (50%)', inci: 'Sodium Hydroxide', category: 'EXCIPIENT', rm_type: 'Liquid', uom: 'KG', price_per_kg: 45, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-EXCIP-002', name: 'Citric Acid Monohydrate', inci: 'Citric Acid', category: 'EXCIPIENT', rm_type: 'Solid', uom: 'KG', price_per_kg: 85, gst: 12, shelf: '36M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-FRAG-001', name: 'Parfum — Solar Breeze', inci: 'Parfum', category: 'FRAGRANCE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 1500, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-FRAG-002', name: 'Parfum — Jasmine Fresh', inci: 'Parfum', category: 'FRAGRANCE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 1600, gst: 18, shelf: '24M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-POLY-001', name: 'Carbomer 980', inci: 'Carbomer', category: 'POLYMER', rm_type: 'Solid', uom: 'KG', price_per_kg: 900, gst: 18, shelf: '36M', status: 'Active', products: ['PR-001'], group: 'Primary +1', created_at: now, updated_at: now },
+      { code: 'EI-RM-POLY-002', name: 'Carbopol 940', inci: 'Carbomer', category: 'POLYMER', rm_type: 'Solid', uom: 'KG', price_per_kg: 850, gst: 18, shelf: '24M', status: 'Active', products: ['PR-002'], group: 'Alt +1', created_at: now, updated_at: now },
+      { code: 'EI-RM-PRES-001', name: 'Phenoxyethanol', inci: 'Phenoxyethanol', category: 'PRESERVATIVE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 520, gst: 18, shelf: '36M', status: 'Active', products: ['PR-001', 'PR-002'], group: 'Primary', created_at: now, updated_at: now },
+      { code: 'EI-RM-SURF-001', name: 'SLES 70%', inci: 'Sodium Laureth Sulfate', category: 'SURFACTANT', rm_type: 'Liquid', uom: 'KG', price_per_kg: 125, gst: 18, shelf: '24M', status: 'Active', products: ['PR-002'], group: 'Primary +1', created_at: now, updated_at: now },
+      { code: 'EI-RM-SURF-002', name: 'Cocamidopropyl Betaine', inci: 'Cocamidopropyl Betaine', category: 'SURFACTANT', rm_type: 'Liquid', uom: 'KG', price_per_kg: 190, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001'], group: 'Alt +1', created_at: now, updated_at: now },
+      { code: 'EI-RM-SURF-003', name: 'Decyl Glucoside', inci: 'Decyl Glucoside', category: 'SURFACTANT', rm_type: 'Liquid', uom: 'KG', price_per_kg: 240, gst: 18, shelf: '18M', status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-UVF-001', name: 'Ethylhexyl Methoxycinnamate', inci: 'Ethylhexyl Methoxycinnamate', category: 'UV FILTER', rm_type: 'Liquid', uom: 'KG', price_per_kg: 1200, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001'], group: 'Primary', created_at: now, updated_at: now },
+      { code: 'EI-RM-UVF-002', name: 'Titanium Dioxide (nano)', inci: 'Titanium Dioxide', category: 'UV FILTER', rm_type: 'Solid', uom: 'KG', price_per_kg: 650, gst: 12, shelf: '36M', status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-UVF-003', name: 'Zinc Oxide (nano)', inci: 'Zinc Oxide', category: 'UV FILTER', rm_type: 'Solid', uom: 'KG', price_per_kg: 720, gst: 12, shelf: '36M', status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-UVF-004', name: 'Avobenzone', inci: 'Butyl Methoxydibenzoylmethane', category: 'UV FILTER', rm_type: 'Solid', uom: 'KG', price_per_kg: 980, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
+    ]);
+
+    const bomRmLines1 = [
+      { code: 'EI-RM-BASE-001', name: 'Aqua (Purified Water)', phase: 'A', func: 'Solvent', pct: 70, uom: 'GM', spec: 'BP/EP', notes: '' },
+      { code: 'EI-RM-ACT-002', name: 'Niacinamide', phase: 'A', func: 'Active', pct: 5, uom: 'GM', spec: '98%', notes: '' },
+      { code: 'EI-RM-ACT-003', name: 'Ascorbyl Glucoside', phase: 'A', func: 'Active', pct: 10, uom: 'GM', spec: '98%', notes: '' },
+      { code: 'EI-RM-EMUL-001', name: 'Cetearyl Alcohol', phase: 'B', func: 'Emulsifier', pct: 2, uom: 'GM', spec: 'NF', notes: '' },
+      { code: 'EI-RM-PRES-001', name: 'Phenoxyethanol', phase: 'C', func: 'Preservative', pct: 0.5, uom: 'GM', spec: 'EP', notes: '' },
+    ];
+    const bomPmLines1 = [
+      { code: 'EI-PM-BTL-001', name: '30ml Amber Dropper Bottle', cat: 'Primary', qty: 1, uom: 'PCS', notes: '' },
+      { code: 'EI-PM-CAP-001', name: 'Dropper Cap', cat: 'Closure', qty: 1, uom: 'PCS', notes: '' },
+      { code: 'EI-PM-LBL-001', name: 'Front Label 50x80mm', cat: 'Label', qty: 1, uom: 'PCS', notes: '' },
+    ];
+    console.log('Seeding BOMs...');
+    await BOM.destroy({ where: {} });
+    await BOM.bulkCreate([
+      {
+        bom_code: 'BOM-FG-001', bom_sku: 'SKU-VC-SERUM-30', bom_category: 'Skincare', bom_unit: 'GM', bom_hsn: '330499', bom_tax_preference: 'Taxable', bom_returnable: false, bom_associate_items: 'Sample Sachet, Gift Box',
+        type: 'FG', status: 'Draft', version: 'v1.0', client: 'Esthetic Insights', name: 'Vitamin C Serum 30ml', dosage: '10% w/w', pack_size: '30ml', site: 'Baddi Plant', category: 'FMCG',
+        claims: 'Brightens skin, Reduces dark spots', project: 'Project Glow', market: 'India, USA', created_by: 'John Doe', reviewed_by: 'Jane Smith',
+        desc: 'Vitamin C serum with niacinamide and ferulic acid. Oil-free, suitable for all skin types.',
+        spec_bulk: 'Clear to slightly yellow liquid; pH 3.0–3.5.', spec_process: 'Cold process; add actives below 40°C.', spec_fg: 'pH 3.0–3.5; viscosity 2000–4000 cPs.', spec_pack: '30ml amber dropper bottle; batch code on bottom.', spec_tests: 'Stability 3M/6M; preservative efficacy.', spec_release: 'All tests pass; QA sign-off.',
+        batch: '100 KG', yield_pct: '98', overage: '2', line: 'Line 1', notes: 'Store in cool place; avoid direct sunlight.', regulatory: 'EU Compliant; ISO 22716.', ph_range: '3.0 - 3.5', description: 'Vitamin C Serum BOM for 30ml pack',
+        rm_lines: bomRmLines1, pm_lines: bomPmLines1, created_at: now, updated_at: now,
+      },
+      {
+        bom_code: 'BOM-FG-002', bom_sku: 'SKU-FW-150', bom_category: 'Skincare', bom_unit: 'ML', bom_hsn: '330499', bom_tax_preference: 'Taxable', bom_returnable: false, bom_associate_items: '',
+        type: 'FG', status: 'Approved', version: 'v1.0', client: 'Esthetic Insights', name: 'Face Wash 150ml', dosage: '5% w/w', pack_size: '150ml', site: 'Baddi Plant', category: 'FMCG',
+        claims: 'Gentle cleanse, pH balanced', project: 'Project Glow', market: 'India', created_by: 'Jane Smith', reviewed_by: 'John Doe',
+        desc: 'Daily use face wash with mild surfactants.',
+        spec_bulk: 'Clear viscous liquid.', spec_process: 'Standard mixing.', spec_fg: 'pH 5.5–6.5.', spec_pack: '150ml PET pump bottle.', spec_tests: 'Stability; PE.', spec_release: 'QA sign-off.',
+        batch: '200 KG', yield_pct: '97', overage: '1', line: 'Line 2', notes: '', regulatory: 'ISO 22716.', ph_range: '5.5 - 6.5', description: 'Face Wash BOM 150ml',
+        rm_lines: [{ code: 'EI-RM-BASE-001', name: 'Aqua', phase: 'A', func: 'Solvent', pct: 85, uom: 'GM', spec: 'BP', notes: '' }, { code: 'EI-RM-SURF-001', name: 'SLES 70%', phase: 'B', func: 'Surfactant', pct: 8, uom: 'GM', spec: 'NF', notes: '' }],
+        pm_lines: [{ code: 'EI-PM-BTL-001', name: '150ml PET Pump Bottle', cat: 'Primary', qty: 1, uom: 'PCS', notes: '' }],
+        created_at: now, updated_at: now,
+      },
     ]);
 
     console.log('Seeding Product Customizations...');
