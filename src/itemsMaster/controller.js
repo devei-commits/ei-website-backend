@@ -40,6 +40,8 @@ async function listItemMasters(req, res) {
   try {
     const search = req.query.search != null ? String(req.query.search).trim() : '';
     const typeFilter = req.query.type != null ? String(req.query.type).trim() : '';
+    const rawMaterialIdParam = req.query.rawMaterialId != null ? String(req.query.rawMaterialId).trim() : '';
+    const rawMaterialId = rawMaterialIdParam ? parseInt(rawMaterialIdParam, 10) : NaN;
     const { Op } = require('sequelize');
     const where = {};
     if (search.length > 0) {
@@ -50,7 +52,13 @@ async function listItemMasters(req, res) {
     }
     if (typeFilter.length > 0) where.type = typeFilter;
 
-    const rows = await ItemMaster.findAll({ where, order: [['code', 'ASC']] });
+    let rows = await ItemMaster.findAll({ where, order: [['code', 'ASC']] });
+    if (!Number.isNaN(rawMaterialId) && rawMaterialId > 0) {
+      rows = rows.filter((r) => {
+        const plain = r.get ? r.get({ plain: true }) : r;
+        return toIntList(plain.raw_material_ids).includes(rawMaterialId);
+      });
+    }
     const allBomIds = new Set();
     const allPmIds = new Set();
     const allRmIds = new Set();

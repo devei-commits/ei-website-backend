@@ -27,6 +27,7 @@ const ItemMaster = require('./src/itemsMaster/models');
 const VendorClient = require('./src/vendorClient/models');
 const SalesOrder = require('./src/salesOrders/models');
 const PurchaseOrder = require('./src/purchaseOrders/models');
+const UniversalSwapHistory = require('./src/universalSwap/models');
 const { ModuleDefinition, Permission, RolePermission } = require('./src/models/index');
 const { StaffProfile } = require('./src/roles/models');
 const defaultModuleDef = require('./src/roles/defaultModuleDefinition');
@@ -41,7 +42,7 @@ const ROLES_TO_SEED = [
   { role_code: 'customer', role_name: 'Customer', level: 'client' },
 ];
 
-const MODULE_IDS = ['dashboard', 'user-management', 'role-management', 'order-management', 'packaging-management', 'raw-materials-management', 'items-master', 'vendor-client', 'sales-purchase'];
+const MODULE_IDS = ['dashboard', 'user-management', 'role-management', 'order-management', 'packaging-management', 'raw-materials-management', 'items-master', 'vendor-client', 'sales-purchase', 'universal-swap'];
 
 /** Admin has all modules except vendor-client (reserved for accounts_team). */
 const ADMIN_MODULE_IDS = MODULE_IDS.filter((m) => m !== 'vendor-client');
@@ -49,7 +50,7 @@ const ADMIN_MODULE_IDS = MODULE_IDS.filter((m) => m !== 'vendor-client');
 const ROLE_PERMISSIONS_MAP = {
   super_admin: MODULE_IDS,
   admin: ADMIN_MODULE_IDS,
-  bd_manager: ['dashboard', 'user-management', 'order-management', 'packaging-management', 'raw-materials-management', 'items-master', 'sales-purchase'],
+  bd_manager: ['dashboard', 'user-management', 'order-management', 'packaging-management', 'raw-materials-management', 'items-master', 'sales-purchase', 'universal-swap'],
   accounts_team: ['dashboard', 'vendor-client'],
   doctor: ['dashboard'],
   customer: [],

@@ -20,6 +20,7 @@ const itemsMasterRouters = require('./src/itemsMaster/routers');
 const vendorClientRouters = require('./src/vendorClient/routers');
 const salesOrdersRouters = require('./src/salesOrders/routers');
 const purchaseOrdersRouters = require('./src/purchaseOrders/routers');
+const universalSwapRouters = require('./src/universalSwap/routers');
 const errorHandler = require('./src/middleware/error_handler');
 const logginHandler = require('./src/middleware/logging')
 const { isAuthenticated } = require('./src/middleware/security')
@@ -75,6 +76,7 @@ app.use(`${apiPrefix}/items-master`, isAuthenticated, itemsMasterRouters);
 app.use(`${apiPrefix}/vendor-client`, isAuthenticated, vendorClientRouters);
 app.use(`${apiPrefix}/sales-orders`, isAuthenticated, salesOrdersRouters);
 app.use(`${apiPrefix}/purchase-orders`, isAuthenticated, purchaseOrdersRouters);
+app.use(`${apiPrefix}/universal-swap`, isAuthenticated, universalSwapRouters);
 
 app.use(errorHandler);
 
