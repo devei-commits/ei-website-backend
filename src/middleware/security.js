@@ -8,7 +8,7 @@ const { StaffProfile, Role, Permission, RolePermission } = require('../models/in
 const USERTYPE_ALLOWED_MODULES = {
   super_admin: ['*'],
   admin: ['*'],
-  bd_manager: ['dashboard', 'user-management', 'order-list', 'order-management', 'coupon-management', 'discount-management'],
+  bd_manager: ['dashboard', 'user-management', 'order-list', 'order-management', 'coupon-management', 'discount-management', 'packaging-management'],
   doctor: ['dashboard'],
   customer: [],
 };

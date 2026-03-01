@@ -13,12 +13,14 @@ const ProductCustomization = require('./src/productCustomizations/models');
 const Enquiry = require('./src/enquiries/models');
 const { Item, excelRowToItem } = require('./src/items/models');
 const itemsSeedDataRaw = require('./src/items/itemsSeedData');
-const { Vendor, contactRowToVendor } = require('./src/vendors/models');
-const contactsSeedDataRaw = require('./src/vendors/contactsSeedData');
+const { Vendor, contactRowToVendor } = require('./src/Vendors/models');
+const contactsSeedDataRaw = require('./src/Vendors/contactsSeedData');
 const { Contact, customerRowToModel } = require('./src/Contacts/models');
 const seedContactData = require('./src/Contacts/seedContact');
 const { CompositeItem, compositeRowToModel } = require('./src/compositeItems/models');
 const compositeItemsSeedData = require('./src/compositeItems/compositeItemsSeedData');
+const Packaging = require('./src/packaging/models');
+const PackMaterial = require('./src/packMaterials/models');
 const { ModuleDefinition, Permission, RolePermission } = require('./src/models/index');
 const { StaffProfile } = require('./src/roles/models');
 const defaultModuleDef = require('./src/roles/defaultModuleDefinition');
@@ -32,12 +34,12 @@ const ROLES_TO_SEED = [
   { role_code: 'customer', role_name: 'Customer', level: 'client' },
 ];
 
-const MODULE_IDS = ['dashboard', 'user-management', 'role-management', 'order-management'];
+const MODULE_IDS = ['dashboard', 'user-management', 'role-management', 'order-management', 'packaging-management'];
 
 const ROLE_PERMISSIONS_MAP = {
   super_admin: MODULE_IDS,
   admin: MODULE_IDS,
-  bd_manager: ['dashboard', 'user-management', 'order-management'],
+  bd_manager: ['dashboard', 'user-management', 'order-management', 'packaging-management'],
   doctor: ['dashboard'],
   customer: [],
 };
@@ -476,11 +478,31 @@ async function seed() {
 
     console.log('Seeding Customers (contacts)...');
     const customersSeedData = seedContactData.map((row) => customerRowToModel(row));
-    await Customer.bulkCreate(customersSeedData);
+    await Contact.bulkCreate(customersSeedData);
 
     console.log('Seeding Composite Items...');
     const compositeItemsData = compositeItemsSeedData.map((row) => compositeRowToModel(row));
     await CompositeItem.bulkCreate(compositeItemsData);
+
+    console.log('Seeding Packaging (Masters)...');
+    await Packaging.destroy({ where: {} });
+    await Packaging.bulkCreate([
+      { package_code: 'PKG-BTL-001', package_name: '30ml Dropper Bottle', package_sku: 'SKU-DRP-30', bottom: 'round', cap_type: 'dropper', bottom_name: 'Amber Glass', bottom_material: 'glass', cap_name: 'Black Dropper', cap_material: 'plastic', bottom_color: 'Amber', cap_color: 'Black', bottom_weight: '45g', cap_weight: '8g', dispenser_volume: '30ml', minimum_order_quantity: '1000', budget: 'medium', comments: 'Standard serum bottle', status: 'active', created_at: now, updated_at: now },
+      { package_code: 'PKG-JAR-001', package_name: '50ml Cream Jar', package_sku: 'SKU-JAR-50', bottom: 'flat', cap_type: 'screw', bottom_name: 'Frosted Glass', bottom_material: 'glass', cap_name: 'Gold Lid', cap_material: 'metal', bottom_color: 'Frosted White', cap_color: 'Gold', bottom_weight: '85g', cap_weight: '25g', dispenser_volume: '50ml', minimum_order_quantity: '500', budget: 'high', comments: 'Premium cream jar', status: 'active', created_at: now, updated_at: now },
+      { package_code: 'PKG-PMP-001', package_name: '100ml Pump Bottle', package_sku: 'SKU-PMP-100', bottom: 'round', cap_type: 'pump', bottom_name: 'Clear PET', bottom_material: 'plastic', cap_name: 'White Pump', cap_material: 'plastic', bottom_color: 'Clear', cap_color: 'White', bottom_weight: '35g', cap_weight: '12g', dispenser_volume: '100ml', minimum_order_quantity: '2000', budget: 'low', comments: 'Economy lotion bottle', status: 'active', created_at: now, updated_at: now },
+    ]);
+
+    console.log('Seeding Pack Materials...');
+    await PackMaterial.destroy({ where: {} });
+    await PackMaterial.bulkCreate([
+      { code: 'EI-PM-BOX-001', description: 'Sunscreen 50g Monocarton', type: 'Monocarton', level: 'Secondary', group: null, material: '300 GSM Duplex Board', size_spec: '52x52x35mm', price_per_pc: 2.8, moq: 5000, lead_time_days: 21, print_status: 'Approved', products: ['PR-002'], created_at: now, updated_at: now },
+      { code: 'EI-PM-BOX-002', description: 'Facewash 150ml Monocarton', type: 'Monocarton', level: 'Secondary', group: null, material: '300 GSM Duplex Board', size_spec: '52x52x168mm', price_per_pc: 3.2, moq: 5000, lead_time_days: 21, print_status: 'Approved', products: ['PR-002'], created_at: now, updated_at: now },
+      { code: 'EI-PM-BTL-001', description: '150ml Clear PET Pump Bottle', type: 'Bottle', level: 'Primary', group: 'Primary +1', material: 'PET (Food Grade)', size_spec: '150ml / 28/410', price_per_pc: 5.5, moq: 5000, lead_time_days: 21, print_status: 'Label awaited', products: ['PR-002'], created_at: now, updated_at: now },
+      { code: 'EI-PM-CAP-001', description: 'Oval Flip-Top Cap for 25mm Tube', type: 'Closure', level: 'Primary', group: null, material: 'PP White', size_spec: '25mm neck', price_per_pc: 0.65, moq: 10000, lead_time_days: 14, print_status: 'N/A', products: ['PR-002'], created_at: now, updated_at: now },
+      { code: 'EI-PM-LBL-001', description: 'Facewash Front Label 100×80mm', type: 'Label', level: 'Primary', group: 'Primary +1', material: 'BOPP Self Adhesive', size_spec: '100mm × 80mm', price_per_pc: 0.65, moq: 10000, lead_time_days: 14, print_status: 'Approved', products: ['PR-002'], created_at: now, updated_at: now },
+      { code: 'EI-PM-PMP-001', description: '24/410 Lotion Pump White', type: 'Pump', level: 'Primary', group: null, material: 'PP/PE', size_spec: '24/410 / 33mm dia', price_per_pc: 2.2, moq: 5000, lead_time_days: 14, print_status: 'N/A', products: ['PR-002'], created_at: now, updated_at: now },
+      { code: 'EI-PM-TUB-001', description: '50g Aluminium Laminated Tube', type: 'Tube', level: 'Primary', group: 'Primary +1', material: 'Aluminium/Plastic Laminate', size_spec: '50g / 82mm × 32mm', price_per_pc: 4.2, moq: 5000, lead_time_days: 21, print_status: 'Artwork approved', products: ['PR-002'], created_at: now, updated_at: now },
+    ]);
 
     console.log('Seeding Product Customizations...');
     await ProductCustomization.create({
