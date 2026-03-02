@@ -19,6 +19,7 @@ const { Contact, customerRowToModel } = require('./src/Contacts/models');
 const seedContactData = require('./src/Contacts/seedContact');
 const { CompositeItem, compositeRowToModel } = require('./src/compositeItems/models');
 const compositeItemsSeedData = require('./src/compositeItems/compositeItemsSeedData');
+const legacyAppointmentsSeedData = require('./src/appointments/legacySeedData');
 const { ModuleDefinition, Permission, RolePermission } = require('./src/models/index');
 const { StaffProfile } = require('./src/roles/models');
 const defaultModuleDef = require('./src/roles/defaultModuleDefinition');
@@ -447,6 +448,96 @@ async function seed() {
       updated_at: now
     });
 
+    // Legacy appointments imported from external system
+    const nullIf = (value) => (value === 'NULL' || value === '' ? null : value);
+
+    const parseLegacyDate = (value) => {
+      const v = nullIf(value);
+      if (!v) return null;
+      const parts = v.includes('-') ? v.split('-') : v.split('/');
+      if (parts.length !== 3) return null;
+      let [d, m, y] = parts.map((p) => parseInt(p, 10));
+      if (Number.isNaN(d) || Number.isNaN(m) || Number.isNaN(y)) return null;
+      if (y < 100) y += 2000;
+      const mm = String(m).padStart(2, '0');
+      const dd = String(d).padStart(2, '0');
+      return `${y}-${mm}-${dd}`;
+    };
+
+    const parseLegacyTime = (value) => {
+      const v = nullIf(value);
+      if (!v) return null;
+      const match = v.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+      if (!match) return null;
+      let hour = parseInt(match[1], 10);
+      const minute = match[2];
+      const ampm = match[3].toUpperCase();
+      if (ampm === 'PM' && hour !== 12) hour += 12;
+      if (ampm === 'AM' && hour === 12) hour = 0;
+      return `${String(hour).padStart(2, '0')}:${minute}:00`;
+    };
+
+    console.log('Seeding legacy Appointments...');
+    const legacyAppointmentsData = legacyAppointmentsSeedData.map((row) => {
+      const addressParts = [
+        nullIf(row.app_address1),
+        nullIf(row.app_address2),
+        nullIf(row.app_other_address),
+      ].filter(Boolean);
+
+      return {
+        app_id: row.app_id,
+        app_type: nullIf(row.app_type),
+        app_doc_name: nullIf(row.app_doc_name),
+        app_doc_mobile: nullIf(row.app_doc_mobile),
+        app_doc_email: nullIf(row.app_doc_email),
+        app_clinic_name: nullIf(row.app_clinic_name),
+        app_address1: nullIf(row.app_address1),
+        app_address2: nullIf(row.app_address2),
+        app_state: nullIf(row.app_state),
+        app_city: nullIf(row.app_city),
+        app_other_address: nullIf(row.app_other_address),
+        app_pincode: nullIf(row.app_pincode),
+        app_date1: nullIf(row.app_date1),
+        app_date1_time_slot1: nullIf(row.app_date1_time_slot1),
+        app_date2: nullIf(row.app_date2),
+        app_date2_time_slot2: nullIf(row.app_date2_time_slot2),
+        app_status: nullIf(row.app_status),
+        app_remarks: nullIf(row.app_remarks),
+        app_userid: nullIf(row.app_userid),
+        confirm_appointment: nullIf(row.confirm_appointment),
+        app_confirmation_status: nullIf(row.app_confirmation_status),
+        meeting_status: nullIf(row.meeting_status),
+        mom: nullIf(row.mom),
+        assign_to: nullIf(row.assign_to),
+        pex_id: nullIf(row.pex_id),
+        adedon: nullIf(row.adedon),
+
+        // Normalized fields
+        user_id: null,
+        doctor_id: null,
+        clinic_name: nullIf(row.app_clinic_name),
+        email: nullIf(row.app_doc_email),
+        phone: nullIf(row.app_doc_mobile),
+        address: addressParts.length ? addressParts.join(', ') : null,
+        city: nullIf(row.app_city),
+        state: nullIf(row.app_state),
+        pincode: nullIf(row.app_pincode),
+        reason: null,
+        mode: nullIf(row.app_address1) === 'Online' ? 'online' : 'offline',
+        status: nullIf(row.app_status),
+        lifecycle_status: 'legacy',
+        slot1_date: parseLegacyDate(row.app_date1),
+        slot1_time: parseLegacyTime(row.app_date1_time_slot1),
+        slot2_date: parseLegacyDate(row.app_date2),
+        slot2_time: parseLegacyTime(row.app_date2_time_slot2),
+        created_at: now,
+        updated_at: now,
+      };
+    });
+
+    await Appointment.bulkCreate(legacyAppointmentsData);
+
     console.log('Seeding New Developments...');
     await Newdevelopment.create({
       user_id: client1.userid,
@@ -476,7 +567,7 @@ async function seed() {
 
     console.log('Seeding Customers (contacts)...');
     const customersSeedData = seedContactData.map((row) => customerRowToModel(row));
-    await Customer.bulkCreate(customersSeedData);
+    await Contact.bulkCreate(customersSeedData);
 
     console.log('Seeding Composite Items...');
     const compositeItemsData = compositeItemsSeedData.map((row) => compositeRowToModel(row));

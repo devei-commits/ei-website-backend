@@ -10,9 +10,115 @@ Appointment.init({
     primaryKey: true,
     autoIncrement: true
   },
+  // Legacy import fields from external appointment system
+  app_id: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  app_type: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  app_doc_name: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  app_doc_mobile: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  app_doc_email: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  app_clinic_name: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  app_address1: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  app_address2: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  app_state: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  app_city: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  app_other_address: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  app_pincode: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  app_date1: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  app_date1_time_slot1: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  app_date2: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  app_date2_time_slot2: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  app_status: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  app_remarks: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  app_userid: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  confirm_appointment: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  app_confirmation_status: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  meeting_status: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  mom: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  assign_to: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  pex_id: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  adedon: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  // Existing normalized fields used by the current app
   user_id: {
     type: DataTypes.INTEGER,
-    allowNull: false,
+    allowNull: true,
     references: {
       model: User,
       key: 'userid'
@@ -20,7 +126,7 @@ Appointment.init({
   },
   doctor_id: {
     type: DataTypes.INTEGER,
-    allowNull: false,
+    allowNull: true,
     references: {
       model: User,
       key: 'userid'
