@@ -356,6 +356,38 @@ const getAllUsers = async (req, res) => {
   }
 };
 
+// Authenticated: search staff users by name/email (e.g. for approver dropdown). Returns minimal { userid, display_name, email }.
+const searchUsers = async (req, res) => {
+  try {
+    const q = req.query.q != null ? String(req.query.q).trim() : '';
+    const attributes = ['userid', 'fname', 'lname', 'display_name', 'email'];
+    const where = { usertype: { [Op.in]: STAFF_USERTYPES } };
+    if (q.length > 0) {
+      const like = { [Op.iLike]: `%${q}%` };
+      where[Op.or] = [
+        { display_name: like },
+        { email: like },
+        { fname: like },
+        { lname: like },
+      ];
+    }
+    const users = await User.findAll({
+      attributes,
+      where,
+      order: [['display_name', 'ASC']],
+      limit: 30,
+    });
+    const rolesByCode = await getRolesByCode();
+    const list = users.map((u) => {
+      const formatted = formatUserForStaffList(u, rolesByCode);
+      return { userid: formatted.userid, display_name: formatted.display_name, email: formatted.email };
+    });
+    res.status(200).json(list);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
 // Admin-only: get one user by id (for view/edit in User Management)
 const getUserById = async (req, res) => {
   try {
@@ -642,6 +674,7 @@ module.exports = {
   userLogin,
   updateUserPaymentTerms,
   getAllUsers,
+  searchUsers,
   getUserById,
   updateUserRole,
   updateUserProfile,
@@ -649,5 +682,4 @@ module.exports = {
   getMe,
   updateMe,
   createAddress,
-  updateUserRole,
 };

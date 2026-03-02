@@ -6,8 +6,10 @@ COPY package*.json ./
 RUN npm install
 
 COPY . .
-RUN chmod +x entrypoint.sh
+# Normalize line endings (CRLF -> LF) so shebang works on all platforms (fixes "Exec format error" on Railway)
+RUN sed -i 's/\r$//' entrypoint.sh && chmod +x entrypoint.sh
 
 EXPOSE 3000
 
-ENTRYPOINT ["/usr/src/app/entrypoint.sh"]
+# Run via sh explicitly so the script is not executed as a binary (avoids Exec format error)
+ENTRYPOINT ["/bin/sh", "/usr/src/app/entrypoint.sh"]

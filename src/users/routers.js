@@ -6,6 +6,7 @@ const {
   userLogin,
   updateUserPaymentTerms,
   getAllUsers,
+  searchUsers,
   getUserById,
   updateUserRole,
   updateUserProfile,
@@ -21,6 +22,9 @@ router.post('/', createUser);
 router.post('/login', userLogin);
 router.get('/token', token);
 router.get('/logout', deleteToken);
+
+// Search users by name/email (for approver dropdowns). Any authenticated user.
+router.get('/search', isAuthenticated, searchUsers);
 
 // Current user's own details
 router.get('/me', isAuthenticated, getMe);
