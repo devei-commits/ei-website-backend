@@ -44,7 +44,7 @@ const createAppointment = async (req, res, next) => {
 /**
  * Get all appointments for the logged-in user (as patient or doctor)
  */
-const getAppointments = async (req, res, next) => {
+const getAppointmentsByUserId = async (req, res) => {
   try {
     const userId = req.user.id;
     
@@ -68,7 +68,23 @@ const getAppointments = async (req, res, next) => {
   }
 };
 
+const getallAppointment = async (req, res, next) => {
+  try {
+    const appointment = await Appointment.findAll();
+    res.status(200).json({
+      success: true,
+      data: appointment
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
 module.exports = {
   createAppointment,
-  getAppointments
+  getAppointmentsByUserId,
+  getallAppointment
 };

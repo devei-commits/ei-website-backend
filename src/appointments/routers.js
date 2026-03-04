@@ -1,9 +1,12 @@
 const express = require('express');
 const router = express.Router();
-const { createAppointment, getAppointments } = require('./controller');
+const { createAppointment, getAppointmentsByUserId, getallAppointment } = require('./controller');
 
 // All appointment routes require authentication
 router.post('/', createAppointment);
-router.get('/', getAppointments);
+router.get('/', getallAppointment);
+router.get('/:id', getAppointmentsByUserId);
+// router.put('/:id', updateAppointment);
+// router.delete('/:id', deleteAppointment);
 
 module.exports = router;
