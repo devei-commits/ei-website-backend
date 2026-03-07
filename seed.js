@@ -13,10 +13,10 @@ const ProductCustomization = require('./src/productCustomizations/models');
 const Enquiry = require('./src/enquiries/models');
 const { Item, excelRowToItem } = require('./src/items/models');
 const itemsSeedDataRaw = require('./src/items/itemsSeedData');
-const { Vendor, contactRowToVendor } = require('./src/vendors/models');
-const contactsSeedDataRaw = require('./src/vendors/contactsSeedData');
-const { Contact, customerRowToModel } = require('./src/contacts/models');
-const seedContactData = require('./src/contacts/seedContact');
+const { Vendor, contactRowToVendor } = require('./src/Vendors/models');
+const contactsSeedDataRaw = require('./src/Vendors/contactsSeedData');
+const { Contact, customerRowToModel } = require('./src/Contacts/models');
+const seedContactData = require('./src/Contacts/seedContact');
 const { CompositeItem, compositeRowToModel } = require('./src/compositeItems/models');
 const compositeItemsSeedData = require('./src/compositeItems/compositeItemsSeedData');
 const Packaging = require('./src/packaging/models');
@@ -27,8 +27,17 @@ const ItemMaster = require('./src/itemsMaster/models');
 const VendorClient = require('./src/vendorClient/models');
 const SalesOrder = require('./src/salesOrders/models');
 const PurchaseOrder = require('./src/purchaseOrders/models');
+const PlanningExtracted = require('./src/planningExtracted/models');
+const ProcurementRequest = require('./src/procurementRequests/models');
+const ProcurementQuotation = require('./src/procurementQuotations/models');
+const PoTracking = require('./src/poTracking/models');
 const UniversalSwapHistory = require('./src/universalSwap/models');
 const ItemGroup = require('./src/itemGroups/models');
+const WarehouseInventory = require('./src/warehouseInventory/models');
+const warehouseSeedData = require('./src/warehouseInventory/warehouseSeedData');
+const { WarehouseLocation, WarehouseRack, WarehouseRackItem } = require('./src/warehouseLocations/models');
+const GoodsReceivedNote = require('./src/grn/models');
+const MaterialRequestNote = require('./src/mrn/models');
 const { ItemsList, ItemListVendorRate, ItemListTier } = require('./src/itemsList/models');
 const legacyAppointmentsSeedData = require('./src/appointments/legacySeedData');
 const { ModuleDefinition, Permission, RolePermission } = require('./src/models/index');
@@ -381,25 +390,88 @@ async function seed() {
     const client1Shipping = await Address.findOne({ where: { user_id: client1.userid, address_type: 'shipping' } });
 
     console.log('Seeding categories and products...');
-    const productA = await Product.create({
-      product_name: 'Advanced Face Serum',
-      product_description: 'A highly effective face serum for daily use.',
-      incredients: 'Hyaluronic Acid, Niacinamide, Vitamin C, Aloe Vera, Green Tea Extract',
-      how_to_use: 'Apply 2-3 drops to clean, dry skin morning and evening. Gently pat into face and neck. Follow with moisturizer and sunscreen during the day.',
-      product_code: 'SERUM-001',
-      product_sku: 'SKU-SERUM-01',
-      status: 'active',
-      availability: 'in_stock',
-      generic_name: 'Face Serum',
-      brand_name: 'Health Glow',
-      tax_rate: 18.00,
-      mrp_price: 1500.00,
-      buy_price: 1200.00,
-      category: 'Skin Care',
-      lifecycle_status: 'active',
-      created_at: now,
-      updated_at: now
-    });
+    const [productA, productB] = await Product.bulkCreate([
+      {
+        product_name: 'EI Sunscreen Lotion SPF50+ PA++++',
+        product_description: 'Sunscreen lotion/cream. Fill: 50g, Batch: 500 kg, Shelf: 24M.',
+        product_code: 'EI-PR-00001',
+        product_sku: 'EI-SUN-50G-001',
+        status: 'Production Released',
+        availability: 'in_stock',
+        generic_name: 'Sunscreen Lotion',
+        brand_name: 'EI',
+        tax_rate: 18.00,
+        mrp_price: 499.00,
+        buy_price: null,
+        category: 'Sunscreen',
+        lifecycle_status: 'Production Released',
+        form: 'Lotion/Cream',
+        fill_size: '50g',
+        batch_size_kg: 500,
+        shelf_life_months: 24,
+        version: 'v2.0',
+        license_cml: 'CML-TG-2023-0042',
+        theoretical_yield_pct: 98.50,
+        pao_months: 12,
+        manufacturing_location: 'EI Plant 1, Hyderabad',
+        equipment_vessel: '500L SS Jacketed Mixer + Homogeniser',
+        storage_conditions: 'Store 15-25C away from sunlight',
+        approved_claims: 'Broad spectrum UVA+UVB - Niacinamide brightening - Vitamin C antioxidant - Non-greasy',
+        ph_range: '6.0-7.0',
+        viscosity_range: '15,000-25,000 cPs',
+        spf_pa_rating: 'SPF50+ PA++++',
+        appearance: 'White to off-white smooth lotion',
+        odour: 'Light Solar Breeze fragrance',
+        fill_weight_spec: '50 +/- 1g',
+        stability_summary: 'Accelerated 6M: PASS - Long-term: Ongoing',
+        created_at: now,
+        updated_at: now
+      },
+      {
+        product_name: 'EI Gentle Foaming Facewash 150ml',
+        product_description: 'Face wash gel. Fill: 150ml, Batch: 500 kg, Shelf: 24M.',
+        product_code: 'EI-PR-00002',
+        product_sku: 'EI-FW-150ML-001',
+        status: 'Production Released',
+        availability: 'in_stock',
+        generic_name: 'Face Wash',
+        brand_name: 'EI',
+        tax_rate: 18.00,
+        mrp_price: 299.00,
+        buy_price: null,
+        category: 'Face Wash',
+        lifecycle_status: 'Production Released',
+        form: 'Gel',
+        fill_size: '150ml',
+        batch_size_kg: 500,
+        shelf_life_months: 24,
+        version: 'v2.0',
+        license_cml: 'CML-TG-2023-0041',
+        theoretical_yield_pct: 98.50,
+        pao_months: 12,
+        manufacturing_location: 'EI Plant 1, Hyderabad',
+        equipment_vessel: '500L SS Jacketed Mixer + Homogeniser',
+        storage_conditions: 'Store 15-25C away from sunlight',
+        approved_claims: 'Gentle SLS-present formula - Niacinamide brightening - Aloe Vera soothing - pH balanced 5.5-6.5',
+        ph_range: '5.5-6.5',
+        viscosity_range: '4,000-8,000 cPs',
+        spf_pa_rating: 'N/A',
+        appearance: 'Clear to slightly hazy gel, no visible particles',
+        odour: 'Jasmine Fresh fragrance',
+        fill_weight_spec: '150 +/- 3g',
+        stability_summary: 'Accelerated 6M: PASS - Long-term: Ongoing',
+        created_at: now,
+        updated_at: now
+      }
+    ]);
+
+    // Planning (PR extracted) products — match HTML PRs Extracted (150ml · EI-FG-001 etc.)
+    await Product.bulkCreate([
+      { product_name: 'EI Gentle Foaming Facewash', product_code: 'EI-FG-001', status: 'Production Released', generic_name: 'Face Wash', category: 'Face Wash', lifecycle_status: 'Production Released', form: 'Gel', fill_size: '150ml', batch_size_kg: 500, created_at: now, updated_at: now },
+      { product_name: 'EI Invisible Sunscreen SPF50', product_code: 'EI-FG-002', status: 'Production Ready', generic_name: 'Sunscreen', category: 'Sunscreen', lifecycle_status: 'Production Ready', form: 'Gel', fill_size: '50g', batch_size_kg: 300, created_at: now, updated_at: now },
+      { product_name: 'EI Hydra-Boost Moisturiser', product_code: 'EI-FG-003', status: 'In Progress', generic_name: 'Moisturiser', category: 'Moisturiser', lifecycle_status: 'In Progress', form: 'Cream', fill_size: '50ml', batch_size_kg: 200, created_at: now, updated_at: now },
+      { product_name: 'EI Keratin Repair Conditioner', product_code: 'EI-FG-004', status: 'Planned', generic_name: 'Conditioner', category: 'Conditioner', lifecycle_status: 'Planned', form: 'Lotion', fill_size: '200ml', batch_size_kg: null, created_at: now, updated_at: now },
+    ]);
 
     console.log('Seeding orders...');
     const order1 = await Order.create({
@@ -620,13 +692,22 @@ async function seed() {
     console.log('Seeding Pack Materials...');
     await PackMaterial.destroy({ where: {} });
     await PackMaterial.bulkCreate([
-      { code: 'EI-PM-BOX-001', description: 'Sunscreen 50g Monocarton', type: 'Monocarton', level: 'Secondary', group: null, material: '300 GSM Duplex Board', size_spec: '52x52x35mm', price_per_pc: 2.8, moq: 5000, lead_time_days: 21, print_status: 'Approved', products: ['PR-002'], created_at: now, updated_at: now },
-      { code: 'EI-PM-BOX-002', description: 'Facewash 150ml Monocarton', type: 'Monocarton', level: 'Secondary', group: null, material: '300 GSM Duplex Board', size_spec: '52x52x168mm', price_per_pc: 3.2, moq: 5000, lead_time_days: 21, print_status: 'Approved', products: ['PR-002'], created_at: now, updated_at: now },
-      { code: 'EI-PM-BTL-001', description: '150ml Clear PET Pump Bottle', type: 'Bottle', level: 'Primary', group: 'Primary +1', material: 'PET (Food Grade)', size_spec: '150ml / 28/410', price_per_pc: 5.5, moq: 5000, lead_time_days: 21, print_status: 'Label awaited', products: ['PR-002'], created_at: now, updated_at: now },
-      { code: 'EI-PM-CAP-001', description: 'Oval Flip-Top Cap for 25mm Tube', type: 'Closure', level: 'Primary', group: null, material: 'PP White', size_spec: '25mm neck', price_per_pc: 0.65, moq: 10000, lead_time_days: 14, print_status: 'N/A', products: ['PR-002'], created_at: now, updated_at: now },
-      { code: 'EI-PM-LBL-001', description: 'Facewash Front Label 100×80mm', type: 'Label', level: 'Primary', group: 'Primary +1', material: 'BOPP Self Adhesive', size_spec: '100mm × 80mm', price_per_pc: 0.65, moq: 10000, lead_time_days: 14, print_status: 'Approved', products: ['PR-002'], created_at: now, updated_at: now },
-      { code: 'EI-PM-PMP-001', description: '24/410 Lotion Pump White', type: 'Pump', level: 'Primary', group: null, material: 'PP/PE', size_spec: '24/410 / 33mm dia', price_per_pc: 2.2, moq: 5000, lead_time_days: 14, print_status: 'N/A', products: ['PR-002'], created_at: now, updated_at: now },
-      { code: 'EI-PM-TUB-001', description: '50g Aluminium Laminated Tube', type: 'Tube', level: 'Primary', group: 'Primary +1', material: 'Aluminium/Plastic Laminate', size_spec: '50g / 82mm × 32mm', price_per_pc: 4.2, moq: 5000, lead_time_days: 21, print_status: 'Artwork approved', products: ['PR-002'], created_at: now, updated_at: now },
+      { code: 'EI-PM-BOX-001', description: 'Sunscreen 50g Monocarton', type: 'Monocarton', level: 'Secondary', group: null, material: '300 GSM Duplex Board', size_spec: '52x52x35mm', price_per_pc: 2.8, moq: 5000, lead_time_days: 21, print_status: 'Approved', products: ['EI-PR-00001'], created_at: now, updated_at: now },
+      { code: 'EI-PM-BOX-002', description: 'Facewash 150ml Monocarton', type: 'Monocarton', level: 'Secondary', group: null, material: '300 GSM Duplex Board', size_spec: '52x52x168mm', price_per_pc: 3.2, moq: 5000, lead_time_days: 21, print_status: 'Approved', products: ['EI-PR-00002'], created_at: now, updated_at: now },
+      { code: 'EI-PM-BTL-001', description: '150ml Clear PET Pump Bottle', type: 'Bottle', level: 'Primary', group: 'Primary +1', material: 'PET (Food Grade)', size_spec: '150ml / 28/410', price_per_pc: 5.5, moq: 5000, lead_time_days: 21, print_status: 'Label awaited', products: ['EI-PR-00002'], created_at: now, updated_at: now },
+      { code: 'EI-PM-CAP-001', description: 'Oval Flip-Top Cap for 25mm Tube', type: 'Closure', level: 'Primary', group: null, material: 'PP White', size_spec: '25mm neck', price_per_pc: 0.65, moq: 10000, lead_time_days: 14, print_status: 'N/A', products: ['EI-PR-00001'], created_at: now, updated_at: now },
+      { code: 'EI-PM-LBL-001', description: 'Facewash Front Label 100×80mm', type: 'Label', level: 'Primary', group: 'Primary +1', material: 'BOPP Self Adhesive', size_spec: '100mm × 80mm', price_per_pc: 0.65, moq: 10000, lead_time_days: 14, print_status: 'Approved', products: ['EI-PR-00002'], created_at: now, updated_at: now },
+      { code: 'EI-PM-PMP-001', description: '24/410 Lotion Pump White', type: 'Pump', level: 'Primary', group: null, material: 'PP/PE', size_spec: '24/410 / 33mm dia', price_per_pc: 2.2, moq: 5000, lead_time_days: 14, print_status: 'N/A', products: ['EI-PR-00002'], created_at: now, updated_at: now },
+      { code: 'EI-PM-TUB-001', description: '50g Aluminium Laminated Tube', type: 'Tube', level: 'Primary', group: 'Primary +1', material: 'Aluminium/Plastic Laminate', size_spec: '50g / 82mm × 32mm', price_per_pc: 4.2, moq: 5000, lead_time_days: 21, print_status: 'Artwork approved', products: ['EI-PR-00001'], created_at: now, updated_at: now },
+      // PMs from HTML (sunscreen / moisturiser / conditioner)
+      { code: 'EI-PM-TUB-002', description: '50g Laminated Tube White Matte', type: 'Tube', level: 'Primary', group: null, material: 'Laminate', size_spec: '50g', price_per_pc: 4.5, moq: 5000, lead_time_days: 21, print_status: 'Approved', products: ['EI-PR-00001'], created_at: now, updated_at: now },
+      { code: 'EI-PM-JAR-001', description: '50ml Acrylic PMMA Jar + Lid White', type: 'Jar', level: 'Primary', group: null, material: 'PMMA', size_spec: '50ml', price_per_pc: 8, moq: 3000, lead_time_days: 28, print_status: 'N/A', products: [], created_at: now, updated_at: now },
+      { code: 'EI-PM-BOX-003', description: 'Moisturiser 50ml Monocarton Premium', type: 'Monocarton', level: 'Secondary', group: null, material: '300 GSM Duplex', size_spec: '52x52x60mm', price_per_pc: 3, moq: 5000, lead_time_days: 21, print_status: 'Approved', products: [], created_at: now, updated_at: now },
+      { code: 'EI-PM-LBL-002', description: 'Product Insert / IFU Leaflet A5', type: 'Label', level: 'Primary', group: null, material: 'Paper', size_spec: 'A5', price_per_pc: 0.5, moq: 10000, lead_time_days: 14, print_status: 'Approved', products: [], created_at: now, updated_at: now },
+      { code: 'EI-PM-BTL-002', description: '200ml HDPE Bottle White Oval', type: 'Bottle', level: 'Primary', group: null, material: 'HDPE', size_spec: '200ml', price_per_pc: 6, moq: 5000, lead_time_days: 21, print_status: 'N/A', products: [], created_at: now, updated_at: now },
+      { code: 'EI-PM-CAP-002', description: '28/410 Disc Cap White', type: 'Closure', level: 'Primary', group: null, material: 'PP', size_spec: '28/410', price_per_pc: 1.2, moq: 10000, lead_time_days: 14, print_status: 'N/A', products: [], created_at: now, updated_at: now },
+      { code: 'EI-PM-LBL-003', description: 'Conditioner 200ml Wrap Label 200×130mm', type: 'Label', level: 'Primary', group: null, material: 'BOPP', size_spec: '200×130mm', price_per_pc: 0.8, moq: 10000, lead_time_days: 14, print_status: 'Approved', products: [], created_at: now, updated_at: now },
+      { code: 'EI-PM-BOX-004', description: '24-unit Shipper Master Carton', type: 'Shipper', level: 'Tertiary', group: null, material: 'Kraft', size_spec: 'Master', price_per_pc: 25, moq: 500, lead_time_days: 14, print_status: 'Approved', products: [], created_at: now, updated_at: now },
     ]);
 
     console.log('Seeding Raw Materials...');
@@ -650,11 +731,32 @@ async function seed() {
       { code: 'EI-RM-PRES-001', name: 'Phenoxyethanol', inci: 'Phenoxyethanol', category: 'PRESERVATIVE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 520, gst: 18, shelf: '36M', status: 'Active', products: ['PR-001', 'PR-002'], group: 'Primary', created_at: now, updated_at: now },
       { code: 'EI-RM-SURF-001', name: 'SLES 70%', inci: 'Sodium Laureth Sulfate', category: 'SURFACTANT', rm_type: 'Liquid', uom: 'KG', price_per_kg: 125, gst: 18, shelf: '24M', status: 'Active', products: ['PR-002'], group: 'Primary +1', created_at: now, updated_at: now },
       { code: 'EI-RM-SURF-002', name: 'Cocamidopropyl Betaine', inci: 'Cocamidopropyl Betaine', category: 'SURFACTANT', rm_type: 'Liquid', uom: 'KG', price_per_kg: 190, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001'], group: 'Alt +1', created_at: now, updated_at: now },
-      { code: 'EI-RM-SURF-003', name: 'Decyl Glucoside', inci: 'Decyl Glucoside', category: 'SURFACTANT', rm_type: 'Liquid', uom: 'KG', price_per_kg: 240, gst: 18, shelf: '18M', status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-SURF-003', name: 'Sodium Cocoyl Isethionate', inci: 'Sodium Cocoyl Isethionate', category: 'SURFACTANT', rm_type: 'Solid', uom: 'KG', price_per_kg: 240, gst: 18, shelf: '18M', status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
       { code: 'EI-RM-UVF-001', name: 'Ethylhexyl Methoxycinnamate', inci: 'Ethylhexyl Methoxycinnamate', category: 'UV FILTER', rm_type: 'Liquid', uom: 'KG', price_per_kg: 1200, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001'], group: 'Primary', created_at: now, updated_at: now },
       { code: 'EI-RM-UVF-002', name: 'Titanium Dioxide (nano)', inci: 'Titanium Dioxide', category: 'UV FILTER', rm_type: 'Solid', uom: 'KG', price_per_kg: 650, gst: 12, shelf: '36M', status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
       { code: 'EI-RM-UVF-003', name: 'Zinc Oxide (nano)', inci: 'Zinc Oxide', category: 'UV FILTER', rm_type: 'Solid', uom: 'KG', price_per_kg: 720, gst: 12, shelf: '36M', status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
       { code: 'EI-RM-UVF-004', name: 'Avobenzone', inci: 'Butyl Methoxydibenzoylmethane', category: 'UV FILTER', rm_type: 'Solid', uom: 'KG', price_per_kg: 980, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
+      // RMs from HTML PRs Extracted (sunscreen / moisturiser / conditioner)
+      { code: 'EI-RM-UVF-005', name: 'Homosalate', inci: 'Homosalate', category: 'UV FILTER', rm_type: 'Liquid', uom: 'KG', price_per_kg: 520, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-UVF-006', name: 'Octocrylene', inci: 'Octocrylene', category: 'UV FILTER', rm_type: 'Liquid', uom: 'KG', price_per_kg: 590, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-HUM-001', name: 'Butylene Glycol', inci: 'Butylene Glycol', category: 'HUMECTANT', rm_type: 'Liquid', uom: 'KG', price_per_kg: 180, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-EMUL-003', name: 'Stearic Acid', inci: 'Stearic Acid', category: 'EMULSIFIER', rm_type: 'Solid', uom: 'KG', price_per_kg: 120, gst: 12, shelf: '36M', status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-EMUL-004', name: 'PEG-100 Stearate/Glyceryl Stearate', inci: 'PEG-100 Stearate', category: 'EMULSIFIER', rm_type: 'Solid', uom: 'KG', price_per_kg: 380, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-SOLV-001', name: 'Isohexadecane', inci: 'Isohexadecane', category: 'SOLVENT', rm_type: 'Liquid', uom: 'KG', price_per_kg: 220, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-SOLV-002', name: 'Cyclopentasiloxane', inci: 'Cyclopentasiloxane', category: 'SOLVENT', rm_type: 'Liquid', uom: 'KG', price_per_kg: 450, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-PRES-002', name: 'Ethylhexylglycerin', inci: 'Ethylhexylglycerin', category: 'PRESERVATIVE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 1200, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-SILI-001', name: 'Dimethicone', inci: 'Dimethicone', category: 'SILICONE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 680, gst: 18, shelf: '24M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-ACT-007', name: 'Sodium Hyaluronate', inci: 'Sodium Hyaluronate', category: 'ACTIVE', rm_type: 'Solid', uom: 'KG', price_per_kg: 8500, gst: 12, shelf: '24M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-ACT-008', name: 'Ceramide NP', inci: 'Ceramide NP', category: 'ACTIVE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 12000, gst: 12, shelf: '18M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-ACT-009', name: 'Panthenol', inci: 'Panthenol', category: 'ACTIVE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 420, gst: 12, shelf: '24M', status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-ACT-010', name: 'Centella Asiatica Extract', inci: 'Centella Asiatica Extract', category: 'BOTANICAL', rm_type: 'Liquid', uom: 'KG', price_per_kg: 1800, gst: 5, shelf: '18M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-COND-001', name: 'Cetrimonium Chloride', inci: 'Cetrimonium Chloride', category: 'CONDITIONER', rm_type: 'Solid', uom: 'KG', price_per_kg: 320, gst: 18, shelf: '24M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-COND-002', name: 'Guar Hydroxypropyltrimonium Chloride', inci: 'Guar Hydroxypropyltrimonium Chloride', category: 'CONDITIONER', rm_type: 'Solid', uom: 'KG', price_per_kg: 580, gst: 18, shelf: '24M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-COND-003', name: 'Behentrimonium Methosulfate/Cetearyl', inci: 'Behentrimonium Methosulfate', category: 'CONDITIONER', rm_type: 'Solid', uom: 'KG', price_per_kg: 420, gst: 18, shelf: '24M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-OIL-001', name: 'Cocos Nucifera Oil', inci: 'Cocos Nucifera Oil', category: 'OIL', rm_type: 'Liquid', uom: 'KG', price_per_kg: 180, gst: 5, shelf: '12M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-OIL-002', name: 'Argania Spinosa Kernel Oil', inci: 'Argania Spinosa Kernel Oil', category: 'OIL', rm_type: 'Liquid', uom: 'KG', price_per_kg: 3200, gst: 5, shelf: '12M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-SILI-002', name: 'Amodimethicone', inci: 'Amodimethicone', category: 'SILICONE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 920, gst: 18, shelf: '24M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-ACT-011', name: 'Hydrolyzed Keratin', inci: 'Hydrolyzed Keratin', category: 'ACTIVE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 1200, gst: 12, shelf: '18M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
     ]);
 
     const bomRmLines1 = [
@@ -692,6 +794,82 @@ async function seed() {
         pm_lines: [{ code: 'EI-PM-BTL-001', name: '150ml PET Pump Bottle', cat: 'Primary', qty: 1, uom: 'PCS', notes: '' }],
         created_at: now, updated_at: now,
       },
+      // PR product BOMs (linked to products table for products-master panel)
+      {
+        bom_code: 'PR-BOM-001', name: 'EI Sunscreen Lotion SPF50+ PA++++', product_id: productA.product_id,
+        type: 'FG', status: 'Approved', version: 'v2.0', ph_range: '6.0-7.0', yield_pct: '98.5',
+        rm_lines: [
+          { phase: 'Phase A', inci_name: 'Aqua', rm_code: 'EI-RM-BASE-001', pct_w_w: 52.30, uom: 'kg' },
+          { phase: 'Phase A', inci_name: 'Glycerin', rm_code: 'EI-RM-ACT-001', pct_w_w: 3.00, uom: 'kg' },
+          { phase: 'Phase A', inci_name: 'Carbomer 980', rm_code: 'EI-RM-POLY-001', pct_w_w: 0.30, uom: 'kg' },
+          { phase: 'Phase B (Oil)', inci_name: 'Homosalate', rm_code: 'EI-RM-UVF-001', pct_w_w: 10.00, uom: 'kg' },
+          { phase: 'Phase B (Oil)', inci_name: 'Ethylhexyl Methoxycinnamate', rm_code: 'EI-RM-UVF-002', pct_w_w: 7.50, uom: 'kg' },
+          { phase: 'Phase B (Oil)', inci_name: 'Octocrylene', rm_code: 'EI-RM-UVF-003', pct_w_w: 8.00, uom: 'kg' },
+          { phase: 'Phase B (Oil)', inci_name: 'Butyl Methoxydibenzoylmethane', rm_code: 'EI-RM-UVF-004', pct_w_w: 3.00, uom: 'kg' },
+          { phase: 'Phase B (Oil)', inci_name: 'Cetearyl Alcohol', rm_code: 'EI-RM-EMUL-001', pct_w_w: 3.00, uom: 'kg' },
+          { phase: 'Phase B (Oil)', inci_name: 'Ceteareth-20', rm_code: 'EI-RM-EMUL-002', pct_w_w: 2.00, uom: 'kg' },
+          { phase: 'Phase B (Oil)', inci_name: 'Tocopheryl Acetate', rm_code: 'EI-RM-ACT-005', pct_w_w: 0.50, uom: 'kg' },
+          { phase: 'Phase C (Active)', inci_name: 'Niacinamide', rm_code: 'EI-RM-ACT-002', pct_w_w: 2.00, uom: 'kg' },
+          { phase: 'Phase C (Active)', inci_name: 'Ascorbyl Glucoside', rm_code: 'EI-RM-ACT-003', pct_w_w: 1.00, uom: 'kg' },
+          { phase: 'Phase C (Active)', inci_name: 'Allantoin', rm_code: 'EI-RM-ACT-004', pct_w_w: 0.20, uom: 'kg' },
+          { phase: 'Phase C (Active)', inci_name: 'Parfum', rm_code: 'EI-RM-FRAG-001', pct_w_w: 0.30, uom: 'kg' },
+          { phase: 'Phase D (Pres)', inci_name: 'Phenoxyethanol', rm_code: 'EI-RM-PRES-001', pct_w_w: 0.80, uom: 'kg' },
+          { phase: 'Phase E (Adjust)', inci_name: 'Sodium Hydroxide', rm_code: 'EI-RM-EXCIP-001', pct_w_w: 0.40, uom: 'kg' },
+        ],
+        pm_lines: [
+          { pm_code: 'EI-PM-TUB-001', description: '50g Aluminium Laminated Tube', pack_type: 'Primary', qty_per_unit: 1, uom: 'pc/unit' },
+          { pm_code: 'EI-PM-CAP-001', description: 'Oval Flip-Top Cap', pack_type: 'Primary', qty_per_unit: 1, uom: 'pc/unit' },
+          { pm_code: 'EI-PM-BOX-001', description: 'Sunscreen 50g Monocarton', pack_type: 'Secondary', qty_per_unit: 1, uom: 'pc/unit' },
+        ],
+        process_steps: [
+          { step_number: 1, description: 'Weigh all raw materials per BOM; verify COA, pass QC release check', duration_minutes: 45 },
+          { step_number: 2, description: 'Phase A: Charge Purified Water in main vessel; heat to 70-75C with slow agitation 100 RPM', duration_minutes: 20 },
+          { step_number: 3, description: 'Phase A: Disperse Carbomer 980 in water; mix at 200 RPM until uniform', duration_minutes: 10 },
+          { step_number: 4, description: 'Phase B: Blend all UV filters + emulsifiers + Tocopherol; heat to 75C', duration_minutes: 25 },
+          { step_number: 5, description: 'Emulsification: Add Phase B to Phase A at 75C with homogeniser at 3000 RPM', duration_minutes: 15 },
+          { step_number: 6, description: 'Cool to 40C with slow agitation; add Phase C actives (Niacinamide, Ascorbyl Glucoside, Allantoin, Fragrance)', duration_minutes: 30 },
+          { step_number: 7, description: 'Add Phase D Phenoxyethanol; neutralise with NaOH to pH 6.0-7.0; adjust viscosity', duration_minutes: 20 },
+          { step_number: 8, description: 'QC check: pH, viscosity, appearance, odour, SPF quick test; fill into tube after PASS', duration_minutes: 45 },
+        ],
+        stability_summary: 'Accelerated 6M: PASS - Long-term: Ongoing',
+        created_at: now, updated_at: now,
+      },
+      {
+        bom_code: 'PR-BOM-002', name: 'EI Gentle Foaming Facewash 150ml', product_id: productB.product_id,
+        type: 'FG', status: 'Approved', version: 'v2.0', ph_range: '5.5-6.5', yield_pct: '98.5',
+        rm_lines: [
+          { phase: 'Phase A', inci_name: 'Aqua', rm_code: 'EI-RM-BASE-001', pct_w_w: 68.70, uom: 'kg' },
+          { phase: 'Phase A', inci_name: 'Sodium Laureth Sulfate', rm_code: 'EI-RM-SURF-001', pct_w_w: 12.00, uom: 'kg' },
+          { phase: 'Phase A', inci_name: 'Cocamidopropyl Betaine', rm_code: 'EI-RM-SURF-002', pct_w_w: 5.00, uom: 'kg' },
+          { phase: 'Phase A', inci_name: 'Sodium Cocoyl Isethionate', rm_code: 'EI-RM-SURF-003', pct_w_w: 4.00, uom: 'kg' },
+          { phase: 'Phase A', inci_name: 'Glycerin', rm_code: 'EI-RM-ACT-001', pct_w_w: 3.00, uom: 'kg' },
+          { phase: 'Phase A', inci_name: 'Carbomer (Carbopol 940)', rm_code: 'EI-RM-POLY-002', pct_w_w: 0.30, uom: 'kg' },
+          { phase: 'Phase C (Active)', inci_name: 'Aloe Barbadensis Leaf Juice', rm_code: 'EI-RM-ACT-006', pct_w_w: 2.00, uom: 'kg' },
+          { phase: 'Phase C (Active)', inci_name: 'Niacinamide', rm_code: 'EI-RM-ACT-002', pct_w_w: 2.00, uom: 'kg' },
+          { phase: 'Phase D (Pres)', inci_name: 'Phenoxyethanol', rm_code: 'EI-RM-PRES-001', pct_w_w: 0.80, uom: 'kg' },
+          { phase: 'Phase E (Frag)', inci_name: 'Parfum', rm_code: 'EI-RM-FRAG-002', pct_w_w: 0.50, uom: 'kg' },
+          { phase: 'Phase F (Adjust)', inci_name: 'Citric Acid', rm_code: 'EI-RM-EXCIP-002', pct_w_w: 0.20, uom: 'kg' },
+          { phase: 'Phase F (Adjust)', inci_name: 'Sodium Hydroxide', rm_code: 'EI-RM-EXCIP-001', pct_w_w: 0.50, uom: 'kg' },
+        ],
+        pm_lines: [
+          { pm_code: 'EI-PM-BTL-001', description: '150ml Clear PET Pump Bottle', pack_type: 'Primary', qty_per_unit: 1, uom: 'pc/unit' },
+          { pm_code: 'EI-PM-PMP-001', description: '24/410 Lotion Pump White', pack_type: 'Primary', qty_per_unit: 1, uom: 'pc/unit' },
+          { pm_code: 'EI-PM-LBL-001', description: 'Facewash Front Label 100x80mm', pack_type: 'Primary (Label)', qty_per_unit: 1, uom: 'pc/unit' },
+          { pm_code: 'EI-PM-BOX-002', description: 'Facewash 150ml Monocarton', pack_type: 'Secondary', qty_per_unit: 1, uom: 'pc/unit' },
+        ],
+        process_steps: [
+          { step_number: 1, description: 'Weigh all raw materials per BOM; verify COA, QC release check', duration_minutes: 30 },
+          { step_number: 2, description: 'Phase A: Charge RO Water in main vessel; heat to 70-75C at 150 RPM', duration_minutes: 20 },
+          { step_number: 3, description: 'Add SLES 70%, CAPB 35%, SCI slowly with gentle agitation at 200 RPM; mix uniform', duration_minutes: 15 },
+          { step_number: 4, description: 'Disperse Carbopol 940 separately in small water portion; add to main vessel', duration_minutes: 10 },
+          { step_number: 5, description: 'Add Glycerin; cool to 40C; add Phase C actives (Aloe Vera, Niacinamide)', duration_minutes: 25 },
+          { step_number: 6, description: 'Add Phase D Phenoxyethanol; add Phase E Fragrance; mix 5 min', duration_minutes: 10 },
+          { step_number: 7, description: 'Neutralise with NaOH to pH 5.5-6.5; adjust with Citric Acid if over-alkaline', duration_minutes: 20 },
+          { step_number: 8, description: 'QC: pH, viscosity, appearance, foam test, micro sample; fill after PASS', duration_minutes: 40 },
+        ],
+        stability_summary: 'Accelerated 6M: PASS - Long-term: Ongoing',
+        created_at: now, updated_at: now,
+      },
     ]);
 
     console.log('Seeding Item Groups (RM/PM groups with member_ids from raw_materials/pack_materials)...');
@@ -712,50 +890,393 @@ async function seed() {
     ];
     await ItemGroup.bulkCreate(igSeed);
 
+    console.log('Seeding Warehouse Inventory (FK to RM/PM/PR, zone/rack/wh_stock/etc)...');
+    await WarehouseInventory.destroy({ where: {} });
+    for (const row of warehouseSeedData) {
+      if (row.type === 'RM') {
+        const rawMaterialId = rmByCode.get(row.code);
+        if (rawMaterialId) {
+          await WarehouseInventory.create({
+            item_type: 'RM',
+            raw_material_id: rawMaterialId,
+            pack_material_id: null,
+            product_id: null,
+            zone: row.zone,
+            rack: row.rack,
+            wh_stock: row.whStock,
+            wh_unit: row.whUnit || 'KG',
+            ml1_stock: row.ml1Stock,
+            ml2_stock: row.ml2Stock,
+            stock_in_hand: row.stockInHand,
+            reserved: row.reserved,
+            in_transit: row.inTransit,
+            reorder_pt: row.reorderPt,
+            avg_mo: row.avgMo,
+            qc_status: row.status || 'In Stock',
+            created_at: now,
+            updated_at: now,
+          });
+        }
+      } else if (row.type === 'PM') {
+        const packMaterialId = pmByCode.get(row.code);
+        if (packMaterialId) {
+          await WarehouseInventory.create({
+            item_type: 'PM',
+            raw_material_id: null,
+            pack_material_id: packMaterialId,
+            product_id: null,
+            zone: row.zone,
+            rack: row.rack,
+            wh_stock: row.whStock,
+            wh_unit: row.whUnit || 'PCS',
+            ml1_stock: row.ml1Stock,
+            ml2_stock: row.ml2Stock,
+            stock_in_hand: row.stockInHand,
+            reserved: row.reserved,
+            in_transit: row.inTransit,
+            reorder_pt: row.reorderPt,
+            avg_mo: row.avgMo,
+            qc_status: row.status || 'In Stock',
+            created_at: now,
+            updated_at: now,
+          });
+        }
+      }
+    }
+    // Ensure every RM and PM has a warehouse_inventory row (for Items Involved WH BATCHES / backend links)
+    const existingWhRm = await WarehouseInventory.findAll({ where: { item_type: 'RM' }, attributes: ['raw_material_id'] });
+    const existingWhPm = await WarehouseInventory.findAll({ where: { item_type: 'PM' }, attributes: ['pack_material_id'] });
+    const rmIdsWithWh = new Set(existingWhRm.map((r) => r.raw_material_id).filter(Boolean));
+    const pmIdsWithWh = new Set(existingWhPm.map((p) => p.pack_material_id).filter(Boolean));
+    const allRms = await RawMaterial.findAll({ attributes: ['id'] });
+    const allPms = await PackMaterial.findAll({ attributes: ['id'] });
+    for (const r of allRms) {
+      if (!rmIdsWithWh.has(r.id)) {
+        await WarehouseInventory.create({
+          item_type: 'RM',
+          raw_material_id: r.id,
+          pack_material_id: null,
+          product_id: null,
+          zone: 'Zone A',
+          rack: 'A1-L1-S1',
+          wh_stock: 0,
+          wh_unit: 'KG',
+          ml1_stock: 0,
+          ml2_stock: 0,
+          stock_in_hand: 0,
+          reserved: 0,
+          in_transit: 0,
+          reorder_pt: 0,
+          avg_mo: 0,
+          qc_status: 'In Stock',
+          created_at: now,
+          updated_at: now,
+        });
+      }
+    }
+    for (const p of allPms) {
+      if (!pmIdsWithWh.has(p.id)) {
+        await WarehouseInventory.create({
+          item_type: 'PM',
+          raw_material_id: null,
+          pack_material_id: p.id,
+          product_id: null,
+          zone: 'Zone C',
+          rack: 'C1-L1-S1',
+          wh_stock: 0,
+          wh_unit: 'PCS',
+          ml1_stock: 0,
+          ml2_stock: 0,
+          stock_in_hand: 0,
+          reserved: 0,
+          in_transit: 0,
+          reorder_pt: 0,
+          avg_mo: 0,
+          qc_status: 'In Stock',
+          created_at: now,
+          updated_at: now,
+        });
+      }
+    }
+    // One warehouse row per product (PR)
+    const productsForWarehouse = await Product.findAll({ attributes: ['product_id', 'product_code'] });
+    for (const p of productsForWarehouse) {
+      await WarehouseInventory.create({
+        item_type: 'PR',
+        raw_material_id: null,
+        pack_material_id: null,
+        product_id: p.product_id,
+        zone: 'Zone F',
+        rack: 'F1-L1-S1',
+        wh_stock: 500,
+        wh_unit: 'PCS',
+        ml1_stock: 100,
+        ml2_stock: 50,
+        stock_in_hand: 650,
+        reserved: 200,
+        in_transit: 300,
+        reorder_pt: 400,
+        avg_mo: 350,
+        qc_status: 'In Stock',
+        created_at: now,
+        updated_at: now,
+      });
+    }
+
+    // Assign batch_number (WH-2026-RM-001, WH-2026-PM-001, etc.) and expiry_date to each warehouse row
+    const year = 2026;
+    const whRowsToLabel = await WarehouseInventory.findAll({
+      order: [['item_type', 'ASC'], ['raw_material_id', 'ASC'], ['pack_material_id', 'ASC'], ['product_id', 'ASC']],
+      attributes: ['id', 'item_type', 'raw_material_id', 'pack_material_id', 'product_id'],
+    });
+    const rmShelfById = new Map(
+      (await RawMaterial.findAll({ attributes: ['id', 'shelf'] })).map((r) => [r.id, r.shelf || '24M'])
+    );
+    const shelfMonths = (s) => {
+      if (!s || typeof s !== 'string') return 24;
+      const m = parseInt(s.replace(/\D/g, ''), 10);
+      return Number.isNaN(m) ? 24 : m;
+    };
+    const addMonths = (date, months) => {
+      const d = new Date(date);
+      d.setMonth(d.getMonth() + months);
+      return d.toISOString().slice(0, 10);
+    };
+    let rmSeq = 0;
+    let pmSeq = 0;
+    let prSeq = 0;
+    for (const w of whRowsToLabel) {
+      let batchNumber = null;
+      let expiryDate = null;
+      if (w.item_type === 'RM' && w.raw_material_id) {
+        rmSeq += 1;
+        batchNumber = `WH-${year}-RM-${String(rmSeq).padStart(3, '0')}`;
+        const months = shelfMonths(rmShelfById.get(w.raw_material_id));
+        expiryDate = addMonths(now, months);
+      } else if (w.item_type === 'PM' && w.pack_material_id) {
+        pmSeq += 1;
+        batchNumber = `WH-${year}-PM-${String(pmSeq).padStart(3, '0')}`;
+        expiryDate = addMonths(now, 24);
+      } else if (w.item_type === 'PR' && w.product_id) {
+        prSeq += 1;
+        batchNumber = `WH-${year}-PR-${String(prSeq).padStart(3, '0')}`;
+        expiryDate = addMonths(now, 36);
+      }
+      if (batchNumber) await WarehouseInventory.update({ batch_number: batchNumber, expiry_date: expiryDate }, { where: { id: w.id } });
+    }
+
+    console.log('Seeding Warehouse Locations & Racks...');
+    await WarehouseRackItem.destroy({ where: {} });
+    await WarehouseRack.destroy({ where: {} });
+    await WarehouseLocation.destroy({ where: {} });
+
+    const allWhInv = await WarehouseInventory.findAll({ order: [['id', 'ASC']] });
+    const whInvIds = allWhInv.map((r) => r.id);
+    const productRows = await Product.findAll({ where: {}, attributes: ['product_id', 'product_code'] });
+    const prWhInv = await WarehouseInventory.findAll({ where: { item_type: 'PR' } });
+    const prCodeToId = new Map();
+    for (const w of prWhInv) {
+      const p = productRows.find((pr) => pr.product_id === w.product_id);
+      if (p && p.product_code) prCodeToId.set(p.product_code, w.id);
+    }
+    const tagToWhInvId = (tag) => {
+      const t = String(tag).trim();
+      if (t === '00001') return prCodeToId.get('EI-PR-00001');
+      if (t === '00002') return prCodeToId.get('EI-PR-00002');
+      const idx = parseInt(t, 10);
+      if (!Number.isNaN(idx) && idx >= 1 && idx <= whInvIds.length) return whInvIds[idx - 1];
+      return null;
+    };
+
+    const locationSeed = [
+      { code: 'LOC-RM', name: 'RM Store', zone_label: 'Zone A', icon: '🧪', area_sqm: 380, description: 'Ambient + Cool + Cold zones', utilisation_pct: 68 },
+      { code: 'LOC-ACT', name: 'Actives Store', zone_label: 'Zone B', icon: '⚗️', area_sqm: 120, description: 'Cool <25°C / Climate controlled', utilisation_pct: 78 },
+      { code: 'LOC-PPM', name: 'Primary Pack Store', zone_label: 'Zone C', icon: '🫙', area_sqm: 220, description: 'Ambient', utilisation_pct: 53 },
+      { code: 'LOC-LBL', name: 'Labels Store', zone_label: 'Zone D', icon: '🏷️', area_sqm: 80, description: 'Ambient humidity-controlled', utilisation_pct: 48 },
+      { code: 'LOC-SPM', name: 'Secondary Pack Store', zone_label: 'Zone E', icon: '📦', area_sqm: 280, description: 'Ambient', utilisation_pct: 47 },
+      { code: 'LOC-FG', name: 'Finished Goods Store', zone_label: 'Zone F', icon: '✅', area_sqm: 300, description: 'Cool dry <25°C', utilisation_pct: 29 },
+    ];
+    const createdLocations = await WarehouseLocation.bulkCreate(
+      locationSeed.map((l) => ({ ...l, created_at: now, updated_at: now }))
+    );
+    const locByCode = new Map(createdLocations.map((c) => [c.code, c.id]));
+
+    const rackSeed = [
+      { locCode: 'LOC-RM', code: 'A1', name: 'A1', description: 'Ambient Row 1', levels: 4, slots_total: 16, tags: ['001', '001'] },
+      { locCode: 'LOC-RM', code: 'A2', name: 'A2', description: 'Ambient Row 2', levels: 4, slots_total: 16, tags: ['001', '002', '001', '002', '002'] },
+      { locCode: 'LOC-RM', code: 'A3', name: 'A3', description: 'Ambient Row 3', levels: 4, slots_total: 16, tags: ['001', '002'] },
+      { locCode: 'LOC-RM', code: 'A4', name: 'A4', description: 'Ambient Row 4', levels: 4, slots_total: 16, tags: [] },
+      { locCode: 'LOC-RM', code: 'B1', name: 'B1', description: 'Cool Store <25°C', levels: 3, slots_total: 12, tags: ['001', '002'] },
+      { locCode: 'LOC-RM', code: 'B2', name: 'B2', description: 'Cool Store <25°C', levels: 3, slots_total: 12, tags: ['001', '001', '002'] },
+      { locCode: 'LOC-RM', code: 'C1', name: 'C1', description: 'Cold Store 2–8°C', levels: 2, slots_total: 8, tags: ['006'] },
+      { locCode: 'LOC-ACT', code: 'B1', name: 'B1', description: 'Actives UV Filters', levels: 3, slots_total: 9, tags: ['001', '002', '003', '004'] },
+      { locCode: 'LOC-ACT', code: 'B2', name: 'B2', description: 'Actives Vitamins/VC', levels: 3, slots_total: 9, tags: ['002', '003', '004', '005'] },
+      { locCode: 'LOC-PPM', code: 'C1', name: 'C1', description: 'Pack Bottles', levels: 4, slots_total: 16, tags: ['001'] },
+      { locCode: 'LOC-PPM', code: 'C2', name: 'C2', description: 'Pack Tubes/Caps', levels: 4, slots_total: 16, tags: ['001', '001'] },
+      { locCode: 'LOC-PPM', code: 'C3', name: 'C3', description: 'Pack Pumps/Closures', levels: 4, slots_total: 16, tags: ['001'] },
+      { locCode: 'LOC-PPM', code: 'C4', name: 'C4', description: 'Pack Reserve/Overflow', levels: 4, slots_total: 16, tags: [] },
+      { locCode: 'LOC-LBL', code: 'D1', name: 'D1', description: 'Labels Self-Adhesive', levels: 3, slots_total: 12, tags: ['001'] },
+      { locCode: 'LOC-LBL', code: 'D2', name: 'D2', description: 'Labels Printed Leaflets', levels: 3, slots_total: 12, tags: [] },
+      { locCode: 'LOC-SPM', code: 'E1', name: 'E1', description: 'SPM Sunscreen Cartons', levels: 4, slots_total: 16, tags: ['001'] },
+      { locCode: 'LOC-SPM', code: 'E2', name: 'E2', description: 'SPM Facewash Cartons', levels: 4, slots_total: 16, tags: ['002'] },
+      { locCode: 'LOC-SPM', code: 'E3', name: 'E3', description: 'SPM Shippers/Master', levels: 3, slots_total: 12, tags: [] },
+      { locCode: 'LOC-FG', code: 'F1', name: 'F1', description: 'FG Quarantine (Under QC)', levels: 3, slots_total: 12, tags: [] },
+      { locCode: 'LOC-FG', code: 'F2', name: 'F2', description: 'FG QC Released / Approved', levels: 4, slots_total: 16, tags: ['00001', '00002'] },
+      { locCode: 'LOC-FG', code: 'F3', name: 'F3', description: 'FG Dispatch Ready', levels: 4, slots_total: 16, tags: [] },
+    ];
+
+    const createdRacks = [];
+    for (const r of rackSeed) {
+      const locationId = locByCode.get(r.locCode);
+      if (!locationId) continue;
+      const rack = await WarehouseRack.create({
+        location_id: locationId,
+        code: r.code,
+        name: r.name,
+        description: r.description,
+        levels: r.levels,
+        slots_total: r.slots_total,
+        created_at: now,
+        updated_at: now,
+      });
+      createdRacks.push({ rack, tags: r.tags });
+    }
+
+    for (const { rack, tags } of createdRacks) {
+      const rackId = rack.id;
+      for (const tag of tags) {
+        const invId = tagToWhInvId(tag);
+        if (invId != null) {
+          await WarehouseRackItem.create({
+            rack_id: rackId,
+            warehouse_inventory_id: invId,
+            created_at: now,
+            updated_at: now,
+          });
+        }
+      }
+    }
+
+    console.log('Seeding Vendor / Client master (before Items List)...');
+    await VendorClient.destroy({ where: {} });
+    const vendorClientSeed = [
+      { entity_code: 'EI-VEN-00001', type: 'vendor', name: 'Chemspec India', email: 'orders@chemspecindia.com', phone: '+91-9876543210', location: 'Mumbai', country: 'India', city: 'Mumbai', category: 'RAW MATERIAL', status: 'active', payment_terms: 'NET 30', notes: 'Reference VD-001', rating: 4, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00002', type: 'vendor', name: 'Sigma Chemicals', email: 'sales@sigmachemicals.com', phone: '+91-9876543211', location: 'Delhi', country: 'India', city: 'Delhi', category: 'RAW MATERIAL', status: 'active', payment_terms: 'NET 30', notes: 'Reference VD-ALT-001', rating: 4, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00003', type: 'vendor', name: 'Nutreco Exports', email: 'export@nutreco.com', phone: '+91-9876543212', location: 'Chennai', country: 'India', city: 'Chennai', category: 'RAW MATERIAL', status: 'active', payment_terms: 'NET 30', notes: 'Reference VD-ALT-002', rating: 4, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00004', type: 'vendor', name: 'Packwell Industries', email: 'pack@packwell.com', phone: '+91-9876543213', location: 'Pune', country: 'India', city: 'Pune', category: 'PACKAGING', status: 'active', payment_terms: 'NET 30', notes: 'Reference VD-002', rating: 4, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00005', type: 'vendor', name: 'PackStar India', email: 'info@packstar.in', phone: '+91-9876543214', location: 'Hyderabad', country: 'India', city: 'Hyderabad', category: 'PACKAGING', status: 'active', payment_terms: 'NET 30', notes: 'Reference VD-ALT-003', rating: 4, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-CLI-00001', type: 'client', name: 'Dr. SUVIDHA GANDRA', email: '', phone: '+91-7702693939', location: 'TS', country: 'India', city: '', category: 'BUSINESS', status: 'active', payment_terms: '60', notes: '', rating: 4, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-CLI-00002', type: 'client', name: 'SCULPT PLASTIC SURGERY HYDERABAD LLP', email: '', phone: '+91-9700222661', location: 'Telangana', country: 'India', city: 'Hyderabad', category: 'BUSINESS', status: 'active', payment_terms: '0', notes: '', rating: 4, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
+    ];
+    await VendorClient.bulkCreate(vendorClientSeed);
+
     console.log('Seeding Items List (vendor pricing view: RM/PM in list with rates and tiers)...');
     await ItemListTier.destroy({ where: {} });
     await ItemListVendorRate.destroy({ where: {} });
     await ItemsList.destroy({ where: {} });
+    const allRmCodes = (await RawMaterial.findAll({ attributes: ['code'], order: [['code']] })).map(r => r.code);
+    const allPmCodes = (await PackMaterial.findAll({ attributes: ['code'], order: [['code']] })).map(p => p.code);
     const itemsListSeed = [];
-    const codesFromFrontend = [
-      'EI-RM-BASE-001', 'EI-RM-UVF-001', 'EI-RM-UVF-002', 'EI-RM-UVF-003', 'EI-RM-UVF-004', 'EI-RM-EMUL-001', 'EI-RM-EMUL-002',
-      'EI-RM-ACT-001', 'EI-RM-ACT-002', 'EI-RM-ACT-003', 'EI-PM-TUB-001', 'EI-PM-BTL-001', 'EI-PM-LBL-001',
-    ];
-    for (const code of codesFromFrontend) {
+    for (const code of allRmCodes) {
       const rmId = rmByCode.get(code);
-      const pmId = pmByCode.get(code);
       if (rmId) itemsListSeed.push({ type: 'RM', raw_material_id: rmId, pack_material_id: null, status: 'Active', created_at: now, updated_at: now });
-      else if (pmId) itemsListSeed.push({ type: 'PM', raw_material_id: null, pack_material_id: pmId, status: 'Active', created_at: now, updated_at: now });
+    }
+    for (const code of allPmCodes) {
+      const pmId = pmByCode.get(code);
+      if (pmId) itemsListSeed.push({ type: 'PM', raw_material_id: null, pack_material_id: pmId, status: 'Active', created_at: now, updated_at: now });
     }
     await ItemsList.bulkCreate(itemsListSeed);
     const vendors = await VendorClient.findAll({ where: { type: 'vendor' }, order: [['id']], attributes: ['id'] });
     const v1 = vendors[0]?.id;
     const v2 = vendors[1]?.id;
+    const v3 = vendors[2]?.id;
+    const v4 = vendors[3]?.id;
+    const rmIdToCode = new Map((await RawMaterial.findAll({ attributes: ['id', 'code'] })).map(r => [r.id, r.code]));
+    const pmIdToCode = new Map((await PackMaterial.findAll({ attributes: ['id', 'code'] })).map(p => [p.id, p.code]));
     const itemsListRows = await ItemsList.findAll({ order: [['id']] });
-    const firstRm = itemsListRows.find(r => r.type === 'RM');
-    const secondRm = itemsListRows.find((r, i) => r.type === 'RM' && i > 0);
-    if (firstRm && v1) {
-      const rate1 = await ItemListVendorRate.create({ items_list_id: firstRm.id, vendor_id: v1, default_rate: 1200, default_moq: 10, currency: 'INR', status: 'active', created_at: now, updated_at: now });
-      await ItemListTier.bulkCreate([
-        { item_list_vendor_rate_id: rate1.id, moq_min: 1, moq_max: 99, price_per_unit: 1250, created_at: now, updated_at: now },
-        { item_list_vendor_rate_id: rate1.id, moq_min: 100, moq_max: 499, price_per_unit: 1200, created_at: now, updated_at: now },
-        { item_list_vendor_rate_id: rate1.id, moq_min: 500, moq_max: null, price_per_unit: 1150, created_at: now, updated_at: now },
-      ]);
+    const ilByCode = new Map();
+    itemsListRows.forEach((r) => {
+      const code = r.raw_material_id ? rmIdToCode.get(r.raw_material_id) : (r.pack_material_id ? pmIdToCode.get(r.pack_material_id) : null);
+      if (code) ilByCode.set(code, r);
+    });
+    const getIl = (code) => ilByCode.get(code);
+    const validTill = '2026-03-31';
+    const validTill2 = '2026-06-30';
+    if (v1) {
+      const ilUVF1 = getIl('EI-RM-UVF-001');
+      if (ilUVF1) {
+        const rate = await ItemListVendorRate.create({ items_list_id: ilUVF1.id, vendor_id: v1, default_rate: 520, default_moq: 1, currency: 'INR', status: 'active', created_at: now, updated_at: now });
+        await ItemListTier.bulkCreate([
+          { item_list_vendor_rate_id: rate.id, moq_min: 1, moq_max: null, price_per_unit: 520, valid_till: validTill, note: 'List price', created_at: now, updated_at: now },
+          { item_list_vendor_rate_id: rate.id, moq_min: 25, moq_max: null, price_per_unit: 495, valid_till: validTill, note: 'Standard order', created_at: now, updated_at: now },
+          { item_list_vendor_rate_id: rate.id, moq_min: 50, moq_max: null, price_per_unit: 475, valid_till: validTill, note: 'Bulk order', created_at: now, updated_at: now },
+          { item_list_vendor_rate_id: rate.id, moq_min: 100, moq_max: null, price_per_unit: 455, valid_till: validTill, note: 'Contract price', created_at: now, updated_at: now },
+        ]);
+      }
+      if (v2) {
+        const ilUVF1Alt = getIl('EI-RM-UVF-001');
+        if (ilUVF1Alt) {
+          const rate2 = await ItemListVendorRate.create({ items_list_id: ilUVF1Alt.id, vendor_id: v2, default_rate: 510, default_moq: 25, currency: 'INR', status: 'active', created_at: now, updated_at: now });
+          await ItemListTier.bulkCreate([
+            { item_list_vendor_rate_id: rate2.id, moq_min: 25, moq_max: null, price_per_unit: 510, valid_till: validTill2, note: 'Alternate vendor', created_at: now, updated_at: now },
+            { item_list_vendor_rate_id: rate2.id, moq_min: 50, moq_max: null, price_per_unit: 490, valid_till: validTill2, note: '', created_at: now, updated_at: now },
+          ]);
+        }
+      }
+      const ilACT2 = getIl('EI-RM-ACT-002');
+      if (ilACT2) {
+        const rate = await ItemListVendorRate.create({ items_list_id: ilACT2.id, vendor_id: v1, default_rate: 1450, default_moq: 1, currency: 'INR', status: 'active', created_at: now, updated_at: now });
+        await ItemListTier.bulkCreate([
+          { item_list_vendor_rate_id: rate.id, moq_min: 1, moq_max: null, price_per_unit: 1450, valid_till: validTill, note: 'List price', created_at: now, updated_at: now },
+          { item_list_vendor_rate_id: rate.id, moq_min: 25, moq_max: null, price_per_unit: 1380, valid_till: validTill, note: 'Standard', created_at: now, updated_at: now },
+          { item_list_vendor_rate_id: rate.id, moq_min: 50, moq_max: null, price_per_unit: 1300, valid_till: validTill, note: 'Bulk', created_at: now, updated_at: now },
+        ]);
+      }
+      if (v3 && ilACT2) {
+        const rate3 = await ItemListVendorRate.create({ items_list_id: ilACT2.id, vendor_id: v3, default_rate: 1420, default_moq: 10, currency: 'INR', status: 'active', created_at: now, updated_at: now });
+        await ItemListTier.bulkCreate([
+          { item_list_vendor_rate_id: rate3.id, moq_min: 10, moq_max: null, price_per_unit: 1420, valid_till: validTill2, note: 'Alternate vendor — China origin', created_at: now, updated_at: now },
+          { item_list_vendor_rate_id: rate3.id, moq_min: 50, moq_max: null, price_per_unit: 1350, valid_till: validTill2, note: '', created_at: now, updated_at: now },
+        ]);
+      }
+      const ilSURF1 = getIl('EI-RM-SURF-001');
+      if (ilSURF1) {
+        const rate = await ItemListVendorRate.create({ items_list_id: ilSURF1.id, vendor_id: v1, default_rate: 125, default_moq: 50, currency: 'INR', status: 'active', created_at: now, updated_at: now });
+        await ItemListTier.bulkCreate([
+          { item_list_vendor_rate_id: rate.id, moq_min: 50, moq_max: null, price_per_unit: 125, valid_till: validTill, note: 'Standard order (50KG drum)', created_at: now, updated_at: now },
+          { item_list_vendor_rate_id: rate.id, moq_min: 150, moq_max: null, price_per_unit: 115, valid_till: validTill, note: 'Full tanker lot', created_at: now, updated_at: now },
+          { item_list_vendor_rate_id: rate.id, moq_min: 500, moq_max: null, price_per_unit: 108, valid_till: validTill, note: 'Annual contract price', created_at: now, updated_at: now },
+        ]);
+      }
+      const ilACT3 = getIl('EI-RM-ACT-003');
+      if (ilACT3) {
+        const rate = await ItemListVendorRate.create({ items_list_id: ilACT3.id, vendor_id: v1, default_rate: 4800, default_moq: 1, currency: 'INR', status: 'active', created_at: now, updated_at: now });
+        await ItemListTier.bulkCreate([
+          { item_list_vendor_rate_id: rate.id, moq_min: 1, moq_max: null, price_per_unit: 4800, valid_till: validTill, note: 'List price', created_at: now, updated_at: now },
+          { item_list_vendor_rate_id: rate.id, moq_min: 5, moq_max: null, price_per_unit: 4600, valid_till: validTill, note: 'Standard', created_at: now, updated_at: now },
+          { item_list_vendor_rate_id: rate.id, moq_min: 10, moq_max: null, price_per_unit: 4400, valid_till: validTill, note: 'Bulk discount', created_at: now, updated_at: now },
+        ]);
+      }
     }
-    if (secondRm && v2) {
-      const rate2 = await ItemListVendorRate.create({ items_list_id: secondRm.id, vendor_id: v2, default_rate: 1450, default_moq: 5, currency: 'INR', status: 'active', created_at: now, updated_at: now });
-      await ItemListTier.bulkCreate([
-        { item_list_vendor_rate_id: rate2.id, moq_min: 1, moq_max: 49, price_per_unit: 1480, created_at: now, updated_at: now },
-        { item_list_vendor_rate_id: rate2.id, moq_min: 50, moq_max: null, price_per_unit: 1450, created_at: now, updated_at: now },
-      ]);
-    }
-    const firstPm = itemsListRows.find(r => r.type === 'PM');
-    if (firstPm && v1) {
-      const ratePm = await ItemListVendorRate.create({ items_list_id: firstPm.id, vendor_id: v1, default_rate: 4.2, default_moq: 5000, currency: 'INR', status: 'active', created_at: now, updated_at: now });
-      await ItemListTier.bulkCreate([
-        { item_list_vendor_rate_id: ratePm.id, moq_min: 1000, moq_max: 4999, price_per_unit: 4.5, created_at: now, updated_at: now },
-        { item_list_vendor_rate_id: ratePm.id, moq_min: 5000, moq_max: null, price_per_unit: 4.2, created_at: now, updated_at: now },
-      ]);
+    if (v4) {
+      const ilTUB = getIl('EI-PM-TUB-001');
+      if (ilTUB) {
+        const rate = await ItemListVendorRate.create({ items_list_id: ilTUB.id, vendor_id: v4, default_rate: 4.2, default_moq: 5000, currency: 'INR', status: 'active', created_at: now, updated_at: now });
+        await ItemListTier.bulkCreate([
+          { item_list_vendor_rate_id: rate.id, moq_min: 5000, moq_max: null, price_per_unit: 4.2, valid_till: validTill2, note: 'Standard MOQ', created_at: now, updated_at: now },
+          { item_list_vendor_rate_id: rate.id, moq_min: 10000, moq_max: null, price_per_unit: 3.95, valid_till: validTill2, note: '10K+ discount', created_at: now, updated_at: now },
+          { item_list_vendor_rate_id: rate.id, moq_min: 25000, moq_max: null, price_per_unit: 3.7, valid_till: validTill2, note: '25K+ bulk', created_at: now, updated_at: now },
+        ]);
+      }
+      const ilBTL = getIl('EI-PM-BTL-001');
+      if (ilBTL) {
+        const rate = await ItemListVendorRate.create({ items_list_id: ilBTL.id, vendor_id: v4, default_rate: 5.5, default_moq: 2500, currency: 'INR', status: 'active', created_at: now, updated_at: now });
+        await ItemListTier.bulkCreate([
+          { item_list_vendor_rate_id: rate.id, moq_min: 2500, moq_max: null, price_per_unit: 5.5, valid_till: validTill2, note: 'Standard MOQ', created_at: now, updated_at: now },
+          { item_list_vendor_rate_id: rate.id, moq_min: 5000, moq_max: null, price_per_unit: 5.2, valid_till: validTill2, note: '5K+ discount', created_at: now, updated_at: now },
+          { item_list_vendor_rate_id: rate.id, moq_min: 10000, moq_max: null, price_per_unit: 4.9, valid_till: validTill2, note: '10K+ bulk', created_at: now, updated_at: now },
+        ]);
+      }
     }
 
     console.log('Seeding Items Master (linked BOMs, Raw Materials, Pack Materials as arrays)...');
@@ -775,33 +1296,67 @@ async function seed() {
       { code: 'IM-PROD-003', name: 'Serum with multiple RMs', type: 'product', status: 'Active', bom_ids: b1 ? [b1] : [], raw_material_ids: [r1, r2].filter(Boolean), pack_material_ids: p1 && p2 ? [p1, p2] : (p1 ? [p1] : []), created_at: now, updated_at: now },
     ]);
 
-    console.log('Seeding Vendor / Client master...');
-    await VendorClient.destroy({ where: {} });
-    const vendorClientSeed = [
-      { entity_code: 'EI-VEN-00001', type: 'vendor', name: 'ELEMENTS BIOTECH', email: 'azad@elementsbiotech.com', phone: '+91-9004730372', location: 'Malad West', country: 'India', city: 'Mumbai Suburban', category: 'COGS-RAW MATERIAL', status: 'active', payment_terms: '—', notes: 'Wholesale business, GST registered', rating: 4, moq: '—', lead_time: '—', data: { setupType: 'VENDOR', setupPrefix: 'VEN', setupCategory: 'COGS-RAW MATERIAL', legalName: 'ELEMENTS BIOTECH', tradeName: 'ELEMENTS BIOTECH', primaryEmail: 'azad@elementsbiotech.com', primaryPhone: '+91-9004730372', billingAddress: 'Kemp Plaza, Chincholi Bunder Road, Malad West', shippingAddress: 'Kemp Plaza, Malad West', state: 'Maharashtra', country: 'India', gstin: '27AALFE7652H1Z3', documents: [], pocs: [], banks: [], vendorItems: [] }, created_at: now, updated_at: now },
-      { entity_code: 'EI-VEN-00002', type: 'vendor', name: 'NUPLANET VENTURES INDIA PRIVATE LIMITED', email: 'shadab.khan@rawble.com', phone: '+91-93191 54361', location: 'New Delhi', country: 'India', city: 'South East Delhi', category: 'RAW MATERIAL', status: 'active', payment_terms: '—', notes: 'Raw material supplier, GST registered', rating: 4, moq: '—', lead_time: '—', data: { setupType: 'VENDOR', setupPrefix: 'VEN', setupCategory: 'RAW MATERIAL', legalName: 'NUPLANET VENTURES INDIA PRIVATE LIMITED', tradeName: 'NUPLANET VENTURES', primaryEmail: 'shadab.khan@rawble.com', primaryPhone: '+91-93191 54361', billingAddress: 'B-51, Okhla Industrial Phase 1, New Delhi', state: 'Delhi', country: 'India', gstin: '07AAFCN9850K1ZX', documents: [], pocs: [], banks: [], vendorItems: [] }, created_at: now, updated_at: now },
-      { entity_code: 'EI-VEN-00003', type: 'vendor', name: 'VIVEKANANDA PRINTERS', email: 'Marketing@vivekanandaprinters.com', phone: '+91-9392083487', location: 'Hyderabad', country: 'India', city: 'Medchal Malkajgiri', category: 'PACKAGING', status: 'active', payment_terms: '—', notes: 'Secondary packaging supplier', rating: 4, moq: '—', lead_time: '—', data: { setupType: 'VENDOR', setupPrefix: 'VEN', setupCategory: 'PACKAGING', legalName: 'VIVEKANANDA PRINTERS', tradeName: 'VIVEKANANDA PRINTERS', primaryEmail: 'Marketing@vivekanandaprinters.com', primaryPhone: '+91-9392083487', billingAddress: '2-158/11, Suraram, Hyderabad', state: 'Telangana', country: 'India', gstin: '36AALFV4539Q1Z8', documents: [], pocs: [], banks: [], vendorItems: [] }, created_at: now, updated_at: now },
-      { entity_code: 'EI-CLI-00001', type: 'client', name: 'Dr. SUVIDHA GANDRA', email: '', phone: '+91-7702693939', location: 'TS', country: 'India', city: '', category: 'BUSINESS', status: 'active', payment_terms: '60', notes: 'Customer CUS-00050', rating: 4, moq: '—', lead_time: '—', data: { setupType: 'CLIENT', setupPrefix: 'CLI', setupCategory: 'BUSINESS', legalName: 'Dr. SUVIDHA GANDRA', tradeName: 'Dr. SUVIDHA GANDRA', primaryPhone: '+91-7702693939', state: 'Telangana', country: 'India', gstin: '36CPYPG1900C1Z2', documents: [], pocs: [], banks: [], productInterests: [] }, created_at: now, updated_at: now },
-      { entity_code: 'EI-CLI-00002', type: 'client', name: 'SCULPT PLASTIC SURGERY HYDERABAD LLP', email: '', phone: '+91-9700222661', location: 'Telangana', country: 'India', city: 'Hyderabad', category: 'BUSINESS', status: 'active', payment_terms: '0', notes: 'Customer CUS-00051', rating: 4, moq: '—', lead_time: '—', data: { setupType: 'CLIENT', setupPrefix: 'CLI', setupCategory: 'BUSINESS', legalName: 'SCULPT PLASTIC SURGERY HYDERABAD LLP', tradeName: 'SCULPT PLASTIC SURGERY', billingAddress: '7-1-69/1/25, Shobhanadri Apartment, Ameerpet', state: 'Telangana', country: 'India', gstin: '36AFDFS7869B1ZP', documents: [], pocs: [], banks: [], productInterests: [] }, created_at: now, updated_at: now },
-    ];
-    await VendorClient.bulkCreate(vendorClientSeed);
-
     console.log('Seeding Sales Orders and Purchase Orders...');
     await SalesOrder.destroy({ where: {} });
     await PurchaseOrder.destroy({ where: {} });
     await SalesOrder.bulkCreate([
       {
-        order_id: 'SO-00001',
-        customer_name: 'Customer 1',
+        order_id: 'SO-001',
+        customer_name: 'Glow Cosmetics Pvt Ltd',
         branch: 'Branch A',
         order_date: '2026-02-01',
         expected_shipment_date: '2026-02-15',
         reference: 'REF-SO-001',
         payment_terms: 'NET 30',
-        status: 'Submitted',
-        order_status: { orderStatus: 'processing', invoiced: 'pending', payment: 'pending', packed: 'pending', shipped: 'pending', deliveryMethod: 'road' },
-        form_data: { customerName: 'Customer 1', branch: 'Branch A', orderId: 'SO-00001', reference: 'REF-SO-001', orderDate: '2026-02-01', expectedShipmentDate: '2026-02-15', paymentTerms: 'NET 30', discount: '0', shippingCharges: '0', roundOff: '0' },
-        items: [{ itemName: 'Product A', batchNumber: 'B001', quantity: '10', rate: '100', tax: '18' }],
+        status: 'Confirmed',
+        order_status: { orderStatus: 'Confirmed', invoiced: 'pending', payment: 'pending', packed: 'pending', shipped: 'pending', deliveryMethod: 'road' },
+        form_data: { customerName: 'Glow Cosmetics Pvt Ltd', orderId: 'SO-001', orderDate: '2026-02-01', expectedShipmentDate: '2026-02-15', paymentTerms: 'NET 30' },
+        items: [{ itemName: 'EI Sunscreen Lotion SPF50+ PA++++', product_code: 'EI-PR-00001', quantity: 10000, rate: '499', tax: '18' }],
+        created_at: now,
+        updated_at: now,
+      },
+      {
+        order_id: 'SO-002',
+        customer_name: 'Glow Cosmetics Pvt Ltd',
+        branch: 'Branch A',
+        order_date: '2026-02-01',
+        expected_shipment_date: '2026-02-20',
+        reference: 'REF-SO-002',
+        payment_terms: 'NET 30',
+        status: 'In Production',
+        order_status: { orderStatus: 'In Production', invoiced: 'pending', payment: 'pending', packed: 'pending', shipped: 'pending', deliveryMethod: 'road' },
+        form_data: { customerName: 'Glow Cosmetics Pvt Ltd', orderId: 'SO-002', orderDate: '2026-02-01', expectedShipmentDate: '2026-02-20', paymentTerms: 'NET 30' },
+        items: [{ itemName: 'EI Gentle Foaming Facewash 150ml', product_code: 'EI-PR-00002', quantity: 10000, rate: '299', tax: '18' }],
+        created_at: now,
+        updated_at: now,
+      },
+      {
+        order_id: 'SO-003',
+        customer_name: 'SkinFirst Brands LLP',
+        branch: 'Branch B',
+        order_date: '2026-02-05',
+        expected_shipment_date: '2026-02-20',
+        reference: 'REF-SO-003',
+        payment_terms: 'NET 30',
+        status: 'Confirmed',
+        order_status: { orderStatus: 'Confirmed', invoiced: 'pending', payment: 'pending', packed: 'pending', shipped: 'pending', deliveryMethod: 'road' },
+        form_data: { customerName: 'SkinFirst Brands LLP', orderId: 'SO-003', orderDate: '2026-02-05', expectedShipmentDate: '2026-02-20', paymentTerms: 'NET 30' },
+        items: [{ itemName: 'EI Sunscreen Lotion SPF50+ PA++++', product_code: 'EI-PR-00001', quantity: 5000, rate: '499', tax: '18' }],
+        created_at: now,
+        updated_at: now,
+      },
+      {
+        order_id: 'SO-004',
+        customer_name: 'SkinFirst Brands LLP',
+        branch: 'Branch B',
+        order_date: '2026-02-05',
+        expected_shipment_date: '2026-02-25',
+        reference: 'REF-SO-004',
+        payment_terms: 'NET 30',
+        status: 'Planning',
+        order_status: { orderStatus: 'Planning', invoiced: 'pending', payment: 'pending', packed: 'pending', shipped: 'pending', deliveryMethod: 'road' },
+        form_data: { customerName: 'SkinFirst Brands LLP', orderId: 'SO-004', orderDate: '2026-02-05', expectedShipmentDate: '2026-02-25', paymentTerms: 'NET 30' },
+        items: [{ itemName: 'EI Gentle Foaming Facewash 150ml', product_code: 'EI-PR-00002', quantity: 5000, rate: '299', tax: '18' }],
         created_at: now,
         updated_at: now,
       },
@@ -820,6 +1375,11 @@ async function seed() {
         created_at: now,
         updated_at: now,
       },
+      // Planning PR-extracted SOs (referenced by planning_extracted) — match HTML (50,000 / 30,000 / 40,000 / 50,000 units)
+      { order_id: 'EI-SO-2026-001', customer_name: 'Planning Client A', branch: 'Branch A', order_date: '2026-02-10', expected_shipment_date: '2026-03-20', reference: 'REF-PLN-001', payment_terms: 'NET 30', status: 'Planning', order_status: { orderStatus: 'Planning', invoiced: 'pending', payment: 'pending', packed: 'pending', shipped: 'pending', deliveryMethod: 'road' }, form_data: {}, items: [{ itemName: 'EI Gentle Foaming Facewash', product_code: 'EI-FG-001', quantity: 50000, rate: '299', tax: '18' }], created_at: now, updated_at: now },
+      { order_id: 'EI-SO-2026-002', customer_name: 'Planning Client B', branch: 'Branch A', order_date: '2026-02-12', expected_shipment_date: '2026-04-05', reference: 'REF-PLN-002', payment_terms: 'NET 30', status: 'Planning', order_status: { orderStatus: 'Planning', invoiced: 'pending', payment: 'pending', packed: 'pending', shipped: 'pending', deliveryMethod: 'road' }, form_data: {}, items: [{ itemName: 'EI Invisible Sunscreen SPF50', product_code: 'EI-FG-002', quantity: 30000, rate: '399', tax: '18' }], created_at: now, updated_at: now },
+      { order_id: 'EI-SO-2026-003', customer_name: 'Planning Client C', branch: 'Branch B', order_date: '2026-02-15', expected_shipment_date: '2026-04-25', reference: 'REF-PLN-003', payment_terms: 'NET 30', status: 'Planning', order_status: { orderStatus: 'Planning', invoiced: 'pending', payment: 'pending', packed: 'pending', shipped: 'pending', deliveryMethod: 'road' }, form_data: {}, items: [{ itemName: 'EI Hydra-Boost Moisturiser', product_code: 'EI-FG-003', quantity: 40000, rate: '349', tax: '18' }], created_at: now, updated_at: now },
+      { order_id: 'EI-SO-2026-004', customer_name: 'Planning Client D', branch: 'Branch B', order_date: '2026-02-18', expected_shipment_date: '2026-05-10', reference: 'REF-PLN-004', payment_terms: 'NET 30', status: 'Planning', order_status: { orderStatus: 'Planning', invoiced: 'pending', payment: 'pending', packed: 'pending', shipped: 'pending', deliveryMethod: 'road' }, form_data: {}, items: [{ itemName: 'EI Keratin Repair Conditioner', product_code: 'EI-FG-004', quantity: 50000, rate: '279', tax: '18' }], created_at: now, updated_at: now },
     ]);
     await PurchaseOrder.bulkCreate([
       {
@@ -852,7 +1412,282 @@ async function seed() {
         created_at: now,
         updated_at: now,
       },
+      { order_id: 'EI-PO-2025-001', vendor_name: 'Chemspec India Pvt Ltd', branch: 'Branch A', order_date: '2025-11-15', expected_shipment_date: '2025-11-20', reference: 'REF-UV-001', payment_terms: 'NET 30', status: 'Submitted', order_status: {}, form_data: {}, items: [{ itemName: 'Homosalate', quantity: 60, rate: '520' }, { itemName: 'Octinoxate', quantity: 50, rate: '600' }, { itemName: 'Octocrylene', quantity: 80, rate: '590' }], created_at: now, updated_at: now },
+      { order_id: 'EI-PO-2025-002', vendor_name: 'Chemspec India', branch: 'Branch A', order_date: '2025-11-18', expected_shipment_date: '2025-11-22', reference: 'REF-SURF-002', payment_terms: 'NET 30', status: 'Submitted', order_status: {}, form_data: {}, items: [{ itemName: 'SLES 70%', quantity: 150, rate: '125' }, { itemName: 'CAPB 35%', quantity: 80, rate: '195' }, { itemName: 'SCI', quantity: 100, rate: '250' }], created_at: now, updated_at: now },
+      { order_id: 'EI-PO-2025-003', vendor_name: 'Packwell Industries', branch: 'Branch B', order_date: '2025-11-20', expected_shipment_date: '2025-11-25', reference: 'REF-PKG-003', payment_terms: 'NET 30', status: 'Submitted', order_status: {}, form_data: {}, items: [{ itemName: 'HDPE Bottles 100ml', quantity: 5000, rate: '8' }, { itemName: 'Caps & Closures', quantity: 5000, rate: '2' }, { itemName: 'Labels 100x50', quantity: 10000, rate: '1.5' }], created_at: now, updated_at: now },
+      { order_id: 'EI-PO-2025-004', vendor_name: 'Packwell Industries', branch: 'Branch B', order_date: '2025-11-22', expected_shipment_date: '2025-11-28', reference: 'REF-PKG-004', payment_terms: 'NET 30', status: 'Submitted', order_status: {}, form_data: {}, items: [{ itemName: 'PET Bottles 500ml', quantity: 2000, rate: '15' }, { itemName: 'Carton Boxes', quantity: 500, rate: '25' }], created_at: now, updated_at: now },
     ]);
+
+    // Planning PR phase: SO data lives in sales_orders; planning_extracted references it by sales_order_id (FK). Data matches HTML PRs Extracted.
+    console.log('Seeding Planning Extracted (PR extracted tab)...');
+    await PlanningExtracted.destroy({ where: {} });
+    const planSOs = await SalesOrder.findAll({ where: { order_id: ['EI-SO-2026-001', 'EI-SO-2026-002', 'EI-SO-2026-003', 'EI-SO-2026-004'] }, order: [['order_id']] });
+    const planProds = await Product.findAll({ where: { product_code: ['EI-FG-001', 'EI-FG-002', 'EI-FG-003', 'EI-FG-004'] }, order: [['product_code']] });
+    const planRmAll = await RawMaterial.findAll({ attributes: ['id', 'code', 'name', 'inci'] });
+    const planPmAll = await PackMaterial.findAll({ attributes: ['id', 'code', 'description'] });
+    const planRmById = (code) => { const r = planRmAll.find((x) => x.code === code); return r ? r.id : null; };
+    const planRmByNameOrInci = (name) => { const r = planRmAll.find((x) => x.name === name || x.inci === name); return r ? r.id : null; };
+    const planPmByCode = (code) => { const p = planPmAll.find((x) => x.code === code); return p ? p.id : null; };
+    const planPmByDesc = (desc) => { const p = planPmAll.find((x) => x.description === desc || (desc && x.description && x.description.includes(desc))); return p ? p.id : null; };
+    const rmL = (name, quantity, unit, code) => ({ raw_material_id: code ? planRmById(code) : planRmByNameOrInci(name), name, quantity, unit, percentage: 100 });
+    const pmL = (name, quantity, unit, value, code) => ({ pack_material_id: code ? planPmByCode(code) : planPmByDesc(name), name, quantity, unit, value: value || 0, percentage: 100 });
+
+    if (planSOs.length === 4 && planProds.length === 4) {
+      // Facewash — 12 RM, 4 PM (HTML); BOM confirmed, 15 batches planned
+      const facewashRm = [
+        rmL('Aqua', 5153, 'KG', 'EI-RM-BASE-001'),
+        rmL('Sodium Laureth Sulfate', 900, 'KG', 'EI-RM-SURF-001'),
+        rmL('Cocamidopropyl Betaine', 375, 'KG', 'EI-RM-SURF-002'),
+        rmL('Sodium Cocoyl Isethionate', 300, 'KG', 'EI-RM-SURF-003'),
+        rmL('Glycerin', 225, 'KG', 'EI-RM-ACT-001'),
+        rmL('Aloe Barbadensis Leaf Juice', 150, 'KG', null),
+        rmL('Niacinamide', 150, 'KG', 'EI-RM-ACT-002'),
+        rmL('Carbomer', 23, 'KG', 'EI-RM-POLY-001'),
+        rmL('Phenoxyethanol', 60, 'KG', 'EI-RM-PRES-001'),
+        rmL('Sodium Hydroxide', 38, 'KG', 'EI-RM-EXCIP-001'),
+        rmL('Citric Acid Monohydrate', 15, 'KG', 'EI-RM-EXCIP-002'),
+        rmL('Parfum', 38, 'KG', 'EI-RM-FRAG-002'),
+      ];
+      const facewashPm = [
+        pmL('150ml Transparent PET Pump Bottle', 50000, 'PCS', 1.43, 'EI-PM-BTL-001'),
+        pmL('24/410 Lotion Pump White', 50000, 'PCS', 2, 'EI-PM-PMP-001'),
+        pmL('Facewash Front Label 100×80mm', 50000, 'PCS', 1.8, 'EI-PM-LBL-001'),
+        pmL('Facewash 150ml Monocarton', 50000, 'PCS', 1.5, 'EI-PM-BOX-002'),
+      ];
+      // Sunscreen — 16 RM, 2 PM; BOM Pending
+      const sunscreenRm = [
+        rmL('Aqua', 788, 'KG', 'EI-RM-BASE-001'),
+        rmL('Glycerin', 45, 'KG', 'EI-RM-ACT-001'),
+        rmL('Butylene Glycol', 45, 'KG', 'EI-RM-HUM-001'),
+        rmL('Homosalate', 150, 'KG', 'EI-RM-UVF-005'),
+        rmL('Ethylhexyl Methoxycinnamate', 113, 'KG', 'EI-RM-UVF-001'),
+        rmL('Octocrylene', 75, 'KG', 'EI-RM-UVF-006'),
+        rmL('Butyl Methoxydibenzoylmethane', 45, 'KG', 'EI-RM-UVF-004'),
+        rmL('PEG-100 Stearate/Glyceryl Stearate', 53, 'KG', 'EI-RM-EMUL-004'),
+        rmL('Stearic Acid', 23, 'KG', 'EI-RM-EMUL-003'),
+        rmL('Isohexadecane', 38, 'KG', 'EI-RM-SOLV-001'),
+        rmL('Cyclopentasiloxane', 30, 'KG', 'EI-RM-SOLV-002'),
+        rmL('Titanium Dioxide (nano)', 30, 'KG', 'EI-RM-UVF-002'),
+        rmL('Tocopheryl Acetate', 8, 'KG', 'EI-RM-ACT-005'),
+        rmL('Niacinamide', 30, 'KG', 'EI-RM-ACT-002'),
+        rmL('Phenoxyethanol', 12, 'KG', 'EI-RM-PRES-001'),
+        rmL('Ethylhexylglycerin', 3, 'KG', 'EI-RM-PRES-002'),
+      ];
+      const sunscreenPm = [
+        pmL('50g Laminated Tube White Matte', 30000, 'PCS', 4.5, 'EI-PM-TUB-002'),
+        pmL('Sunscreen 50g Monocarton Premium', 30000, 'PCS', 2.8, 'EI-PM-BOX-001'),
+      ];
+      // Moisturiser — 17 RM, 3 PM; BOM Pending
+      const moisturiserRm = [
+        rmL('Aqua', 1260, 'KG', 'EI-RM-BASE-001'),
+        rmL('Glycerin', 100, 'KG', 'EI-RM-ACT-001'),
+        rmL('Butylene Glycol', 60, 'KG', 'EI-RM-HUM-001'),
+        rmL('Cetearyl Alcohol', 80, 'KG', 'EI-RM-EMUL-001'),
+        rmL('Ceteareth-20', 30, 'KG', 'EI-RM-EMUL-002'),
+        rmL('Dimethicone', 40, 'KG', 'EI-RM-SILI-001'),
+        rmL('Stearic Acid', 30, 'KG', 'EI-RM-EMUL-003'),
+        rmL('Niacinamide', 100, 'KG', 'EI-RM-ACT-002'),
+        rmL('Sodium Hyaluronate', 10, 'KG', 'EI-RM-ACT-007'),
+        rmL('Ceramide NP', 4, 'KG', 'EI-RM-ACT-008'),
+        rmL('Panthenol', 20, 'KG', 'EI-RM-ACT-009'),
+        rmL('Centella Asiatica Extract', 20, 'KG', 'EI-RM-ACT-010'),
+        rmL('Tocopheryl Acetate', 10, 'KG', 'EI-RM-ACT-005'),
+        rmL('Phenoxyethanol', 16, 'KG', 'EI-RM-PRES-001'),
+        rmL('Ethylhexylglycerin', 6, 'KG', 'EI-RM-PRES-002'),
+        rmL('Citric Acid Monohydrate', 4, 'KG', 'EI-RM-EXCIP-002'),
+        rmL('Parfum', 10, 'KG', 'EI-RM-FRAG-001'),
+      ];
+      const moisturiserPm = [
+        pmL('50ml Acrylic PMMA Jar + Lid White', 40000, 'PCS', 8, 'EI-PM-JAR-001'),
+        pmL('Moisturiser 50ml Monocarton Premium', 40000, 'PCS', 3, 'EI-PM-BOX-003'),
+        pmL('Product Insert / IFU Leaflet A5', 40000, 'PCS', 0.5, 'EI-PM-LBL-002'),
+      ];
+      // Conditioner — 15 RM, 4 PM; BOM Pending, 1 batch (batch size not set)
+      const conditionerRm = [
+        rmL('Aqua', 7240, 'KG', 'EI-RM-BASE-001'),
+        rmL('Cetrimonium Chloride', 300, 'KG', 'EI-RM-COND-001'),
+        rmL('Guar Hydroxypropyltrimonium Chloride', 50, 'KG', 'EI-RM-COND-002'),
+        rmL('Glycerin', 200, 'KG', 'EI-RM-ACT-001'),
+        rmL('Behentrimonium Methosulfate/Cetearyl', 600, 'KG', 'EI-RM-COND-003'),
+        rmL('Cocos Nucifera Oil', 200, 'KG', 'EI-RM-OIL-001'),
+        rmL('Argania Spinosa Kernel Oil', 100, 'KG', 'EI-RM-OIL-002'),
+        rmL('Amodimethicone', 200, 'KG', 'EI-RM-SILI-002'),
+        rmL('Hydrolyzed Keratin', 200, 'KG', 'EI-RM-ACT-011'),
+        rmL('Panthenol', 100, 'KG', 'EI-RM-ACT-009'),
+        rmL('Niacinamide', 200, 'KG', 'EI-RM-ACT-002'),
+        rmL('Tocopheryl Acetate', 50, 'KG', 'EI-RM-ACT-005'),
+        rmL('Phenoxyethanol', 80, 'KG', 'EI-RM-PRES-001'),
+        rmL('Citric Acid Monohydrate', 20, 'KG', 'EI-RM-EXCIP-002'),
+        rmL('Parfum', 80, 'KG', 'EI-RM-FRAG-002'),
+      ];
+      const conditionerPm = [
+        pmL('200ml HDPE Bottle White Oval', 50000, 'PCS', 6, 'EI-PM-BTL-002'),
+        pmL('28/410 Disc Cap White', 50000, 'PCS', 1.2, 'EI-PM-CAP-002'),
+        pmL('Conditioner 200ml Wrap Label 200×130mm', 50000, 'PCS', 0.8, 'EI-PM-LBL-003'),
+        pmL('24-unit Shipper Master Carton', 50000, 'PCS', 25, 'EI-PM-BOX-004'),
+      ];
+
+      const bomConfirmedAt = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
+      await PlanningExtracted.bulkCreate([
+        { sales_order_id: planSOs[0].id, product_id: planProds[0].product_id, order_qty_display: '50,000 Units', total_kg_display: '7,500 KG', order_date: '2026-02-10', due_date: '2026-03-20', batch_size_display: '500 KG', batches_required: 15, bom_status: 'Production Released', approved_by: 'Amit Kumar', raw_materials: facewashRm, packaging_materials: facewashPm, color: 'pink', batch_count: 15, batch_size_kg: 500, bom_confirmed_at: bomConfirmedAt, created_at: now, updated_at: now },
+        { sales_order_id: planSOs[1].id, product_id: planProds[1].product_id, order_qty_display: '30,000 Units', total_kg_display: '1,500 KG', order_date: '2026-02-12', due_date: '2026-04-05', batch_size_display: '300 KG', batches_required: 5, bom_status: 'Production Ready', approved_by: 'Amit Kumar', raw_materials: sunscreenRm, packaging_materials: sunscreenPm, color: 'orange', batch_count: 5, batch_size_kg: 300, created_at: now, updated_at: now },
+        { sales_order_id: planSOs[2].id, product_id: planProds[2].product_id, order_qty_display: '40,000 Units', total_kg_display: '2,000 KG', order_date: '2026-02-15', due_date: '2026-04-25', batch_size_display: '200 KG', batches_required: 10, bom_status: 'In Progress', approved_by: 'Riya Shah', raw_materials: moisturiserRm, packaging_materials: moisturiserPm, color: 'blue', batch_count: 10, batch_size_kg: 200, created_at: now, updated_at: now },
+        { sales_order_id: planSOs[3].id, product_id: planProds[3].product_id, order_qty_display: '50,000 Units', total_kg_display: '10,000 KG', order_date: '2026-02-18', due_date: '2026-05-10', batch_size_display: 'Not set — 1 batch', batches_required: 1, bom_status: 'Planned', approved_by: 'Riya Shah', raw_materials: conditionerRm, packaging_materials: conditionerPm, color: 'purple', batch_count: 1, batch_size_kg: null, created_at: now, updated_at: now },
+      ]);
+    }
+
+    // Procurement Requests — reference planning_extracted (which references sales_orders); items reference RM/PM/PR/FG by ID
+    console.log('Seeding Procurement Requests...');
+    await ProcurementRequest.destroy({ where: {} });
+    const planRows = await PlanningExtracted.findAll({ order: [['id', 'ASC']], limit: 2 });
+    const prRms = await RawMaterial.findAll({ attributes: ['id', 'code', 'name'], order: [['id', 'ASC']], limit: 5 });
+    const prPms = await PackMaterial.findAll({ attributes: ['id', 'code', 'description'], order: [['id', 'ASC']], limit: 4 });
+    if (planRows.length > 0 && prRms.length > 0 && prPms.length > 0) {
+      const prItems1 = [
+        ...prRms.slice(0, 3).map((r) => ({ type: 'RM', raw_material_id: r.id, quantity_requested: 500, unit: 'KG', line_notes: '', code: r.code, name: r.name })),
+        ...prPms.slice(0, 2).map((p) => ({ type: 'PM', pack_material_id: p.id, quantity_requested: 10000, unit: 'PCS', line_notes: '', code: p.code, name: p.description || p.code })),
+      ];
+      const prItems2 = [
+        { type: 'RM', raw_material_id: prRms[0].id, quantity_requested: 200, unit: 'KG', line_notes: 'Urgent', code: prRms[0].code, name: prRms[0].name },
+        { type: 'PM', pack_material_id: prPms[0].id, quantity_requested: 5000, unit: 'PCS', line_notes: '', code: prPms[0].code, name: prPms[0].description || prPms[0].code },
+      ];
+      await ProcurementRequest.bulkCreate([
+        { planning_extracted_id: planRows[0].id, priority: 'High', required_by_date: '2026-03-15', notes: 'Shortage for EI-SO-2026-001', items: prItems1, status: 'Pending', requested_by: 'planning@example.com', created_at: now, updated_at: now },
+        { planning_extracted_id: planRows[0].id, priority: 'Medium', required_by_date: '2026-03-20', notes: 'Follow-up PR', items: prItems2, status: 'Pending', requested_by: 'planning@example.com', created_at: now, updated_at: now },
+      ]);
+      // Procurement Quotations — vendor quotes against procurement requests (mock data from Procurement Operations Hub reference)
+      console.log('Seeding Procurement Quotations...');
+      await ProcurementQuotation.destroy({ where: {} });
+      const prList = await ProcurementRequest.findAll({ order: [['id', 'ASC']], limit: 2 });
+      const quotVendors = await VendorClient.findAll({ where: { type: 'vendor' }, order: [['id', 'ASC']], attributes: ['id', 'name'], limit: 5 });
+      if (prList.length >= 2 && quotVendors.length >= 3) {
+        const [chemspec, sigma] = quotVendors;
+        // QT-001 & QT-002: quote for first PR — same 3 RMs as prItems1 (prRms[0..2]); link by raw_material_id and code/name
+        const qt1Items = [
+          { raw_material_id: prRms[0].id, itemId: prRms[0].code, name: prRms[0].name, orderQty: 100, pricePerUnit: 490, uom: 'KG', totalValue: 49000 },
+          { raw_material_id: prRms[1].id, itemId: prRms[1].code, name: prRms[1].name, orderQty: 75, pricePerUnit: 645, uom: 'KG', totalValue: 48375 },
+          { raw_material_id: prRms[2].id, itemId: prRms[2].code, name: prRms[2].name, orderQty: 80, pricePerUnit: 560, uom: 'KG', totalValue: 44800 },
+        ];
+        const qt2Items = [
+          { raw_material_id: prRms[0].id, itemId: prRms[0].code, name: prRms[0].name, orderQty: 100, pricePerUnit: 510, uom: 'KG', totalValue: 51000 },
+          { raw_material_id: prRms[1].id, itemId: prRms[1].code, name: prRms[1].name, orderQty: 75, pricePerUnit: 660, uom: 'KG', totalValue: 49500 },
+          { raw_material_id: prRms[2].id, itemId: prRms[2].code, name: prRms[2].name, orderQty: 80, pricePerUnit: 575, uom: 'KG', totalValue: 46000 },
+        ];
+        // QT-003: quote for second PR — same 1 RM + 1 PM as prItems2; link by raw_material_id / pack_material_id
+        const qt3Items = [
+          { raw_material_id: prRms[0].id, itemId: prRms[0].code, name: prRms[0].name, orderQty: 200, pricePerUnit: 87.5, uom: 'KG', totalValue: 17500 },
+          { pack_material_id: prPms[0].id, itemId: prPms[0].code, name: prPms[0].description || prPms[0].code, orderQty: 5000, pricePerUnit: 10.26, uom: 'PCS', totalValue: 51300 },
+        ];
+        const qt3Total = 17500 + 51300;
+        await ProcurementQuotation.bulkCreate([
+          { procurement_request_id: prList[0].id, vendor_id: chemspec.id, quote_date: '2026-02-17', quoted_by: 'Procurement — Ramesh', attachment_ref: 'QT-001-Chemspec-UV-Filters.pdf', attachment_status: 'received', items: qt1Items, lead_time_days: 18, payment_terms: '50% Advance, 50% Before Dispatch', valid_till: '2026-03-10', total_value: 142175, notes: 'Chemspec offering 5% discount on 100KG lot. UV-002 and UV-003 at standard 25 KG rates.', status: 'confirmed', created_at: now, updated_at: now },
+          { procurement_request_id: prList[0].id, vendor_id: sigma.id, quote_date: '2026-02-18', quoted_by: 'Procurement — Ramesh', attachment_ref: 'QT-002-Sigma-UV-Filters.pdf', attachment_status: 'received', items: qt2Items, lead_time_days: 21, payment_terms: '60 days credit', valid_till: '2026-03-15', total_value: 146500, notes: 'Sigma offers 60-day credit; pricing 3% higher. Alternate vendor for backup.', status: 'not_selected', created_at: now, updated_at: now },
+          { procurement_request_id: prList[1].id, vendor_id: chemspec.id, quote_date: '2026-02-19', quoted_by: 'Procurement — Ramesh', attachment_ref: 'QT-003-Chemspec-Carbomer.pdf', attachment_status: 'received', items: qt3Items, lead_time_days: 12, payment_terms: '30 days credit', valid_till: '2026-03-20', total_value: qt3Total, notes: 'Standard pricing. 12-day lead time confirmed by vendor.', status: 'confirmed', created_at: now, updated_at: now },
+        ]);
+        // Procurement-linked POs: one Released (PR-REQ-001), one Draft (PR-REQ-002) — so Issued POs and Draft POs tabs have linked data
+        const requestCode1 = `PR-REQ-${String(prList[0].id).padStart(3, '0')}`;
+        const requestCode2 = `PR-REQ-${String(prList[1].id).padStart(3, '0')}`;
+        const vendorName = chemspec.name || 'Chemspec India Pvt Ltd';
+        await PurchaseOrder.bulkCreate([
+          {
+            order_id: `PO-${requestCode1}`,
+            vendor_name: vendorName,
+            branch: 'Branch A',
+            order_date: '2026-02-17',
+            expected_shipment_date: '2026-03-10',
+            reference: requestCode1,
+            payment_terms: '50% Advance, 50% Before Dispatch',
+            status: 'Released',
+            order_status: {},
+            form_data: { requestId: String(prList[0].id), requestCode: requestCode1 },
+            items: qt1Items.map((i) => ({ itemName: i.name, quantity: i.orderQty, rate: String(i.pricePerUnit), tax: '18' })),
+            created_at: now,
+            updated_at: now,
+          },
+          {
+            order_id: `DPO-${requestCode2}`,
+            vendor_name: vendorName,
+            branch: 'Branch A',
+            order_date: '2026-02-19',
+            expected_shipment_date: '2026-03-20',
+            reference: requestCode2,
+            payment_terms: '30 days credit',
+            status: 'Draft',
+            order_status: {},
+            form_data: { requestId: String(prList[1].id), requestCode: requestCode2 },
+            items: qt3Items.map((i) => ({ itemName: i.name, quantity: i.orderQty, rate: String(i.pricePerUnit), tax: '18' })),
+            created_at: now,
+            updated_at: now,
+          },
+        ]);
+        await prList[0].update({ status: 'PO Released' });
+        await prList[1].update({ status: 'PO Draft' });
+      }
+    }
+
+    console.log('Seeding GRN (Goods Received Notes) for Inbound...');
+    await GoodsReceivedNote.destroy({ where: {} });
+    const grnPos = await PurchaseOrder.findAll({ where: { order_id: ['EI-PO-2025-001', 'EI-PO-2025-002', 'EI-PO-2025-003', 'EI-PO-2025-004'] }, order: [['order_id', 'ASC']] });
+    const poIdByOrderId = {};
+    grnPos.forEach((p) => { poIdByOrderId[p.order_id] = p.id; });
+    const grnRms = await RawMaterial.findAll({ attributes: ['id', 'code'] });
+    const grnPms = await PackMaterial.findAll({ attributes: ['id', 'code'] });
+    const grnRmByCode = {};
+    grnRms.forEach((r) => { grnRmByCode[r.code] = r.id; });
+    const grnPmByCode = {};
+    grnPms.forEach((p) => { grnPmByCode[p.code] = p.id; });
+    const grnSeed = [
+      { grn_no: 'EI-GRN-2025-001', purchase_order_id: poIdByOrderId['EI-PO-2025-001'], po_no: 'EI-PO-2025-001', vendor: 'Chemspec India Pvt Ltd', type: 'RM', items: 3, po_value: 312400, expected_date: '2025-11-20', received_date: '2025-11-19', assigned_to: 'Karan Nair (WH Supervisor)', qc_status: 'Passed', status: 'GRN Complete', invoice_no: 'CHEM-INV-2025-1112', invoice_amount: 312400, grn_date: '2025-11-20', line_items: [{ id: 'l1', raw_material_id: grnRmByCode['EI-RM-UVF-001'], poQty: 60, rcvdQty: 60, invoiceQty: 60, unitPrice: 520, qcStatus: 'Pass', qcBy: 'Meera QC' }, { id: 'l2', raw_material_id: grnRmByCode['EI-RM-UVF-002'], poQty: 50, rcvdQty: 50, invoiceQty: 50, unitPrice: 600, qcStatus: 'Pass', qcBy: 'Meera QC' }, { id: 'l3', raw_material_id: grnRmByCode['EI-RM-UVF-003'], poQty: 80, rcvdQty: 80, invoiceQty: 80, unitPrice: 590, qcStatus: 'Pass', qcBy: 'Meera QC' }], workflow_steps: ['PO Received', 'Qty Check', 'QC Inspection', 'Label Generation', 'Dispatch Ready'], created_at: now, updated_at: now },
+      { grn_no: 'EI-GRN-2025-002', purchase_order_id: poIdByOrderId['EI-PO-2025-002'], po_no: 'EI-PO-2025-002', vendor: 'Chemspec India', type: 'RM', items: 3, po_value: 185600, expected_date: '2025-11-22', received_date: '2025-11-21', assigned_to: 'Ravi Kumar', qc_status: 'In Progress', status: 'Under GRN', invoice_no: 'CHEM-INV-2025-1115', invoice_amount: 185200, grn_date: '2025-11-22', line_items: [{ id: 'l4', raw_material_id: grnRmByCode['EI-RM-SURF-001'], poQty: 150, rcvdQty: 148, invoiceQty: 150, unitPrice: 125, qcStatus: 'Pass', qcBy: 'Meera QC' }, { id: 'l5', raw_material_id: grnRmByCode['EI-RM-SURF-002'], poQty: 80, rcvdQty: 82, invoiceQty: 80, unitPrice: 195, qcStatus: 'Pass', qcBy: 'Meera QC' }, { id: 'l6', raw_material_id: grnRmByCode['EI-RM-SURF-003'], poQty: 100, rcvdQty: 100, invoiceQty: 100, unitPrice: 250, qcStatus: 'Pass', qcBy: 'Meera QC' }], workflow_steps: ['PO Received', 'Qty Check', 'QC Inspection', 'Label Generation'], created_at: now, updated_at: now },
+      { grn_no: 'EI-GRN-2025-003', purchase_order_id: poIdByOrderId['EI-PO-2025-003'], po_no: 'EI-PO-2025-003', vendor: 'Packwell Industries', type: 'PM', items: 3, po_value: 79250, expected_date: '2025-11-25', received_date: '2025-11-24', assigned_to: 'Santosh Kumar', qc_status: 'Passed', status: 'GRN Complete', invoice_no: 'PKW-INV-2025-1118', invoice_amount: 79250, grn_date: '2025-11-25', line_items: [{ id: 'l7', pack_material_id: grnPmByCode['EI-PM-BTL-001'], poQty: 5000, rcvdQty: 5000, invoiceQty: 5000, unitPrice: 8, qcStatus: 'Pass', qcBy: 'Ravi QC' }, { id: 'l8', pack_material_id: grnPmByCode['EI-PM-CAP-001'], poQty: 5000, rcvdQty: 5000, invoiceQty: 5000, unitPrice: 2, qcStatus: 'Pass', qcBy: 'Ravi QC' }, { id: 'l9', pack_material_id: grnPmByCode['EI-PM-LBL-001'], poQty: 10000, rcvdQty: 10000, invoiceQty: 10000, unitPrice: 1.5, qcStatus: 'Pass', qcBy: 'Ravi QC' }], workflow_steps: ['PO Received', 'Qty Check', 'QC Inspection', 'Label Generation', 'Dispatch Ready'], created_at: now, updated_at: now },
+      { grn_no: 'EI-GRN-2025-004', purchase_order_id: poIdByOrderId['EI-PO-2025-004'], po_no: 'EI-PO-2025-004', vendor: 'Packwell Industries', type: 'PM', items: 2, po_value: 125600, expected_date: '2025-11-28', received_date: null, assigned_to: 'Unassigned', qc_status: 'Pending', status: 'In Transit', invoice_no: null, invoice_amount: null, grn_date: null, line_items: [{ id: 'l10', pack_material_id: grnPmByCode['EI-PM-BTL-001'], poQty: 2000, rcvdQty: 0, invoiceQty: 0, unitPrice: 15, qcStatus: 'Pending', qcBy: 'Pending' }, { id: 'l11', pack_material_id: grnPmByCode['EI-PM-BOX-001'], poQty: 500, rcvdQty: 0, invoiceQty: 0, unitPrice: 25, qcStatus: 'Pending', qcBy: 'Pending' }], workflow_steps: [], created_at: now, updated_at: now },
+    ];
+    await GoodsReceivedNote.bulkCreate(grnSeed);
+
+    console.log('Seeding MRN (Material Request Notes)...');
+    await MaterialRequestNote.destroy({ where: {} });
+    const mrnRms = await RawMaterial.findAll({ attributes: ['id', 'code'] });
+    const mrnPms = await PackMaterial.findAll({ attributes: ['id', 'code'] });
+    const mrnRmByCode = {};
+    mrnRms.forEach((r) => { mrnRmByCode[r.code] = r.id; });
+    const mrnPmByCode = {};
+    mrnPms.forEach((p) => { mrnPmByCode[p.code] = p.id; });
+    const mrnSeed = [
+      { mrn_no: 'EI-MRN-2025-001', requested_by: 'Batch Mfg — ML1', status: 'Completed', assigned_picker: '', transfer_team: '', notes: 'EI Sunscreen SPF50+ (BTH-SUN-001), 500 KG. Required: 2025-11-20', line_items: [
+        { id: 'm1', raw_material_id: mrnRmByCode['EI-RM-BASE-001'], quantity: 261.5, unit: 'KG', notes: '' },
+        { id: 'm2', raw_material_id: mrnRmByCode['EI-RM-ACT-001'], quantity: 15, unit: 'KG', notes: '' },
+        { id: 'm3', raw_material_id: mrnRmByCode['EI-RM-UVF-001'], quantity: 50, unit: 'KG', notes: '' },
+        { id: 'm4', raw_material_id: mrnRmByCode['EI-RM-UVF-002'], quantity: 37.5, unit: 'KG', notes: '' },
+        { id: 'm5', raw_material_id: mrnRmByCode['EI-RM-UVF-003'], quantity: 40, unit: 'KG', notes: '' },
+        { id: 'm6', raw_material_id: mrnRmByCode['EI-RM-UVF-004'], quantity: 15, unit: 'KG', notes: '' },
+        { id: 'm7', raw_material_id: mrnRmByCode['EI-RM-EMUL-001'], quantity: 15, unit: 'KG', notes: '' },
+        { id: 'm8', raw_material_id: mrnRmByCode['EI-RM-EMUL-002'], quantity: 10, unit: 'KG', notes: '' },
+        { id: 'm9', raw_material_id: mrnRmByCode['EI-RM-ACT-005'], quantity: 2.5, unit: 'KG', notes: '' },
+        { id: 'm10', raw_material_id: mrnRmByCode['EI-RM-ACT-002'], quantity: 10, unit: 'KG', notes: '' },
+        { id: 'm11', raw_material_id: mrnRmByCode['EI-RM-ACT-003'], quantity: 5, unit: 'KG', notes: '' },
+        { id: 'm12', raw_material_id: mrnRmByCode['EI-RM-PRES-001'], quantity: 4, unit: 'KG', notes: '' },
+      ], created_at: now, updated_at: now },
+      { mrn_no: 'EI-MRN-2025-002', requested_by: 'Batch Mfg — ML1', status: 'Picked', assigned_picker: 'Santosh Kumar', transfer_team: '', notes: 'EI Gentle Foaming Facewash (BTH-FW-001), 500 KG. Required: 2025-11-21', line_items: [
+        { id: 'm13', raw_material_id: mrnRmByCode['EI-RM-SURF-001'], quantity: 65, unit: 'KG', notes: '' },
+        { id: 'm14', raw_material_id: mrnRmByCode['EI-RM-SURF-002'], quantity: 40, unit: 'KG', notes: '' },
+        { id: 'm15', raw_material_id: mrnRmByCode['EI-RM-SURF-003'], quantity: 15, unit: 'KG', notes: '' },
+        { id: 'm16', raw_material_id: mrnRmByCode['EI-RM-BASE-001'], quantity: 200, unit: 'KG', notes: '' },
+        { id: 'm17', raw_material_id: mrnRmByCode['EI-RM-POLY-002'], quantity: 5, unit: 'KG', notes: '' },
+        { id: 'm18', raw_material_id: mrnRmByCode['EI-RM-ACT-006'], quantity: 10, unit: 'KG', notes: '' },
+        { id: 'm19', raw_material_id: mrnRmByCode['EI-RM-ACT-002'], quantity: 10, unit: 'KG', notes: '' },
+        { id: 'm20', raw_material_id: mrnRmByCode['EI-RM-PRES-001'], quantity: 4, unit: 'KG', notes: '' },
+      ], created_at: now, updated_at: now },
+      { mrn_no: 'EI-MRN-2025-003', requested_by: 'Packaging — ML2', status: 'In Transfer', assigned_picker: 'Ravi Kumar', transfer_team: '', notes: 'EI Sunscreen SPF50+ — Fill & Pack (BTH-SUN-001-PACK), 10,000 units. Required: 2025-11-22', line_items: [
+        { id: 'm21', pack_material_id: mrnPmByCode['EI-PM-TUB-001'], quantity: 10000, unit: 'PCS', notes: '' },
+        { id: 'm22', pack_material_id: mrnPmByCode['EI-PM-CAP-001'], quantity: 10000, unit: 'PCS', notes: '' },
+        { id: 'm23', pack_material_id: mrnPmByCode['EI-PM-BOX-001'], quantity: 10000, unit: 'PCS', notes: '' },
+      ], created_at: now, updated_at: now },
+      { mrn_no: 'EI-MRN-2025-004', requested_by: 'Batch Mfg — ML2', status: 'Completed', assigned_picker: 'Karan Nair', transfer_team: '', notes: 'EI Gentle Foaming Facewash (BTH-FW-002), 500 KG. Required: 2025-11-17', line_items: [
+        { id: 'm24', raw_material_id: mrnRmByCode['EI-RM-EMUL-001'], quantity: 8, unit: 'KG', notes: '' },
+        { id: 'm25', raw_material_id: mrnRmByCode['EI-RM-EMUL-002'], quantity: 6, unit: 'KG', notes: '' },
+      ], created_at: now, updated_at: now },
+    ];
+    await MaterialRequestNote.bulkCreate(mrnSeed);
 
     console.log('Seeding Product Customizations...');
     await ProductCustomization.create({

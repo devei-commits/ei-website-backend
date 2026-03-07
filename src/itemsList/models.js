@@ -62,6 +62,8 @@ ItemListTier.init(
     moq_min: { type: DataTypes.INTEGER, allowNull: false },
     moq_max: { type: DataTypes.INTEGER, allowNull: true },
     price_per_unit: { type: DataTypes.DECIMAL(14, 2), allowNull: false },
+    valid_till: { type: DataTypes.DATEONLY, allowNull: true },
+    note: { type: DataTypes.STRING(500), allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
   },

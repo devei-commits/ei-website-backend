@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { isAuthenticated, requireModule } = require('../middleware/security');
 const {
+  pageItemsList,
   listItemsList,
   getItemsListById,
   createItemsList,
@@ -18,6 +19,7 @@ const {
 
 const guard = [isAuthenticated, requireModule('items-master')];
 
+router.get('/page', guard, pageItemsList);
 router.get('/', guard, listItemsList);
 router.get('/:id/rates', guard, listRates);
 router.post('/:id/rates', guard, createRate);

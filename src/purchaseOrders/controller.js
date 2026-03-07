@@ -11,6 +11,8 @@ function formatRow(row) {
     vendorName: d.vendor_name,
     orderDate: d.order_date || '',
     expectedShipmentDate: d.expected_shipment_date || '',
+    reference: d.reference || '',
+    paymentTerms: d.payment_terms || '',
     status: d.status || 'Draft',
     items: Array.isArray(d.items) ? d.items : [],
     formData: d.form_data && typeof d.form_data === 'object' ? d.form_data : {},

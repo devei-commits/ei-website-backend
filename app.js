@@ -22,7 +22,16 @@ const salesOrdersRouters = require('./src/salesOrders/routers');
 const purchaseOrdersRouters = require('./src/purchaseOrders/routers');
 const universalSwapRouters = require('./src/universalSwap/routers');
 const itemGroupsRouters = require('./src/itemGroups/routers');
+const warehouseInventoryRouters = require('./src/warehouseInventory/routers');
+const warehouseLocationsRouters = require('./src/warehouseLocations/routers');
+const warehouseRouters = require('./src/warehouse/routers');
+const grnRouters = require('./src/grn/routers');
+const mrnRouters = require('./src/mrn/routers');
 const itemsListRouters = require('./src/itemsList/routers');
+const planningExtractedRouters = require('./src/planningExtracted/routers');
+const procurementRequestsRouters = require('./src/procurementRequests/routers');
+const procurementQuotationsRouters = require('./src/procurementQuotations/routers');
+const poTrackingRouters = require('./src/poTracking/routers');
 const errorHandler = require('./src/middleware/error_handler');
 const logginHandler = require('./src/middleware/logging')
 const { isAuthenticated } = require('./src/middleware/security')
@@ -80,7 +89,16 @@ app.use(`${apiPrefix}/sales-orders`, isAuthenticated, salesOrdersRouters);
 app.use(`${apiPrefix}/purchase-orders`, isAuthenticated, purchaseOrdersRouters);
 app.use(`${apiPrefix}/universal-swap`, isAuthenticated, universalSwapRouters);
 app.use(`${apiPrefix}/item-groups`, isAuthenticated, itemGroupsRouters);
+app.use(`${apiPrefix}/warehouse-inventory`, isAuthenticated, warehouseInventoryRouters);
+app.use(`${apiPrefix}/warehouse-locations`, isAuthenticated, warehouseLocationsRouters);
+app.use(`${apiPrefix}/warehouse`, isAuthenticated, warehouseRouters);
+app.use(`${apiPrefix}/grn`, isAuthenticated, grnRouters);
+app.use(`${apiPrefix}/mrn`, isAuthenticated, mrnRouters);
 app.use(`${apiPrefix}/items-list`, isAuthenticated, itemsListRouters);
+app.use(`${apiPrefix}/planning-extracted`, isAuthenticated, planningExtractedRouters);
+app.use(`${apiPrefix}/procurement`, isAuthenticated, procurementRequestsRouters);
+app.use(`${apiPrefix}/procurement-quotations`, isAuthenticated, procurementQuotationsRouters);
+app.use(`${apiPrefix}/po-tracking`, isAuthenticated, poTrackingRouters);
 
 app.use(errorHandler);
 

@@ -22,6 +22,7 @@
     "jsonwebtoken": "^9.0.3",
     "mailtrap": "^4.4.0",
     "pg": "^8.13.1",
+    "qrcode": "^1.5.4",
     "razorpay": "^2.9.6",
     "sequelize": "^6.37.5",
     "sequelize-cli": "^6.6.5",

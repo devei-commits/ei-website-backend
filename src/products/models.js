@@ -101,6 +101,28 @@ Product.init(
       type: DataTypes.STRING,
       allowNull: true,
     },
+
+    // PR Master / Product Registration fields (products-master UI)
+    form: { type: DataTypes.STRING(100), allowNull: true },
+    fill_size: { type: DataTypes.STRING(50), allowNull: true },
+    batch_size_kg: { type: DataTypes.INTEGER, allowNull: true },
+    shelf_life_months: { type: DataTypes.INTEGER, allowNull: true },
+    version: { type: DataTypes.STRING(50), allowNull: true },
+    license_cml: { type: DataTypes.STRING(100), allowNull: true },
+    theoretical_yield_pct: { type: DataTypes.DECIMAL(5, 2), allowNull: true },
+    pao_months: { type: DataTypes.INTEGER, allowNull: true },
+    manufacturing_location: { type: DataTypes.STRING(255), allowNull: true },
+    equipment_vessel: { type: DataTypes.STRING(255), allowNull: true },
+    storage_conditions: { type: DataTypes.TEXT, allowNull: true },
+    approved_claims: { type: DataTypes.TEXT, allowNull: true },
+    // Finished product specs (can also be on BOM)
+    ph_range: { type: DataTypes.STRING(50), allowNull: true },
+    viscosity_range: { type: DataTypes.STRING(100), allowNull: true },
+    spf_pa_rating: { type: DataTypes.STRING(50), allowNull: true },
+    appearance: { type: DataTypes.STRING(255), allowNull: true },
+    odour: { type: DataTypes.STRING(255), allowNull: true },
+    fill_weight_spec: { type: DataTypes.STRING(100), allowNull: true },
+    stability_summary: { type: DataTypes.TEXT, allowNull: true },
   },
   {
     sequelize: db,

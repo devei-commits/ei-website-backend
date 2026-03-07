@@ -42,12 +42,14 @@ function formatBOM(row) {
     description: d.description,
     rmLines: d.rm_lines,
     pmLines: d.pm_lines,
+    productId: d.product_id != null ? d.product_id : null,
   };
 }
 
 async function listBOMs(req, res) {
   try {
     const search = req.query.search != null ? String(req.query.search).trim() : '';
+    const productId = req.query.product_id != null ? parseInt(req.query.product_id, 10) : null;
     const { Op } = require('sequelize');
     const where = {};
     if (search.length > 0) {
@@ -56,6 +58,9 @@ async function listBOMs(req, res) {
         { name: { [Op.iLike]: `%${search}%` } },
         { client: { [Op.iLike]: `%${search}%` } },
       ];
+    }
+    if (productId != null && !Number.isNaN(productId)) {
+      where.product_id = productId;
     }
     const rows = await BOM.findAll({ where, order: [['bom_code', 'ASC']] });
     res.json(rows.map(formatBOM));
@@ -119,7 +124,29 @@ function bodyToBOM(b) {
     description: b.description ?? null,
     rm_lines: b.rmLines ?? b.rm_lines ?? null,
     pm_lines: b.pmLines ?? b.pm_lines ?? null,
+    product_id: b.productId ?? b.product_id ?? null,
   };
+}
+
+async function updateBOM(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const row = await BOM.findByPk(id);
+    if (!row) return res.status(404).json({ error: 'BOM not found' });
+    const b = req.body || {};
+    const updates = {};
+    if (b.rmLines !== undefined) updates.rm_lines = b.rmLines;
+    if (b.pmLines !== undefined) updates.pm_lines = b.pmLines;
+    if (Object.keys(updates).length > 0) {
+      await row.update(updates);
+    }
+    const updated = await BOM.findByPk(id);
+    res.json(formatBOM(updated));
+  } catch (err) {
+    console.error('updateBOM error', err);
+    res.status(500).json({ error: 'Failed to update BOM' });
+  }
 }
 
 async function createBOM(req, res) {
@@ -136,4 +163,4 @@ async function createBOM(req, res) {
   }
 }
 
-module.exports = { listBOMs, getBOMById, createBOM };
+module.exports = { listBOMs, getBOMById, createBOM, updateBOM };

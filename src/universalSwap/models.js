@@ -16,7 +16,7 @@ UniversalSwapHistory.init(
     reason: { type: DataTypes.TEXT, allowNull: true },
     approved_by: { type: DataTypes.STRING(255), allowNull: true },
     approved_by_user_id: { type: DataTypes.INTEGER, allowNull: true },
-    affected_item_ids: { type: DataTypes.JSON, allowNull: true }, // [1, 2, 3] items_master ids
+    affected_group_ids: { type: DataTypes.JSON, allowNull: true }, // [1, 2] item_groups ids
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
   },

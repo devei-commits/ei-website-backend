@@ -56,6 +56,122 @@ async function resolveItemMaster(row) {
 }
 
 /**
+ * GET /page?type=RM|PM — all RM or PM from masters with optional price list data (vendorRates + tiers).
+ * Used by Price Lists UI: each item shows either list-price-only or full vendor/tier table.
+ */
+async function pageItemsList(req, res) {
+  try {
+    const type = req.query.type;
+    if (type !== 'RM' && type !== 'PM') {
+      return res.status(400).json({ error: 'Query type must be RM or PM' });
+    }
+    const items = [];
+    if (type === 'RM') {
+      const rms = await RawMaterial.findAll({ order: [['code', 'ASC']] });
+      const listRows = await ItemsList.findAll({ where: { type: 'RM' }, order: [['id']] });
+      const byRmId = new Map(listRows.map((r) => [r.raw_material_id, r]));
+      const vendorIds = [...new Set((await ItemListVendorRate.findAll({ attributes: ['vendor_id'] })).map((r) => r.vendor_id))];
+      const vendors = vendorIds.length ? await VendorClient.findAll({ where: { id: vendorIds } }) : [];
+      const vendorById = new Map(vendors.map((v) => [v.id, v.get ? v.get({ plain: true }) : v]));
+
+      for (const rm of rms) {
+        const r = rm.get ? rm.get({ plain: true }) : rm;
+        const base = {
+          code: r.code,
+          name: r.name || r.code,
+          type: 'RM',
+          uom: r.uom || 'KG',
+          gst: toNum(r.gst) ?? 0,
+          pricePerUnit: toNum(r.price_per_kg) ?? 0,
+          raw_material_id: rm.id,
+          pack_material_id: null,
+        };
+        const listRow = byRmId.get(rm.id);
+        if (!listRow) {
+          items.push({ ...base, itemsListId: null, vendorRates: [] });
+          continue;
+        }
+        const rates = await ItemListVendorRate.findAll({ where: { items_list_id: listRow.id }, order: [['id']] });
+        const ratesWithTiers = [];
+        for (const rate of rates) {
+          const tiers = await ItemListTier.findAll({ where: { item_list_vendor_rate_id: rate.id }, order: [['moq_min', 'ASC']] });
+          const v = vendorById.get(rate.vendor_id);
+          ratesWithTiers.push({
+            id: rate.id,
+            vendor_id: rate.vendor_id,
+            vendor_name: v ? v.name : null,
+            vendor_code: v ? v.entity_code : null,
+            currency: rate.currency || 'INR',
+            tiers: tiers.map((t) => ({
+              id: t.id,
+              moq_min: t.moq_min,
+              moq_max: t.moq_max,
+              price_per_unit: toNum(t.price_per_unit),
+              valid_till: t.valid_till || null,
+              note: t.note || null,
+            })),
+          });
+        }
+        items.push({ ...base, itemsListId: listRow.id, vendorRates: ratesWithTiers });
+      }
+    } else {
+      const pms = await PackMaterial.findAll({ order: [['code', 'ASC']] });
+      const listRows = await ItemsList.findAll({ where: { type: 'PM' }, order: [['id']] });
+      const byPmId = new Map(listRows.map((r) => [r.pack_material_id, r]));
+      const vendorIds = [...new Set((await ItemListVendorRate.findAll({ attributes: ['vendor_id'] })).map((r) => r.vendor_id))];
+      const vendors = vendorIds.length ? await VendorClient.findAll({ where: { id: vendorIds } }) : [];
+      const vendorById = new Map(vendors.map((v) => [v.id, v.get ? v.get({ plain: true }) : v]));
+
+      for (const pm of pms) {
+        const p = pm.get ? pm.get({ plain: true }) : pm;
+        const base = {
+          code: p.code,
+          name: p.description || p.code,
+          type: 'PM',
+          pack_type: p.type || '',
+          level: p.level || '',
+          pricePerUnit: toNum(p.price_per_pc) ?? 0,
+          moq: toNum(p.moq) ?? 0,
+          raw_material_id: null,
+          pack_material_id: pm.id,
+        };
+        const listRow = byPmId.get(pm.id);
+        if (!listRow) {
+          items.push({ ...base, itemsListId: null, vendorRates: [] });
+          continue;
+        }
+        const rates = await ItemListVendorRate.findAll({ where: { items_list_id: listRow.id }, order: [['id']] });
+        const ratesWithTiers = [];
+        for (const rate of rates) {
+          const tiers = await ItemListTier.findAll({ where: { item_list_vendor_rate_id: rate.id }, order: [['moq_min', 'ASC']] });
+          const v = vendorById.get(rate.vendor_id);
+          ratesWithTiers.push({
+            id: rate.id,
+            vendor_id: rate.vendor_id,
+            vendor_name: v ? v.name : null,
+            vendor_code: v ? v.entity_code : null,
+            currency: rate.currency || 'INR',
+            tiers: tiers.map((t) => ({
+              id: t.id,
+              moq_min: t.moq_min,
+              moq_max: t.moq_max,
+              price_per_unit: toNum(t.price_per_unit),
+              valid_till: t.valid_till || null,
+              note: t.note || null,
+            })),
+          });
+        }
+        items.push({ ...base, itemsListId: listRow.id, vendorRates: ratesWithTiers });
+      }
+    }
+    res.json(items);
+  } catch (err) {
+    console.error('pageItemsList error', err);
+    res.status(500).json({ error: 'Failed to load price list page' });
+  }
+}
+
+/**
  * GET / — list items with vendor count, tier count, lastUpdated from rates.
  */
 async function listItemsList(req, res) {
@@ -128,12 +244,14 @@ async function getItemsListById(req, res) {
         default_moq: toNum(r.default_moq),
         currency: r.currency || 'INR',
         status: r.status,
-        tiers: tiers.map((t) => ({
-          id: t.id,
-          moq_min: t.moq_min,
-          moq_max: t.moq_max,
-          price_per_unit: toNum(t.price_per_unit),
-        })),
+      tiers: tiers.map((t) => ({
+        id: t.id,
+        moq_min: t.moq_min,
+        moq_max: t.moq_max,
+        price_per_unit: toNum(t.price_per_unit),
+        valid_till: t.valid_till || null,
+        note: t.note || null,
+      })),
       });
     }
 
@@ -261,7 +379,7 @@ async function listRates(req, res) {
         default_moq: toNum(r.default_moq),
         currency: r.currency || 'INR',
         status: r.status,
-        tiers: tiers.map((t) => ({ id: t.id, moq_min: t.moq_min, moq_max: t.moq_max, price_per_unit: toNum(t.price_per_unit) })),
+        tiers: tiers.map((t) => ({ id: t.id, moq_min: t.moq_min, moq_max: t.moq_max, price_per_unit: toNum(t.price_per_unit), valid_till: t.valid_till || null, note: t.note || null })),
       });
     }
     res.json(result);
@@ -333,7 +451,7 @@ async function updateRate(req, res) {
       default_moq: toNum(row.default_moq),
       currency: row.currency || 'INR',
       status: row.status,
-      tiers: tiers.map((t) => ({ id: t.id, moq_min: t.moq_min, moq_max: t.moq_max, price_per_unit: toNum(t.price_per_unit) })),
+      tiers: tiers.map((t) => ({ id: t.id, moq_min: t.moq_min, moq_max: t.moq_max, price_per_unit: toNum(t.price_per_unit), valid_till: t.valid_till || null, note: t.note || null })),
     });
   } catch (err) {
     console.error('updateRate error', err);
@@ -364,7 +482,7 @@ async function createTier(req, res) {
     if (Number.isNaN(rateId)) return res.status(400).json({ error: 'Invalid rateId' });
     const rate = await ItemListVendorRate.findByPk(rateId);
     if (!rate) return res.status(404).json({ error: 'Rate not found' });
-    const { moq_min, moq_max, price_per_unit } = req.body;
+    const { moq_min, moq_max, price_per_unit, valid_till, note } = req.body;
     const moqMin = moq_min != null ? parseInt(moq_min, 10) : null;
     if (moqMin == null || Number.isNaN(moqMin)) return res.status(400).json({ error: 'moq_min required' });
     const price = price_per_unit != null ? parseFloat(price_per_unit) : null;
@@ -374,8 +492,10 @@ async function createTier(req, res) {
       moq_min: moqMin,
       moq_max: moq_max != null ? parseInt(moq_max, 10) : null,
       price_per_unit: price,
+      valid_till: valid_till || null,
+      note: note || null,
     });
-    res.status(201).json({ id: row.id, moq_min: row.moq_min, moq_max: row.moq_max, price_per_unit: toNum(row.price_per_unit) });
+    res.status(201).json({ id: row.id, moq_min: row.moq_min, moq_max: row.moq_max, price_per_unit: toNum(row.price_per_unit), valid_till: row.valid_till, note: row.note });
   } catch (err) {
     console.error('createTier error', err);
     res.status(500).json({ error: 'Failed to create tier' });
@@ -388,12 +508,14 @@ async function updateTier(req, res) {
     if (Number.isNaN(tierId)) return res.status(400).json({ error: 'Invalid tierId' });
     const row = await ItemListTier.findByPk(tierId);
     if (!row) return res.status(404).json({ error: 'Tier not found' });
-    const { moq_min, moq_max, price_per_unit } = req.body;
+    const { moq_min, moq_max, price_per_unit, valid_till, note } = req.body;
     if (moq_min !== undefined) row.moq_min = parseInt(moq_min, 10);
     if (moq_max !== undefined) row.moq_max = moq_max == null ? null : parseInt(moq_max, 10);
     if (price_per_unit !== undefined) row.price_per_unit = parseFloat(price_per_unit);
+    if (valid_till !== undefined) row.valid_till = valid_till || null;
+    if (note !== undefined) row.note = note || null;
     await row.save();
-    res.json({ id: row.id, moq_min: row.moq_min, moq_max: row.moq_max, price_per_unit: toNum(row.price_per_unit) });
+    res.json({ id: row.id, moq_min: row.moq_min, moq_max: row.moq_max, price_per_unit: toNum(row.price_per_unit), valid_till: row.valid_till, note: row.note });
   } catch (err) {
     console.error('updateTier error', err);
     res.status(500).json({ error: 'Failed to update tier' });
@@ -415,6 +537,7 @@ async function deleteTier(req, res) {
 }
 
 module.exports = {
+  pageItemsList,
   listItemsList,
   getItemsListById,
   createItemsList,

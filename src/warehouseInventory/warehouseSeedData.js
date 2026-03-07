@@ -1,0 +1,60 @@
+/**
+ * Warehouse inventory seed data — from frontend mock (Zone/Rack, WH Stock, ML1/ML2, etc.).
+ * Each entry keyed by code + type; used to look up by master code (RM/PM) and fill warehouse_inventory.
+ * PR rows are created in seed.js from products with default warehouse values.
+ */
+module.exports = [
+  { code: 'EI-RM-BASE-001', type: 'RM', zone: 'Zone A', rack: 'A1-L2-S3', whStock: 390, whUnit: 'KG', ml1Stock: 120, ml2Stock: 60, stockInHand: 560, reserved: 200, inTransit: 500, reorderPt: 300, avgMo: 408, status: 'In Stock' },
+  { code: 'EI-RM-ACT-001', type: 'RM', zone: 'Zone A', rack: 'A1-L1-S5', whStock: 95, whUnit: 'KG', ml1Stock: 30, ml2Stock: 15, stockInHand: 140, reserved: 60, inTransit: 0, reorderPt: 80, avgMo: 80, status: 'In Stock' },
+  { code: 'EI-RM-EMUL-001', type: 'RM', zone: 'Zone A', rack: 'A1-L1-S1', whStock: 42, whUnit: 'KG', ml1Stock: 8, ml2Stock: 5, stockInHand: 55, reserved: 30, inTransit: 50, reorderPt: 40, avgMo: 28, status: 'In Stock' },
+  { code: 'EI-RM-EMUL-002', type: 'RM', zone: 'Zone A', rack: 'A2-L1-S5', whStock: 28, whUnit: 'KG', ml1Stock: 5, ml2Stock: 3, stockInHand: 36, reserved: 20, inTransit: 30, reorderPt: 25, avgMo: 20, status: 'In Stock' },
+  { code: 'EI-RM-POLY-001', type: 'RM', zone: 'Zone A', rack: 'B1-L1-S2', whStock: 12, whUnit: 'KG', ml1Stock: 2, ml2Stock: 1, stockInHand: 15, reserved: 8, inTransit: 20, reorderPt: 10, avgMo: 8, status: 'In Stock' },
+  { code: 'EI-RM-POLY-002', type: 'RM', zone: 'Zone A', rack: 'B2-L1-S1', whStock: 10, whUnit: 'KG', ml1Stock: 2, ml2Stock: 0, stockInHand: 12, reserved: 6, inTransit: 0, reorderPt: 10, avgMo: 7, status: 'In Stock' },
+  { code: 'EI-RM-PRES-001', type: 'RM', zone: 'Zone A', rack: 'A2-L2-S1', whStock: 18, whUnit: 'KG', ml1Stock: 4, ml2Stock: 2, stockInHand: 24, reserved: 12, inTransit: 25, reorderPt: 15, avgMo: 12, status: 'In Stock' },
+  { code: 'EI-RM-EXCIP-001', type: 'RM', zone: 'Zone A', rack: 'A3-L1-S1', whStock: 35, whUnit: 'KG', ml1Stock: 5, ml2Stock: 3, stockInHand: 43, reserved: 15, inTransit: 0, reorderPt: 20, avgMo: 15, status: 'In Stock' },
+  { code: 'EI-RM-EXCIP-002', type: 'RM', zone: 'Zone A', rack: 'A3-L1-S2', whStock: 22, whUnit: 'KG', ml1Stock: 3, ml2Stock: 2, stockInHand: 27, reserved: 10, inTransit: 0, reorderPt: 15, avgMo: 8, status: 'In Stock' },
+  { code: 'EI-RM-SURF-001', type: 'RM', zone: 'Zone A', rack: 'A2-L1-S3', whStock: 95, whUnit: 'KG', ml1Stock: 25, ml2Stock: 15, stockInHand: 135, reserved: 60, inTransit: 150, reorderPt: 80, avgMo: 75, status: 'In Stock' },
+  { code: 'EI-RM-SURF-002', type: 'RM', zone: 'Zone A', rack: 'A2-L2-S3', whStock: 55, whUnit: 'KG', ml1Stock: 15, ml2Stock: 8, stockInHand: 78, reserved: 30, inTransit: 0, reorderPt: 40, avgMo: 38, status: 'In Stock' },
+  // PM mock (codes that may not exist in backend — will be skipped if not found)
+  { code: 'EI-PM-CONT-001', type: 'PM', zone: 'Zone C', rack: 'C1-L3-S2', whStock: 2500, whUnit: 'PCS', ml1Stock: 500, ml2Stock: 300, stockInHand: 3300, reserved: 1200, inTransit: 5000, reorderPt: 2000, avgMo: 1500, status: 'In Stock' },
+  { code: 'EI-PM-CONT-002', type: 'PM', zone: 'Zone C', rack: 'C1-L3-S4', whStock: 1800, whUnit: 'PCS', ml1Stock: 400, ml2Stock: 200, stockInHand: 2400, reserved: 800, inTransit: 3000, reorderPt: 1500, avgMo: 1200, status: 'In Stock' },
+  { code: 'EI-PM-TUBE-001', type: 'PM', zone: 'Zone C', rack: 'C2-L2-S1', whStock: 3200, whUnit: 'PCS', ml1Stock: 800, ml2Stock: 400, stockInHand: 4400, reserved: 1500, inTransit: 2000, reorderPt: 2500, avgMo: 2000, status: 'In Stock' },
+  // Backend PM codes (from seed.js) — warehouse defaults so every PM gets a row
+  { code: 'EI-PM-BOX-001', type: 'PM', zone: 'Zone C', rack: 'C1-L1-S1', whStock: 5000, whUnit: 'PCS', ml1Stock: 1000, ml2Stock: 500, stockInHand: 6500, reserved: 2000, inTransit: 3000, reorderPt: 4000, avgMo: 3500, status: 'In Stock' },
+  { code: 'EI-PM-BOX-002', type: 'PM', zone: 'Zone C', rack: 'C1-L1-S2', whStock: 4800, whUnit: 'PCS', ml1Stock: 900, ml2Stock: 400, stockInHand: 6100, reserved: 1800, inTransit: 2500, reorderPt: 3500, avgMo: 3200, status: 'In Stock' },
+  { code: 'EI-PM-BTL-001', type: 'PM', zone: 'Zone C', rack: 'C1-L2-S1', whStock: 4000, whUnit: 'PCS', ml1Stock: 800, ml2Stock: 400, stockInHand: 5200, reserved: 1500, inTransit: 2000, reorderPt: 3000, avgMo: 2800, status: 'In Stock' },
+  { code: 'EI-PM-CAP-001', type: 'PM', zone: 'Zone C', rack: 'C1-L2-S2', whStock: 15000, whUnit: 'PCS', ml1Stock: 3000, ml2Stock: 1500, stockInHand: 19500, reserved: 5000, inTransit: 8000, reorderPt: 10000, avgMo: 9000, status: 'In Stock' },
+  { code: 'EI-PM-LBL-001', type: 'PM', zone: 'Zone C', rack: 'C1-L2-S3', whStock: 12000, whUnit: 'PCS', ml1Stock: 2500, ml2Stock: 1200, stockInHand: 15700, reserved: 4000, inTransit: 6000, reorderPt: 8000, avgMo: 7500, status: 'In Stock' },
+  { code: 'EI-PM-PMP-001', type: 'PM', zone: 'Zone C', rack: 'C1-L2-S4', whStock: 6000, whUnit: 'PCS', ml1Stock: 1200, ml2Stock: 600, stockInHand: 7800, reserved: 2000, inTransit: 4000, reorderPt: 5000, avgMo: 4500, status: 'In Stock' },
+  { code: 'EI-PM-TUB-001', type: 'PM', zone: 'Zone C', rack: 'C1-L2-S5', whStock: 5500, whUnit: 'PCS', ml1Stock: 1100, ml2Stock: 550, stockInHand: 7150, reserved: 2200, inTransit: 3500, reorderPt: 4500, avgMo: 4000, status: 'In Stock' },
+  // New RMs from HTML planning (sunscreen / moisturiser / conditioner)
+  { code: 'EI-RM-UVF-005', type: 'RM', zone: 'Zone B', rack: 'B1-L1-S1', whStock: 160, whUnit: 'KG', ml1Stock: 40, ml2Stock: 20, stockInHand: 220, reserved: 70, inTransit: 0, reorderPt: 100, avgMo: 80, status: 'In Stock' },
+  { code: 'EI-RM-UVF-006', type: 'RM', zone: 'Zone B', rack: 'B1-L1-S2', whStock: 80, whUnit: 'KG', ml1Stock: 20, ml2Stock: 10, stockInHand: 110, reserved: 35, inTransit: 0, reorderPt: 50, avgMo: 40, status: 'In Stock' },
+  { code: 'EI-RM-HUM-001', type: 'RM', zone: 'Zone A', rack: 'A2-L1-S2', whStock: 50, whUnit: 'KG', ml1Stock: 10, ml2Stock: 5, stockInHand: 65, reserved: 20, inTransit: 0, reorderPt: 30, avgMo: 25, status: 'In Stock' },
+  { code: 'EI-RM-EMUL-003', type: 'RM', zone: 'Zone A', rack: 'A2-L2-S2', whStock: 30, whUnit: 'KG', ml1Stock: 5, ml2Stock: 2, stockInHand: 37, reserved: 15, inTransit: 0, reorderPt: 20, avgMo: 15, status: 'In Stock' },
+  { code: 'EI-RM-EMUL-004', type: 'RM', zone: 'Zone A', rack: 'A2-L2-S3', whStock: 55, whUnit: 'KG', ml1Stock: 10, ml2Stock: 5, stockInHand: 70, reserved: 25, inTransit: 0, reorderPt: 40, avgMo: 35, status: 'In Stock' },
+  { code: 'EI-RM-SOLV-001', type: 'RM', zone: 'Zone A', rack: 'A3-L2-S1', whStock: 40, whUnit: 'KG', ml1Stock: 8, ml2Stock: 4, stockInHand: 52, reserved: 15, inTransit: 0, reorderPt: 25, avgMo: 20, status: 'In Stock' },
+  { code: 'EI-RM-SOLV-002', type: 'RM', zone: 'Zone A', rack: 'A3-L2-S2', whStock: 32, whUnit: 'KG', ml1Stock: 6, ml2Stock: 3, stockInHand: 41, reserved: 12, inTransit: 0, reorderPt: 20, avgMo: 18, status: 'In Stock' },
+  { code: 'EI-RM-PRES-002', type: 'RM', zone: 'Zone A', rack: 'A2-L2-S1', whStock: 5, whUnit: 'KG', ml1Stock: 1, ml2Stock: 0, stockInHand: 6, reserved: 2, inTransit: 0, reorderPt: 3, avgMo: 2, status: 'In Stock' },
+  { code: 'EI-RM-SILI-001', type: 'RM', zone: 'Zone A', rack: 'A3-L1-S3', whStock: 42, whUnit: 'KG', ml1Stock: 8, ml2Stock: 4, stockInHand: 54, reserved: 18, inTransit: 0, reorderPt: 25, avgMo: 22, status: 'In Stock' },
+  { code: 'EI-RM-ACT-007', type: 'RM', zone: 'Zone B', rack: 'B2-L1-S1', whStock: 12, whUnit: 'KG', ml1Stock: 2, ml2Stock: 1, stockInHand: 15, reserved: 5, inTransit: 0, reorderPt: 8, avgMo: 6, status: 'In Stock' },
+  { code: 'EI-RM-ACT-008', type: 'RM', zone: 'Zone B', rack: 'B2-L1-S2', whStock: 5, whUnit: 'KG', ml1Stock: 1, ml2Stock: 0, stockInHand: 6, reserved: 2, inTransit: 0, reorderPt: 3, avgMo: 2, status: 'In Stock' },
+  { code: 'EI-RM-ACT-009', type: 'RM', zone: 'Zone A', rack: 'A1-L2-S2', whStock: 22, whUnit: 'KG', ml1Stock: 5, ml2Stock: 2, stockInHand: 29, reserved: 10, inTransit: 0, reorderPt: 15, avgMo: 12, status: 'In Stock' },
+  { code: 'EI-RM-ACT-010', type: 'RM', zone: 'Zone B', rack: 'B2-L2-S1', whStock: 22, whUnit: 'KG', ml1Stock: 4, ml2Stock: 2, stockInHand: 28, reserved: 8, inTransit: 0, reorderPt: 12, avgMo: 10, status: 'In Stock' },
+  { code: 'EI-RM-COND-001', type: 'RM', zone: 'Zone A', rack: 'A2-L1-S4', whStock: 310, whUnit: 'KG', ml1Stock: 80, ml2Stock: 40, stockInHand: 430, reserved: 120, inTransit: 0, reorderPt: 200, avgMo: 150, status: 'In Stock' },
+  { code: 'EI-RM-COND-002', type: 'RM', zone: 'Zone A', rack: 'A2-L1-S5', whStock: 52, whUnit: 'KG', ml1Stock: 10, ml2Stock: 5, stockInHand: 67, reserved: 20, inTransit: 0, reorderPt: 35, avgMo: 30, status: 'In Stock' },
+  { code: 'EI-RM-COND-003', type: 'RM', zone: 'Zone A', rack: 'A2-L2-S4', whStock: 620, whUnit: 'KG', ml1Stock: 150, ml2Stock: 80, stockInHand: 850, reserved: 220, inTransit: 0, reorderPt: 400, avgMo: 350, status: 'In Stock' },
+  { code: 'EI-RM-OIL-001', type: 'RM', zone: 'Zone A', rack: 'A1-L1-S3', whStock: 210, whUnit: 'KG', ml1Stock: 50, ml2Stock: 25, stockInHand: 285, reserved: 80, inTransit: 0, reorderPt: 150, avgMo: 120, status: 'In Stock' },
+  { code: 'EI-RM-OIL-002', type: 'RM', zone: 'Zone B', rack: 'B1-L2-S1', whStock: 105, whUnit: 'KG', ml1Stock: 25, ml2Stock: 12, stockInHand: 142, reserved: 40, inTransit: 0, reorderPt: 60, avgMo: 50, status: 'In Stock' },
+  { code: 'EI-RM-SILI-002', type: 'RM', zone: 'Zone A', rack: 'A3-L1-S4', whStock: 210, whUnit: 'KG', ml1Stock: 50, ml2Stock: 25, stockInHand: 285, reserved: 80, inTransit: 0, reorderPt: 150, avgMo: 120, status: 'In Stock' },
+  { code: 'EI-RM-ACT-011', type: 'RM', zone: 'Zone B', rack: 'B2-L2-S2', whStock: 205, whUnit: 'KG', ml1Stock: 50, ml2Stock: 25, stockInHand: 280, reserved: 80, inTransit: 0, reorderPt: 150, avgMo: 120, status: 'In Stock' },
+  // New PMs from HTML
+  { code: 'EI-PM-TUB-002', type: 'PM', zone: 'Zone C', rack: 'C2-L2-S2', whStock: 3200, whUnit: 'PCS', ml1Stock: 800, ml2Stock: 400, stockInHand: 4400, reserved: 1200, inTransit: 2000, reorderPt: 2500, avgMo: 2000, status: 'In Stock' },
+  { code: 'EI-PM-JAR-001', type: 'PM', zone: 'Zone C', rack: 'C1-L3-S1', whStock: 3300, whUnit: 'PCS', ml1Stock: 800, ml2Stock: 400, stockInHand: 4500, reserved: 1200, inTransit: 2000, reorderPt: 3000, avgMo: 2500, status: 'In Stock' },
+  { code: 'EI-PM-BOX-003', type: 'PM', zone: 'Zone E', rack: 'E2-L1-S2', whStock: 4200, whUnit: 'PCS', ml1Stock: 800, ml2Stock: 400, stockInHand: 5400, reserved: 1400, inTransit: 2000, reorderPt: 3500, avgMo: 3000, status: 'In Stock' },
+  { code: 'EI-PM-LBL-002', type: 'PM', zone: 'Zone D', rack: 'D2-L1-S1', whStock: 52000, whUnit: 'PCS', ml1Stock: 10000, ml2Stock: 5000, stockInHand: 67000, reserved: 15000, inTransit: 10000, reorderPt: 40000, avgMo: 35000, status: 'In Stock' },
+  { code: 'EI-PM-BTL-002', type: 'PM', zone: 'Zone C', rack: 'C1-L2-S5', whStock: 4300, whUnit: 'PCS', ml1Stock: 1000, ml2Stock: 500, stockInHand: 5800, reserved: 1500, inTransit: 2000, reorderPt: 3500, avgMo: 3000, status: 'In Stock' },
+  { code: 'EI-PM-CAP-002', type: 'PM', zone: 'Zone C', rack: 'C1-L2-S3', whStock: 4600, whUnit: 'PCS', ml1Stock: 1000, ml2Stock: 500, stockInHand: 6100, reserved: 1500, inTransit: 2000, reorderPt: 4000, avgMo: 3500, status: 'In Stock' },
+  { code: 'EI-PM-LBL-003', type: 'PM', zone: 'Zone D', rack: 'D1-L2-S1', whStock: 4100, whUnit: 'PCS', ml1Stock: 1000, ml2Stock: 500, stockInHand: 5600, reserved: 1400, inTransit: 2000, reorderPt: 3500, avgMo: 3000, status: 'In Stock' },
+  { code: 'EI-PM-BOX-004', type: 'PM', zone: 'Zone E', rack: 'E3-L1-S1', whStock: 1900, whUnit: 'PCS', ml1Stock: 400, ml2Stock: 200, stockInHand: 2500, reserved: 600, inTransit: 1000, reorderPt: 2000, avgMo: 1500, status: 'In Stock' },
+];
