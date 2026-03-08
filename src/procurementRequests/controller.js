@@ -12,6 +12,7 @@ function formatPR(row) {
     notes: d.notes,
     items: d.items,
     status: d.status,
+    preferredVendor: d.preferred_vendor,
     requestedBy: d.requested_by,
     createdAt: d.created_at,
     updatedAt: d.updated_at,
@@ -96,6 +97,8 @@ async function updateProcurementRequest(req, res) {
     if (body.notes !== undefined) updates.notes = body.notes;
     if (body.items !== undefined) updates.items = body.items;
     if (body.status !== undefined) updates.status = body.status;
+    if (body.preferredVendor !== undefined) updates.preferred_vendor = body.preferredVendor;
+    if (body.preferred_vendor !== undefined) updates.preferred_vendor = body.preferred_vendor;
     if (Object.keys(updates).length > 0) {
       await row.update(updates);
     }
