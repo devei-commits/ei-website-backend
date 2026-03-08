@@ -62,14 +62,13 @@ async function getByPurchaseOrderId(req, res) {
     const purchaseOrderId = parseInt(req.params.purchaseOrderId, 10);
     if (Number.isNaN(purchaseOrderId)) return res.status(400).json({ error: 'Invalid purchase order id' });
 
-    const po = await PurchaseOrder.findByPk(purchaseOrderId);
+    const [po, row] = await Promise.all([
+      PurchaseOrder.findByPk(purchaseOrderId),
+      PoTracking.findOne({ where: { purchase_order_id: purchaseOrderId } }),
+    ]);
     if (!po) return res.status(404).json({ error: 'Purchase order not found' });
-
-    let row = await PoTracking.findOne({ where: { purchase_order_id: purchaseOrderId } });
-    if (!row) {
-      row = await PoTracking.create({ purchase_order_id: purchaseOrderId });
-    }
-    res.json(formatTracking(row));
+    const trackingRow = row || await PoTracking.create({ purchase_order_id: purchaseOrderId });
+    res.json(formatTracking(trackingRow));
   } catch (err) {
     console.error('getByPurchaseOrderId (po-tracking) error', err);
     res.status(500).json({ error: 'Failed to get PO tracking' });
@@ -85,17 +84,20 @@ async function upsertByPurchaseOrderId(req, res) {
     const purchaseOrderId = parseInt(req.params.purchaseOrderId, 10);
     if (Number.isNaN(purchaseOrderId)) return res.status(400).json({ error: 'Invalid purchase order id' });
 
-    const po = await PurchaseOrder.findByPk(purchaseOrderId);
-    if (!po) return res.status(404).json({ error: 'Purchase order not found' });
-
     const updates = bodyToTracking(req.body || {});
-    let row = await PoTracking.findOne({ where: { purchase_order_id: purchaseOrderId } });
-    if (!row) {
-      row = await PoTracking.create({ purchase_order_id: purchaseOrderId, ...updates });
-    } else {
+    const [po, row] = await Promise.all([
+      PurchaseOrder.findByPk(purchaseOrderId),
+      PoTracking.findOne({ where: { purchase_order_id: purchaseOrderId } }),
+    ]);
+    if (!po) return res.status(404).json({ error: 'Purchase order not found' });
+    let trackingRow;
+    if (row) {
       await row.update(updates);
+      trackingRow = row;
+    } else {
+      trackingRow = await PoTracking.create({ purchase_order_id: purchaseOrderId, ...updates });
     }
-    res.json(formatTracking(row));
+    res.json(formatTracking(trackingRow));
   } catch (err) {
     console.error('upsertByPurchaseOrderId (po-tracking) error', err);
     res.status(500).json({ error: 'Failed to update PO tracking' });

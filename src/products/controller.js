@@ -51,16 +51,24 @@ const getAllProducts = async (req, res) => {
     const productCodes = products.map((p) => p.product_code).filter(Boolean);
     const productIds = products.map((p) => p.product_id);
 
+    const openStatuses = ['Draft', 'Submitted', 'Confirmed', 'Processing', 'Pending', 'In Progress'];
+    const bomsPromise = productIds.length > 0
+      ? BOM.findAll({ where: { product_id: { [Op.in]: productIds } } })
+      : Promise.resolve([]);
+    const packPromise = PackMaterial.findAll();
+    const salesOrdersPromise = SalesOrder.findAll({
+      where: { status: { [Op.in]: openStatuses } },
+      attributes: ['id', 'order_id', 'customer_name', 'status', 'items'],
+    }).catch(() => []);
+
+    const [boms, allPack, salesOrders] = await Promise.all([bomsPromise, packPromise, salesOrdersPromise]);
+
     const bomsByProductId = {};
-    if (productIds.length > 0) {
-      const boms = await BOM.findAll({ where: { product_id: { [Op.in]: productIds } } });
-      boms.forEach((b) => {
-        bomsByProductId[b.product_id] = b;
-      });
-    }
+    boms.forEach((b) => {
+      bomsByProductId[b.product_id] = b;
+    });
 
     const packMaterialsByCode = {};
-    const allPack = await PackMaterial.findAll();
     allPack.forEach((pm) => {
       const prods = Array.isArray(pm.products) ? pm.products : [];
       prods.forEach((code) => {
@@ -69,25 +77,16 @@ const getAllProducts = async (req, res) => {
       });
     });
 
-    const openStatuses = ['Draft', 'Submitted', 'Confirmed', 'Processing', 'Pending', 'In Progress'];
     let openSoCountByCode = {};
-    try {
-      const salesOrders = await SalesOrder.findAll({
-        where: { status: { [Op.in]: openStatuses } },
-        attributes: ['id', 'order_id', 'customer_name', 'status', 'items'],
+    salesOrders.forEach((so) => {
+      const items = Array.isArray(so.items) ? so.items : [];
+      items.forEach((line) => {
+        const code = line.product_code || line.productCode;
+        if (code) {
+          openSoCountByCode[code] = (openSoCountByCode[code] || 0) + 1;
+        }
       });
-      salesOrders.forEach((so) => {
-        const items = Array.isArray(so.items) ? so.items : [];
-        items.forEach((line) => {
-          const code = line.product_code || line.productCode;
-          if (code) {
-            openSoCountByCode[code] = (openSoCountByCode[code] || 0) + 1;
-          }
-        });
-      });
-    } catch (_) {
-      openSoCountByCode = {};
-    }
+    });
 
     const list = products.map((p) => {
     const plain = p.get ? p.get({ plain: true }) : p;
@@ -131,7 +130,15 @@ const getProductDetail = async (req, res) => {
     }
     const plain = product.get ? product.get({ plain: true }) : product;
 
-    const bom = await BOM.findOne({ where: { product_id: id } });
+    const openStatuses = ['Draft', 'Submitted', 'Confirmed', 'Processing', 'Pending', 'In Progress'];
+    const [bom, allPackForProduct, allOpenSo] = await Promise.all([
+      BOM.findOne({ where: { product_id: id } }),
+      PackMaterial.findAll(),
+      SalesOrder.findAll({
+        where: { status: { [Op.in]: openStatuses } },
+        order: [['order_date', 'DESC']],
+      }),
+    ]);
     const rmLines = (bom && bom.rm_lines) ? bom.rm_lines : [];
     const pmLines = (bom && bom.pm_lines) ? bom.pm_lines : [];
     const processSteps = (bom && bom.process_steps) ? bom.process_steps : [];
@@ -151,8 +158,6 @@ const getProductDetail = async (req, res) => {
       phase: phaseName,
       ingredients,
     }));
-
-    const allPackForProduct = await PackMaterial.findAll();
     const packMaterials = allPackForProduct.filter((pm) => {
       const prods = Array.isArray(pm.products) ? pm.products : [];
       return prods.includes(plain.product_code);
@@ -183,11 +188,6 @@ const getProductDetail = async (req, res) => {
       uom: row.uom || 'pc/unit',
     }));
 
-    const openStatuses = ['Draft', 'Submitted', 'Confirmed', 'Processing', 'Pending', 'In Progress'];
-    const allOpenSo = await SalesOrder.findAll({
-      where: { status: { [Op.in]: openStatuses } },
-      order: [['order_date', 'DESC']],
-    });
     const salesOrders = allOpenSo.filter((so) => {
       const items = Array.isArray(so.items) ? so.items : [];
       return items.some((l) => (l.product_code || l.productCode) === plain.product_code);

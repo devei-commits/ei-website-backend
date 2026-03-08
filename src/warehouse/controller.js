@@ -71,10 +71,12 @@ function timeAgo(date) {
  */
 async function getOverview(req, res) {
   try {
-    const invMap = await buildInventorySummaryMap();
-    const whRows = await WarehouseInventory.findAll({
-      order: [['item_type', 'ASC'], ['raw_material_id', 'ASC'], ['pack_material_id', 'ASC'], ['product_id', 'ASC']],
-    });
+    const [invMap, whRows] = await Promise.all([
+      buildInventorySummaryMap(),
+      WarehouseInventory.findAll({
+        order: [['item_type', 'ASC'], ['raw_material_id', 'ASC'], ['pack_material_id', 'ASC'], ['product_id', 'ASC']],
+      }),
+    ]);
 
     let totalSkus = 0;
     let lowCriticalStock = 0;

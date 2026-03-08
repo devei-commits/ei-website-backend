@@ -98,9 +98,11 @@ async function createProcurementQuotation(req, res) {
     const vId = parseInt(vendorId, 10);
     if (Number.isNaN(prId)) return res.status(400).json({ error: 'Invalid procurementRequestId' });
     if (Number.isNaN(vId)) return res.status(400).json({ error: 'Invalid vendorId' });
-    const prRow = await ProcurementRequest.findByPk(prId);
+    const [prRow, vendorRow] = await Promise.all([
+      ProcurementRequest.findByPk(prId),
+      VendorClient.findByPk(vId),
+    ]);
     if (!prRow) return res.status(404).json({ error: 'Procurement request not found' });
-    const vendorRow = await VendorClient.findByPk(vId);
     if (!vendorRow) return res.status(404).json({ error: 'Vendor not found' });
     const row = await ProcurementQuotation.create({
       procurement_request_id: prId,

@@ -190,9 +190,11 @@ async function getItemsInvolved(req, res) {
     const whWhere = [];
     if (allRmIds.length) whWhere.push({ item_type: 'RM', raw_material_id: { [Op.in]: allRmIds } });
     if (allPmIds.length) whWhere.push({ item_type: 'PM', pack_material_id: { [Op.in]: allPmIds } });
-    const whRows = whWhere.length
-      ? await WarehouseInventory.findAll({ where: { [Op.or]: whWhere } })
-      : [];
+    const [whRows, rmsList, pmsList] = await Promise.all([
+      whWhere.length ? WarehouseInventory.findAll({ where: { [Op.or]: whWhere } }) : Promise.resolve([]),
+      allRmIds.length ? RawMaterial.findAll({ where: { id: allRmIds }, attributes: ['id', 'code', 'name'] }) : Promise.resolve([]),
+      allPmIds.length ? PackMaterial.findAll({ where: { id: allPmIds }, attributes: ['id', 'code', 'description'] }) : Promise.resolve([]),
+    ]);
     const sihByRm = new Map();
     const sihByPm = new Map();
     const whIdByRm = new Map();
@@ -219,9 +221,6 @@ async function getItemsInvolved(req, res) {
         if (expiryDate) expiryByPm.set(w.pack_material_id, expiryDate);
       }
     }
-
-    const rmsList = allRmIds.length ? await RawMaterial.findAll({ where: { id: allRmIds }, attributes: ['id', 'code', 'name'] }) : [];
-    const pmsList = allPmIds.length ? await PackMaterial.findAll({ where: { id: allPmIds }, attributes: ['id', 'code', 'description'] }) : [];
     const rmInfo = new Map(rmsList.map((r) => [r.id, { code: r.code, name: r.name }]));
     const pmInfo = new Map(pmsList.map((p) => [p.id, { code: p.code, name: p.description || p.code }]));
 
@@ -317,7 +316,11 @@ async function getItemsInvolvedByPlanningId(req, res) {
     const whWhere = [];
     if (rmIds.length) whWhere.push({ item_type: 'RM', raw_material_id: { [Op.in]: rmIds } });
     if (pmIds.length) whWhere.push({ item_type: 'PM', pack_material_id: { [Op.in]: pmIds } });
-    const whRows = whWhere.length ? await WarehouseInventory.findAll({ where: { [Op.or]: whWhere } }) : [];
+    const [whRows, rmsList, pmsList] = await Promise.all([
+      whWhere.length ? WarehouseInventory.findAll({ where: { [Op.or]: whWhere } }) : Promise.resolve([]),
+      rmIds.length ? RawMaterial.findAll({ where: { id: rmIds }, attributes: ['id', 'code', 'name'] }) : Promise.resolve([]),
+      pmIds.length ? PackMaterial.findAll({ where: { id: pmIds }, attributes: ['id', 'code', 'description'] }) : Promise.resolve([]),
+    ]);
 
     const sihByRm = new Map();
     const reservedByRm = new Map();
@@ -348,8 +351,6 @@ async function getItemsInvolvedByPlanningId(req, res) {
       }
     }
 
-    const rmsList = rmIds.length ? await RawMaterial.findAll({ where: { id: rmIds }, attributes: ['id', 'code', 'name'] }) : [];
-    const pmsList = pmIds.length ? await PackMaterial.findAll({ where: { id: pmIds }, attributes: ['id', 'code', 'description'] }) : [];
     const rmInfo = new Map(rmsList.map((r) => [r.id, { code: r.code, name: r.name }]));
     const pmInfo = new Map(pmsList.map((p) => [p.id, { code: p.code, name: p.description || p.code }]));
 

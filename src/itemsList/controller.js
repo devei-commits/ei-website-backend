@@ -1,3 +1,4 @@
+const { Op } = require('sequelize');
 const { ItemsList, ItemListVendorRate, ItemListTier } = require('./models');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
@@ -10,7 +11,7 @@ function toNum(x) {
 }
 
 /**
- * Resolve item row to display shape from RM or PM master.
+ * Resolve item row to display shape from RM or PM master (async, single row).
  */
 async function resolveItemMaster(row) {
   const d = row.get ? row.get({ plain: true }) : row;
@@ -18,6 +19,20 @@ async function resolveItemMaster(row) {
     const rm = await RawMaterial.findByPk(d.raw_material_id);
     if (!rm) return null;
     const r = rm.get ? rm.get({ plain: true }) : rm;
+    return resolveItemMasterFromMaps(d, r, null);
+  }
+  if (d.type === 'PM' && d.pack_material_id) {
+    const pm = await PackMaterial.findByPk(d.pack_material_id);
+    if (!pm) return null;
+    const p = pm.get ? pm.get({ plain: true }) : pm;
+    return resolveItemMasterFromMaps(d, null, p);
+  }
+  return null;
+}
+
+/** Sync resolution when RM/PM maps are already loaded (for batch list). */
+function resolveItemMasterFromMaps(d, r, p) {
+  if (r) {
     const price = toNum(r.price_per_kg);
     return {
       id: String(d.id),
@@ -33,10 +48,7 @@ async function resolveItemMaster(row) {
       pack_material_id: null,
     };
   }
-  if (d.type === 'PM' && d.pack_material_id) {
-    const pm = await PackMaterial.findByPk(d.pack_material_id);
-    if (!pm) return null;
-    const p = pm.get ? pm.get({ plain: true }) : pm;
+  if (p) {
     const price = toNum(p.price_per_pc);
     return {
       id: String(d.id),
@@ -181,18 +193,53 @@ async function listItemsList(req, res) {
     if (typeFilter === 'RM' || typeFilter === 'PM') where.type = typeFilter;
 
     const rows = await ItemsList.findAll({ where, order: [['id', 'ASC']] });
+    const rowIds = rows.map((r) => r.id);
+    const rmIds = [...new Set(rows.map((r) => (r.get ? r.get({ plain: true }) : r).raw_material_id).filter(Boolean))];
+    const pmIds = [...new Set(rows.map((r) => (r.get ? r.get({ plain: true }) : r).pack_material_id).filter(Boolean))];
+
+    const [ratesList, rmsList, pmsList] = await Promise.all([
+      rowIds.length ? ItemListVendorRate.findAll({ where: { items_list_id: { [Op.in]: rowIds } }, order: [['id', 'ASC']] }) : Promise.resolve([]),
+      rmIds.length ? RawMaterial.findAll({ where: { id: rmIds } }) : Promise.resolve([]),
+      pmIds.length ? PackMaterial.findAll({ where: { id: pmIds } }) : Promise.resolve([]),
+    ]);
+    const rateIds = (ratesList || []).map((r) => r.id);
+    const tiersList = rateIds.length
+      ? await ItemListTier.findAll({ where: { item_list_vendor_rate_id: { [Op.in]: rateIds } }, attributes: ['item_list_vendor_rate_id'] })
+      : [];
+
+    const ratesByListId = new Map();
+    for (const r of ratesList) {
+      const listId = r.items_list_id;
+      if (!ratesByListId.has(listId)) ratesByListId.set(listId, []);
+      ratesByListId.get(listId).push(r);
+    }
+    const tierCountByRateId = new Map();
+    for (const t of tiersList) {
+      const rid = t.item_list_vendor_rate_id;
+      tierCountByRateId.set(rid, (tierCountByRateId.get(rid) || 0) + 1);
+    }
+    const rmMap = new Map((rmsList || []).map((x) => {
+      const d = x.get ? x.get({ plain: true }) : x;
+      return [d.id, d];
+    }));
+    const pmMap = new Map((pmsList || []).map((x) => {
+      const d = x.get ? x.get({ plain: true }) : x;
+      return [d.id, d];
+    }));
+
     const list = [];
     for (const row of rows) {
-      const base = await resolveItemMaster(row);
+      const d = row.get ? row.get({ plain: true }) : row;
+      const r = d.type === 'RM' && d.raw_material_id ? rmMap.get(d.raw_material_id) : null;
+      const p = d.type === 'PM' && d.pack_material_id ? pmMap.get(d.pack_material_id) : null;
+      const base = resolveItemMasterFromMaps(d, r, p);
       if (!base) continue;
-      const rates = await ItemListVendorRate.findAll({ where: { items_list_id: row.id } });
-      const rateIds = rates.map((r) => r.id);
-      const tierCount = rateIds.length
-        ? await ItemListTier.count({ where: { item_list_vendor_rate_id: rateIds } })
-        : 0;
+      const rates = ratesByListId.get(row.id) || [];
+      const tierCount = rates.reduce((sum, rate) => sum + (tierCountByRateId.get(rate.id) || 0), 0);
       let lastUpdated = row.updated_at;
-      for (const r of rates) {
-        if (r.updated_at && (!lastUpdated || r.updated_at > lastUpdated)) lastUpdated = r.updated_at;
+      for (const rate of rates) {
+        const u = rate.updated_at;
+        if (u && (!lastUpdated || new Date(u) > new Date(lastUpdated))) lastUpdated = u;
       }
       list.push({
         ...base,
@@ -217,25 +264,38 @@ async function getItemsListById(req, res) {
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await ItemsList.findByPk(id);
     if (!row) return res.status(404).json({ error: 'Item not found' });
-    const base = await resolveItemMaster(row);
+    const [base, rates] = await Promise.all([
+      resolveItemMaster(row),
+      ItemListVendorRate.findAll({ where: { items_list_id: id }, order: [['id', 'ASC']] }),
+    ]);
     if (!base) return res.status(404).json({ error: 'Master not found' });
 
-    const rates = await ItemListVendorRate.findAll({
-      where: { items_list_id: id },
-      order: [['id', 'ASC']],
-    });
     const vendorIds = [...new Set(rates.map((r) => r.vendor_id))];
-    const vendors = await VendorClient.findAll({ where: { id: vendorIds } });
+    const rateIds = rates.map((r) => r.id);
+    const [vendors, allTiers] = await Promise.all([
+      vendorIds.length ? VendorClient.findAll({ where: { id: vendorIds } }) : Promise.resolve([]),
+      rateIds.length
+        ? ItemListTier.findAll({
+            where: { item_list_vendor_rate_id: { [Op.in]: rateIds } },
+            order: [
+              ['item_list_vendor_rate_id', 'ASC'],
+              ['moq_min', 'ASC'],
+            ],
+          })
+        : Promise.resolve([]),
+    ]);
     const vendorById = new Map(vendors.map((v) => [v.id, v.get ? v.get({ plain: true }) : v]));
+    const tiersByRateId = new Map();
+    for (const t of allTiers) {
+      const rid = t.item_list_vendor_rate_id;
+      if (!tiersByRateId.has(rid)) tiersByRateId.set(rid, []);
+      tiersByRateId.get(rid).push(t);
+    }
 
-    const ratesWithTiers = [];
-    for (const r of rates) {
-      const tiers = await ItemListTier.findAll({
-        where: { item_list_vendor_rate_id: r.id },
-        order: [['moq_min', 'ASC']],
-      });
+    const ratesWithTiers = rates.map((r) => {
+      const tiers = tiersByRateId.get(r.id) || [];
       const v = vendorById.get(r.vendor_id);
-      ratesWithTiers.push({
+      return {
         id: r.id,
         vendor_id: r.vendor_id,
         vendor_name: v ? v.name : null,
@@ -244,16 +304,16 @@ async function getItemsListById(req, res) {
         default_moq: toNum(r.default_moq),
         currency: r.currency || 'INR',
         status: r.status,
-      tiers: tiers.map((t) => ({
-        id: t.id,
-        moq_min: t.moq_min,
-        moq_max: t.moq_max,
-        price_per_unit: toNum(t.price_per_unit),
-        valid_till: t.valid_till || null,
-        note: t.note || null,
-      })),
-      });
-    }
+        tiers: tiers.map((t) => ({
+          id: t.id,
+          moq_min: t.moq_min,
+          moq_max: t.moq_max,
+          price_per_unit: toNum(t.price_per_unit),
+          valid_till: t.valid_till || null,
+          note: t.note || null,
+        })),
+      };
+    });
 
     res.json({
       ...base,
