@@ -32,6 +32,11 @@ const planningExtractedRouters = require('./src/planningExtracted/routers');
 const procurementRequestsRouters = require('./src/procurementRequests/routers');
 const procurementQuotationsRouters = require('./src/procurementQuotations/routers');
 const poTrackingRouters = require('./src/poTracking/routers');
+const productionRouters = require('./src/production/routers');
+const facilityAreasRouters = require('./src/facilityAreas/routers');
+const departmentsRouters = require('./src/departments/routers');
+const fulfillmentRouters = require('./src/fulfillment/routers');
+const clientHubRouters = require('./src/clientHub/routers');
 const errorHandler = require('./src/middleware/error_handler');
 const logginHandler = require('./src/middleware/logging')
 const { isAuthenticated } = require('./src/middleware/security')
@@ -99,6 +104,11 @@ app.use(`${apiPrefix}/planning-extracted`, isAuthenticated, planningExtractedRou
 app.use(`${apiPrefix}/procurement`, isAuthenticated, procurementRequestsRouters);
 app.use(`${apiPrefix}/procurement-quotations`, isAuthenticated, procurementQuotationsRouters);
 app.use(`${apiPrefix}/po-tracking`, isAuthenticated, poTrackingRouters);
+app.use(`${apiPrefix}/production`, isAuthenticated, productionRouters);
+app.use(`${apiPrefix}/facility-areas`, isAuthenticated, facilityAreasRouters);
+app.use(`${apiPrefix}/departments`, departmentsRouters);
+app.use(`${apiPrefix}/fulfillment`, isAuthenticated, fulfillmentRouters);
+app.use(`${apiPrefix}/client-hub`, isAuthenticated, clientHubRouters);
 
 app.use(errorHandler);
 

@@ -15,6 +15,7 @@ function formatRow(row) {
     items: Array.isArray(d.items) ? d.items : [],
     formData: d.form_data && typeof d.form_data === 'object' ? d.form_data : {},
     orderStatus: d.order_status && typeof d.order_status === 'object' ? d.order_status : { orderStatus: '', invoiced: '', payment: '', packed: '', shipped: '', deliveryMethod: '' },
+    createdBy: d.created_by || null,
     createdAt: d.created_at,
     updatedAt: d.updated_at,
   };
@@ -67,6 +68,7 @@ function bodyToPayload(body) {
     order_status: orderStatus,
     form_data: formData,
     items,
+    created_by: body.createdBy ?? null,
   };
 }
 
@@ -93,7 +95,56 @@ async function createSalesOrder(req, res) {
   try {
     const payload = bodyToPayload(req.body || {});
     if (!payload.order_id || !String(payload.order_id).trim()) return res.status(400).json({ error: 'orderId is required' });
+    if (!payload.created_by && req.user) {
+      payload.created_by = req.user.fullName || req.user.email;
+    }
     const row = await SalesOrder.create(payload);
+
+    // Auto-create planning_extracted rows for each item in the SO
+    if (Array.isArray(payload.items) && payload.items.length > 0) {
+      const PlanningExtracted = require('../planningExtracted/models');
+      const BOM = require('../bom/models');
+      const { Product } = require('../products/models');
+
+      for (const item of payload.items) {
+        const productId = item.product_id || item.productId;
+        if (!productId) continue;
+
+        const product = await Product.findByPk(productId);
+        if (!product) continue;
+
+        let rawMaterials = [];
+        let packagingMaterials = [];
+        const bom = await BOM.findOne({ where: { product_id: productId } });
+        if (bom) {
+          rawMaterials = Array.isArray(bom.rm_lines) ? bom.rm_lines : [];
+          packagingMaterials = Array.isArray(bom.pm_lines) ? bom.pm_lines : [];
+        }
+
+        const orderQty = item.quantity || item.orderedQty || 0;
+        const batchSizeKg = product.batch_size_kg || 100;
+        const batchesRequired = batchSizeKg > 0 ? Math.ceil(orderQty / batchSizeKg) : 1;
+
+        await PlanningExtracted.create({
+          sales_order_id: row.id,
+          product_id: productId,
+          order_qty_display: `${orderQty} units`,
+          total_kg_display: batchSizeKg ? `${orderQty} KG` : null,
+          order_date: payload.order_date || null,
+          due_date: payload.expected_shipment_date || null,
+          batch_size_display: batchSizeKg ? `${batchSizeKg} KG` : null,
+          batches_required: batchesRequired,
+          batch_count: batchesRequired,
+          batch_size_kg: batchSizeKg,
+          bom_status: bom ? 'Confirmed' : 'Pending',
+          bom_confirmed_at: bom ? new Date() : null,
+          approved_by: payload.created_by,
+          raw_materials: rawMaterials,
+          packaging_materials: packagingMaterials,
+        });
+      }
+    }
+
     res.status(201).json(formatRow(row));
   } catch (err) {
     console.error('createSalesOrder error', err);

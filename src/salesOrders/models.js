@@ -20,6 +20,7 @@ SalesOrder.init(
     order_status: { type: DataTypes.JSON, allowNull: true },
     form_data: { type: DataTypes.JSON, allowNull: true },
     items: { type: DataTypes.JSON, allowNull: true },
+    created_by: { type: DataTypes.STRING(200), allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
   },

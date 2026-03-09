@@ -356,11 +356,11 @@ const getAllUsers = async (req, res) => {
   }
 };
 
-// Authenticated: search staff users by name/email (e.g. for approver dropdown). Returns minimal { userid, display_name, email }.
+// Authenticated: search staff users by name/email (e.g. for approver dropdown, team management).
 const searchUsers = async (req, res) => {
   try {
     const q = req.query.q != null ? String(req.query.q).trim() : '';
-    const attributes = ['userid', 'fname', 'lname', 'display_name', 'email'];
+    const attributes = ['userid', 'fname', 'lname', 'display_name', 'email', 'department', 'usertype'];
     const where = { usertype: { [Op.in]: STAFF_USERTYPES } };
     if (q.length > 0) {
       const like = { [Op.iLike]: `%${q}%` };
@@ -380,7 +380,13 @@ const searchUsers = async (req, res) => {
     const rolesByCode = await getRolesByCode();
     const list = users.map((u) => {
       const formatted = formatUserForStaffList(u, rolesByCode);
-      return { userid: formatted.userid, display_name: formatted.display_name, email: formatted.email };
+      return {
+        userid: formatted.userid,
+        display_name: formatted.display_name,
+        email: formatted.email,
+        department: formatted.department,
+        role_name: formatted.role_name,
+      };
     });
     res.status(200).json(list);
   } catch (err) {

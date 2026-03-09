@@ -40,6 +40,11 @@ const GoodsReceivedNote = require('./src/grn/models');
 const MaterialRequestNote = require('./src/mrn/models');
 const { ItemsList, ItemListVendorRate, ItemListTier } = require('./src/itemsList/models');
 const legacyAppointmentsSeedData = require('./src/appointments/legacySeedData');
+const { ProductionEquipment, ProductionTeamMember, ProductionBatch } = require('./src/production/models');
+const { FulfillmentOrder, FulfillmentOrderItem, FulfillmentBatchSplit, Transporter, FulfillmentInvoice } = require('./src/fulfillment/models');
+const { ClientQuery, ClientDevelopment, ClientOrder, ClientAppointment } = require('./src/clientHub/models');
+const FacilityArea = require('./src/facilityAreas/models');
+const { Department } = require('./src/departments/models');
 const { ModuleDefinition, Permission, RolePermission } = require('./src/models/index');
 const { StaffProfile } = require('./src/roles/models');
 const defaultModuleDef = require('./src/roles/defaultModuleDefinition');
@@ -308,6 +313,32 @@ async function seed() {
       advance_amount: null,
       created_at: now,
       updated_at: now
+    });
+
+    // 7. Account Managers (for Client Hub)
+    const amPriya = await User.create({
+      fname: 'Priya', lname: 'Mehta', display_name: 'Priya Mehta',
+      email: 'priya.mehta@example.com', mobile: '+919876543220',
+      password: bcrypt.hashSync('PriyaAM@123', 10),
+      usertype: 'bd_manager', department: 'Business Development',
+      status: 'active', verify_status: 'verified',
+      advance_payment: false, advance_amount: null, created_at: now, updated_at: now
+    });
+    const amSuresh = await User.create({
+      fname: 'Suresh', lname: 'Kumar', display_name: 'Suresh Kumar',
+      email: 'suresh.kumar@example.com', mobile: '+919876543221',
+      password: bcrypt.hashSync('SureshAM@123', 10),
+      usertype: 'bd_manager', department: 'Business Development',
+      status: 'active', verify_status: 'verified',
+      advance_payment: false, advance_amount: null, created_at: now, updated_at: now
+    });
+    const amAnanya = await User.create({
+      fname: 'Ananya', lname: 'Krishnan', display_name: 'Ananya Krishnan',
+      email: 'ananya.krishnan@example.com', mobile: '+919876543222',
+      password: bcrypt.hashSync('AnanyaAM@123', 10),
+      usertype: 'bd_manager', department: 'Business Development',
+      status: 'active', verify_status: 'verified',
+      advance_payment: false, advance_amount: null, created_at: now, updated_at: now
     });
 
     console.log('Seeding Doctor Profiles...');
@@ -877,16 +908,16 @@ async function seed() {
     const rmByCode = await RawMaterial.findAll({ attributes: ['id', 'code'] }).then(rows => new Map(rows.map(r => [r.code, r.id])));
     const pmByCode = await PackMaterial.findAll({ attributes: ['id', 'code'] }).then(rows => new Map(rows.map(r => [r.code, r.id])));
     const igSeed = [
-      { code: 'IG-001', icon: '💧', type: 'RM', name: 'Emulsion Base Water Phase', description: 'Purified water sources — mutually interchangeable at same %', purpose: 'Water phase for emulsions', status: 'Active', notes: 'Only one water source currently; group for future expansion', member_ids: [rmByCode.get('EI-RM-BASE-001')].filter(Boolean), proposed_alternates: [], created_at: now, updated_at: now },
-      { code: 'IG-002', icon: '☀️', type: 'RM', name: 'Broad-Spectrum UV Filter Pack', description: 'UV filters approved for sunscreen formula', purpose: 'Sunscreen actives', status: 'Active', notes: 'SPF must be re-verified', member_ids: ['EI-RM-UVF-001', 'EI-RM-UVF-002', 'EI-RM-UVF-003', 'EI-RM-UVF-004'].map(c => rmByCode.get(c)).filter(Boolean), proposed_alternates: [], created_at: now, updated_at: now },
-      { code: 'IG-003', icon: '🔄', type: 'RM', name: 'Emulsifiers', description: 'Oil & water phase binders — compatibility tested', purpose: 'Emulsion stabilizers', status: 'Active', notes: 'Both emulsifiers work as a pair', member_ids: ['EI-RM-EMUL-001', 'EI-RM-EMUL-002'].map(c => rmByCode.get(c)).filter(Boolean), proposed_alternates: [{ id: '1', name: 'Glyceryl Stearate SE', notes: 'Not yet approved — R&D trial pending', status: 'proposed' }], created_at: now, updated_at: now },
-      { code: 'IG-004', icon: '🧊', type: 'RM', name: 'Carbomer Rheology Modifier', description: 'Carbomer 980 and Carbopol 940 interchangeable at same %', purpose: 'Viscosity adjusters', status: 'Active', notes: '980 preferred for sunscreen, 940 for facewash', member_ids: ['EI-RM-POLY-001', 'EI-RM-POLY-002'].map(c => rmByCode.get(c)).filter(Boolean), proposed_alternates: [], created_at: now, updated_at: now },
-      { code: 'IG-005', icon: '🛡️', type: 'RM', name: 'Preservative System', description: 'Phenoxyethanol primary', purpose: 'Preservative actives', status: 'Active', notes: 'Primary preservative at 0.8%', member_ids: [rmByCode.get('EI-RM-PRES-001')].filter(Boolean), proposed_alternates: [{ id: '1', name: 'Phenoxyethanol + Ethylhexylglycerin', notes: 'Cosmos-approved alternative', status: 'proposed' }], created_at: now, updated_at: now },
-      { code: 'IG-006', icon: '🍋', type: 'RM', name: 'Vitamin C Derivatives', description: 'Ascorbyl Glucoside and Sodium Ascorbyl Phosphate', purpose: 'Antioxidant actives', status: 'Active', notes: 'Use at same % if supply disrupted', member_ids: [rmByCode.get('EI-RM-ACT-003')].filter(Boolean), proposed_alternates: [{ id: '1', name: 'Sodium Ascorbyl Phosphate', notes: 'Stability assessment pending', status: 'proposed' }], created_at: now, updated_at: now },
+      { code: 'IG-001', icon: '', type: 'RM', name: 'Emulsion Base Water Phase', description: 'Purified water sources — mutually interchangeable at same %', purpose: 'Water phase for emulsions', status: 'Active', notes: 'Only one water source currently; group for future expansion', member_ids: [rmByCode.get('EI-RM-BASE-001')].filter(Boolean), proposed_alternates: [], created_at: now, updated_at: now },
+      { code: 'IG-002', icon: '', type: 'RM', name: 'Broad-Spectrum UV Filter Pack', description: 'UV filters approved for sunscreen formula', purpose: 'Sunscreen actives', status: 'Active', notes: 'SPF must be re-verified', member_ids: ['EI-RM-UVF-001', 'EI-RM-UVF-002', 'EI-RM-UVF-003', 'EI-RM-UVF-004'].map(c => rmByCode.get(c)).filter(Boolean), proposed_alternates: [], created_at: now, updated_at: now },
+      { code: 'IG-003', icon: '', type: 'RM', name: 'Emulsifiers', description: 'Oil & water phase binders — compatibility tested', purpose: 'Emulsion stabilizers', status: 'Active', notes: 'Both emulsifiers work as a pair', member_ids: ['EI-RM-EMUL-001', 'EI-RM-EMUL-002'].map(c => rmByCode.get(c)).filter(Boolean), proposed_alternates: [{ id: '1', name: 'Glyceryl Stearate SE', notes: 'Not yet approved — R&D trial pending', status: 'proposed' }], created_at: now, updated_at: now },
+      { code: 'IG-004', icon: '', type: 'RM', name: 'Carbomer Rheology Modifier', description: 'Carbomer 980 and Carbopol 940 interchangeable at same %', purpose: 'Viscosity adjusters', status: 'Active', notes: '980 preferred for sunscreen, 940 for facewash', member_ids: ['EI-RM-POLY-001', 'EI-RM-POLY-002'].map(c => rmByCode.get(c)).filter(Boolean), proposed_alternates: [], created_at: now, updated_at: now },
+      { code: 'IG-005', icon: '', type: 'RM', name: 'Preservative System', description: 'Phenoxyethanol primary', purpose: 'Preservative actives', status: 'Active', notes: 'Primary preservative at 0.8%', member_ids: [rmByCode.get('EI-RM-PRES-001')].filter(Boolean), proposed_alternates: [{ id: '1', name: 'Phenoxyethanol + Ethylhexylglycerin', notes: 'Cosmos-approved alternative', status: 'proposed' }], created_at: now, updated_at: now },
+      { code: 'IG-006', icon: '', type: 'RM', name: 'Vitamin C Derivatives', description: 'Ascorbyl Glucoside and Sodium Ascorbyl Phosphate', purpose: 'Antioxidant actives', status: 'Active', notes: 'Use at same % if supply disrupted', member_ids: [rmByCode.get('EI-RM-ACT-003')].filter(Boolean), proposed_alternates: [{ id: '1', name: 'Sodium Ascorbyl Phosphate', notes: 'Stability assessment pending', status: 'proposed' }], created_at: now, updated_at: now },
       { code: 'IG-007', icon: '🫧', type: 'RM', name: 'Anionic Surfactant', description: 'Primary SLES; SCI can partially replace', purpose: 'Cleansing agents', status: 'Active', notes: 'SCI replaces SLES at 90% ratio', member_ids: ['EI-RM-SURF-001', 'EI-RM-SURF-003'].map(c => rmByCode.get(c)).filter(Boolean), proposed_alternates: [], created_at: now, updated_at: now },
       { code: 'IG-008', icon: '🫧', type: 'RM', name: 'Amphoteric Co-Surfactant', description: 'CAPB primary amphoteric', purpose: 'Conditioning agents', status: 'Active', notes: '1:1 swap possible', member_ids: [rmByCode.get('EI-RM-SURF-002')].filter(Boolean), proposed_alternates: [{ id: '1', name: 'Sodium Lauroamphoacetate', notes: 'Milder; trial batch needed', status: 'proposed' }], created_at: now, updated_at: now },
-      { code: 'IG-PM-001', icon: '🧴', type: 'PM', name: '50g Sunscreen Primary Pack Tube', description: 'Tube options for 50g sunscreen', purpose: 'Primary packaging', status: 'Active', notes: 'Aluminium laminate preferred', member_ids: [pmByCode.get('EI-PM-TUB-001')].filter(Boolean), proposed_alternates: [{ id: '1', name: '50g HDPE Squeeze Tube', notes: 'Backup option; artwork re-approval needed', status: 'proposed' }], created_at: now, updated_at: now },
-      { code: 'IG-PM-002', icon: '🍶', type: 'PM', name: '150ml Facewash Bottle', description: '150ml pump bottle — PET options', purpose: 'Primary packaging', status: 'Active', notes: 'PET transparent preferred', member_ids: [pmByCode.get('EI-PM-BTL-001')].filter(Boolean), proposed_alternates: [{ id: '1', name: '150ml HDPE Opaque Pump Bottle', notes: 'Backup vendor; same neck finish 28/410', status: 'proposed' }], created_at: now, updated_at: now },
+      { code: 'IG-PM-001', icon: '', type: 'PM', name: '50g Sunscreen Primary Pack Tube', description: 'Tube options for 50g sunscreen', purpose: 'Primary packaging', status: 'Active', notes: 'Aluminium laminate preferred', member_ids: [pmByCode.get('EI-PM-TUB-001')].filter(Boolean), proposed_alternates: [{ id: '1', name: '50g HDPE Squeeze Tube', notes: 'Backup option; artwork re-approval needed', status: 'proposed' }], created_at: now, updated_at: now },
+      { code: 'IG-PM-002', icon: '', type: 'PM', name: '150ml Facewash Bottle', description: '150ml pump bottle — PET options', purpose: 'Primary packaging', status: 'Active', notes: 'PET transparent preferred', member_ids: [pmByCode.get('EI-PM-BTL-001')].filter(Boolean), proposed_alternates: [{ id: '1', name: '150ml HDPE Opaque Pump Bottle', notes: 'Backup vendor; same neck finish 28/410', status: 'proposed' }], created_at: now, updated_at: now },
     ];
     await ItemGroup.bulkCreate(igSeed);
 
@@ -1065,11 +1096,48 @@ async function seed() {
       if (batchNumber) await WarehouseInventory.update({ batch_number: batchNumber, expiry_date: expiryDate }, { where: { id: w.id } });
     }
 
-    console.log('Seeding Warehouse Locations & Racks...');
+    /* ── Departments ── */
+    console.log('Seeding Departments...');
+    await Department.destroy({ where: {} });
+    await Department.bulkCreate([
+      { name: 'Business Development', code: 'business-development', is_active: true, created_at: now, updated_at: now },
+      { name: 'Quality Assurance',    code: 'quality-assurance',    is_active: true, created_at: now, updated_at: now },
+      { name: 'Research & Development', code: 'research-development', is_active: true, created_at: now, updated_at: now },
+      { name: 'Sales',               code: 'sales',                is_active: true, created_at: now, updated_at: now },
+      { name: 'Packaging',           code: 'packaging',            is_active: true, created_at: now, updated_at: now },
+      { name: 'Design',              code: 'design',               is_active: true, created_at: now, updated_at: now },
+      { name: 'Procurement',         code: 'procurement',          is_active: true, created_at: now, updated_at: now },
+      { name: 'Manufacturing',       code: 'manufacturing',        is_active: true, created_at: now, updated_at: now },
+      { name: 'Logistics',           code: 'logistics',            is_active: true, created_at: now, updated_at: now },
+      { name: 'Administration',      code: 'administration',       is_active: true, created_at: now, updated_at: now },
+      { name: 'Production',          code: 'production',           is_active: true, created_at: now, updated_at: now },
+      { name: 'Filling',             code: 'filling',              is_active: true, created_at: now, updated_at: now },
+      { name: 'Quality',             code: 'quality',              is_active: true, created_at: now, updated_at: now },
+      { name: 'Human Resources',     code: 'human-resources',      is_active: true, created_at: now, updated_at: now },
+      { name: 'Finance',             code: 'finance',              is_active: true, created_at: now, updated_at: now },
+      { name: 'IT',                  code: 'it',                   is_active: true, created_at: now, updated_at: now },
+    ]);
+
+    console.log('Seeding Facility Areas...');
     await WarehouseRackItem.destroy({ where: {} });
     await WarehouseRack.destroy({ where: {} });
     await WarehouseLocation.destroy({ where: {} });
+    await FacilityArea.destroy({ where: {} });
 
+    const areaSeed = [
+      { code: 'AREA-WH',   name: 'Main Warehouse',      area_type: 'warehouse',  icon: '', description: 'Central warehouse storage zones' },
+      { code: 'AREA-MFG',  name: 'Manufacturing Floor',  area_type: 'production', icon: '', description: 'Manufacturing vessels and supporting tanks' },
+      { code: 'AREA-DISP', name: 'Dispensing Room',       area_type: 'production', icon: '', description: 'RM weighing & dispensing area' },
+      { code: 'AREA-FIL',  name: 'Filling Hall',         area_type: 'production', icon: '', description: 'Filling lines FL-01 to FL-04' },
+      { code: 'AREA-PKG',  name: 'Packaging Bay',        area_type: 'production', icon: '', description: 'Packaging lines, shrink wrap station' },
+      { code: 'AREA-QC',   name: 'QC Lab',               area_type: 'production', icon: '', description: 'Quality control & in-process testing' },
+    ];
+    const createdAreas = await FacilityArea.bulkCreate(
+      areaSeed.map((a) => ({ ...a, created_at: now, updated_at: now }))
+    );
+    const areaByCode = new Map(createdAreas.map((a) => [a.code, a.id]));
+
+    console.log('Seeding Warehouse Locations & Racks...');
     const allWhInv = await WarehouseInventory.findAll({ order: [['id', 'ASC']] });
     const whInvIds = allWhInv.map((r) => r.id);
     const productRows = await Product.findAll({ where: {}, attributes: ['product_id', 'product_code'] });
@@ -1088,13 +1156,42 @@ async function seed() {
       return null;
     };
 
+    const WH = areaByCode.get('AREA-WH');
+    const MFG = areaByCode.get('AREA-MFG');
+    const DISP = areaByCode.get('AREA-DISP');
+    const FIL = areaByCode.get('AREA-FIL');
+    const PKG = areaByCode.get('AREA-PKG');
+    const QC = areaByCode.get('AREA-QC');
+
     const locationSeed = [
-      { code: 'LOC-RM', name: 'RM Store', zone_label: 'Zone A', icon: '🧪', area_sqm: 380, description: 'Ambient + Cool + Cold zones', utilisation_pct: 68 },
-      { code: 'LOC-ACT', name: 'Actives Store', zone_label: 'Zone B', icon: '⚗️', area_sqm: 120, description: 'Cool <25°C / Climate controlled', utilisation_pct: 78 },
-      { code: 'LOC-PPM', name: 'Primary Pack Store', zone_label: 'Zone C', icon: '🫙', area_sqm: 220, description: 'Ambient', utilisation_pct: 53 },
-      { code: 'LOC-LBL', name: 'Labels Store', zone_label: 'Zone D', icon: '🏷️', area_sqm: 80, description: 'Ambient humidity-controlled', utilisation_pct: 48 },
-      { code: 'LOC-SPM', name: 'Secondary Pack Store', zone_label: 'Zone E', icon: '📦', area_sqm: 280, description: 'Ambient', utilisation_pct: 47 },
-      { code: 'LOC-FG', name: 'Finished Goods Store', zone_label: 'Zone F', icon: '✅', area_sqm: 300, description: 'Cool dry <25°C', utilisation_pct: 29 },
+      // Main Warehouse zones
+      { code: 'LOC-RM',  name: 'RM Store',            area_id: WH,  location_type: 'warehouse', zone_label: 'Zone A', icon: '', area_sqm: 380, description: 'Ambient + Cool + Cold zones', utilisation_pct: 68 },
+      { code: 'LOC-ACT', name: 'Actives Store',       area_id: WH,  location_type: 'warehouse', zone_label: 'Zone B', icon: '', area_sqm: 120, description: 'Cool <25 C / Climate controlled', utilisation_pct: 78 },
+      { code: 'LOC-PPM', name: 'Primary Pack Store',  area_id: WH,  location_type: 'warehouse', zone_label: 'Zone C', icon: '', area_sqm: 220, description: 'Ambient', utilisation_pct: 53 },
+      { code: 'LOC-LBL', name: 'Labels Store',        area_id: WH,  location_type: 'warehouse', zone_label: 'Zone D', icon: '', area_sqm: 80,  description: 'Ambient humidity-controlled', utilisation_pct: 48 },
+      { code: 'LOC-SPM', name: 'Secondary Pack Store', area_id: WH, location_type: 'warehouse', zone_label: 'Zone E', icon: '', area_sqm: 280, description: 'Ambient', utilisation_pct: 47 },
+      { code: 'LOC-FG',  name: 'Finished Goods Store', area_id: WH, location_type: 'warehouse', zone_label: 'Zone F', icon: '', area_sqm: 300, description: 'Cool dry <25 C', utilisation_pct: 29 },
+      // Manufacturing Floor zones
+      { code: 'LOC-MV01', name: 'MV-01 Bay',          area_id: MFG, location_type: 'production', zone_label: 'Manufacturing', icon: '', area_sqm: 120, description: 'Main vessel MV-01 (2000L)', utilisation_pct: null },
+      { code: 'LOC-MV02', name: 'MV-02 Bay',          area_id: MFG, location_type: 'production', zone_label: 'Manufacturing', icon: '', area_sqm: 120, description: 'Main vessel MV-02 (1000L)', utilisation_pct: null },
+      { code: 'LOC-MV03', name: 'MV-03 Bay',          area_id: MFG, location_type: 'production', zone_label: 'Manufacturing', icon: '', area_sqm: 100, description: 'Main vessel MV-03 (500L)', utilisation_pct: null },
+      { code: 'LOC-STANK', name: 'Supporting Tanks Bay', area_id: MFG, location_type: 'production', zone_label: 'Manufacturing', icon: '', area_sqm: 110, description: 'Supporting tanks ST-01 to ST-04', utilisation_pct: null },
+      // Dispensing Room zones
+      { code: 'LOC-DISP1', name: 'Dispensing Bay 1',  area_id: DISP, location_type: 'production', zone_label: 'Dispensing', icon: '', area_sqm: 40, description: 'Primary dispensing station', utilisation_pct: null },
+      { code: 'LOC-DISP2', name: 'Dispensing Bay 2',  area_id: DISP, location_type: 'production', zone_label: 'Dispensing', icon: '', area_sqm: 40, description: 'Secondary dispensing station', utilisation_pct: null },
+      // Filling Hall zones
+      { code: 'LOC-FL01', name: 'Filling Line 1 Zone', area_id: FIL, location_type: 'production', zone_label: 'Filling', icon: '', area_sqm: 75, description: 'FL-01 Automatic filling line', utilisation_pct: null },
+      { code: 'LOC-FL02', name: 'Filling Line 2 Zone', area_id: FIL, location_type: 'production', zone_label: 'Filling', icon: '', area_sqm: 75, description: 'FL-02 Automatic filling line', utilisation_pct: null },
+      { code: 'LOC-FL03', name: 'Filling Line 3 Zone', area_id: FIL, location_type: 'production', zone_label: 'Filling', icon: '', area_sqm: 75, description: 'FL-03 Automatic filling line', utilisation_pct: null },
+      { code: 'LOC-FL04', name: 'Filling Line 4 Zone (Manual)', area_id: FIL, location_type: 'production', zone_label: 'Filling', icon: '', area_sqm: 75, description: 'FL-04 Manual filling line', utilisation_pct: null },
+      // Packaging Bay zones
+      { code: 'LOC-PL01', name: 'Packaging Line 1 Zone', area_id: PKG, location_type: 'production', zone_label: 'Packaging', icon: '', area_sqm: 140, description: 'PL-01 primary packaging line', utilisation_pct: null },
+      { code: 'LOC-PL02', name: 'Packaging Line 2 Zone', area_id: PKG, location_type: 'production', zone_label: 'Packaging', icon: '', area_sqm: 140, description: 'PL-02 secondary packaging line', utilisation_pct: null },
+      { code: 'LOC-SHRINK', name: 'Shrink Wrap Station', area_id: PKG, location_type: 'production', zone_label: 'Packaging', icon: '', area_sqm: 70, description: 'Shrink wrap / heat tunnel station', utilisation_pct: null },
+      // QC Lab zones
+      { code: 'LOC-QCIPT', name: 'In-Process Testing',  area_id: QC, location_type: 'production', zone_label: 'QC', icon: '', area_sqm: 25, description: 'In-process QC testing bench', utilisation_pct: null },
+      { code: 'LOC-QCBLK', name: 'Bulk QC Station',     area_id: QC, location_type: 'production', zone_label: 'QC', icon: '', area_sqm: 20, description: 'Bulk QC sampling & testing', utilisation_pct: null },
+      { code: 'LOC-QCFR',  name: 'Final Release',       area_id: QC, location_type: 'production', zone_label: 'QC', icon: '', area_sqm: 15, description: 'Final release QC review', utilisation_pct: null },
     ];
     const createdLocations = await WarehouseLocation.bulkCreate(
       locationSeed.map((l) => ({ ...l, created_at: now, updated_at: now }))
@@ -1165,10 +1262,108 @@ async function seed() {
       { entity_code: 'EI-VEN-00003', type: 'vendor', name: 'Nutreco Exports', email: 'export@nutreco.com', phone: '+91-9876543212', location: 'Chennai', country: 'India', city: 'Chennai', category: 'RAW MATERIAL', status: 'active', payment_terms: 'NET 30', notes: 'Reference VD-ALT-002', rating: 4, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
       { entity_code: 'EI-VEN-00004', type: 'vendor', name: 'Packwell Industries', email: 'pack@packwell.com', phone: '+91-9876543213', location: 'Pune', country: 'India', city: 'Pune', category: 'PACKAGING', status: 'active', payment_terms: 'NET 30', notes: 'Reference VD-002', rating: 4, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
       { entity_code: 'EI-VEN-00005', type: 'vendor', name: 'PackStar India', email: 'info@packstar.in', phone: '+91-9876543214', location: 'Hyderabad', country: 'India', city: 'Hyderabad', category: 'PACKAGING', status: 'active', payment_terms: 'NET 30', notes: 'Reference VD-ALT-003', rating: 4, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
-      { entity_code: 'EI-CLI-00001', type: 'client', name: 'Dr. SUVIDHA GANDRA', email: '', phone: '+91-7702693939', location: 'TS', country: 'India', city: '', category: 'BUSINESS', status: 'active', payment_terms: '60', notes: '', rating: 4, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
-      { entity_code: 'EI-CLI-00002', type: 'client', name: 'SCULPT PLASTIC SURGERY HYDERABAD LLP', email: '', phone: '+91-9700222661', location: 'Telangana', country: 'India', city: 'Hyderabad', category: 'BUSINESS', status: 'active', payment_terms: '0', notes: '', rating: 4, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-CLI-00001', type: 'client', name: 'Luminos Skincare', email: 'bd@luminos.in', phone: '+91-9812345001', location: 'Maharashtra', country: 'India', city: 'Mumbai', category: 'CDMO', status: 'active', payment_terms: 'NET 45', notes: '', rating: 5, moq: '—', lead_time: '—', data: {}, priority: 'high', segment: 'Skin Care · Luxury — Since 2022', since_year: 2022, revenue_value: 4200000, avatar_color: 'orange', account_manager_id: amPriya.userid, contacts: [{ name: 'Rajeev Sharma', role: 'BD Head' }, { name: 'Nisha Patel', role: 'QA Lead' }], created_at: now, updated_at: now },
+      { entity_code: 'EI-CLI-00002', type: 'client', name: 'HairVeda Pro', email: 'bd@hairveda.in', phone: '+91-9812345002', location: 'Karnataka', country: 'India', city: 'Bengaluru', category: 'CDMO', status: 'active', payment_terms: 'NET 30', notes: '', rating: 5, moq: '—', lead_time: '—', data: {}, priority: 'high', segment: 'Hair Care · Mass Market — Since 2021', since_year: 2021, revenue_value: 7800000, avatar_color: 'teal', account_manager_id: amSuresh.userid, contacts: [{ name: 'Mala Iyer', role: 'CEO' }, { name: 'Deepak Nair', role: 'Technical' }], created_at: now, updated_at: now },
+      { entity_code: 'EI-CLI-00003', type: 'client', name: 'GlowNaturals', email: 'bd@glownaturals.in', phone: '+91-9812345003', location: 'Delhi', country: 'India', city: 'Delhi', category: 'CDMO', status: 'active', payment_terms: 'NET 30', notes: '', rating: 4, moq: '—', lead_time: '—', data: {}, priority: 'medium', segment: 'Organic Skin Care · DTC — Since 2023', since_year: 2023, revenue_value: 1800000, avatar_color: 'violet', account_manager_id: amAnanya.userid, contacts: [{ name: 'Shruti Jain', role: 'Founder' }, { name: 'Ravi Kapoor', role: 'Operations' }], created_at: now, updated_at: now },
+      { entity_code: 'EI-CLI-00004', type: 'client', name: 'DermaClinix Rx', email: 'bd@dermaclinix.in', phone: '+91-9812345004', location: 'Maharashtra', country: 'India', city: 'Mumbai', category: 'CDMO', status: 'active', payment_terms: 'NET 60', notes: '', rating: 5, moq: '—', lead_time: '—', data: {}, priority: 'high', segment: 'Derma · Rx-to-OTC — Since 2020', since_year: 2020, revenue_value: 11000000, avatar_color: 'red', account_manager_id: amPriya.userid, contacts: [{ name: 'Dr. Anil Bose', role: 'Medical Affairs' }, { name: 'Shalini Roy', role: 'Regulatory' }], created_at: now, updated_at: now },
+      { entity_code: 'EI-CLI-00005', type: 'client', name: 'SunShield India', email: 'bd@sunshield.in', phone: '+91-9812345005', location: 'Gujarat', country: 'India', city: 'Ahmedabad', category: 'CDMO', status: 'active', payment_terms: 'NET 30', notes: '', rating: 4, moq: '—', lead_time: '—', data: {}, priority: 'medium', segment: 'Sun Care · Sports & Outdoor — Since 2023', since_year: 2023, revenue_value: 3100000, avatar_color: 'amber', account_manager_id: amSuresh.userid, contacts: [{ name: 'Vikram Sethi', role: 'MD' }, { name: 'Pooja Agarwal', role: 'Product' }], created_at: now, updated_at: now },
+      { entity_code: 'EI-CLI-00006', type: 'client', name: 'PureGlow Co.', email: 'bd@pureglow.in', phone: '+91-9812345006', location: 'Maharashtra', country: 'India', city: 'Pune', category: 'CDMO', status: 'active', payment_terms: 'Advance', notes: '', rating: 3, moq: '—', lead_time: '—', data: {}, priority: 'low', segment: 'Colour Cosmetics · D2C — Since 2024', since_year: 2024, revenue_value: 900000, avatar_color: 'pink', account_manager_id: amAnanya.userid, contacts: [{ name: 'Neha Saxena', role: 'CEO' }, { name: 'Rohit Verma', role: 'Creative' }], created_at: now, updated_at: now },
+      { entity_code: 'EI-CLI-00007', type: 'client', name: 'MensEdge Grooming', email: 'bd@mensedge.in', phone: '+91-9812345007', location: 'Tamil Nadu', country: 'India', city: 'Chennai', category: 'CDMO', status: 'active', payment_terms: 'NET 30', notes: '', rating: 4, moq: '—', lead_time: '—', data: {}, priority: 'medium', segment: "Men's Care · Mass Premium — Since 2022", since_year: 2022, revenue_value: 5500000, avatar_color: 'blue', account_manager_id: amSuresh.userid, contacts: [{ name: 'Arjun Malik', role: 'Brand Head' }, { name: 'Shweta Das', role: 'Technical' }], created_at: now, updated_at: now },
+      { entity_code: 'EI-CLI-00008', type: 'client', name: 'AquaFresh Wellness', email: 'bd@aquafresh.in', phone: '+91-9812345008', location: 'Telangana', country: 'India', city: 'Hyderabad', category: 'CDMO', status: 'active', payment_terms: 'NET 30', notes: '', rating: 4, moq: '—', lead_time: '—', data: {}, priority: 'low', segment: 'Body Care · Wellness — Since 2023', since_year: 2023, revenue_value: 2200000, avatar_color: 'cyan', account_manager_id: amPriya.userid, contacts: [{ name: 'Kavita Rao', role: 'Director' }, { name: 'Mohan Lal', role: 'QA' }], created_at: now, updated_at: now },
     ];
     await VendorClient.bulkCreate(vendorClientSeed);
+
+    // ── Client Hub sub-entities ──
+    console.log('Seeding Client Hub data (queries, developments, orders, appointments)...');
+    await ClientAppointment.destroy({ where: {} });
+    await ClientOrder.destroy({ where: {} });
+    await ClientDevelopment.destroy({ where: {} });
+    await ClientQuery.destroy({ where: {} });
+
+    const hubClients = await VendorClient.findAll({ where: { type: 'client' }, order: [['entity_code', 'ASC']], attributes: ['id', 'entity_code'] });
+    const cliId = {};
+    for (const c of hubClients) { cliId[c.entity_code] = c.id; }
+    const C1 = cliId['EI-CLI-00001'], C2 = cliId['EI-CLI-00002'], C3 = cliId['EI-CLI-00003'], C4 = cliId['EI-CLI-00004'];
+    const C5 = cliId['EI-CLI-00005'], C6 = cliId['EI-CLI-00006'], C7 = cliId['EI-CLI-00007'], C8 = cliId['EI-CLI-00008'];
+
+    await ClientQuery.bulkCreate([
+      { client_id: C1, title: 'SPF 50 formulation pricing query — volume breaks', status: 'overdue', due_date: '2026-02-10', category: 'Pricing', notes: 'Client escalation — BD to respond immediately', created_at: now, updated_at: now },
+      { client_id: C1, title: 'EU CPNP notification process — sunscreen product', status: 'pending', due_date: '2026-03-05', category: 'Regulatory', notes: 'RA team input awaited', created_at: now, updated_at: now },
+      { client_id: C1, title: 'Stability protocol clarification for face cream', status: 'done', due_date: '2026-02-10', category: 'Technical', notes: 'Resolved — protocol doc shared', created_at: now, updated_at: now },
+      { client_id: C2, title: 'Anti-hairfall shampoo — sulfate-free new brief', status: 'new', due_date: '2026-03-05', category: 'New Brief', notes: 'Feasibility assessment pending — assign R&D lead', created_at: now, updated_at: now },
+      { client_id: C2, title: 'Conditioner scale-up — manufacturing slot query', status: 'overdue', due_date: '2026-02-20', category: 'Capacity', notes: 'Production planning team to respond urgently', created_at: now, updated_at: now },
+      { client_id: C2, title: 'Updated CoA format requirements from client', status: 'pending', due_date: '2026-03-08', category: 'Documentation', notes: 'QC team to update format template', created_at: now, updated_at: now },
+      { client_id: C3, title: 'COSMOS certification process for organic face cream', status: 'pending', due_date: '2026-03-12', category: 'Regulatory', notes: 'RA team assigned — timeline to be shared', created_at: now, updated_at: now },
+      { client_id: C3, title: 'Fragrance allergen declaration requirements', status: 'done', due_date: '2026-02-12', category: 'Labelling', notes: 'Resolved — allergen list shared with client', created_at: now, updated_at: now },
+      { client_id: C4, title: 'Sunscreen OTC classification India — regulatory status', status: 'overdue', due_date: '2026-02-19', category: 'Regulatory', notes: 'Client escalation — CRITICAL — RA director to handle', created_at: now, updated_at: now },
+      { client_id: C4, title: 'CDSCO notification status update requested', status: 'overdue', due_date: '2026-02-21', category: 'Regulatory', notes: 'RA team to send update by EOD', created_at: now, updated_at: now },
+      { client_id: C4, title: 'Annual contract pricing — 5-SKU derma range', status: 'pending', due_date: '2026-03-08', category: 'Pricing', notes: 'BD approval required before sharing', created_at: now, updated_at: now },
+      { client_id: C5, title: 'SPF 50+ water resistant formula brief', status: 'new', due_date: '2026-03-10', category: 'New Brief', notes: 'Brief received — assigning R&D lead', created_at: now, updated_at: now },
+      { client_id: C5, title: 'Eco-friendly laminate tube options query', status: 'pending', due_date: '2026-03-05', category: 'Packaging', notes: 'PM team to share eco-tube comparison', created_at: now, updated_at: now },
+      { client_id: C6, title: 'Vegan certification process for lip gloss range', status: 'pending', due_date: '2026-03-15', category: 'Regulatory', notes: 'New client onboarding — RA to guide', created_at: now, updated_at: now },
+      { client_id: C7, title: 'New brief — beard oil 3-variant range', status: 'new', due_date: '2026-03-12', category: 'New Brief', notes: 'Brief under internal review', created_at: now, updated_at: now },
+      { client_id: C7, title: 'Anti-ageing face wash INCI list clarification', status: 'overdue', due_date: '2026-02-22', category: 'Labelling', notes: 'R&D to update INCI and share with client', created_at: now, updated_at: now },
+      { client_id: C8, title: 'Body butter formula — cocoa butter new brief', status: 'pending', due_date: '2026-03-18', category: 'New Brief', notes: 'R&D review meeting scheduled', created_at: now, updated_at: now },
+    ]);
+
+    await ClientDevelopment.bulkCreate([
+      { client_id: C1, pr_code: 'PR-SUN-0042', name: 'SPF 30 Sunscreen Lotion 50g Tube', stage: 'R&D Closure', status: 'overdue', due_date: '2026-02-15', phase: 'Formula Lock', created_at: now, updated_at: now },
+      { client_id: C1, pr_code: 'PR-SKN-0088', name: 'Vitamin C Brightening Serum 15%', stage: 'Scale-up Trial', status: 'inprog', due_date: '2026-03-10', phase: 'Pilot Batch', created_at: now, updated_at: now },
+      { client_id: C1, pr_code: 'PR-SKN-0091', name: 'Retinol Night Cream 0.3%', stage: 'R&D Stage', status: 'inprog', due_date: '2026-04-01', phase: 'Formula Dev', created_at: now, updated_at: now },
+      { client_id: C2, pr_code: 'PR-HAR-0031', name: 'Keratin Smoothing Shampoo 500mL', stage: 'BMR Ready', status: 'done', due_date: '2026-02-01', phase: 'Production Ready', created_at: now, updated_at: now },
+      { client_id: C2, pr_code: 'PR-HAR-0055', name: 'Scalp Care Caffeine Serum 100mL', stage: 'R&D Stage', status: 'inprog', due_date: '2026-04-15', phase: 'Trial 2', created_at: now, updated_at: now },
+      { client_id: C2, pr_code: 'PR-HAR-0061', name: 'Anti-Hairfall Shampoo SF', stage: 'Brief Review', status: 'new', due_date: '2026-03-30', phase: 'Concept Stage', created_at: now, updated_at: now },
+      { client_id: C3, pr_code: 'PR-ORG-0017', name: 'COSMOS Certified Hydrating Face Cream', stage: 'R&D Closure', status: 'inprog', due_date: '2026-03-20', phase: 'Stability Initiated', created_at: now, updated_at: now },
+      { client_id: C3, pr_code: 'PR-ORG-0022', name: 'Natural SPF 20 Tinted Moisturiser', stage: 'R&D Stage', status: 'inprog', due_date: '2026-04-30', phase: 'Trial 1', created_at: now, updated_at: now },
+      { client_id: C4, pr_code: 'PR-DRM-0009', name: 'Azelaic Acid 15% Gel', stage: 'Scale-up', status: 'inprog', due_date: '2026-03-12', phase: 'Pilot Batch', created_at: now, updated_at: now },
+      { client_id: C4, pr_code: 'PR-DRM-0014', name: 'Niacinamide 10% Barrier Cream', stage: 'BMR Ready', status: 'inprog', due_date: '2026-03-05', phase: 'Production Slot', created_at: now, updated_at: now },
+      { client_id: C4, pr_code: 'PR-DRM-0018', name: 'Salicylic Acid 2% Face Cleanser', stage: 'R&D Stage', status: 'pending', due_date: '2026-04-10', phase: 'Formula Dev', created_at: now, updated_at: now },
+      { client_id: C5, pr_code: 'PR-SUN-0058', name: 'SPF 50+ Water Resistant Sports Spray', stage: 'R&D Stage', status: 'new', due_date: '2026-05-01', phase: 'Brief Review', created_at: now, updated_at: now },
+      { client_id: C5, pr_code: 'PR-SUN-0063', name: 'Kids SPF 50 Gentle Lotion', stage: 'R&D Closure', status: 'inprog', due_date: '2026-03-25', phase: 'PR Preparation', created_at: now, updated_at: now },
+      { client_id: C6, pr_code: 'PR-CLR-0003', name: 'Vegan Lip Gloss — 8 Shades', stage: 'R&D Stage', status: 'inprog', due_date: '2026-05-15', phase: 'Shade Development', created_at: now, updated_at: now },
+      { client_id: C6, pr_code: 'PR-CLR-0007', name: 'Tinted BB Cream SPF 20', stage: 'Brief', status: 'new', due_date: '2026-06-01', phase: 'Brief Review', created_at: now, updated_at: now },
+      { client_id: C7, pr_code: 'PR-MEN-0024', name: 'Activated Charcoal Face Wash', stage: 'BMR Ready', status: 'done', due_date: '2026-02-01', phase: 'Production', created_at: now, updated_at: now },
+      { client_id: C7, pr_code: 'PR-MEN-0029', name: 'Beard Oil 3-Variant Range', stage: 'Brief', status: 'new', due_date: '2026-05-30', phase: 'Brief Review', created_at: now, updated_at: now },
+      { client_id: C7, pr_code: 'PR-MEN-0031', name: 'SPF 20 Daily Moisturiser', stage: 'R&D Stage', status: 'inprog', due_date: '2026-04-20', phase: 'Trial 3', created_at: now, updated_at: now },
+      { client_id: C8, pr_code: 'PR-BDY-0012', name: 'Shea Butter Body Lotion 200mL', stage: 'Scale-up', status: 'inprog', due_date: '2026-03-28', phase: 'Pilot Batch', created_at: now, updated_at: now },
+      { client_id: C8, pr_code: 'PR-BDY-0015', name: 'Coffee Exfoliating Body Scrub', stage: 'R&D Stage', status: 'inprog', due_date: '2026-04-25', phase: 'Trial 2', created_at: now, updated_at: now },
+      { client_id: C8, pr_code: 'PR-BDY-0019', name: 'Cocoa Butter Rich Body Butter', stage: 'Brief', status: 'new', due_date: '2026-05-20', phase: 'Brief Review', created_at: now, updated_at: now },
+    ]);
+
+    await ClientOrder.bulkCreate([
+      { client_id: C1, product_name: 'SPF 30 Lotion 50g Tube', quantity: '50,000 units', status: 'inprog', due_date: '2026-03-05', batch_code: 'BT-2026-0301', created_at: now, updated_at: now },
+      { client_id: C1, product_name: 'Vitamin C Serum 30mL', quantity: '20,000 units', status: 'pending', due_date: '2026-03-20', batch_code: 'TBD', created_at: now, updated_at: now },
+      { client_id: C1, product_name: 'Moisturiser SPF15 100g', quantity: '30,000 units', status: 'done', due_date: '2026-02-01', batch_code: 'BT-2026-0188', created_at: now, updated_at: now },
+      { client_id: C2, product_name: 'Keratin Shampoo 500mL', quantity: '1,00,000 units', status: 'inprog', due_date: '2026-03-15', batch_code: 'BT-2026-0312', created_at: now, updated_at: now },
+      { client_id: C2, product_name: 'Conditioner 300mL', quantity: '50,000 units', status: 'overdue', due_date: '2026-02-22', batch_code: 'BT-2026-0215', created_at: now, updated_at: now },
+      { client_id: C3, product_name: 'Aloe Vera Soothing Gel 150g', quantity: '15,000 units', status: 'done', due_date: '2026-01-30', batch_code: 'BT-2026-0142', created_at: now, updated_at: now },
+      { client_id: C3, product_name: 'Rose Water Balancing Toner', quantity: '10,000 units', status: 'pending', due_date: '2026-03-25', batch_code: 'TBD', created_at: now, updated_at: now },
+      { client_id: C4, product_name: 'Niacinamide Cream 50g', quantity: '25,000 units', status: 'inprog', due_date: '2026-03-08', batch_code: 'BT-2026-0318', created_at: now, updated_at: now },
+      { client_id: C4, product_name: 'Moisturiser SPF 30 75g', quantity: '20,000 units', status: 'overdue', due_date: '2026-02-20', batch_code: 'BT-2026-0201', created_at: now, updated_at: now },
+      { client_id: C4, product_name: 'Gentle Cleanser 100mL', quantity: '30,000 units', status: 'inprog', due_date: '2026-03-18', batch_code: 'BT-2026-0319', created_at: now, updated_at: now },
+      { client_id: C5, product_name: 'SPF 30 Daily Lotion 100g', quantity: '40,000 units', status: 'done', due_date: '2026-02-05', batch_code: 'BT-2026-0198', created_at: now, updated_at: now },
+      { client_id: C5, product_name: 'After-Sun Cooling Gel 150g', quantity: '20,000 units', status: 'inprog', due_date: '2026-03-22', batch_code: 'BT-2026-0322', created_at: now, updated_at: now },
+      { client_id: C6, product_name: 'Matte Lipstick 6 shades', quantity: '8,000 units', status: 'done', due_date: '2026-01-25', batch_code: 'BT-2026-0128', created_at: now, updated_at: now },
+      { client_id: C7, product_name: 'Charcoal Face Wash 100mL', quantity: '60,000 units', status: 'inprog', due_date: '2026-03-10', batch_code: 'BT-2026-0310', created_at: now, updated_at: now },
+      { client_id: C8, product_name: 'Shea Butter Lotion 200mL', quantity: '25,000 units', status: 'inprog', due_date: '2026-03-30', batch_code: 'BT-2026-0330', created_at: now, updated_at: now },
+      { client_id: C8, product_name: 'Coffee Body Scrub 200g', quantity: '15,000 units', status: 'pending', due_date: '2026-04-10', batch_code: 'TBD', created_at: now, updated_at: now },
+    ]);
+
+    await ClientAppointment.bulkCreate([
+      { client_id: C1, title: 'Q2 Planning & Roadmap Call', appointment_date: '2026-03-03', appointment_time: '10:00 AM', type: 'Video Call', with_person: 'Rajeev Sharma', created_at: now, updated_at: now },
+      { client_id: C1, title: 'SPF 50 Development Review', appointment_date: '2026-03-10', appointment_time: '3:00 PM', type: 'In-person', with_person: 'Nisha Patel + R&D', created_at: now, updated_at: now },
+      { client_id: C2, title: 'Q1 Review & Q2 Forecast', appointment_date: '2026-03-01', appointment_time: '11:00 AM', type: 'Video Call', with_person: 'Mala Iyer', created_at: now, updated_at: now },
+      { client_id: C2, title: 'Shampoo Formula Finalisation', appointment_date: '2026-03-12', appointment_time: '2:00 PM', type: 'In-person', with_person: 'Deepak Nair + R&D', created_at: now, updated_at: now },
+      { client_id: C3, title: 'COSMOS Project Kickoff Call', appointment_date: '2026-03-05', appointment_time: '4:00 PM', type: 'Video Call', with_person: 'Shruti Jain', created_at: now, updated_at: now },
+      { client_id: C4, title: 'Regulatory Escalation Call', appointment_date: '2026-03-01', appointment_time: '5:00 PM', type: 'Video Call', with_person: 'Dr. Anil Bose + Shalini Roy', created_at: now, updated_at: now },
+      { client_id: C4, title: 'Annual Contract Negotiation', appointment_date: '2026-03-15', appointment_time: '10:30 AM', type: 'In-person', with_person: 'Dr. Anil Bose', created_at: now, updated_at: now },
+      { client_id: C5, title: 'SPF 50+ Brief Discussion', appointment_date: '2026-03-04', appointment_time: '2:00 PM', type: 'Video Call', with_person: 'Vikram Sethi', created_at: now, updated_at: now },
+      { client_id: C6, title: 'Onboarding & Lip Gloss Brief', appointment_date: '2026-03-02', appointment_time: '11:30 AM', type: 'Video Call', with_person: 'Neha Saxena', created_at: now, updated_at: now },
+      { client_id: C7, title: 'Q2 Portfolio Planning Review', appointment_date: '2026-03-07', appointment_time: '3:30 PM', type: 'In-person', with_person: 'Arjun Malik', created_at: now, updated_at: now },
+      { client_id: C8, title: 'Body Butter Brief Meeting', appointment_date: '2026-03-09', appointment_time: '10:00 AM', type: 'Video Call', with_person: 'Kavita Rao', created_at: now, updated_at: now },
+    ]);
+
+    console.log('Client Hub seed complete.');
 
     console.log('Seeding Items List (vendor pricing view: RM/PM in list with rates and tiers)...');
     await ItemListTier.destroy({ where: {} });
@@ -1712,6 +1907,340 @@ async function seed() {
       created_at: now,
       updated_at: now
     });
+
+    /* ── Production Equipment ── */
+    console.log('Seeding Production Equipment...');
+    await ProductionEquipment.destroy({ where: {} });
+    await ProductionEquipment.bulkCreate([
+      { equipment_id: 'MV-01', name: 'Manufacturing Vessel 01', category: 'manufacturing', capacity: 500, type: 'jacketed', homogenizer: true, process_types: ['hot', 'cold'], status: 'idle', created_at: now, updated_at: now },
+      { equipment_id: 'MV-02', name: 'Manufacturing Vessel 02', category: 'manufacturing', capacity: 300, type: 'jacketed', homogenizer: true, process_types: ['hot', 'cold'], status: 'idle', created_at: now, updated_at: now },
+      { equipment_id: 'MV-03', name: 'Manufacturing Vessel 03', category: 'manufacturing', capacity: 200, type: 'simple', homogenizer: false, process_types: ['cold'], status: 'idle', created_at: now, updated_at: now },
+      { equipment_id: 'ST-01', name: 'Supporting Tank 01', category: 'manufacturing', capacity: 100, type: 'support', homogenizer: false, process_types: ['hot', 'cold'], status: 'idle', created_at: now, updated_at: now },
+      { equipment_id: 'ST-02', name: 'Supporting Tank 02', category: 'manufacturing', capacity: 100, type: 'support', homogenizer: false, process_types: ['hot', 'cold'], status: 'idle', created_at: now, updated_at: now },
+      { equipment_id: 'ST-03', name: 'Supporting Tank 03', category: 'manufacturing', capacity: 50, type: 'support', homogenizer: false, process_types: ['cold'], status: 'idle', created_at: now, updated_at: now },
+      { equipment_id: 'FL-01', name: 'Filling Line 01 (Bottle)', category: 'filling', speed: 3000, type: 'bottle', compatible: ['bottle'], status: 'idle', created_at: now, updated_at: now },
+      { equipment_id: 'FL-02', name: 'Filling Line 02 (Tube)', category: 'filling', speed: 2000, type: 'tube', compatible: ['tube'], status: 'idle', created_at: now, updated_at: now },
+      { equipment_id: 'FL-03', name: 'Filling Line 03 (Jar)', category: 'filling', speed: 500, type: 'jar', compatible: ['jar'], status: 'idle', created_at: now, updated_at: now },
+      { equipment_id: 'FL-04', name: 'Filling Line 04 (Manual)', category: 'filling', speed: 200, type: 'manual', compatible: ['bottle', 'tube', 'jar', 'sachet'], status: 'idle', created_at: now, updated_at: now },
+      { equipment_id: 'PL-01', name: 'Packaging Line 01', category: 'packaging', speed: 4000, type: 'auto', supports: ['carton', 'label', 'shrink'], status: 'idle', created_at: now, updated_at: now },
+      { equipment_id: 'PL-02', name: 'Packaging Line 02', category: 'packaging', speed: 2500, type: 'semi', supports: ['carton', 'label'], status: 'idle', created_at: now, updated_at: now },
+      { equipment_id: 'SK-01', name: 'Shrink Wrap Station', category: 'packaging', speed: 1500, type: 'shrink', supports: ['shrink'], status: 'idle', created_at: now, updated_at: now },
+    ]);
+
+    /* ── Production Team Members ── */
+    console.log('Seeding Production Team Members (empty — add via Team Management UI)...');
+    await ProductionTeamMember.destroy({ where: {} });
+
+    /* ── Production Batches (BMR / BPR) ── */
+    console.log('Seeding Production Batches...');
+    await ProductionBatch.destroy({ where: {} });
+    await ProductionBatch.bulkCreate([
+      {
+        bmr_no: 'BMR-2026-001', bpr_no: 'BPR-2026-001', product_name: 'Gentle Foaming Facewash', sku: 'EI-FW-150',
+        so_no: 'SO-2026-001', order_qty: 30000, batch_size: 500, batch_no: 'B-01', batch_index: 1, total_batches: 3,
+        bmr_status: 'in_production', bpr_status: 'draft', color: 'teal',
+        process_type: 'hot', homogenizer: true, main_vessel: 'MV-01', supporting_tanks: ['ST-01'],
+        filling_line: 'FL-01', filling_type: 'bottle', packaging_line: 'PL-01', monocarton: true, shrink: false,
+        team_bmr: ['T01', 'T02', 'T04'], team_bpr: ['T08', 'T10'], qc_officer_bmr: 'T05', qc_officer_bpr: 'T07',
+        mfg_date: '2026-03-04', fill_date: '2026-03-08', pack_date: '2026-03-09', fg_date: '2026-03-10',
+        rm_connect_date: '2026-03-02', pm_connect_date: '2026-03-06',
+        rm_reserved: true, pm_reserved: false, rm_connected: true, pm_connected: false,
+        dispensing_rm: [
+          { code: 'RM-001', inci: 'Aqua (Water)', required: 350, dispensed: 350, done: true },
+          { code: 'RM-002', inci: 'Sodium Laureth Sulfate', required: 75, dispensed: 75, done: true },
+          { code: 'RM-003', inci: 'Cocamidopropyl Betaine', required: 40, dispensed: 40, done: true },
+          { code: 'RM-004', inci: 'Glycerin', required: 25, dispensed: 25, done: true },
+          { code: 'RM-005', inci: 'Fragrance', required: 10, dispensed: 10, done: true },
+        ],
+        dispensing_pm: [
+          { code: 'PM-001', name: '150ml Bottle', required: 10000, dispensed: 0, done: false },
+          { code: 'PM-002', name: 'Flip Cap', required: 10000, dispensed: 0, done: false },
+          { code: 'PM-003', name: 'Label', required: 10000, dispensed: 0, done: false },
+          { code: 'PM-004', name: 'Mono Carton', required: 10000, dispensed: 0, done: false },
+        ],
+        bulk_yield: null, fill_yield: null, fg_yield: null,
+        bulk_batch_accepted: null, fill_batch_accepted: null, fg_batch_accepted: null,
+        qc_specs: [], remarks: '', due_date: '2026-03-12',
+        created_at: now, updated_at: now,
+      },
+      {
+        bmr_no: 'BMR-2026-002', bpr_no: 'BPR-2026-002', product_name: 'Gentle Foaming Facewash', sku: 'EI-FW-150',
+        so_no: 'SO-2026-001', order_qty: 30000, batch_size: 500, batch_no: 'B-02', batch_index: 2, total_batches: 3,
+        bmr_status: 'scheduled', bpr_status: 'draft', color: 'teal',
+        process_type: 'hot', homogenizer: true, main_vessel: 'MV-01', supporting_tanks: ['ST-01'],
+        filling_line: 'FL-01', filling_type: 'bottle', packaging_line: 'PL-01', monocarton: true, shrink: false,
+        team_bmr: ['T01', 'T02'], team_bpr: [], qc_officer_bmr: 'T05', qc_officer_bpr: '',
+        mfg_date: '2026-03-06', fill_date: '2026-03-10', pack_date: '2026-03-11', fg_date: '2026-03-12',
+        rm_connect_date: '2026-03-04', pm_connect_date: '2026-03-08',
+        rm_reserved: true, pm_reserved: false, rm_connected: false, pm_connected: false,
+        dispensing_rm: [
+          { code: 'RM-001', inci: 'Aqua (Water)', required: 350, dispensed: 0, done: false },
+          { code: 'RM-002', inci: 'Sodium Laureth Sulfate', required: 75, dispensed: 0, done: false },
+          { code: 'RM-003', inci: 'Cocamidopropyl Betaine', required: 40, dispensed: 0, done: false },
+        ],
+        dispensing_pm: [
+          { code: 'PM-001', name: '150ml Bottle', required: 10000, dispensed: 0, done: false },
+          { code: 'PM-002', name: 'Flip Cap', required: 10000, dispensed: 0, done: false },
+        ],
+        bulk_yield: null, fill_yield: null, fg_yield: null,
+        bulk_batch_accepted: null, fill_batch_accepted: null, fg_batch_accepted: null,
+        qc_specs: [], remarks: '', due_date: '2026-03-14',
+        created_at: now, updated_at: now,
+      },
+      {
+        bmr_no: 'BMR-2026-003', bpr_no: 'BPR-2026-003', product_name: 'Gentle Foaming Facewash', sku: 'EI-FW-150',
+        so_no: 'SO-2026-001', order_qty: 30000, batch_size: 500, batch_no: 'B-03', batch_index: 3, total_batches: 3,
+        bmr_status: 'batch_confirmed', bpr_status: 'draft', color: 'teal',
+        process_type: 'hot', homogenizer: true, main_vessel: '', supporting_tanks: [],
+        filling_line: '', filling_type: 'bottle', packaging_line: '', monocarton: true, shrink: false,
+        team_bmr: [], team_bpr: [], qc_officer_bmr: '', qc_officer_bpr: '',
+        mfg_date: null, fill_date: null, pack_date: null, fg_date: null,
+        rm_connect_date: null, pm_connect_date: null,
+        rm_reserved: false, pm_reserved: false, rm_connected: false, pm_connected: false,
+        dispensing_rm: [
+          { code: 'RM-001', inci: 'Aqua (Water)', required: 350, dispensed: 0, done: false },
+          { code: 'RM-002', inci: 'Sodium Laureth Sulfate', required: 75, dispensed: 0, done: false },
+        ],
+        dispensing_pm: [
+          { code: 'PM-001', name: '150ml Bottle', required: 10000, dispensed: 0, done: false },
+        ],
+        bulk_yield: null, fill_yield: null, fg_yield: null,
+        bulk_batch_accepted: null, fill_batch_accepted: null, fg_batch_accepted: null,
+        qc_specs: [], remarks: '', due_date: '2026-03-16',
+        created_at: now, updated_at: now,
+      },
+      {
+        bmr_no: 'BMR-2026-004', bpr_no: 'BPR-2026-004', product_name: 'Invisible Sunscreen SPF50', sku: 'EI-SS-50',
+        so_no: 'SO-2026-002', order_qty: 20000, batch_size: 300, batch_no: 'B-01', batch_index: 1, total_batches: 2,
+        bmr_status: 'bulk_qc', bpr_status: 'pm_reserved', color: 'amber',
+        process_type: 'hot', homogenizer: true, main_vessel: 'MV-02', supporting_tanks: ['ST-02'],
+        filling_line: 'FL-02', filling_type: 'tube', packaging_line: 'PL-01', monocarton: true, shrink: true,
+        team_bmr: ['T01', 'T04'], team_bpr: ['T08', 'T09', 'T10', 'T11'], qc_officer_bmr: 'T05', qc_officer_bpr: 'T07',
+        mfg_date: '2026-03-03', fill_date: '2026-03-07', pack_date: '2026-03-08', fg_date: '2026-03-09',
+        rm_connect_date: '2026-03-01', pm_connect_date: '2026-03-05',
+        rm_reserved: true, pm_reserved: true, rm_connected: true, pm_connected: false,
+        dispensing_rm: [
+          { code: 'RM-006', inci: 'Titanium Dioxide', required: 45, dispensed: 45, done: true },
+          { code: 'RM-007', inci: 'Zinc Oxide', required: 30, dispensed: 30, done: true },
+          { code: 'RM-001', inci: 'Aqua', required: 150, dispensed: 150, done: true },
+          { code: 'RM-008', inci: 'Silicone Emulsion', required: 50, dispensed: 50, done: true },
+        ],
+        dispensing_pm: [
+          { code: 'PM-005', name: '50ml Tube', required: 10000, dispensed: 0, done: false },
+          { code: 'PM-006', name: 'Tube Cap', required: 10000, dispensed: 0, done: false },
+          { code: 'PM-003', name: 'Label', required: 10000, dispensed: 0, done: false },
+          { code: 'PM-004', name: 'Mono Carton', required: 10000, dispensed: 0, done: false },
+        ],
+        bulk_yield: null, fill_yield: null, fg_yield: null,
+        bulk_batch_accepted: null, fill_batch_accepted: null, fg_batch_accepted: null,
+        qc_specs: [
+          { param: 'pH', spec: '6.5 - 7.5', result: '7.0', passed: true },
+          { param: 'Viscosity', spec: '8000-12000 cps', result: '9500', passed: true },
+          { param: 'SPF Value', spec: '>= 50', result: '52', passed: true },
+          { param: 'Appearance', spec: 'White smooth lotion', result: 'Conforms', passed: true },
+        ],
+        remarks: '', due_date: '2026-03-10',
+        created_at: now, updated_at: now,
+      },
+      {
+        bmr_no: 'BMR-2026-005', bpr_no: 'BPR-2026-005', product_name: 'Invisible Sunscreen SPF50', sku: 'EI-SS-50',
+        so_no: 'SO-2026-002', order_qty: 20000, batch_size: 300, batch_no: 'B-02', batch_index: 2, total_batches: 2,
+        bmr_status: 'draft', bpr_status: 'draft', color: 'amber',
+        process_type: 'hot', homogenizer: true, main_vessel: '', supporting_tanks: [],
+        filling_line: '', filling_type: 'tube', packaging_line: '', monocarton: true, shrink: true,
+        team_bmr: [], team_bpr: [], qc_officer_bmr: '', qc_officer_bpr: '',
+        mfg_date: null, fill_date: null, pack_date: null, fg_date: null,
+        rm_connect_date: null, pm_connect_date: null,
+        rm_reserved: false, pm_reserved: false, rm_connected: false, pm_connected: false,
+        dispensing_rm: [
+          { code: 'RM-006', inci: 'Titanium Dioxide', required: 45, dispensed: 0, done: false },
+          { code: 'RM-007', inci: 'Zinc Oxide', required: 30, dispensed: 0, done: false },
+        ],
+        dispensing_pm: [
+          { code: 'PM-005', name: '50ml Tube', required: 10000, dispensed: 0, done: false },
+        ],
+        bulk_yield: null, fill_yield: null, fg_yield: null,
+        bulk_batch_accepted: null, fill_batch_accepted: null, fg_batch_accepted: null,
+        qc_specs: [], remarks: '', due_date: '2026-03-18',
+        created_at: now, updated_at: now,
+      },
+      {
+        bmr_no: 'BMR-2026-006', bpr_no: 'BPR-2026-006', product_name: 'Hydra-Boost Moisturiser', sku: 'EI-MO-200',
+        so_no: 'SO-2026-003', order_qty: 15000, batch_size: 200, batch_no: 'B-01', batch_index: 1, total_batches: 1,
+        bmr_status: 'draft', bpr_status: 'draft', color: 'purple',
+        process_type: 'cold', homogenizer: false, main_vessel: 'MV-03', supporting_tanks: [],
+        filling_line: 'FL-03', filling_type: 'jar', packaging_line: 'PL-02', monocarton: true, shrink: false,
+        team_bmr: [], team_bpr: [], qc_officer_bmr: '', qc_officer_bpr: '',
+        mfg_date: null, fill_date: null, pack_date: null, fg_date: null,
+        rm_connect_date: null, pm_connect_date: null,
+        rm_reserved: false, pm_reserved: false, rm_connected: false, pm_connected: false,
+        dispensing_rm: [
+          { code: 'RM-001', inci: 'Aqua', required: 140, dispensed: 0, done: false },
+          { code: 'RM-009', inci: 'Hyaluronic Acid', required: 5, dispensed: 0, done: false },
+          { code: 'RM-010', inci: 'Shea Butter', required: 30, dispensed: 0, done: false },
+        ],
+        dispensing_pm: [
+          { code: 'PM-007', name: '200ml Jar', required: 15000, dispensed: 0, done: false },
+          { code: 'PM-008', name: 'Jar Lid', required: 15000, dispensed: 0, done: false },
+        ],
+        bulk_yield: null, fill_yield: null, fg_yield: null,
+        bulk_batch_accepted: null, fill_batch_accepted: null, fg_batch_accepted: null,
+        qc_specs: [], remarks: '', due_date: '2026-03-20',
+        created_at: now, updated_at: now,
+      },
+    ]);
+
+    /* ── Transporters ── */
+    console.log('Seeding Transporters...');
+    await Transporter.destroy({ where: {} });
+    await Transporter.bulkCreate([
+      { name: 'BlueDart Express', code: 'BLUEDART', contact_phone: '+91-1860-233-1234', contact_email: 'customerservice@bluedart.com', tracking_url: 'https://www.bluedart.com/tracking', status: 'active', created_at: now, updated_at: now },
+      { name: 'Delhivery', code: 'DELHIVERY', contact_phone: '+91-11-4567-8900', contact_email: 'support@delhivery.com', tracking_url: 'https://www.delhivery.com/track', status: 'active', created_at: now, updated_at: now },
+      { name: 'FedEx India', code: 'FEDEX', contact_phone: '+91-22-2645-6789', contact_email: 'india@fedex.com', tracking_url: 'https://www.fedex.com/en-in/tracking.html', status: 'active', created_at: now, updated_at: now },
+      { name: 'DTDC', code: 'DTDC', contact_phone: '+91-33-4400-6644', contact_email: 'custcare@dtdc.com', tracking_url: 'https://www.dtdc.in/tracking.asp', status: 'active', created_at: now, updated_at: now },
+      { name: 'Ecom Express', code: 'ECOM', contact_phone: '+91-11-4567-1234', contact_email: 'support@ecomexpress.in', tracking_url: 'https://www.ecomexpress.in/tracking', status: 'active', created_at: now, updated_at: now },
+      { name: 'Direct Dispatch', code: 'DIRECT', contact_phone: '', contact_email: '', tracking_url: '', status: 'active', created_at: now, updated_at: now },
+      { name: 'Gati Logistics', code: 'GATI', contact_phone: '+91-40-2398-5566', contact_email: 'customercare@gati.com', tracking_url: 'https://www.gati.com/tracking', status: 'active', created_at: now, updated_at: now },
+      { name: 'Rivigo', code: 'RIVIGO', contact_phone: '+91-124-466-9000', contact_email: 'help@rivigo.com', tracking_url: 'https://www.rivigo.com/tracking', status: 'active', created_at: now, updated_at: now },
+    ]);
+
+    /* ── Fulfillment Invoices ── */
+    console.log('Seeding Fulfillment Invoices...');
+    await FulfillmentInvoice.destroy({ where: {} });
+
+    /* ── Fulfillment Orders ── */
+    console.log('Seeding Fulfillment Orders...');
+    await FulfillmentBatchSplit.destroy({ where: {} });
+    await FulfillmentOrderItem.destroy({ where: {} });
+    await FulfillmentOrder.destroy({ where: {} });
+
+    const soEI001 = await SalesOrder.findOne({ where: { order_id: 'EI-SO-2026-001' } });
+    const soEI002 = await SalesOrder.findOne({ where: { order_id: 'EI-SO-2026-002' } });
+    const soEI003 = await SalesOrder.findOne({ where: { order_id: 'EI-SO-2026-003' } });
+    const soEI004 = await SalesOrder.findOne({ where: { order_id: 'EI-SO-2026-004' } });
+
+    const pbBMR001 = await ProductionBatch.findOne({ where: { bmr_no: 'BMR-2026-001' } });
+    const pbBMR002 = await ProductionBatch.findOne({ where: { bmr_no: 'BMR-2026-002' } });
+    const pbBMR003 = await ProductionBatch.findOne({ where: { bmr_no: 'BMR-2026-003' } });
+    const pbBMR004 = await ProductionBatch.findOne({ where: { bmr_no: 'BMR-2026-004' } });
+    const pbBMR005 = await ProductionBatch.findOne({ where: { bmr_no: 'BMR-2026-005' } });
+    const pbBMR006 = await ProductionBatch.findOne({ where: { bmr_no: 'BMR-2026-006' } });
+
+    const ffOrder1 = await FulfillmentOrder.create({
+      so_no: 'EI-SO-2026-001', sales_order_id: soEI001?.id || null,
+      customer_name: 'BeautyBox Retail', customer_city: 'Mumbai',
+      order_date: '2026-01-10', due_date: '2026-03-15', priority: 'high', so_status: 'partial',
+      so_value: 750000, ship_address: '12th Floor, Trade Centre, BKC, Bandra East, Mumbai 400051',
+      payment_terms: 'Net 30', notes: 'Urgent — retail launch tied to March season. Partial dispatch OK.',
+      created_at: now, updated_at: now,
+    });
+    const ffItem1 = await FulfillmentOrderItem.create({
+      fulfillment_order_id: ffOrder1.id, item_no: '001', sku: 'EI-FG-001',
+      product_name: 'EI Gentle Foaming Facewash', pack: '150ml Tube',
+      ordered_qty: 50000, rate: 15, unit_price: 15,
+      created_at: now, updated_at: now,
+    });
+    await FulfillmentBatchSplit.bulkCreate([
+      {
+        fulfillment_order_item_id: ffItem1.id, fulfillment_order_id: ffOrder1.id,
+        production_batch_id: pbBMR001?.id || null, bmr_no: 'BMR-2026-001', bpr_no: 'BPR-2026-001',
+        planned_qty: 20000, fg_qty: 20000, fg_location: 'FG-A-12', ff_status: 'fg_ready',
+        picked_qty: 0, created_at: now, updated_at: now,
+      },
+      {
+        fulfillment_order_item_id: ffItem1.id, fulfillment_order_id: ffOrder1.id,
+        production_batch_id: pbBMR002?.id || null, bmr_no: 'BMR-2026-002', bpr_no: 'BPR-2026-002',
+        planned_qty: 15000, fg_qty: 0, fg_location: null, ff_status: 'fg_pending',
+        picked_qty: 0, created_at: now, updated_at: now,
+      },
+      {
+        fulfillment_order_item_id: ffItem1.id, fulfillment_order_id: ffOrder1.id,
+        production_batch_id: pbBMR003?.id || null, bmr_no: 'BMR-2026-003', bpr_no: 'BPR-2026-003',
+        planned_qty: 15000, fg_qty: 0, fg_location: null, ff_status: 'fg_pending',
+        picked_qty: 0, created_at: now, updated_at: now,
+      },
+    ]);
+
+    const ffOrder2 = await FulfillmentOrder.create({
+      so_no: 'EI-SO-2026-002', sales_order_id: soEI002?.id || null,
+      customer_name: 'Glow & Go Distribution', customer_city: 'Bengaluru',
+      order_date: '2026-02-01', due_date: '2026-04-10', priority: 'normal', so_status: 'in_production',
+      so_value: 900000, ship_address: '45, Industrial Layout, Peenya, Bengaluru 560058',
+      payment_terms: 'Net 45', notes: '',
+      created_at: now, updated_at: now,
+    });
+    const ffItem2 = await FulfillmentOrderItem.create({
+      fulfillment_order_id: ffOrder2.id, item_no: '001', sku: 'EI-FG-002',
+      product_name: 'EI Invisible Sunscreen SPF50', pack: '50ml Bottle',
+      ordered_qty: 30000, rate: 30, unit_price: 30,
+      created_at: now, updated_at: now,
+    });
+    await FulfillmentBatchSplit.bulkCreate([
+      {
+        fulfillment_order_item_id: ffItem2.id, fulfillment_order_id: ffOrder2.id,
+        production_batch_id: pbBMR004?.id || null, bmr_no: 'BMR-2026-004', bpr_no: 'BPR-2026-004',
+        planned_qty: 15000, fg_qty: 14800, fg_location: 'FG-B-03', ff_status: 'bulk_qc',
+        picked_qty: 0, created_at: now, updated_at: now,
+      },
+      {
+        fulfillment_order_item_id: ffItem2.id, fulfillment_order_id: ffOrder2.id,
+        production_batch_id: pbBMR005?.id || null, bmr_no: 'BMR-2026-005', bpr_no: 'BPR-2026-005',
+        planned_qty: 15000, fg_qty: 0, fg_location: null, ff_status: 'fg_pending',
+        picked_qty: 0, created_at: now, updated_at: now,
+      },
+    ]);
+
+    const ffOrder3 = await FulfillmentOrder.create({
+      so_no: 'EI-SO-2026-003', sales_order_id: soEI003?.id || null,
+      customer_name: 'Shine & Care Salons', customer_city: 'Hyderabad',
+      order_date: '2026-02-20', due_date: '2026-05-01', priority: 'normal', so_status: 'planned',
+      so_value: 1000000, ship_address: 'Plot 88, HITEC City, Phase 2, Hyderabad 500081',
+      payment_terms: 'Advance', notes: 'New client — first order. Quality check before dispatch.',
+      created_at: now, updated_at: now,
+    });
+    const ffItem3 = await FulfillmentOrderItem.create({
+      fulfillment_order_id: ffOrder3.id, item_no: '001', sku: 'EI-FG-003',
+      product_name: 'EI Hydra-Boost Moisturiser', pack: '100ml Jar',
+      ordered_qty: 40000, rate: 25, unit_price: 25,
+      created_at: now, updated_at: now,
+    });
+    await FulfillmentBatchSplit.bulkCreate([
+      {
+        fulfillment_order_item_id: ffItem3.id, fulfillment_order_id: ffOrder3.id,
+        production_batch_id: pbBMR006?.id || null, bmr_no: 'BMR-2026-006', bpr_no: 'BPR-2026-006',
+        planned_qty: 40000, fg_qty: 0, fg_location: null, ff_status: 'fg_pending',
+        picked_qty: 0, created_at: now, updated_at: now,
+      },
+    ]);
+
+    const ffOrder4 = await FulfillmentOrder.create({
+      so_no: 'EI-SO-2026-004', sales_order_id: soEI004?.id || null,
+      customer_name: 'NaturGlow FMCG', customer_city: 'Delhi',
+      order_date: '2025-12-15', due_date: '2026-02-28', priority: 'high', so_status: 'shipped',
+      so_value: 400000, ship_address: 'A-12, Okhla Industrial Area, Phase 1, New Delhi 110020',
+      payment_terms: 'COD', notes: '',
+      invoice_no: 'INV-2026-1001', invoice_date: '2026-02-12',
+      awb_no: 'BD9876543210', dispatch_date: '2026-02-18', courier: 'BlueDart Express',
+      created_at: now, updated_at: now,
+    });
+    const ffItem4 = await FulfillmentOrderItem.create({
+      fulfillment_order_id: ffOrder4.id, item_no: '001', sku: 'EI-FG-004',
+      product_name: 'EI Daily Defence Conditioner', pack: '200ml Bottle',
+      ordered_qty: 20000, rate: 20, unit_price: 20,
+      created_at: now, updated_at: now,
+    });
+    await FulfillmentBatchSplit.bulkCreate([
+      {
+        fulfillment_order_item_id: ffItem4.id, fulfillment_order_id: ffOrder4.id,
+        production_batch_id: null, bmr_no: 'BMR-2025-0401', bpr_no: 'BPR-2025-0401',
+        planned_qty: 20000, fg_qty: 20000, fg_location: 'FG-C-01', ff_status: 'shipped',
+        picked_qty: 20000, picker_name: 'Ramesh K', pick_date: '2026-02-10',
+        pick_slip_no: 'PS-40112', remarks: 'Handle with care — glass bottles',
+        invoice_no: 'INV-2026-1001', awb_no: 'BD9876543210', courier: 'BlueDart Express',
+        dispatch_date: '2026-02-18', eta_date: '2026-02-25',
+        created_at: now, updated_at: now,
+      },
+    ]);
 
     console.log('Seeding complete.');
     process.exit(0);

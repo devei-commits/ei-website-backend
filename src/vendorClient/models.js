@@ -27,6 +27,13 @@ VendorClient.init(
     moq: { type: DataTypes.STRING(100), allowNull: true },
     lead_time: { type: DataTypes.STRING(100), allowNull: true },
     data: { type: DataTypes.JSONB, allowNull: true }, // formData + documents, pocs, banks, vendorItems/productInterests
+    priority: { type: DataTypes.STRING(20), allowNull: true },
+    segment: { type: DataTypes.STRING(200), allowNull: true },
+    since_year: { type: DataTypes.INTEGER, allowNull: true },
+    revenue_value: { type: DataTypes.DECIMAL(15, 2), allowNull: true },
+    avatar_color: { type: DataTypes.STRING(50), allowNull: true },
+    account_manager_id: { type: DataTypes.INTEGER, allowNull: true },
+    contacts: { type: DataTypes.JSONB, allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
   },

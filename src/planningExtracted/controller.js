@@ -51,6 +51,7 @@ function formatRow(row) {
     plannedStartDate: d.planned_start_date || null,
     productionLine: d.production_line || null,
     bomConfirmedAt: d.bom_confirmed_at || null,
+    customBatches: Array.isArray(d.custom_batches) ? d.custom_batches : null,
     createdAt: d.created_at,
     updatedAt: d.updated_at,
   };
@@ -103,12 +104,14 @@ async function updatePlanningExtracted(req, res) {
       rawMaterials: 'raw_materials', packagingMaterials: 'packaging_materials', color: 'color',
       batchCount: 'batch_count', batchSizeKg: 'batch_size_kg', plannedStartDate: 'planned_start_date',
       productionLine: 'production_line', bomConfirmedAt: 'bom_confirmed_at',
+      customBatches: 'custom_batches',
     };
     const allowed = [
       'order_qty_display', 'total_kg_display', 'order_date', 'due_date',
       'batch_size_display', 'batches_required', 'bom_status', 'approved_by',
       'raw_materials', 'packaging_materials', 'color',
       'batch_count', 'batch_size_kg', 'planned_start_date', 'production_line', 'bom_confirmed_at',
+      'custom_batches',
     ];
     for (const key of allowed) {
       if (body[key] !== undefined) row.set(key, body[key]);

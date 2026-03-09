@@ -37,6 +37,11 @@ Permission.belongsToMany(Role, { through: RolePermission, foreignKey: "permissio
 // StaffProfile (from roles/models) used by isAuthenticated for /me and admin RBAC
 StaffProfile.belongsTo(Role, { foreignKey: "role_id", as: "role" });
 
+// VendorClient account_manager FK + Client Hub sub-entity associations
+const VendorClient = require("../vendorClient/models");
+VendorClient.belongsTo(User, { foreignKey: "account_manager_id", targetKey: "userid", as: "accountManager" });
+require("../clientHub/models");
+
 module.exports = {
   User,
   Address,
@@ -47,4 +52,5 @@ module.exports = {
   RolePermission,
   ModuleDefinition,
   StaffProfile,
+  VendorClient,
 };

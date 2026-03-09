@@ -30,6 +30,7 @@ PlanningExtracted.init(
     planned_start_date: { type: DataTypes.DATEONLY, allowNull: true },
     production_line: { type: DataTypes.STRING(200), allowNull: true },
     bom_confirmed_at: { type: DataTypes.DATE, allowNull: true },
+    custom_batches: { type: DataTypes.JSON, allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
   },

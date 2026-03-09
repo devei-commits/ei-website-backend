@@ -296,9 +296,11 @@ async function remove(req, res) {
 
 /**
  * POST /api/v1/grn/:id/generate-labels
- * Body (optional): noOfBoxes, unitsPerBox, locationPrefix, grnBatchMfg, expiry, mfgBatch.
- * Uses GRN-stored values if not in body. Generates noOfBoxes QR codes (payload: grn_id, units_per_box, location_prefix, grn_batch_mfg, expiry, mfg_batch, box_index).
- * Returns { labels: [{ boxIndex, qrPayload, qrImageDataUrl }] } and stores generated_labels on GRN.
+ * Body (optional): noOfBoxes, unitsPerBox, locationPrefix, grnBatchMfg, expiry, mfgBatch,
+ *                  productName, itemCode (selected line item info).
+ * Uses GRN-stored values if not in body. Generates noOfBoxes QR codes per box.
+ * Also advances workflow_steps to include 'Label Generation'.
+ * Returns { labels, workflowSteps }.
  */
 async function generateLabels(req, res) {
   try {
@@ -314,6 +316,8 @@ async function generateLabels(req, res) {
     const grnBatchMfg = body.grnBatchMfg ?? body.grn_batch_mfg ?? d.grn_batch_mfg ?? '';
     const expiry = body.expiry ?? d.expiry ?? '';
     const mfgBatch = body.mfgBatch ?? body.mfg_batch ?? d.mfg_batch ?? '';
+    const productName = body.productName ?? '';
+    const itemCode = body.itemCode ?? '';
 
     const updates = {};
     if (body.noOfBoxes !== undefined) updates.no_of_boxes = body.noOfBoxes;
@@ -330,6 +334,9 @@ async function generateLabels(req, res) {
     for (let boxIndex = 1; boxIndex <= n; boxIndex++) {
       const payload = {
         grn_id: id,
+        grn_no: d.grn_no,
+        product_name: productName || null,
+        item_code: itemCode || null,
         units_per_box: unitsPerBox,
         location_prefix: locationPrefix,
         grn_batch_mfg: grnBatchMfg,
@@ -341,8 +348,13 @@ async function generateLabels(req, res) {
       const qrImageDataUrl = await QRCode.toDataURL(qrPayload, { type: 'image/png', margin: 2 });
       labels.push({ boxIndex, qrPayload, qrImageDataUrl });
     }
-    await row.update({ generated_labels: labels });
-    res.json({ labels });
+
+    const existingSteps = d.workflow_steps || [];
+    const ORDERED_STEPS = ['PO Received', 'Qty Check', 'QC Inspection', 'Label Generation'];
+    const updatedSteps = [...new Set([...existingSteps, ...ORDERED_STEPS])];
+
+    await row.update({ generated_labels: labels, workflow_steps: updatedSteps });
+    res.json({ labels, workflowSteps: updatedSteps });
   } catch (err) {
     console.error('[grn] generateLabels error:', err);
     res.status(500).json({ error: err.message || 'Failed to generate labels' });

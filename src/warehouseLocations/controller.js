@@ -3,6 +3,7 @@
  * Stored items are warehouse_inventory ids; resolved to code, name, type for display.
  */
 const { WarehouseLocation, WarehouseRack, WarehouseRackItem } = require('./models');
+const FacilityArea = require('../facilityAreas/models');
 const WarehouseInventory = require('../warehouseInventory/models');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
@@ -72,9 +73,14 @@ async function buildInventorySummaryMap() {
 async function list(req, res) {
   try {
     const invMap = await buildInventorySummaryMap();
+    const where = {};
+    if (req.query.location_type) where.location_type = req.query.location_type;
+    if (req.query.area_id) where.area_id = parseInt(req.query.area_id, 10);
     const locations = await WarehouseLocation.findAll({
+      where,
       order: [['id', 'ASC']],
       include: [
+        { model: FacilityArea, as: 'area', required: false, attributes: ['id', 'name', 'area_type'] },
         {
           model: WarehouseRack,
           as: 'WarehouseRacks',
@@ -127,10 +133,14 @@ async function list(req, res) {
         ? Math.round(racks.reduce((sum, r) => sum + (r.utilisationPct || 0), 0) / racks.length)
         : 0;
 
+      const areaData = locPlain.area || null;
       return {
         id: locPlain.id,
         code: locPlain.code,
         name: locPlain.name,
+        locationType: locPlain.location_type || 'warehouse',
+        areaId: locPlain.area_id || null,
+        areaName: areaData ? areaData.name : null,
         zoneLabel: locPlain.zone_label,
         icon: locPlain.icon,
         areaSqm: locPlain.area_sqm,
@@ -215,7 +225,7 @@ async function getLocationById(req, res) {
 
 /**
  * POST /api/v1/warehouse-locations
- * Body: { code, name, zone_label?, icon?, area_sqm?, description? }
+ * Body: { code, name, area_id?, location_type?, zone_label?, icon?, area_sqm?, description? }
  */
 async function createLocation(req, res) {
   try {
@@ -227,6 +237,8 @@ async function createLocation(req, res) {
       where: { code: String(body.code).trim() },
       defaults: {
         name: String(body.name).trim(),
+        area_id: body.area_id != null ? parseInt(body.area_id, 10) : null,
+        location_type: body.location_type || 'warehouse',
         zone_label: body.zone_label != null ? String(body.zone_label) : null,
         icon: body.icon != null ? String(body.icon) : null,
         area_sqm: body.area_sqm != null ? parseInt(body.area_sqm, 10) : null,
@@ -254,6 +266,8 @@ async function updateLocation(req, res) {
     const updates = {};
     if (body.code != null) updates.code = String(body.code);
     if (body.name != null) updates.name = String(body.name);
+    if (body.area_id !== undefined) updates.area_id = body.area_id != null ? parseInt(body.area_id, 10) : null;
+    if (body.location_type != null) updates.location_type = String(body.location_type);
     if (body.zone_label != null) updates.zone_label = String(body.zone_label);
     if (body.icon != null) updates.icon = String(body.icon);
     if (body.area_sqm != null) updates.area_sqm = parseInt(body.area_sqm, 10);

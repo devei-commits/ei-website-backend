@@ -12,8 +12,15 @@ class WarehouseLocation extends Model {}
 WarehouseLocation.init(
   {
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    area_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: 'facility_areas', key: 'id' },
+      onDelete: 'SET NULL',
+    },
     code: { type: DataTypes.STRING(50), allowNull: false, unique: true },
     name: { type: DataTypes.STRING(200), allowNull: false },
+    location_type: { type: DataTypes.STRING(30), allowNull: false, defaultValue: 'warehouse' },
     zone_label: { type: DataTypes.STRING(50), allowNull: true },
     icon: { type: DataTypes.STRING(20), allowNull: true },
     area_sqm: { type: DataTypes.INTEGER, allowNull: true },

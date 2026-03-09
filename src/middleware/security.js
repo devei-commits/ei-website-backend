@@ -72,6 +72,7 @@ const isAuthenticated = async (req, res, next) => {
         req.user = {
             id: user.userid,
             email: user.email,
+            fullName: [user.fname, user.lname].filter(Boolean).join(' ') || user.display_name || user.email,
             role: user.usertype,
             allowedModules: getAllowedModules(user.usertype)
         };
