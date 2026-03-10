@@ -1,7 +1,7 @@
 const Joi = require('joi');
 
 const appointmentSchema = Joi.object({
-  doctor_id: Joi.number().integer().required(),
+  doctor_id: Joi.string().required(),
   clinic_name: Joi.string().allow('', null),
   email: Joi.string().email().allow('', null),
   phone: Joi.string().allow('', null),

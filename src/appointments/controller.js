@@ -1,5 +1,6 @@
 const Appointment = require('./models');
 const { appointmentSchema } = require('./schemas');
+const { Op } = require('sequelize');
 
 /**
  * Create a new appointment
@@ -44,17 +45,22 @@ const createAppointment = async (req, res, next) => {
 /**
  * Get all appointments for the logged-in user (as patient or doctor)
  */
-const getAppointmentsByUserId = async (req, res) => {
+const getAppointmentsByUserId = async (req, res, next) => {
   try {
     const userId = req.user.id;
-    
-    // Find appointments where the user is either the patient or the doctor
+
+    // Base condition: user is the patient
+    const orConditions = [{ user_id: userId }];
+
+    // If the logged-in user is a doctor and we know their legacy doctor ID,
+    // also fetch appointments where they are the doctor (by legacy code).
+    if (req.user.role === 'doctor' && req.user.doctorIdLegacy) {
+      orConditions.push({ doctor_id: req.user.doctorIdLegacy });
+    }
+
     const appointments = await Appointment.findAll({
       where: {
-        [require('sequelize').Op.or]: [
-          { user_id: userId },
-          { doctor_id: userId }
-        ]
+        [Op.or]: orConditions,
       },
       order: [['created_at', 'DESC']]
     });
@@ -64,6 +70,7 @@ const getAppointmentsByUserId = async (req, res) => {
       data: appointments
     });
   } catch (err) {
+    console.error('Error getting appointments:', err);
     next(err);
   }
 };

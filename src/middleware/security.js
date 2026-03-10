@@ -74,6 +74,7 @@ const isAuthenticated = async (req, res, next) => {
             email: user.email,
             fullName: [user.fname, user.lname].filter(Boolean).join(' ') || user.display_name || user.email,
             role: user.usertype,
+            doctorIdLegacy: user.doctor_id_legacy,
             allowedModules: getAllowedModules(user.usertype)
         };
         // For staff (admin dashboard RBAC): attach roleId, roleName, roleLevel from staff_profiles + roles

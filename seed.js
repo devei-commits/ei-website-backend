@@ -13,10 +13,11 @@ const ProductCustomization = require('./src/productCustomizations/models');
 const Enquiry = require('./src/enquiries/models');
 const { Item, excelRowToItem } = require('./src/items/models');
 const itemsSeedDataRaw = require('./src/items/itemsSeedData');
-const { Vendor, contactRowToVendor } = require('./src/Vendors/models');
-const contactsSeedDataRaw = require('./src/Vendors/contactsSeedData');
-const { Contact, customerRowToModel } = require('./src/Contacts/models');
-const seedContactData = require('./src/Contacts/seedContact');
+const { Vendor, contactRowToVendor } = require('./src/vendors/models');
+const contactsSeedDataRaw = require('./src/vendors/contactsSeedData');
+const { Contact, customerRowToModel } = require('./src/contacts/models');
+const seedContactData = require('./src/contacts/seedContact');
+const Authentication = require('./src/otp/models');
 const { CompositeItem, compositeRowToModel } = require('./src/compositeItems/models');
 const compositeItemsSeedData = require('./src/compositeItems/compositeItemsSeedData');
 const Packaging = require('./src/packaging/models');
@@ -115,6 +116,14 @@ async function seed() {
     await dropEntireDatabase();
     console.log('Syncing database...');
     await db.sync({ alter: true });
+
+    // Ensure doctor_id in appointments is string-compatible (for legacy codes like DOC-SAR-101)
+    await db.query(
+      `ALTER TABLE appointments
+       ALTER COLUMN doctor_id TYPE VARCHAR(255)
+       USING doctor_id::text`,
+      { raw: true }
+    ).catch(() => {});
 
     // Ensure permissions.updated_at exists (model expects it for audit)
     await db.query(

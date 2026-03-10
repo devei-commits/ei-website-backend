@@ -125,12 +125,8 @@ Appointment.init({
     }
   },
   doctor_id: {
-    type: DataTypes.INTEGER,
-    allowNull: true,
-    references: {
-      model: User,
-      key: 'userid'
-    }
+    type: DataTypes.STRING,
+    allowNull: true
   },
   clinic_name: {
     type: DataTypes.STRING,
@@ -209,9 +205,6 @@ Appointment.init({
 
 // Associations
 Appointment.belongsTo(User, { foreignKey: 'user_id', as: 'patient' });
-Appointment.belongsTo(User, { foreignKey: 'doctor_id', as: 'doctor' });
-
 User.hasMany(Appointment, { foreignKey: 'user_id', as: 'appointments' });
-User.hasMany(Appointment, { foreignKey: 'doctor_id', as: 'doctorAppointments' });
 
 module.exports = Appointment;

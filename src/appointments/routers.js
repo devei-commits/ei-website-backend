@@ -5,7 +5,7 @@ const { createAppointment, getAppointmentsByUserId, getallAppointment } = requir
 // All appointment routes require authentication
 router.post('/', createAppointment);
 router.get('/', getallAppointment);
-router.get('/:id', getAppointmentsByUserId);
+router.get('/id', getAppointmentsByUserId);
 // router.put('/:id', updateAppointment);
 // router.delete('/:id', deleteAppointment);
 
