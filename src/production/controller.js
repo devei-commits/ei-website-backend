@@ -1,4 +1,9 @@
 const { ProductionEquipment, ProductionTeamMember, ProductionBatch } = require('./models');
+const WarehouseInventory = require('../warehouseInventory/models');
+const { FulfillmentBatchSplit } = require('../fulfillment/models');
+const { Product } = require('../products/models');
+const RawMaterial = require('../rawMaterials/models');
+const PackMaterial = require('../packMaterials/models');
 
 /* ════════════════════════════════════════════════════════════
    EQUIPMENT
@@ -304,14 +309,122 @@ async function createBatch(req, res) {
   }
 }
 
+/**
+ * After BPR QC: reduce RM/PM (consumed), add FG to warehouse, set fulfillment split fg_qty for invoicing.
+ * Called when BPR status transitions to fg_ready.
+ */
+async function applyBprFgReadyToInventory(batchRow) {
+  const d = batchRow.get ? batchRow.get({ plain: true }) : batchRow;
+
+  // 1. Reduce RM (consumption from dispensing_rm)
+  const dispensingRm = Array.isArray(d.dispensing_rm) ? d.dispensing_rm : [];
+  for (const line of dispensingRm) {
+    const qty = Number(line.dispensed ?? line.required ?? 0) || 0;
+    if (qty <= 0) continue;
+    const code = (line.code || '').trim();
+    if (!code) continue;
+    const rm = await RawMaterial.findOne({ where: { code } });
+    if (!rm) continue;
+    const wh = await WarehouseInventory.findOne({ where: { item_type: 'RM', raw_material_id: rm.id } });
+    if (!wh) continue;
+    const plain = wh.get ? wh.get({ plain: true }) : wh;
+    const whStock = Number(plain.wh_stock) || 0;
+    const ml1 = Number(plain.ml1_stock) || 0;
+    const ml2 = Number(plain.ml2_stock) || 0;
+    const newWhStock = Math.max(0, whStock - qty);
+    await wh.update({ wh_stock: newWhStock, stock_in_hand: newWhStock + ml1 + ml2 });
+    console.log('[production] BPR fg_ready: reduced RM id=%s qty=%s -> wh_stock=%s', rm.id, qty, newWhStock);
+  }
+
+  // 2. Reduce PM (consumption from dispensing_pm)
+  const dispensingPm = Array.isArray(d.dispensing_pm) ? d.dispensing_pm : [];
+  for (const line of dispensingPm) {
+    const qty = Number(line.dispensed ?? line.required ?? 0) || 0;
+    if (qty <= 0) continue;
+    const code = (line.code || '').trim();
+    if (!code) continue;
+    const pm = await PackMaterial.findOne({ where: { code } });
+    if (!pm) continue;
+    const wh = await WarehouseInventory.findOne({ where: { item_type: 'PM', pack_material_id: pm.id } });
+    if (!wh) continue;
+    const plain = wh.get ? wh.get({ plain: true }) : wh;
+    const whStock = Number(plain.wh_stock) || 0;
+    const ml1 = Number(plain.ml1_stock) || 0;
+    const ml2 = Number(plain.ml2_stock) || 0;
+    const newWhStock = Math.max(0, whStock - qty);
+    await wh.update({ wh_stock: newWhStock, stock_in_hand: newWhStock + ml1 + ml2 });
+    console.log('[production] BPR fg_ready: reduced PM id=%s qty=%s -> wh_stock=%s', pm.id, qty, newWhStock);
+  }
+
+  // 3. Add FG (product) to warehouse_inventory
+  let product = null;
+  if (d.sku) product = await Product.findOne({ where: { product_sku: d.sku } });
+  if (!product && d.product_name) product = await Product.findOne({ where: { product_name: d.product_name } });
+  if (!product) {
+    console.warn('[production] BPR fg_ready: no product found for sku=%s product_name=%s', d.sku, d.product_name);
+  } else {
+    const productId = product.get ? product.get({ plain: true }).product_id : product.product_id;
+    const producedQty = Math.max(0, parseInt(d.batch_size || d.order_qty || 0, 10) || 0);
+    if (producedQty > 0) {
+      let whRow = await WarehouseInventory.findOne({ where: { item_type: 'PR', product_id: productId } });
+      if (whRow) {
+        const wh = whRow.get ? whRow.get({ plain: true }) : whRow;
+        const whStock = (Number(wh.wh_stock) || 0) + producedQty;
+        const ml1 = Number(wh.ml1_stock) || 0;
+        const ml2 = Number(wh.ml2_stock) || 0;
+        await whRow.update({ wh_stock: whStock, stock_in_hand: whStock + ml1 + ml2 });
+        console.log('[production] BPR fg_ready: added FG product_id=%d qty=%s -> wh_stock=%s', productId, producedQty, whStock);
+      } else {
+        await WarehouseInventory.create({
+          item_type: 'PR',
+          raw_material_id: null,
+          pack_material_id: null,
+          product_id: productId,
+          wh_stock: producedQty,
+          wh_unit: 'PCS',
+          ml1_stock: 0,
+          ml2_stock: 0,
+          stock_in_hand: producedQty,
+          reserved: 0,
+          in_transit: 0,
+          reorder_pt: 0,
+          avg_mo: 0,
+          qc_status: 'In Stock',
+        });
+        console.log('[production] BPR fg_ready: created PR warehouse_inventory product_id=%d wh_stock=%s', productId, producedQty);
+      }
+
+      // 4. Set fulfillment split fg_qty (final FG quantity = what is invoiced)
+      const splits = await FulfillmentBatchSplit.findAll({
+        where: { production_batch_id: d.id },
+        order: [['id', 'ASC']],
+      });
+      let remaining = producedQty;
+      for (const split of splits) {
+        const planned = Number(split.planned_qty) || 0;
+        const qty = Math.min(planned, remaining);
+        if (qty > 0) await split.update({ fg_qty: qty });
+        remaining -= qty;
+        if (remaining <= 0) break;
+      }
+    }
+  }
+}
+
 async function updateBatch(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await ProductionBatch.findByPk(id);
     if (!row) return res.status(404).json({ error: 'Batch not found' });
+    const prevPlain = row.get ? row.get({ plain: true }) : row;
+    const prevBprStatus = prevPlain.bpr_status;
     applyBatchBody(row, req.body);
     await row.save();
+    const nextPlain = row.get ? row.get({ plain: true }) : row;
+    if (prevBprStatus !== 'fg_ready' && nextPlain.bpr_status === 'fg_ready') {
+      await applyBprFgReadyToInventory(row);
+    }
     res.json(formatBatch(row));
   } catch (err) {
     console.error('updateBatch error:', err);

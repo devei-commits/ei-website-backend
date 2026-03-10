@@ -232,4 +232,51 @@ FulfillmentOrder.hasMany(FulfillmentInvoice, { as: 'invoices', foreignKey: 'fulf
 FulfillmentInvoice.belongsTo(FulfillmentOrder, { as: 'fulfillmentOrder', foreignKey: 'fulfillment_order_id' });
 FulfillmentInvoice.belongsTo(Transporter, { as: 'transporter', foreignKey: 'transporter_id' });
 
-module.exports = { FulfillmentOrder, FulfillmentOrderItem, FulfillmentBatchSplit, Transporter, FulfillmentInvoice };
+/* ── Reserved Batch Items (RM/PM reserved for SO/batch) ── */
+
+class ReservedBatchItem extends Model {}
+
+ReservedBatchItem.init(
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    production_batch_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: 'production_batches', key: 'id' },
+      onDelete: 'CASCADE',
+    },
+    fulfillment_order_item_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: 'fulfillment_order_items', key: 'id' },
+      onDelete: 'CASCADE',
+    },
+    raw_material_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: 'raw_materials', key: 'id' },
+      onDelete: 'CASCADE',
+    },
+    pack_material_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: 'pack_materials', key: 'id' },
+      onDelete: 'CASCADE',
+    },
+    quantity_reserved: { type: DataTypes.DECIMAL(14, 4), allowNull: false, defaultValue: 0 },
+    unit: { type: DataTypes.STRING(20), allowNull: true, defaultValue: 'KG' },
+    so_no: { type: DataTypes.STRING(50), allowNull: true },
+    created_at: { type: DataTypes.DATE, allowNull: true },
+    updated_at: { type: DataTypes.DATE, allowNull: true },
+  },
+  {
+    sequelize: db,
+    modelName: 'ReservedBatchItem',
+    tableName: 'reserved_batch_items',
+    timestamps: true,
+    createdAt: 'created_at',
+    updatedAt: 'updated_at',
+  }
+);
+
+module.exports = { FulfillmentOrder, FulfillmentOrderItem, FulfillmentBatchSplit, Transporter, FulfillmentInvoice, ReservedBatchItem };

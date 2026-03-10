@@ -1,5 +1,7 @@
 const RawMaterial = require('./models');
 const { Op } = require('sequelize');
+const WarehouseInventory = require('../warehouseInventory/models');
+const { ReservedBatchItem } = require('../fulfillment/models');
 
 /** List-view only (no form_data). */
 function formatRawMaterial(row) {
@@ -148,11 +150,39 @@ async function deleteRawMaterial(req, res) {
   }
 }
 
+/**
+ * GET /api/v1/raw-materials/:id/reserved-stock — actual (SIH), reserved (from SO/batches), available = actual - reserved.
+ */
+async function getReservedStock(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid raw material id' });
+    const rm = await RawMaterial.findByPk(id);
+    if (!rm) return res.status(404).json({ error: 'Raw material not found' });
+
+    const wh = await WarehouseInventory.findOne({ where: { item_type: 'RM', raw_material_id: id } });
+    const actual = wh && wh.stock_in_hand != null ? Number(wh.stock_in_hand) : 0;
+
+    const rows = await ReservedBatchItem.findAll({
+      where: { raw_material_id: id },
+      attributes: ['quantity_reserved'],
+    });
+    const reserved = rows.reduce((sum, r) => sum + Number(r.quantity_reserved || 0), 0);
+    const available = Math.max(0, actual - reserved);
+
+    res.json({ actual, reserved, available, unit: rm.uom || 'KG' });
+  } catch (err) {
+    console.error('getReservedStock (RM) error', err);
+    res.status(500).json({ error: 'Failed to get reserved stock' });
+  }
+}
+
 module.exports = {
   listRawMaterials,
   getRawMaterialById,
   createRawMaterial,
   updateRawMaterial,
   deleteRawMaterial,
+  getReservedStock,
   formatRawMaterial,
 };

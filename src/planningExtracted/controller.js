@@ -1,10 +1,12 @@
 const { Op } = require('sequelize');
 const PlanningExtracted = require('./models');
+const PlanningBomOverride = require('./planningBomOverrideModel');
 const SalesOrder = require('../salesOrders/models');
 const { Product } = require('../products/models');
 const WarehouseInventory = require('../warehouseInventory/models');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
+const BOM = require('../bom/models');
 
 function daysLeftDisplay(dueDate) {
   if (!dueDate) return '';
@@ -52,6 +54,7 @@ function formatRow(row) {
     productionLine: d.production_line || null,
     bomConfirmedAt: d.bom_confirmed_at || null,
     customBatches: Array.isArray(d.custom_batches) ? d.custom_batches : null,
+    sentBatchIndices: Array.isArray(d.sent_batch_indices) ? d.sent_batch_indices : [],
     createdAt: d.created_at,
     updatedAt: d.updated_at,
   };
@@ -105,13 +108,14 @@ async function updatePlanningExtracted(req, res) {
       batchCount: 'batch_count', batchSizeKg: 'batch_size_kg', plannedStartDate: 'planned_start_date',
       productionLine: 'production_line', bomConfirmedAt: 'bom_confirmed_at',
       customBatches: 'custom_batches',
+      sentBatchIndices: 'sent_batch_indices',
     };
     const allowed = [
       'order_qty_display', 'total_kg_display', 'order_date', 'due_date',
       'batch_size_display', 'batches_required', 'bom_status', 'approved_by',
       'raw_materials', 'packaging_materials', 'color',
       'batch_count', 'batch_size_kg', 'planned_start_date', 'production_line', 'bom_confirmed_at',
-      'custom_batches',
+      'custom_batches', 'sent_batch_indices',
     ];
     for (const key of allowed) {
       if (body[key] !== undefined) row.set(key, body[key]);
@@ -130,6 +134,92 @@ async function updatePlanningExtracted(req, res) {
   } catch (err) {
     console.error('updatePlanningExtracted error', err);
     res.status(500).json({ error: 'Failed to update planning extracted' });
+  }
+}
+
+/**
+ * GET /:id/bom-override — custom BOM for this planning extracted row (swapped/edited in Plan Batches).
+ * Returns { rmLines, pmLines } or 404 if no override.
+ */
+async function getBomOverride(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const row = await PlanningBomOverride.findOne({ where: { planning_extracted_id: id } });
+    if (!row) return res.status(404).json({ error: 'No BOM override for this planning row' });
+    const d = row.get ? row.get({ plain: true }) : row;
+    res.json({
+      rmLines: Array.isArray(d.rm_lines) ? d.rm_lines : [],
+      pmLines: Array.isArray(d.pm_lines) ? d.pm_lines : [],
+    });
+  } catch (err) {
+    console.error('getBomOverride error', err);
+    res.status(500).json({ error: 'Failed to fetch BOM override' });
+  }
+}
+
+/**
+ * PUT /:id/bom-override — create or update custom BOM for this planning extracted row.
+ * Body: { rmLines, pmLines }. Also syncs planning_extracted.raw_materials and packaging_materials from override
+ * so items-involved and other flows use the custom BOM.
+ */
+async function putBomOverride(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const planRow = await PlanningExtracted.findByPk(id);
+    if (!planRow) return res.status(404).json({ error: 'Planning extracted not found' });
+    const body = req.body || {};
+    const rmLines = Array.isArray(body.rmLines) ? body.rmLines : [];
+    const pmLines = Array.isArray(body.pmLines) ? body.pmLines : [];
+
+    const [override] = await PlanningBomOverride.findOrCreate({
+      where: { planning_extracted_id: id },
+      defaults: { rm_lines: rmLines, pm_lines: pmLines },
+    });
+    if (!override) return res.status(500).json({ error: 'Failed to create BOM override' });
+    override.rm_lines = rmLines;
+    override.pm_lines = pmLines;
+    await override.save();
+
+    const batchSizeKg = Number(planRow.batch_size_kg) || 500;
+    const orderQtyNum = parseInt(String(planRow.order_qty_display || '0').replace(/\D/g, ''), 10) || 0;
+    const totalKg = parseFloat(String(planRow.total_kg_display || '0').replace(/[^\d.]/g, '')) || 0;
+    const rawMaterials = rmLines.map((line) => {
+      const pct = line.pct_w_w ?? line.pct ?? 0;
+      const quantity = (batchSizeKg * pct) / 100;
+      return {
+        raw_material_id: line.raw_material_id ?? null,
+        name: line.inci_name ?? line.name ?? line.rm_code ?? '',
+        quantity: Math.round(quantity * 1000) / 1000,
+        unit: line.uom || 'KG',
+        code: line.rm_code ?? line.code ?? '',
+      };
+    });
+    const unitsFraction = totalKg > 0 ? batchSizeKg / totalKg : 0;
+    const unitsForBatch = Math.ceil(orderQtyNum * unitsFraction) || 0;
+    const packagingMaterials = pmLines.map((line) => {
+      const qtyPerUnit = line.qty_per_unit ?? line.qty ?? 1;
+      const required = unitsForBatch * qtyPerUnit;
+      return {
+        pack_material_id: line.pack_material_id ?? null,
+        name: line.description ?? line.name ?? line.pm_code ?? '',
+        quantity: Math.ceil(required),
+        unit: 'PCS',
+        code: line.pm_code ?? line.code ?? '',
+      };
+    });
+    planRow.raw_materials = rawMaterials;
+    planRow.packaging_materials = packagingMaterials;
+    await planRow.save();
+
+    res.json({
+      rmLines: override.rm_lines || [],
+      pmLines: override.pm_lines || [],
+    });
+  } catch (err) {
+    console.error('putBomOverride error', err);
+    res.status(500).json({ error: 'Failed to save BOM override' });
   }
 }
 
@@ -301,14 +391,114 @@ async function getItemsInvolvedByPlanningId(req, res) {
     const rmReq = new Map(); // id -> { quantity, unit, name, code }
     const pmReq = new Map();
 
-    const rms = Array.isArray(plain.raw_materials) ? plain.raw_materials : [];
+    let rms = Array.isArray(plain.raw_materials) ? plain.raw_materials : [];
+    let pms = Array.isArray(plain.packaging_materials) ? plain.packaging_materials : [];
+
+    const productId = plain.product_id ?? plain.product?.product_id;
+    if (productId != null && (rms.length === 0 || pms.length === 0)) {
+      const bomRows = await BOM.findAll({ where: { product_id: productId }, limit: 1 });
+      const bom = bomRows[0];
+      if (bom) {
+        const bomPlain = bom.get ? bom.get({ plain: true }) : bom;
+        if (rms.length === 0 && Array.isArray(bomPlain.rm_lines) && bomPlain.rm_lines.length > 0) {
+          const batchSizeKg = Number(plain.batch_size_kg) || 500;
+          for (const line of bomPlain.rm_lines) {
+            let rid = line.raw_material_id != null ? Number(line.raw_material_id) : null;
+            if (rid == null && line.rm_code) {
+              const rm = await RawMaterial.findOne({ where: { code: line.rm_code }, attributes: ['id'] });
+              if (rm) rid = rm.id;
+            }
+            if (rid == null || Number.isNaN(rid)) continue;
+            const pct = line.pct_w_w ?? line.pct ?? 0;
+            const quantity = (batchSizeKg * pct) / 100;
+            rms.push({
+              raw_material_id: rid,
+              name: line.inci_name ?? line.name ?? line.rm_code ?? '',
+              quantity: Math.round(quantity * 1000) / 1000,
+              unit: line.uom || 'KG',
+              code: line.rm_code ?? line.code ?? '',
+            });
+          }
+        }
+        if (pms.length === 0 && Array.isArray(bomPlain.pm_lines) && bomPlain.pm_lines.length > 0) {
+          const orderQtyNum = parseInt(String(plain.order_qty_display || '0').replace(/\D/g, ''), 10) || 0;
+          const totalKg = parseFloat(String(plain.total_kg_display || '0').replace(/[^\d.]/g, '')) || 0;
+          const batchSizeKg = Number(plain.batch_size_kg) || 500;
+          const unitsFraction = totalKg > 0 ? batchSizeKg / totalKg : 0;
+          const unitsForBatch = Math.ceil(orderQtyNum * unitsFraction) || 0;
+          for (const line of bomPlain.pm_lines) {
+            let pid = line.pack_material_id != null ? Number(line.pack_material_id) : null;
+            if (pid == null && line.pm_code) {
+              const pm = await PackMaterial.findOne({ where: { code: line.pm_code }, attributes: ['id'] });
+              if (pm) pid = pm.id;
+            }
+            if (pid == null || Number.isNaN(pid)) continue;
+            const qtyPerUnit = line.qty_per_unit ?? line.qty ?? 1;
+            const required = unitsForBatch * qtyPerUnit;
+            pms.push({
+              pack_material_id: pid,
+              name: line.description ?? line.name ?? line.pm_code ?? '',
+              quantity: Math.ceil(required),
+              unit: 'PCS',
+              code: line.pm_code ?? line.code ?? '',
+            });
+          }
+        }
+      }
+    }
+
+    // Resolve raw_material_id / pack_material_id by code or name when missing (planning_extracted often has code/name only)
+    const rmCodes = [...new Set(rms.map((r) => (r.code || '').trim()).filter(Boolean))];
+    const rmNames = [...new Set(rms.map((r) => (r.name || '').trim()).filter(Boolean))];
+    const pmCodes = [...new Set(pms.map((p) => (p.code || '').trim()).filter(Boolean))];
+    const pmNames = [...new Set(pms.map((p) => (p.name || '').trim()).filter(Boolean))];
+    let rmByCode = {};
+    let rmByName = {};
+    let pmByCode = {};
+    let pmByName = {};
+    if (rmCodes.length > 0 || rmNames.length > 0) {
+      const rmWhere = rmCodes.length && rmNames.length
+        ? { [Op.or]: [{ code: { [Op.in]: rmCodes } }, { name: { [Op.in]: rmNames } }] }
+        : (rmCodes.length ? { code: { [Op.in]: rmCodes } } : { name: { [Op.in]: rmNames } });
+      const rmRows = await RawMaterial.findAll({ where: rmWhere, attributes: ['id', 'code', 'name'] });
+      rmRows.forEach((x) => {
+        const d = x.get ? x.get({ plain: true }) : x;
+        if (d.code) rmByCode[d.code] = d.id;
+        if (d.name) rmByName[String(d.name).trim().toLowerCase()] = d.id;
+      });
+    }
+    if (pmCodes.length > 0 || pmNames.length > 0) {
+      const pmWhere = pmCodes.length && pmNames.length
+        ? { [Op.or]: [{ code: { [Op.in]: pmCodes } }, { description: { [Op.in]: pmNames } }] }
+        : (pmCodes.length ? { code: { [Op.in]: pmCodes } } : { description: { [Op.in]: pmNames } });
+      const pmRows = await PackMaterial.findAll({ where: pmWhere, attributes: ['id', 'code', 'description'] });
+      pmRows.forEach((x) => {
+        const d = x.get ? x.get({ plain: true }) : x;
+        if (d.code) pmByCode[d.code] = d.id;
+        if (d.description) pmByName[String(d.description).trim().toLowerCase()] = d.id;
+      });
+    }
+    for (const r of rms) {
+      if (r.raw_material_id != null && !Number.isNaN(Number(r.raw_material_id))) continue;
+      const code = (r.code || '').trim();
+      const nameKey = (r.name || '').trim().toLowerCase();
+      if (code && rmByCode[code]) r.raw_material_id = rmByCode[code];
+      else if (nameKey && rmByName[nameKey]) r.raw_material_id = rmByName[nameKey];
+    }
+    for (const p of pms) {
+      if (p.pack_material_id != null && !Number.isNaN(Number(p.pack_material_id))) continue;
+      const code = (p.code || '').trim();
+      const nameKey = (p.name || '').trim().toLowerCase();
+      if (code && pmByCode[code]) p.pack_material_id = pmByCode[code];
+      else if (nameKey && pmByName[nameKey]) p.pack_material_id = pmByName[nameKey];
+    }
+
     for (const r of rms) {
       const rid = r.raw_material_id != null ? Number(r.raw_material_id) : null;
       if (rid == null || Number.isNaN(rid)) continue;
       rmIds.push(rid);
       rmReq.set(rid, { quantity: Number(r.quantity) || 0, unit: r.unit || 'KG', name: r.name || '', code: r.code || '' });
     }
-    const pms = Array.isArray(plain.packaging_materials) ? plain.packaging_materials : [];
     for (const p of pms) {
       const pid = p.pack_material_id != null ? Number(p.pack_material_id) : null;
       if (pid == null || Number.isNaN(pid)) continue;
@@ -435,6 +625,8 @@ module.exports = {
   listPlanningExtracted,
   getPlanningExtractedById,
   updatePlanningExtracted,
+  getBomOverride,
+  putBomOverride,
   getItemsInvolved,
   getItemsInvolvedByPlanningId,
 };

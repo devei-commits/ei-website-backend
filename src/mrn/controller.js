@@ -1,8 +1,10 @@
+const { Op } = require('sequelize');
 const MaterialRequestNote = require('./models');
 const { User } = require('../users/models');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const { Product } = require('../products/models');
+const WarehouseInventory = require('../warehouseInventory/models');
 
 /** Usertypes that can be assigned as Picker / Transfer Team (same as GRN). */
 const ASSIGNABLE_USERTYPES = ['super_admin', 'admin', 'bd_manager'];
@@ -97,6 +99,49 @@ async function getMastersForLineItems(rows) {
   return { rmMap, pmMap, productMap };
 }
 
+/** Resolve line_items that have code/rm_code/pm_code to raw_material_id or pack_material_id. */
+async function resolveLineItemCodes(lineItems, itemType) {
+  if (!Array.isArray(lineItems) || lineItems.length === 0) return lineItems;
+  const codes = [...new Set(lineItems.map((l) => l.code || l.rm_code || l.itemCode || l.pm_code).filter(Boolean))];
+  if (codes.length === 0) return lineItems;
+  const type = String(itemType || 'rm').toUpperCase();
+  let rmByCode = {};
+  let pmByCode = {};
+  if (type === 'RM') {
+    const rms = await RawMaterial.findAll({ where: { code: codes }, attributes: ['id', 'code'] });
+    rms.forEach((r) => { const d = r.get ? r.get({ plain: true }) : r; rmByCode[d.code] = d.id; });
+  }
+  if (type === 'PM') {
+    const pms = await PackMaterial.findAll({ where: { code: codes }, attributes: ['id', 'code'] });
+    pms.forEach((p) => { const d = p.get ? p.get({ plain: true }) : p; pmByCode[d.code] = d.id; });
+  }
+  return lineItems.map((line, idx) => {
+    if (line.raw_material_id != null || line.pack_material_id != null) return line;
+    const code = line.code || line.rm_code || line.pm_code || line.itemCode;
+    if (!code) return line;
+    const rid = rmByCode[code];
+    const pid = pmByCode[code];
+    const { code: _c, rm_code: _rc, pm_code: _pc, ...rest } = line;
+    const id = line.id || `m${idx + 1}`;
+    if (rid != null) return { ...rest, id, raw_material_id: rid, quantity: Number(line.quantity) || 0, unit: line.unit || 'KG', notes: line.notes || '' };
+    if (pid != null) return { ...rest, id, pack_material_id: pid, quantity: Number(line.quantity) || 0, unit: line.unit || 'PCS', notes: line.notes || '' };
+    return line;
+  });
+}
+
+async function generateMrnNo() {
+  const { Op } = require('sequelize');
+  const year = new Date().getFullYear();
+  const prefix = `EI-MRN-${year}-`;
+  const last = await MaterialRequestNote.findOne({
+    where: { mrn_no: { [Op.like]: prefix + '%' } },
+    order: [['id', 'DESC']],
+    attributes: ['mrn_no'],
+  });
+  const lastNum = last && last.mrn_no ? parseInt(last.mrn_no.replace(prefix, ''), 10) : 0;
+  return prefix + String(lastNum + 1).padStart(3, '0');
+}
+
 function formatRow(r, enrichedLineItems) {
   if (!r) return null;
   const d = r.get ? r.get({ plain: true }) : r;
@@ -110,12 +155,20 @@ function formatRow(r, enrichedLineItems) {
     transferTeam: d.transfer_team || '',
     lineItems,
     notes: d.notes || '',
+    bmrNo: d.bmr_no || '',
+    source: d.source || '',
+    isInboundFromMu: Boolean(d.is_inbound_from_mu),
   };
 }
 
 async function list(req, res) {
   try {
+    const transferType = req.query.transferType; // 'outbound' | 'inbound_from_mu'
+    let where = {};
+    if (transferType === 'outbound') where = { [Op.or]: [{ is_inbound_from_mu: false }, { is_inbound_from_mu: null }] };
+    if (transferType === 'inbound_from_mu') where = { is_inbound_from_mu: true };
     const rows = await MaterialRequestNote.findAll({
+      where: Object.keys(where).length ? where : undefined,
       order: [['id', 'DESC']],
     });
     const { rmMap, pmMap, productMap } = await getMastersForLineItems(rows);
@@ -150,14 +203,21 @@ async function getById(req, res) {
 async function create(req, res) {
   try {
     const body = req.body || {};
+    let lineItems = body.lineItems ?? body.line_items ?? [];
+    const itemType = body.itemType || body.item_type;
+    lineItems = await resolveLineItemCodes(lineItems, itemType);
+    const mrnNo = body.mrnNo || body.mrn_no || (await generateMrnNo());
     const payload = {
-      mrn_no: body.mrnNo || body.mrn_no,
+      mrn_no: mrnNo,
       requested_by: body.requestedBy ?? body.requested_by,
       status: body.status || 'Pending',
       assigned_picker: body.assignedPicker ?? body.assigned_picker,
       transfer_team: body.transferTeam ?? body.transfer_team,
-      line_items: body.lineItems ?? body.line_items ?? [],
+      line_items: lineItems,
       notes: body.notes ?? body.notes,
+      bmr_no: body.bmrNo ?? body.bmr_no ?? null,
+      source: body.source ?? null,
+      is_inbound_from_mu: body.isInboundFromMu ?? body.is_inbound_from_mu ?? false,
     };
     const row = await MaterialRequestNote.create(payload);
     const { rmMap, pmMap, productMap } = await getMastersForLineItems([row]);
@@ -188,15 +248,64 @@ async function update(req, res) {
     if (body.lineItems !== undefined) updates.line_items = body.lineItems;
     if (body.line_items !== undefined) updates.line_items = body.line_items;
     if (body.notes !== undefined) updates.notes = body.notes;
+    if (body.bmrNo !== undefined) updates.bmr_no = body.bmrNo;
+    if (body.bmr_no !== undefined) updates.bmr_no = body.bmr_no;
+    if (body.source !== undefined) updates.source = body.source;
+    if (body.isInboundFromMu !== undefined) updates.is_inbound_from_mu = Boolean(body.isInboundFromMu);
+    if (body.is_inbound_from_mu !== undefined) updates.is_inbound_from_mu = Boolean(body.is_inbound_from_mu);
+
+    const plainBefore = row.get ? row.get({ plain: true }) : row;
+    const previousStatus = plainBefore.status || '';
+
     await row.update(updates);
     const refreshed = await MaterialRequestNote.findByPk(id);
-    const { rmMap, pmMap, productMap } = await getMastersForLineItems([refreshed]);
     const d = refreshed.get ? refreshed.get({ plain: true }) : refreshed;
+
+    const newStatus = updates.status !== undefined ? updates.status : previousStatus;
+    if (newStatus === 'Completed' && previousStatus !== 'Completed' && d.source === 'MTR' && d.bmr_no) {
+      await applyMrnCompletionToInventory(d);
+    }
+
+    const { rmMap, pmMap, productMap } = await getMastersForLineItems([refreshed]);
     const enriched = enrichMrnLineItems(d.line_items || [], rmMap, pmMap, productMap);
     res.json(formatRow(refreshed, enriched));
   } catch (err) {
     console.error('[mrn] update error:', err);
     res.status(500).json({ error: err.message || 'Failed to update MRN' });
+  }
+}
+
+/**
+ * When an MRN from MTR is marked Completed, reduce warehouse SIH (consumption).
+ * For each line item: find warehouse_inventory by raw_material_id or pack_material_id and decrement wh_stock.
+ */
+async function applyMrnCompletionToInventory(plainMrn) {
+  if (plainMrn.source !== 'MTR' || !plainMrn.bmr_no) return;
+  const lineItems = Array.isArray(plainMrn.line_items) ? plainMrn.line_items : [];
+  for (const line of lineItems) {
+    const qty = Number(line.quantity) || 0;
+    if (qty <= 0) continue;
+    let whRow = null;
+    if (line.raw_material_id != null) {
+      whRow = await WarehouseInventory.findOne({
+        where: { item_type: 'RM', raw_material_id: line.raw_material_id },
+      });
+    } else if (line.pack_material_id != null) {
+      whRow = await WarehouseInventory.findOne({
+        where: { item_type: 'PM', pack_material_id: line.pack_material_id },
+      });
+    }
+    if (!whRow) continue;
+    const plain = whRow.get ? whRow.get({ plain: true }) : whRow;
+    const whStock = Number(plain.wh_stock) || 0;
+    const ml1 = Number(plain.ml1_stock) || 0;
+    const ml2 = Number(plain.ml2_stock) || 0;
+    const newWhStock = Math.max(0, whStock - qty);
+    const newSih = newWhStock + ml1 + ml2;
+    await whRow.update({
+      wh_stock: newWhStock,
+      stock_in_hand: newSih,
+    });
   }
 }
 

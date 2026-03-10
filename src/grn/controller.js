@@ -1,8 +1,10 @@
+const { Op } = require('sequelize');
 const GoodsReceivedNote = require('./models');
 const { User } = require('../users/models');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const { Product } = require('../products/models');
+const WarehouseInventory = require('../warehouseInventory/models');
 
 /** Usertypes that have order-management (warehouse/GRN) access — can be assigned to GRN. */
 const ASSIGNABLE_USERTYPES = ['super_admin', 'admin', 'bd_manager'];
@@ -228,6 +230,163 @@ async function create(req, res) {
 }
 
 /**
+ * When GRN status transitions to 'GRN Complete', add each line item's received qty to warehouse_inventory
+ * (wh_stock and stock_in_hand) so SIH reflects in Planning / Plan Batches.
+ * Line items from Procurement-created GRNs often have itemCode but no raw_material_id/pack_material_id;
+ * we resolve by itemCode (RM/PM code) when IDs are missing.
+ */
+async function applyGrnCompletionToInventory(grnRow) {
+  const d = grnRow.get ? grnRow.get({ plain: true }) : grnRow;
+  const lineItems = d.line_items || [];
+  if (lineItems.length === 0) return;
+
+  const grnType = (d.type || 'RM').toUpperCase(); // 'RM' | 'PM'
+  const codes = [...new Set(lineItems.map((l) => (l.itemCode || l.item_code || '').trim()).filter(Boolean))];
+  const names = [...new Set(lineItems.map((l) => (l.item || '').trim()).filter(Boolean))];
+  let rmByCode = {};
+  let pmByCode = {};
+  let rmByName = {};
+  let pmByName = {};
+  if (codes.length > 0 || names.length > 0) {
+    const rmWhere = codes.length > 0 && names.length > 0 ? { [Op.or]: [{ code: { [Op.in]: codes } }, { name: { [Op.in]: names } }] } : (codes.length > 0 ? { code: { [Op.in]: codes } } : { name: { [Op.in]: names } });
+    const pmWhere = codes.length > 0 && names.length > 0 ? { [Op.or]: [{ code: { [Op.in]: codes } }, { description: { [Op.in]: names } }] } : (codes.length > 0 ? { code: { [Op.in]: codes } } : { description: { [Op.in]: names } });
+    const [rms, pms] = await Promise.all([
+      RawMaterial.findAll({ where: rmWhere, attributes: ['id', 'code', 'name'] }),
+      PackMaterial.findAll({ where: pmWhere, attributes: ['id', 'code', 'description'] }),
+    ]);
+    rms.forEach((r) => { const x = r.get ? r.get({ plain: true }) : r; rmByCode[x.code] = x.id; if (x.name) rmByName[String(x.name).trim().toLowerCase()] = x.id; });
+    pms.forEach((p) => { const x = p.get ? p.get({ plain: true }) : p; pmByCode[x.code] = x.id; if (x.description) pmByName[String(x.description).trim().toLowerCase()] = x.id; });
+  }
+
+  const toAddByRm = new Map(); // raw_material_id -> qty to add
+  const toAddByPm = new Map(); // pack_material_id -> qty to add
+  const toAddByProduct = new Map(); // product_id -> qty to add
+
+  for (const line of lineItems) {
+    const rcvdQty = Math.max(0, Number(line.rcvdQty ?? line.rcvd_qty) || 0);
+    if (rcvdQty === 0) continue;
+    const code = (line.itemCode || line.item_code || '').trim();
+
+    if (line.raw_material_id != null) {
+      const id = line.raw_material_id;
+      toAddByRm.set(id, (toAddByRm.get(id) || 0) + rcvdQty);
+    } else if (line.pack_material_id != null) {
+      const id = line.pack_material_id;
+      toAddByPm.set(id, (toAddByPm.get(id) || 0) + rcvdQty);
+    } else if (line.product_id != null) {
+      const id = line.product_id;
+      toAddByProduct.set(id, (toAddByProduct.get(id) || 0) + rcvdQty);
+    } else if (code || (line.item && String(line.item).trim())) {
+      // Resolve by itemCode or by item name (Procurement-created GRNs may have only item name e.g. "Niacinamide")
+      const nameKey = (line.item || '').trim().toLowerCase();
+      let rmId = rmByCode[code];
+      let pmId = pmByCode[code];
+      if (rmId == null && nameKey) rmId = rmByName[nameKey];
+      if (pmId == null && nameKey) pmId = pmByName[nameKey];
+      if (grnType === 'PM' && pmId != null) {
+        toAddByPm.set(pmId, (toAddByPm.get(pmId) || 0) + rcvdQty);
+      } else if (rmId != null) {
+        toAddByRm.set(rmId, (toAddByRm.get(rmId) || 0) + rcvdQty);
+      } else if (pmId != null) {
+        toAddByPm.set(pmId, (toAddByPm.get(pmId) || 0) + rcvdQty);
+      } else {
+        console.warn('[grn] GRN Complete: line item code "%s" / name "%s" not found in RM/PM masters; skipping inventory update', code, line.item || '');
+      }
+    }
+  }
+
+  for (const [rawMaterialId, qty] of toAddByRm) {
+    let whRow = await WarehouseInventory.findOne({ where: { item_type: 'RM', raw_material_id: rawMaterialId } });
+    if (whRow) {
+      const wh = whRow.get ? whRow.get({ plain: true }) : whRow;
+      const whStock = (Number(wh.wh_stock) || 0) + qty;
+      const ml1 = Number(wh.ml1_stock) || 0;
+      const ml2 = Number(wh.ml2_stock) || 0;
+      await whRow.update({ wh_stock: whStock, stock_in_hand: whStock + ml1 + ml2 });
+      console.log('[grn] GRN Complete: added RM id=%d qty=%s -> wh_stock=%s', rawMaterialId, qty, whStock);
+    } else {
+      await WarehouseInventory.create({
+        item_type: 'RM',
+        raw_material_id: rawMaterialId,
+        pack_material_id: null,
+        product_id: null,
+        wh_stock: qty,
+        wh_unit: 'KG',
+        ml1_stock: 0,
+        ml2_stock: 0,
+        stock_in_hand: qty,
+        reserved: 0,
+        in_transit: 0,
+        reorder_pt: 0,
+        avg_mo: 0,
+        qc_status: 'In Stock',
+      });
+      console.log('[grn] GRN Complete: created RM warehouse_inventory id=%d wh_stock=%s', rawMaterialId, qty);
+    }
+  }
+
+  for (const [packMaterialId, qty] of toAddByPm) {
+    let whRow = await WarehouseInventory.findOne({ where: { item_type: 'PM', pack_material_id: packMaterialId } });
+    if (whRow) {
+      const wh = whRow.get ? whRow.get({ plain: true }) : whRow;
+      const whStock = (Number(wh.wh_stock) || 0) + qty;
+      const ml1 = Number(wh.ml1_stock) || 0;
+      const ml2 = Number(wh.ml2_stock) || 0;
+      await whRow.update({ wh_stock: whStock, stock_in_hand: whStock + ml1 + ml2 });
+      console.log('[grn] GRN Complete: added PM id=%d qty=%s -> wh_stock=%s', packMaterialId, qty, whStock);
+    } else {
+      await WarehouseInventory.create({
+        item_type: 'PM',
+        raw_material_id: null,
+        pack_material_id: packMaterialId,
+        product_id: null,
+        wh_stock: qty,
+        wh_unit: 'PCS',
+        ml1_stock: 0,
+        ml2_stock: 0,
+        stock_in_hand: qty,
+        reserved: 0,
+        in_transit: 0,
+        reorder_pt: 0,
+        avg_mo: 0,
+        qc_status: 'In Stock',
+      });
+      console.log('[grn] GRN Complete: created PM warehouse_inventory id=%d wh_stock=%s', packMaterialId, qty);
+    }
+  }
+
+  for (const [productId, qty] of toAddByProduct) {
+    let whRow = await WarehouseInventory.findOne({ where: { item_type: 'PR', product_id: productId } });
+    if (whRow) {
+      const wh = whRow.get ? whRow.get({ plain: true }) : whRow;
+      const whStock = (Number(wh.wh_stock) || 0) + qty;
+      const ml1 = Number(wh.ml1_stock) || 0;
+      const ml2 = Number(wh.ml2_stock) || 0;
+      await whRow.update({ wh_stock: whStock, stock_in_hand: whStock + ml1 + ml2 });
+      console.log('[grn] GRN Complete: added PR product_id=%d qty=%s -> wh_stock=%s', productId, qty, whStock);
+    } else {
+      await WarehouseInventory.create({
+        item_type: 'PR',
+        raw_material_id: null,
+        pack_material_id: null,
+        product_id: productId,
+        wh_stock: qty,
+        wh_unit: 'PCS',
+        ml1_stock: 0,
+        ml2_stock: 0,
+        stock_in_hand: qty,
+        reserved: 0,
+        in_transit: 0,
+        reorder_pt: 0,
+        avg_mo: 0,
+        qc_status: 'In Stock',
+      });
+      console.log('[grn] GRN Complete: created PR warehouse_inventory product_id=%d wh_stock=%s', productId, qty);
+    }
+  }
+}
+
+/**
  * PUT /api/v1/grn/:id — update GRN. Body: any of assigned_to, grn_date, received_date, qc_status, status, line_items, workflow_steps, invoice_no, invoice_amount.
  */
 async function update(req, res) {
@@ -266,8 +425,12 @@ async function update(req, res) {
     if (body.expiry !== undefined) updates.expiry = body.expiry;
     if (body.mfgBatch !== undefined) updates.mfg_batch = body.mfgBatch;
     if (body.mfg_batch !== undefined) updates.mfg_batch = body.mfg_batch;
+    const previousStatus = (row.get ? row.get({ plain: true }) : row).status;
     await row.update(updates);
     const refreshed = await GoodsReceivedNote.findByPk(id);
+    if (updates.status === 'GRN Complete' && previousStatus !== 'GRN Complete') {
+      await applyGrnCompletionToInventory(refreshed);
+    }
     const { rmMap, pmMap, productMap } = await getMastersForLineItems([refreshed]);
     const d = refreshed.get ? refreshed.get({ plain: true }) : refreshed;
     const enriched = enrichLineItems(d.line_items || [], rmMap, pmMap, productMap);

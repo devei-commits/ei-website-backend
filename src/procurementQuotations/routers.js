@@ -3,6 +3,7 @@ const router = express.Router();
 const { isAuthenticated, requireModule } = require('../middleware/security');
 const {
   listProcurementQuotations,
+  getQuoteLineDefaults,
   getProcurementQuotationById,
   createProcurementQuotation,
   updateProcurementQuotation,
@@ -12,6 +13,7 @@ const {
 const guard = [isAuthenticated, requireModule('order-management')];
 
 router.get('/', guard, listProcurementQuotations);
+router.get('/quote-line-defaults', guard, getQuoteLineDefaults);
 router.get('/:id', guard, getProcurementQuotationById);
 router.post('/', guard, createProcurementQuotation);
 router.patch('/:id', guard, updateProcurementQuotation);

@@ -1,5 +1,7 @@
 const PackMaterial = require('./models');
 const { Op } = require('sequelize');
+const WarehouseInventory = require('../warehouseInventory/models');
+const { ReservedBatchItem } = require('../fulfillment/models');
 
 /**
  * Parse numeric suffix from code after prefix (e.g. "EI-PM-PRI-00001" -> 1, "EI-PM-BOX-001" -> 1).
@@ -131,9 +133,37 @@ async function createPackMaterial(req, res) {
   }
 }
 
+/**
+ * GET /api/v1/pack-materials/:id/reserved-stock — actual (SIH), reserved (from SO/batches), available = actual - reserved.
+ */
+async function getReservedStock(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid pack material id' });
+    const pm = await PackMaterial.findByPk(id);
+    if (!pm) return res.status(404).json({ error: 'Pack material not found' });
+
+    const wh = await WarehouseInventory.findOne({ where: { item_type: 'PM', pack_material_id: id } });
+    const actual = wh && wh.stock_in_hand != null ? Number(wh.stock_in_hand) : 0;
+
+    const rows = await ReservedBatchItem.findAll({
+      where: { pack_material_id: id },
+      attributes: ['quantity_reserved'],
+    });
+    const reserved = rows.reduce((sum, r) => sum + Number(r.quantity_reserved || 0), 0);
+    const available = Math.max(0, actual - reserved);
+
+    res.json({ actual, reserved, available, unit: 'PCS' });
+  } catch (err) {
+    console.error('getReservedStock (PM) error', err);
+    res.status(500).json({ error: 'Failed to get reserved stock' });
+  }
+}
+
 module.exports = {
   listPackMaterials,
   getNextCode,
   createPackMaterial,
+  getReservedStock,
   formatPackMaterial,
 };

@@ -1,6 +1,31 @@
 const ProcurementQuotation = require('./models');
 const ProcurementRequest = require('../procurementRequests/models');
 const VendorClient = require('../vendorClient/models');
+const { ItemsList, ItemListVendorRate, ItemListTier } = require('../itemsList/models');
+
+/**
+ * Resolve price_per_unit from Items List for a vendor + RM or PM.
+ * @param {number} vendorId
+ * @param {number|null} rawMaterialId
+ * @param {number|null} packMaterialId
+ * @returns {Promise<number|null>}
+ */
+async function getVendorPriceFromItemsList(vendorId, rawMaterialId, packMaterialId) {
+  const where = rawMaterialId != null ? { raw_material_id: rawMaterialId } : { pack_material_id: packMaterialId };
+  const listRow = await ItemsList.findOne({ where });
+  if (!listRow) return null;
+  const rateRow = await ItemListVendorRate.findOne({
+    where: { items_list_id: listRow.id, vendor_id: vendorId },
+  });
+  if (!rateRow) return null;
+  const tier = await ItemListTier.findOne({
+    where: { item_list_vendor_rate_id: rateRow.id },
+    order: [['moq_min', 'ASC']],
+  });
+  if (!tier || tier.price_per_unit == null) return null;
+  const n = Number(tier.price_per_unit);
+  return Number.isNaN(n) ? null : n;
+}
 
 function formatQuotation(row) {
   if (!row) return null;
@@ -65,6 +90,48 @@ async function listProcurementQuotations(req, res) {
   }
 }
 
+/**
+ * GET /quote-line-defaults?procurementRequestId=&vendorId=
+ * Returns PR items with pricePerUnit and totalValue from Items List for the given vendor.
+ */
+async function getQuoteLineDefaults(req, res) {
+  try {
+    const prId = req.query.procurementRequestId != null ? parseInt(req.query.procurementRequestId, 10) : null;
+    const vId = req.query.vendorId != null ? parseInt(req.query.vendorId, 10) : null;
+    if (prId == null || Number.isNaN(prId) || vId == null || Number.isNaN(vId)) {
+      return res.status(400).json({ error: 'procurementRequestId and vendorId are required' });
+    }
+    const [prRow, vendorRow] = await Promise.all([
+      ProcurementRequest.findByPk(prId),
+      VendorClient.findByPk(vId),
+    ]);
+    if (!prRow) return res.status(404).json({ error: 'Procurement request not found' });
+    if (!vendorRow) return res.status(404).json({ error: 'Vendor not found' });
+    const prItems = Array.isArray(prRow.items) ? prRow.items : [];
+    const lines = [];
+    for (const it of prItems) {
+      const qty = Number(it.quantity_requested ?? it.orderQty ?? 0) || 0;
+      const price = await getVendorPriceFromItemsList(vId, it.raw_material_id ?? null, it.pack_material_id ?? null);
+      const priceNum = price != null ? price : 0;
+      lines.push({
+        type: it.type || 'RM',
+        raw_material_id: it.raw_material_id ?? null,
+        pack_material_id: it.pack_material_id ?? null,
+        itemId: it.code ?? it.itemId ?? '',
+        name: it.name ?? '',
+        orderQty: qty,
+        uom: it.unit ?? it.uom ?? 'KG',
+        pricePerUnit: priceNum,
+        totalValue: qty * priceNum,
+      });
+    }
+    res.json({ items: lines });
+  } catch (err) {
+    console.error('getQuoteLineDefaults error', err);
+    res.status(500).json({ error: 'Failed to get quote line defaults' });
+  }
+}
+
 async function getProcurementQuotationById(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
@@ -104,6 +171,41 @@ async function createProcurementQuotation(req, res) {
     ]);
     if (!prRow) return res.status(404).json({ error: 'Procurement request not found' });
     if (!vendorRow) return res.status(404).json({ error: 'Vendor not found' });
+
+    const prItems = Array.isArray(prRow.items) ? prRow.items : [];
+    let items = Array.isArray(body.items) && body.items.length > 0 ? body.items : prItems.map((it) => ({
+      type: it.type || 'RM',
+      raw_material_id: it.raw_material_id ?? null,
+      pack_material_id: it.pack_material_id ?? null,
+      itemId: it.code ?? it.itemId ?? '',
+      name: it.name ?? '',
+      orderQty: it.quantity_requested ?? it.orderQty ?? 0,
+      uom: it.unit ?? it.uom ?? 'KG',
+      pricePerUnit: it.pricePerUnit,
+      totalValue: it.totalValue,
+    }));
+
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      const qty = Number(it.orderQty ?? it.quantity_requested ?? 0) || 0;
+      let price = it.pricePerUnit != null ? Number(it.pricePerUnit) : null;
+      if (price == null || Number.isNaN(price) || price === 0) {
+        price = await getVendorPriceFromItemsList(vId, it.raw_material_id ?? null, it.pack_material_id ?? null);
+      }
+      const priceNum = price != null && !Number.isNaN(Number(price)) ? Number(price) : 0;
+      const totalValue = qty * priceNum;
+      items[i] = {
+        ...it,
+        itemId: it.itemId ?? it.code ?? '',
+        name: it.name ?? '',
+        orderQty: qty,
+        uom: it.uom ?? 'KG',
+        pricePerUnit: priceNum,
+        totalValue,
+      };
+    }
+    const totalValue = items.reduce((sum, it) => sum + (Number(it.totalValue) || 0), 0);
+
     const row = await ProcurementQuotation.create({
       procurement_request_id: prId,
       vendor_id: vId,
@@ -111,11 +213,11 @@ async function createProcurementQuotation(req, res) {
       quoted_by: body.quotedBy ?? body.quoted_by ?? req.user?.email ?? null,
       attachment_ref: body.attachmentRef ?? body.attachment_ref ?? null,
       attachment_status: body.attachmentStatus ?? body.attachment_status ?? 'pending',
-      items: body.items ?? [],
+      items,
       lead_time_days: body.leadTimeDays ?? body.lead_time_days ?? null,
       payment_terms: body.paymentTerms ?? body.payment_terms ?? null,
       valid_till: body.validTill ?? body.valid_till ?? null,
-      total_value: body.totalValue ?? body.total_value ?? null,
+      total_value: body.totalValue ?? body.total_value ?? totalValue,
       notes: body.notes ?? null,
       status: body.status ?? 'pending',
     });
@@ -191,6 +293,7 @@ async function deleteProcurementQuotation(req, res) {
 
 module.exports = {
   listProcurementQuotations,
+  getQuoteLineDefaults,
   getProcurementQuotationById,
   createProcurementQuotation,
   updateProcurementQuotation,

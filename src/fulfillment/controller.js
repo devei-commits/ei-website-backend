@@ -1,4 +1,6 @@
-const { FulfillmentOrder, FulfillmentOrderItem, FulfillmentBatchSplit, Transporter, FulfillmentInvoice } = require('./models');
+const { Op } = require('sequelize');
+const { FulfillmentOrder, FulfillmentOrderItem, FulfillmentBatchSplit, Transporter, FulfillmentInvoice, ReservedBatchItem } = require('./models');
+const BOM = require('../bom/models');
 const { ProductionBatch } = require('../production/models');
 const SalesOrder = require('../salesOrders/models');
 const VendorClient = require('../vendorClient/models');
@@ -16,8 +18,33 @@ const INCLUDE_FULL = [
 
 /* ── Helpers ── */
 
-function formatOrder(row) {
+/** Build map production_batch_id -> { bpr_status } for deriving effective ff_status from Production. */
+async function getBatchStatusMap(productionBatchIds) {
+  const ids = [...new Set((productionBatchIds || []).filter(Boolean))];
+  if (ids.length === 0) return {};
+  const rows = await ProductionBatch.findAll({ where: { id: ids }, attributes: ['id', 'bpr_status'] });
+  const map = {};
+  rows.forEach((r) => { const d = r.get ? r.get({ plain: true }) : r; map[d.id] = { bpr_status: d.bpr_status }; });
+  return map;
+}
+
+/** Effective ff_status: only fg_ready when Production BPR is fg_ready; else fg_pending. Shipped/delivered stay from DB. */
+function effectiveFfStatus(split, batchMap) {
+  const stored = split.ff_status;
+  if (['picking', 'invoiced', 'shipped', 'delivered', 'closed'].includes(stored)) return stored;
+  const batchId = split.production_batch_id;
+  if (batchId && batchMap[batchId]) {
+    const bprStatus = batchMap[batchId].bpr_status;
+    return bprStatus === 'fg_ready' ? 'fg_ready' : 'fg_pending';
+  }
+  return stored === 'fg_ready' ? 'fg_pending' : (stored || 'fg_pending');
+}
+
+function formatOrder(row, batchMap = {}) {
   const d = row.get ? row.get({ plain: true }) : row;
+  const items = (d.items || []).map((item) => formatItem(item, batchMap));
+  const allSplits = items.flatMap((i) => i.batchSplits || []);
+  const soStatus = recalculateSOStatusFromSplits(allSplits);
   return {
     id: d.id,
     soNo: d.so_no,
@@ -28,7 +55,7 @@ function formatOrder(row) {
     orderDate: d.order_date,
     dueDate: d.due_date,
     priority: d.priority,
-    soStatus: d.so_status,
+    soStatus,
     soValue: d.so_value != null ? Number(d.so_value) : 0,
     shipAddress: d.ship_address || '',
     paymentTerms: d.payment_terms || '',
@@ -38,11 +65,11 @@ function formatOrder(row) {
     awbNo: d.awb_no || undefined,
     dispatchDate: d.dispatch_date || undefined,
     courier: d.courier || undefined,
-    items: (d.items || []).map(formatItem),
+    items,
   };
 }
 
-function formatItem(d) {
+function formatItem(d, batchMap = {}) {
   return {
     id: d.id,
     itemNo: d.item_no || '',
@@ -52,11 +79,12 @@ function formatItem(d) {
     orderedQty: d.ordered_qty,
     rate: d.rate != null ? Number(d.rate) : 0,
     unitPrice: d.unit_price != null ? Number(d.unit_price) : 0,
-    batchSplits: (d.batchSplits || []).map(formatSplit),
+    batchSplits: (d.batchSplits || []).map((s) => formatSplit(s, batchMap)),
   };
 }
 
-function formatSplit(d) {
+function formatSplit(d, batchMap = {}) {
+  const ffStatus = effectiveFfStatus(d, batchMap);
   return {
     id: d.id,
     fulfillmentOrderItemId: d.fulfillment_order_item_id,
@@ -67,7 +95,7 @@ function formatSplit(d) {
     plannedQty: d.planned_qty,
     fgQty: d.fg_qty || 0,
     fgLocation: d.fg_location,
-    ffStatus: d.ff_status,
+    ffStatus,
     pickedQty: d.picked_qty || 0,
     pickerName: d.picker_name,
     pickDate: d.pick_date,
@@ -82,6 +110,24 @@ function formatSplit(d) {
     receivedBy: d.received_by,
     deliveryRemarks: d.delivery_remarks,
   };
+}
+
+/** Recompute SO status from split objects that have .ffStatus (formatted). */
+function recalculateSOStatusFromSplits(splits) {
+  if (!splits.length) return 'planned';
+  const fgSplits = splits.filter(s => s.fgQty > 0 || ['fg_ready', 'picking', 'invoiced', 'shipped', 'delivered', 'closed'].includes(s.ffStatus));
+  if (!fgSplits.length) {
+    if (splits.some(s => ['bulk_qc', 'wip'].includes(s.ffStatus))) return 'in_production';
+    return 'planned';
+  }
+  if (fgSplits.every(s => ['delivered', 'closed'].includes(s.ffStatus))) return 'closed';
+  if (fgSplits.some(s => ['shipped', 'delivered'].includes(s.ffStatus))) return 'shipped';
+  if (fgSplits.some(s => s.ffStatus === 'invoiced')) return 'invoiced';
+  if (fgSplits.some(s => s.ffStatus === 'picking')) return 'picking';
+  if (fgSplits.every(s => s.ffStatus === 'fg_ready')) return 'fg_ready';
+  if (fgSplits.some(s => s.ffStatus === 'fg_ready')) return 'partial';
+  if (splits.some(s => ['bulk_qc', 'wip', 'fg_pending'].includes(s.ffStatus))) return 'in_production';
+  return 'planned';
 }
 
 function recalculateSOStatus(splits) {
@@ -101,6 +147,23 @@ function recalculateSOStatus(splits) {
   return 'planned';
 }
 
+/** Get next auto-incremented BMR/BPR numbers for the year (e.g. BMR-2026-001, BPR-2026-001). */
+async function getNextBMRBPRSequence(year) {
+  const prefix = `BMR-${year}-`;
+  const batches = await ProductionBatch.findAll({
+    where: { bmr_no: { [Op.like]: `${prefix}%` } },
+    attributes: ['bmr_no'],
+  });
+  let maxNum = 0;
+  for (const b of batches) {
+    const num = parseInt(b.bmr_no.replace(prefix, ''), 10);
+    if (!Number.isNaN(num) && num > maxNum) maxNum = num;
+  }
+  const next = maxNum + 1;
+  const suffix = String(next).padStart(3, '0');
+  return { bmrNo: `BMR-${year}-${suffix}`, bprNo: `BPR-${year}-${suffix}` };
+}
+
 /* ── CRUD ── */
 
 async function listOrders(req, res) {
@@ -109,7 +172,12 @@ async function listOrders(req, res) {
       include: INCLUDE_FULL,
       order: [['due_date', 'ASC'], ['id', 'ASC']],
     });
-    res.json(rows.map(formatOrder));
+    const batchIds = rows.flatMap((r) => {
+      const d = r.get ? r.get({ plain: true }) : r;
+      return (d.items || []).flatMap((i) => (i.batchSplits || []).map((s) => s.production_batch_id).filter(Boolean));
+    });
+    const batchMap = await getBatchStatusMap(batchIds);
+    res.json(rows.map((row) => formatOrder(row, batchMap)));
   } catch (err) {
     console.error('listOrders error:', err);
     res.status(500).json({ error: 'Failed to fetch fulfillment orders' });
@@ -122,7 +190,10 @@ async function getOrderById(req, res) {
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await FulfillmentOrder.findByPk(id, { include: INCLUDE_FULL });
     if (!row) return res.status(404).json({ error: 'Fulfillment order not found' });
-    res.json(formatOrder(row));
+    const d = row.get ? row.get({ plain: true }) : row;
+    const batchIds = (d.items || []).flatMap((i) => (i.batchSplits || []).map((s) => s.production_batch_id).filter(Boolean));
+    const batchMap = await getBatchStatusMap(batchIds);
+    res.json(formatOrder(row, batchMap));
   } catch (err) {
     console.error('getOrderById error:', err);
     res.status(500).json({ error: 'Failed to fetch fulfillment order' });
@@ -260,6 +331,7 @@ async function createOrder(req, res) {
           let bmrNo = split.bmrNo || null;
           let bprNo = split.bprNo || null;
 
+          const year = new Date().getFullYear();
           if (bmrNo) {
             const pb = await ProductionBatch.findOne({ where: { bmr_no: bmrNo } });
             if (pb) {
@@ -267,10 +339,11 @@ async function createOrder(req, res) {
               if (!bprNo) bprNo = pb.bpr_no;
             }
           }
-
-          const year = new Date().getFullYear();
-          if (!bmrNo) bmrNo = `BMR-${year}-${soSuffix}${String(splitCounter).padStart(2, '0')}`;
-          if (!bprNo) bprNo = `BPR-${year}-${soSuffix}${String(splitCounter).padStart(2, '0')}`;
+          if (!bmrNo) {
+            const nextSeq = await getNextBMRBPRSequence(year);
+            bmrNo = nextSeq.bmrNo;
+            bprNo = nextSeq.bprNo;
+          }
 
           if (!productionBatchId) {
             const pb = await ProductionBatch.create({
@@ -302,6 +375,73 @@ async function createOrder(req, res) {
             fg_location: split.fgLocation || null,
             ff_status: split.ffStatus || 'fg_pending',
           });
+
+          // Reserve RM/PM for this SO batch: BOM qty × planned qty → reserved_batch_items
+          const plannedQty = split.plannedQty || item.orderedQty || 0;
+          let productId = null;
+          if (item.sku) {
+            const prod = await Product.findOne({ where: { product_sku: item.sku } });
+            if (prod) productId = prod.product_id;
+          }
+          if (!productId && item.productName) {
+            const prod = await Product.findOne({ where: { product_name: item.productName } });
+            if (prod) productId = prod.product_id;
+          }
+          if (productId && plannedQty > 0) {
+            const bom = await BOM.findOne({ where: { product_id: productId } });
+            if (bom) {
+              const rmLines = Array.isArray(bom.rm_lines) ? bom.rm_lines : [];
+              const pmLines = Array.isArray(bom.pm_lines) ? bom.pm_lines : [];
+              for (const line of rmLines) {
+                let rm = null;
+                if (line.raw_material_id != null) {
+                  rm = await RawMaterial.findByPk(line.raw_material_id);
+                }
+                if (!rm) {
+                  const code = line.rm_code || line.rmCode || line.code;
+                  if (!code) continue;
+                  rm = await RawMaterial.findOne({ where: { code } });
+                }
+                if (!rm) continue;
+                const qtyPerUnit = line.quantity != null ? Number(line.quantity) : (line.pct_w_w != null ? Number(line.pct_w_w) / 100 : 0);
+                const qtyReserved = qtyPerUnit * plannedQty;
+                if (qtyReserved <= 0) continue;
+                await ReservedBatchItem.create({
+                  production_batch_id: productionBatchId,
+                  fulfillment_order_item_id: orderItem.id,
+                  raw_material_id: rm.id,
+                  pack_material_id: null,
+                  quantity_reserved: qtyReserved,
+                  unit: line.uom || 'KG',
+                  so_no: soNo,
+                });
+              }
+              for (const line of pmLines) {
+                let pm = null;
+                if (line.pack_material_id != null) {
+                  pm = await PackMaterial.findByPk(line.pack_material_id);
+                }
+                if (!pm) {
+                  const code = line.pm_code || line.pmCode || line.code;
+                  if (!code) continue;
+                  pm = await PackMaterial.findOne({ where: { code } });
+                }
+                if (!pm) continue;
+                const qtyPerUnit = line.qty_per_unit != null ? Number(line.qty_per_unit) : 1;
+                const qtyReserved = qtyPerUnit * plannedQty;
+                if (qtyReserved <= 0) continue;
+                await ReservedBatchItem.create({
+                  production_batch_id: productionBatchId,
+                  fulfillment_order_item_id: orderItem.id,
+                  raw_material_id: null,
+                  pack_material_id: pm.id,
+                  quantity_reserved: qtyReserved,
+                  unit: line.uom || 'PCS',
+                  so_no: soNo,
+                });
+              }
+            }
+          }
         }
       }
     }
@@ -624,6 +764,7 @@ async function getCustomers(_req, res) {
   }
 }
 
+/** Products lookup for Add SO modal: only Finished Goods (FG). RMs and PMs are materials used to build FGs. */
 async function getProducts(_req, res) {
   try {
     const products = await Product.findAll({
@@ -631,21 +772,9 @@ async function getProducts(_req, res) {
       order: [['product_name', 'ASC']],
     });
 
-    const rmRows = await RawMaterial.findAll({
-      attributes: ['id', 'code', 'name', 'inci', 'uom', 'price_per_kg'],
-      order: [['code', 'ASC']],
-    });
-
-    const pmRows = await PackMaterial.findAll({
-      attributes: ['id', 'code', 'description', 'type', 'size_spec', 'price_per_pc'],
-      order: [['code', 'ASC']],
-    });
-
-    const items = [];
-
-    for (const p of products) {
+    const items = products.map(p => {
       const d = p.get({ plain: true });
-      items.push({
+      return {
         id: `PR-${d.product_id}`,
         type: 'product',
         name: d.product_name || d.product_code,
@@ -653,34 +782,8 @@ async function getProducts(_req, res) {
         pack: d.fill_size ? `${d.fill_size} ${d.form || ''}`.trim() : d.form || '',
         category: d.category || '',
         price: d.mrp_price != null ? Number(d.mrp_price) : 0,
-      });
-    }
-
-    for (const r of rmRows) {
-      const d = r.get({ plain: true });
-      items.push({
-        id: `RM-${d.id}`,
-        type: 'raw_material',
-        name: d.name || d.inci || d.code,
-        sku: d.code,
-        pack: d.uom || 'kg',
-        category: 'Raw Material',
-        price: d.price_per_kg != null ? Number(d.price_per_kg) : 0,
-      });
-    }
-
-    for (const p of pmRows) {
-      const d = p.get({ plain: true });
-      items.push({
-        id: `PM-${d.id}`,
-        type: 'pack_material',
-        name: d.description || d.code,
-        sku: d.code,
-        pack: d.size_spec || d.type || 'pcs',
-        category: 'Pack Material',
-        price: d.price_per_pc != null ? Number(d.price_per_pc) : 0,
-      });
-    }
+      };
+    });
 
     res.json(items);
   } catch (err) {

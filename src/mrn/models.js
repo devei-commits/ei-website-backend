@@ -17,6 +17,10 @@ MaterialRequestNote.init(
     transfer_team: { type: DataTypes.STRING(200), allowNull: true },
     line_items: { type: DataTypes.JSON, allowNull: true },
     notes: { type: DataTypes.TEXT, allowNull: true },
+    bmr_no: { type: DataTypes.STRING(50), allowNull: true },
+    source: { type: DataTypes.STRING(20), allowNull: true },
+    /** true = transfer from MU to Warehouse (inbound-from-MU); false/null = outbound (WH→MU). */
+    is_inbound_from_mu: { type: DataTypes.BOOLEAN, allowNull: true, defaultValue: false },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
   },

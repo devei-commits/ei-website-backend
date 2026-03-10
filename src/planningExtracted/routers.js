@@ -5,6 +5,8 @@ const {
   listPlanningExtracted,
   getPlanningExtractedById,
   updatePlanningExtracted,
+  getBomOverride,
+  putBomOverride,
   getItemsInvolved,
   getItemsInvolvedByPlanningId,
 } = require('./controller');
@@ -14,6 +16,8 @@ const guard = [isAuthenticated, requireModule('order-management')];
 router.get('/', guard, listPlanningExtracted);
 router.get('/items-involved', guard, getItemsInvolved);
 router.get('/:id/items-involved', guard, getItemsInvolvedByPlanningId);
+router.get('/:id/bom-override', guard, getBomOverride);
+router.put('/:id/bom-override', guard, putBomOverride);
 router.get('/:id', guard, getPlanningExtractedById);
 router.patch('/:id', guard, updatePlanningExtracted);
 

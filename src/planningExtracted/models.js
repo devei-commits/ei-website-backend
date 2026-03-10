@@ -31,6 +31,7 @@ PlanningExtracted.init(
     production_line: { type: DataTypes.STRING(200), allowNull: true },
     bom_confirmed_at: { type: DataTypes.DATE, allowNull: true },
     custom_batches: { type: DataTypes.JSON, allowNull: true },
+    sent_batch_indices: { type: DataTypes.JSON, allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
   },
@@ -44,8 +45,12 @@ PlanningExtracted.init(
   }
 );
 
+const PlanningBomOverride = require('./planningBomOverrideModel');
+
 PlanningExtracted.belongsTo(SalesOrder, { foreignKey: 'sales_order_id', as: 'salesOrder' });
 PlanningExtracted.belongsTo(Product, { foreignKey: 'product_id', as: 'product' });
+PlanningExtracted.hasOne(PlanningBomOverride, { foreignKey: 'planning_extracted_id', as: 'bomOverride' });
+PlanningBomOverride.belongsTo(PlanningExtracted, { foreignKey: 'planning_extracted_id' });
 SalesOrder.hasMany(PlanningExtracted, { foreignKey: 'sales_order_id' });
 Product.hasMany(PlanningExtracted, { foreignKey: 'product_id' });
 
