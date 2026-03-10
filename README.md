@@ -11,3 +11,4 @@ Start PostgreSQL and the Node.js application:
 ```bash
 docker-compose up --build
 ```
+1
