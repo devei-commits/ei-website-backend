@@ -3,13 +3,13 @@
 -- Run this if your DB does not use Sequelize sync (e.g. production with existing schema).
 
 -- PostgreSQL
-CREATE TABLE IF NOT EXISTS module_definitions (
-  id SERIAL PRIMARY KEY,
-  name VARCHAR(100) NOT NULL DEFAULT 'default',
-  definition_json JSONB NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+-- CREATE TABLE IF NOT EXISTS module_definitions (
+--   id SERIAL PRIMARY KEY,
+--   name VARCHAR(100) NOT NULL DEFAULT 'default',
+--   definition_json JSONB NOT NULL,
+--   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+--   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+-- );
 
 -- MySQL (if applicable)
 -- CREATE TABLE IF NOT EXISTS module_definitions (

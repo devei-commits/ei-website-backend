@@ -1,6 +1,7 @@
 /**
  * Raw Materials model for Masters → Raw Materials dashboard.
- * Table: raw_materials (code, name, inci, category, rm_type, uom, price_per_kg, gst, shelf, status, products, group)
+ * Primary info for Zoho sync (TODO: implement sync): name, zoho_id, sku, hsn_code, unit (uom), tax_pref, sales_purchase_account.
+ * Table: raw_materials (code, name, inci, ..., zoho_id, sku, hsn_code, tax_pref, sales_purchase_account)
  */
 const { DataTypes, Model } = require('sequelize');
 const db = require('../../db');
@@ -23,9 +24,17 @@ RawMaterial.init(
     price_per_kg: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
     gst: { type: DataTypes.DECIMAL(5, 2), allowNull: true },
     shelf: { type: DataTypes.STRING(20), allowNull: true },
+    /** Specific gravity vs water for vessel volume: volume_L = quantity_kg / specific_gravity. Default 1 if null. */
+    specific_gravity: { type: DataTypes.DECIMAL(5, 3), allowNull: true },
     status: { type: DataTypes.STRING(50), allowNull: true },
     products: { type: DataTypes.JSON, allowNull: true }, // array of product codes e.g. ['PR-001','PR-002']
     group: { type: DataTypes.STRING(100), allowNull: true },
+    // Primary info for Zoho sync (TODO: implement Zoho integration)
+    zoho_id: { type: DataTypes.STRING(100), allowNull: true },
+    sku: { type: DataTypes.STRING(100), allowNull: true },
+    hsn_code: { type: DataTypes.STRING(50), allowNull: true },
+    tax_pref: { type: DataTypes.STRING(50), allowNull: true },
+    sales_purchase_account: { type: DataTypes.STRING(255), allowNull: true },
     form_data: { type: DataTypes.JSON, allowNull: true }, // full form payload for create/edit (vendors, documents, tests, all scalars)
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },

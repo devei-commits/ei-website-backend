@@ -35,6 +35,7 @@ const PoTracking = require('./src/poTracking/models');
 const UniversalSwapHistory = require('./src/universalSwap/models');
 const ItemGroup = require('./src/itemGroups/models');
 const WarehouseInventory = require('./src/warehouseInventory/models');
+const WarehouseInventoryLocationHistory = require('./src/warehouseInventory/locationHistoryModel');
 const warehouseSeedData = require('./src/warehouseInventory/warehouseSeedData');
 const { WarehouseLocation, WarehouseRack, WarehouseRackItem } = require('./src/warehouseLocations/models');
 const GoodsReceivedNote = require('./src/grn/models');
@@ -94,7 +95,7 @@ async function dropEntireDatabase() {
     const key = Object.keys((tables && tables[0]) || {})[0] || 'Tables_in_db';
     for (const row of tables || []) {
       const name = row[key];
-      if (name) await db.query(`DROP TABLE IF EXISTS \`${name}\``, { raw: true }).catch(() => {});
+      if (name) await db.query(`DROP TABLE IF EXISTS \`${name}\``, { raw: true }).catch(() => { });
     }
     await db.query('SET FOREIGN_KEY_CHECKS = 1', { raw: true });
     console.log('All tables dropped.');
@@ -103,7 +104,7 @@ async function dropEntireDatabase() {
   if (dialect === 'sqlite') {
     const [rows] = await db.query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'", { raw: true });
     for (const row of rows || []) {
-      if (row.name) await db.query(`DROP TABLE IF EXISTS "${row.name}"`, { raw: true }).catch(() => {});
+      if (row.name) await db.query(`DROP TABLE IF EXISTS "${row.name}"`, { raw: true }).catch(() => { });
     }
     console.log('All tables dropped.');
     return;
@@ -123,13 +124,13 @@ async function seed() {
        ALTER COLUMN doctor_id TYPE VARCHAR(255)
        USING doctor_id::text`,
       { raw: true }
-    ).catch(() => {});
+    ).catch(() => { });
 
     // Ensure permissions.updated_at exists (model expects it for audit)
     await db.query(
       `ALTER TABLE permissions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NULL`,
       { raw: true }
-    ).catch(() => {});
+    ).catch(() => { });
 
     console.log('Seeding module definitions (if empty)...');
     await ModuleDefinition.findOrCreate({
@@ -667,50 +668,50 @@ async function seed() {
     console.log('Seeding Raw Materials...');
     await RawMaterial.destroy({ where: {} });
     await RawMaterial.bulkCreate([
-      { code: 'EI-RM-ACT-001', name: 'Glycerin', inci: 'Glycerin', category: 'ACTIVE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 55, gst: 12, shelf: '36M', status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-ACT-002', name: 'Niacinamide', inci: 'Niacinamide', category: 'ACTIVE', rm_type: 'Solid', uom: 'KG', price_per_kg: 1450, gst: 12, shelf: '24M', status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-ACT-003', name: 'Ascorbyl Glucoside', inci: 'Ascorbyl Glucoside', category: 'ACTIVE', rm_type: 'Solid', uom: 'KG', price_per_kg: 4800, gst: 12, shelf: '18M', status: 'Active', products: ['PR-001'], group: 'Primary', created_at: now, updated_at: now },
-      { code: 'EI-RM-ACT-004', name: 'Allantoin', inci: 'Allantoin', category: 'ACTIVE', rm_type: 'Solid', uom: 'KG', price_per_kg: 780, gst: 12, shelf: '36M', status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-ACT-005', name: 'Tocopheryl Acetate', inci: 'Tocopheryl Acetate', category: 'ACTIVE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 2200, gst: 12, shelf: '24M', status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-ACT-006', name: 'Aloe Vera Extract', inci: 'Aloe Barbadensis Leaf Juice', category: 'BOTANICAL', rm_type: 'Liquid', uom: 'KG', price_per_kg: 280, gst: 5, shelf: '18M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-BASE-001', name: 'Aqua (Purified Water)', inci: 'Aqua', category: 'BASE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 8.85, gst: 8, shelf: '24M', status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-EMUL-001', name: 'Cetearyl Alcohol', inci: 'Cetearyl Alcohol', category: 'EMULSIFIER', rm_type: 'Solid', uom: 'KG', price_per_kg: 185, gst: 12, shelf: '36M', status: 'Active', products: ['PR-001'], group: 'Primary +1', created_at: now, updated_at: now },
-      { code: 'EI-RM-EMUL-002', name: 'Ceteareth-20', inci: 'Ceteareth-20', category: 'EMULSIFIER', rm_type: 'Solid', uom: 'KG', price_per_kg: 310, gst: 12, shelf: '24M', status: 'Active', products: ['PR-001'], group: 'Alt +1', created_at: now, updated_at: now },
-      { code: 'EI-RM-EXCIP-001', name: 'Sodium Hydroxide (50%)', inci: 'Sodium Hydroxide', category: 'EXCIPIENT', rm_type: 'Liquid', uom: 'KG', price_per_kg: 45, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-EXCIP-002', name: 'Citric Acid Monohydrate', inci: 'Citric Acid', category: 'EXCIPIENT', rm_type: 'Solid', uom: 'KG', price_per_kg: 85, gst: 12, shelf: '36M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-FRAG-001', name: 'Parfum — Solar Breeze', inci: 'Parfum', category: 'FRAGRANCE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 1500, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-FRAG-002', name: 'Parfum — Jasmine Fresh', inci: 'Parfum', category: 'FRAGRANCE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 1600, gst: 18, shelf: '24M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-POLY-001', name: 'Carbomer 980', inci: 'Carbomer', category: 'POLYMER', rm_type: 'Solid', uom: 'KG', price_per_kg: 900, gst: 18, shelf: '36M', status: 'Active', products: ['PR-001'], group: 'Primary +1', created_at: now, updated_at: now },
-      { code: 'EI-RM-POLY-002', name: 'Carbopol 940', inci: 'Carbomer', category: 'POLYMER', rm_type: 'Solid', uom: 'KG', price_per_kg: 850, gst: 18, shelf: '24M', status: 'Active', products: ['PR-002'], group: 'Alt +1', created_at: now, updated_at: now },
-      { code: 'EI-RM-PRES-001', name: 'Phenoxyethanol', inci: 'Phenoxyethanol', category: 'PRESERVATIVE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 520, gst: 18, shelf: '36M', status: 'Active', products: ['PR-001', 'PR-002'], group: 'Primary', created_at: now, updated_at: now },
-      { code: 'EI-RM-SURF-001', name: 'SLES 70%', inci: 'Sodium Laureth Sulfate', category: 'SURFACTANT', rm_type: 'Liquid', uom: 'KG', price_per_kg: 125, gst: 18, shelf: '24M', status: 'Active', products: ['PR-002'], group: 'Primary +1', created_at: now, updated_at: now },
-      { code: 'EI-RM-SURF-002', name: 'Cocamidopropyl Betaine', inci: 'Cocamidopropyl Betaine', category: 'SURFACTANT', rm_type: 'Liquid', uom: 'KG', price_per_kg: 190, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001'], group: 'Alt +1', created_at: now, updated_at: now },
-      { code: 'EI-RM-SURF-003', name: 'Sodium Cocoyl Isethionate', inci: 'Sodium Cocoyl Isethionate', category: 'SURFACTANT', rm_type: 'Solid', uom: 'KG', price_per_kg: 240, gst: 18, shelf: '18M', status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-UVF-001', name: 'Ethylhexyl Methoxycinnamate', inci: 'Ethylhexyl Methoxycinnamate', category: 'UV FILTER', rm_type: 'Liquid', uom: 'KG', price_per_kg: 1200, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001'], group: 'Primary', created_at: now, updated_at: now },
-      { code: 'EI-RM-UVF-002', name: 'Titanium Dioxide (nano)', inci: 'Titanium Dioxide', category: 'UV FILTER', rm_type: 'Solid', uom: 'KG', price_per_kg: 650, gst: 12, shelf: '36M', status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-UVF-003', name: 'Zinc Oxide (nano)', inci: 'Zinc Oxide', category: 'UV FILTER', rm_type: 'Solid', uom: 'KG', price_per_kg: 720, gst: 12, shelf: '36M', status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-UVF-004', name: 'Avobenzone', inci: 'Butyl Methoxydibenzoylmethane', category: 'UV FILTER', rm_type: 'Solid', uom: 'KG', price_per_kg: 980, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-ACT-001', name: 'Glycerin', inci: 'Glycerin', category: 'ACTIVE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 55, gst: 12, shelf: '36M', specific_gravity: 1.26, status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-ACT-002', name: 'Niacinamide', inci: 'Niacinamide', category: 'ACTIVE', rm_type: 'Solid', uom: 'KG', price_per_kg: 1450, gst: 12, shelf: '24M', specific_gravity: 1.0, status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-ACT-003', name: 'Ascorbyl Glucoside', inci: 'Ascorbyl Glucoside', category: 'ACTIVE', rm_type: 'Solid', uom: 'KG', price_per_kg: 4800, gst: 12, shelf: '18M', specific_gravity: 1.0, status: 'Active', products: ['PR-001'], group: 'Primary', created_at: now, updated_at: now },
+      { code: 'EI-RM-ACT-004', name: 'Allantoin', inci: 'Allantoin', category: 'ACTIVE', rm_type: 'Solid', uom: 'KG', price_per_kg: 780, gst: 12, shelf: '36M', specific_gravity: 1.0, status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-ACT-005', name: 'Tocopheryl Acetate', inci: 'Tocopheryl Acetate', category: 'ACTIVE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 2200, gst: 12, shelf: '24M', specific_gravity: 0.96, status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-ACT-006', name: 'Aloe Vera Extract', inci: 'Aloe Barbadensis Leaf Juice', category: 'BOTANICAL', rm_type: 'Liquid', uom: 'KG', price_per_kg: 280, gst: 5, shelf: '18M', specific_gravity: 1.0, status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-BASE-001', name: 'Aqua (Purified Water)', inci: 'Aqua', category: 'BASE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 8.85, gst: 8, shelf: '24M', specific_gravity: 1.0, status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-EMUL-001', name: 'Cetearyl Alcohol', inci: 'Cetearyl Alcohol', category: 'EMULSIFIER', rm_type: 'Solid', uom: 'KG', price_per_kg: 185, gst: 12, shelf: '36M', specific_gravity: 0.85, status: 'Active', products: ['PR-001'], group: 'Primary +1', created_at: now, updated_at: now },
+      { code: 'EI-RM-EMUL-002', name: 'Ceteareth-20', inci: 'Ceteareth-20', category: 'EMULSIFIER', rm_type: 'Solid', uom: 'KG', price_per_kg: 310, gst: 12, shelf: '24M', specific_gravity: 1.0, status: 'Active', products: ['PR-001'], group: 'Alt +1', created_at: now, updated_at: now },
+      { code: 'EI-RM-EXCIP-001', name: 'Sodium Hydroxide (50%)', inci: 'Sodium Hydroxide', category: 'EXCIPIENT', rm_type: 'Liquid', uom: 'KG', price_per_kg: 45, gst: 18, shelf: '24M', specific_gravity: 1.0, status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-EXCIP-002', name: 'Citric Acid Monohydrate', inci: 'Citric Acid', category: 'EXCIPIENT', rm_type: 'Solid', uom: 'KG', price_per_kg: 85, gst: 12, shelf: '36M', specific_gravity: 1.0, status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-FRAG-001', name: 'Parfum — Solar Breeze', inci: 'Parfum', category: 'FRAGRANCE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 1500, gst: 18, shelf: '24M', specific_gravity: 0.9, status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-FRAG-002', name: 'Parfum — Jasmine Fresh', inci: 'Parfum', category: 'FRAGRANCE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 1600, gst: 18, shelf: '24M', specific_gravity: 0.9, status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-POLY-001', name: 'Carbomer 980', inci: 'Carbomer', category: 'POLYMER', rm_type: 'Solid', uom: 'KG', price_per_kg: 900, gst: 18, shelf: '36M', specific_gravity: 1.0, status: 'Active', products: ['PR-001'], group: 'Primary +1', created_at: now, updated_at: now },
+      { code: 'EI-RM-POLY-002', name: 'Carbopol 940', inci: 'Carbomer', category: 'POLYMER', rm_type: 'Solid', uom: 'KG', price_per_kg: 850, gst: 18, shelf: '24M', specific_gravity: 1.0, status: 'Active', products: ['PR-002'], group: 'Alt +1', created_at: now, updated_at: now },
+      { code: 'EI-RM-PRES-001', name: 'Phenoxyethanol', inci: 'Phenoxyethanol', category: 'PRESERVATIVE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 520, gst: 18, shelf: '36M', specific_gravity: 1.1, status: 'Active', products: ['PR-001', 'PR-002'], group: 'Primary', created_at: now, updated_at: now },
+      { code: 'EI-RM-SURF-001', name: 'SLES 70%', inci: 'Sodium Laureth Sulfate', category: 'SURFACTANT', rm_type: 'Liquid', uom: 'KG', price_per_kg: 125, gst: 18, shelf: '24M', specific_gravity: 1.05, status: 'Active', products: ['PR-002'], group: 'Primary +1', created_at: now, updated_at: now },
+      { code: 'EI-RM-SURF-002', name: 'Cocamidopropyl Betaine', inci: 'Cocamidopropyl Betaine', category: 'SURFACTANT', rm_type: 'Liquid', uom: 'KG', price_per_kg: 190, gst: 18, shelf: '24M', specific_gravity: 1.04, status: 'Active', products: ['PR-001'], group: 'Alt +1', created_at: now, updated_at: now },
+      { code: 'EI-RM-SURF-003', name: 'Sodium Cocoyl Isethionate', inci: 'Sodium Cocoyl Isethionate', category: 'SURFACTANT', rm_type: 'Solid', uom: 'KG', price_per_kg: 240, gst: 18, shelf: '18M', specific_gravity: 1.0, status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-UVF-001', name: 'Ethylhexyl Methoxycinnamate', inci: 'Ethylhexyl Methoxycinnamate', category: 'UV FILTER', rm_type: 'Liquid', uom: 'KG', price_per_kg: 1200, gst: 18, shelf: '24M', specific_gravity: 1.05, status: 'Active', products: ['PR-001'], group: 'Primary', created_at: now, updated_at: now },
+      { code: 'EI-RM-UVF-002', name: 'Titanium Dioxide (nano)', inci: 'Titanium Dioxide', category: 'UV FILTER', rm_type: 'Solid', uom: 'KG', price_per_kg: 650, gst: 12, shelf: '36M', specific_gravity: 1.0, status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-UVF-003', name: 'Zinc Oxide (nano)', inci: 'Zinc Oxide', category: 'UV FILTER', rm_type: 'Solid', uom: 'KG', price_per_kg: 720, gst: 12, shelf: '36M', specific_gravity: 1.0, status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-UVF-004', name: 'Avobenzone', inci: 'Butyl Methoxydibenzoylmethane', category: 'UV FILTER', rm_type: 'Solid', uom: 'KG', price_per_kg: 980, gst: 18, shelf: '24M', specific_gravity: 1.0, status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
       // RMs from HTML PRs Extracted (sunscreen / moisturiser / conditioner)
-      { code: 'EI-RM-UVF-005', name: 'Homosalate', inci: 'Homosalate', category: 'UV FILTER', rm_type: 'Liquid', uom: 'KG', price_per_kg: 520, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-UVF-006', name: 'Octocrylene', inci: 'Octocrylene', category: 'UV FILTER', rm_type: 'Liquid', uom: 'KG', price_per_kg: 590, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-HUM-001', name: 'Butylene Glycol', inci: 'Butylene Glycol', category: 'HUMECTANT', rm_type: 'Liquid', uom: 'KG', price_per_kg: 180, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-EMUL-003', name: 'Stearic Acid', inci: 'Stearic Acid', category: 'EMULSIFIER', rm_type: 'Solid', uom: 'KG', price_per_kg: 120, gst: 12, shelf: '36M', status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-EMUL-004', name: 'PEG-100 Stearate/Glyceryl Stearate', inci: 'PEG-100 Stearate', category: 'EMULSIFIER', rm_type: 'Solid', uom: 'KG', price_per_kg: 380, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-SOLV-001', name: 'Isohexadecane', inci: 'Isohexadecane', category: 'SOLVENT', rm_type: 'Liquid', uom: 'KG', price_per_kg: 220, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-SOLV-002', name: 'Cyclopentasiloxane', inci: 'Cyclopentasiloxane', category: 'SOLVENT', rm_type: 'Liquid', uom: 'KG', price_per_kg: 450, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-PRES-002', name: 'Ethylhexylglycerin', inci: 'Ethylhexylglycerin', category: 'PRESERVATIVE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 1200, gst: 18, shelf: '24M', status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-SILI-001', name: 'Dimethicone', inci: 'Dimethicone', category: 'SILICONE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 680, gst: 18, shelf: '24M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-ACT-007', name: 'Sodium Hyaluronate', inci: 'Sodium Hyaluronate', category: 'ACTIVE', rm_type: 'Solid', uom: 'KG', price_per_kg: 8500, gst: 12, shelf: '24M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-ACT-008', name: 'Ceramide NP', inci: 'Ceramide NP', category: 'ACTIVE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 12000, gst: 12, shelf: '18M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-ACT-009', name: 'Panthenol', inci: 'Panthenol', category: 'ACTIVE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 420, gst: 12, shelf: '24M', status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-ACT-010', name: 'Centella Asiatica Extract', inci: 'Centella Asiatica Extract', category: 'BOTANICAL', rm_type: 'Liquid', uom: 'KG', price_per_kg: 1800, gst: 5, shelf: '18M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-COND-001', name: 'Cetrimonium Chloride', inci: 'Cetrimonium Chloride', category: 'CONDITIONER', rm_type: 'Solid', uom: 'KG', price_per_kg: 320, gst: 18, shelf: '24M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-COND-002', name: 'Guar Hydroxypropyltrimonium Chloride', inci: 'Guar Hydroxypropyltrimonium Chloride', category: 'CONDITIONER', rm_type: 'Solid', uom: 'KG', price_per_kg: 580, gst: 18, shelf: '24M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-COND-003', name: 'Behentrimonium Methosulfate/Cetearyl', inci: 'Behentrimonium Methosulfate', category: 'CONDITIONER', rm_type: 'Solid', uom: 'KG', price_per_kg: 420, gst: 18, shelf: '24M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-OIL-001', name: 'Cocos Nucifera Oil', inci: 'Cocos Nucifera Oil', category: 'OIL', rm_type: 'Liquid', uom: 'KG', price_per_kg: 180, gst: 5, shelf: '12M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-OIL-002', name: 'Argania Spinosa Kernel Oil', inci: 'Argania Spinosa Kernel Oil', category: 'OIL', rm_type: 'Liquid', uom: 'KG', price_per_kg: 3200, gst: 5, shelf: '12M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-SILI-002', name: 'Amodimethicone', inci: 'Amodimethicone', category: 'SILICONE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 920, gst: 18, shelf: '24M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
-      { code: 'EI-RM-ACT-011', name: 'Hydrolyzed Keratin', inci: 'Hydrolyzed Keratin', category: 'ACTIVE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 1200, gst: 12, shelf: '18M', status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-UVF-005', name: 'Homosalate', inci: 'Homosalate', category: 'UV FILTER', rm_type: 'Liquid', uom: 'KG', price_per_kg: 520, gst: 18, shelf: '24M', specific_gravity: 1.04, status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-UVF-006', name: 'Octocrylene', inci: 'Octocrylene', category: 'UV FILTER', rm_type: 'Liquid', uom: 'KG', price_per_kg: 590, gst: 18, shelf: '24M', specific_gravity: 1.0, status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-HUM-001', name: 'Butylene Glycol', inci: 'Butylene Glycol', category: 'HUMECTANT', rm_type: 'Liquid', uom: 'KG', price_per_kg: 180, gst: 18, shelf: '24M', specific_gravity: 1.0, status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-EMUL-003', name: 'Stearic Acid', inci: 'Stearic Acid', category: 'EMULSIFIER', rm_type: 'Solid', uom: 'KG', price_per_kg: 120, gst: 12, shelf: '36M', specific_gravity: 0.85, status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-EMUL-004', name: 'PEG-100 Stearate/Glyceryl Stearate', inci: 'PEG-100 Stearate', category: 'EMULSIFIER', rm_type: 'Solid', uom: 'KG', price_per_kg: 380, gst: 18, shelf: '24M', specific_gravity: 1.0, status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-SOLV-001', name: 'Isohexadecane', inci: 'Isohexadecane', category: 'SOLVENT', rm_type: 'Liquid', uom: 'KG', price_per_kg: 220, gst: 18, shelf: '24M', specific_gravity: 0.79, status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-SOLV-002', name: 'Cyclopentasiloxane', inci: 'Cyclopentasiloxane', category: 'SOLVENT', rm_type: 'Liquid', uom: 'KG', price_per_kg: 450, gst: 18, shelf: '24M', specific_gravity: 0.96, status: 'Active', products: ['PR-001'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-PRES-002', name: 'Ethylhexylglycerin', inci: 'Ethylhexylglycerin', category: 'PRESERVATIVE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 1200, gst: 18, shelf: '24M', specific_gravity: 1.0, status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-SILI-001', name: 'Dimethicone', inci: 'Dimethicone', category: 'SILICONE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 680, gst: 18, shelf: '24M', specific_gravity: 0.97, status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-ACT-007', name: 'Sodium Hyaluronate', inci: 'Sodium Hyaluronate', category: 'ACTIVE', rm_type: 'Solid', uom: 'KG', price_per_kg: 8500, gst: 12, shelf: '24M', specific_gravity: 1.0, status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-ACT-008', name: 'Ceramide NP', inci: 'Ceramide NP', category: 'ACTIVE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 12000, gst: 12, shelf: '18M', specific_gravity: 1.0, status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-ACT-009', name: 'Panthenol', inci: 'Panthenol', category: 'ACTIVE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 420, gst: 12, shelf: '24M', specific_gravity: 1.0, status: 'Active', products: ['PR-001', 'PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-ACT-010', name: 'Centella Asiatica Extract', inci: 'Centella Asiatica Extract', category: 'BOTANICAL', rm_type: 'Liquid', uom: 'KG', price_per_kg: 1800, gst: 5, shelf: '18M', specific_gravity: 1.0, status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-COND-001', name: 'Cetrimonium Chloride', inci: 'Cetrimonium Chloride', category: 'CONDITIONER', rm_type: 'Solid', uom: 'KG', price_per_kg: 320, gst: 18, shelf: '24M', specific_gravity: 1.0, status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-COND-002', name: 'Guar Hydroxypropyltrimonium Chloride', inci: 'Guar Hydroxypropyltrimonium Chloride', category: 'CONDITIONER', rm_type: 'Solid', uom: 'KG', price_per_kg: 580, gst: 18, shelf: '24M', specific_gravity: 1.0, status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-COND-003', name: 'Behentrimonium Methosulfate/Cetearyl', inci: 'Behentrimonium Methosulfate', category: 'CONDITIONER', rm_type: 'Solid', uom: 'KG', price_per_kg: 420, gst: 18, shelf: '24M', specific_gravity: 1.0, status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-OIL-001', name: 'Cocos Nucifera Oil', inci: 'Cocos Nucifera Oil', category: 'OIL', rm_type: 'Liquid', uom: 'KG', price_per_kg: 180, gst: 5, shelf: '12M', specific_gravity: 0.92, status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-OIL-002', name: 'Argania Spinosa Kernel Oil', inci: 'Argania Spinosa Kernel Oil', category: 'OIL', rm_type: 'Liquid', uom: 'KG', price_per_kg: 3200, gst: 5, shelf: '12M', specific_gravity: 0.91, status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-SILI-002', name: 'Amodimethicone', inci: 'Amodimethicone', category: 'SILICONE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 920, gst: 18, shelf: '24M', specific_gravity: 0.98, status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
+      { code: 'EI-RM-ACT-011', name: 'Hydrolyzed Keratin', inci: 'Hydrolyzed Keratin', category: 'ACTIVE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 1200, gst: 12, shelf: '18M', specific_gravity: 1.0, status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
     ]);
 
     console.log('Seeding BOMs...');
@@ -721,22 +722,22 @@ async function seed() {
         bom_code: 'PR-BOM-001', name: 'EI Sunscreen Lotion SPF50+ PA++++', product_id: productA.product_id,
         type: 'FG', status: 'Approved', version: 'v2.0', ph_range: '6.0-7.0', yield_pct: '98.5',
         rm_lines: [
-          { phase: 'Phase A', inci_name: 'Aqua', rm_code: 'EI-RM-BASE-001', pct_w_w: 52.30, uom: 'kg' },
-          { phase: 'Phase A', inci_name: 'Glycerin', rm_code: 'EI-RM-ACT-001', pct_w_w: 3.00, uom: 'kg' },
-          { phase: 'Phase A', inci_name: 'Carbomer 980', rm_code: 'EI-RM-POLY-001', pct_w_w: 0.30, uom: 'kg' },
-          { phase: 'Phase B (Oil)', inci_name: 'Homosalate', rm_code: 'EI-RM-UVF-001', pct_w_w: 10.00, uom: 'kg' },
-          { phase: 'Phase B (Oil)', inci_name: 'Ethylhexyl Methoxycinnamate', rm_code: 'EI-RM-UVF-002', pct_w_w: 7.50, uom: 'kg' },
-          { phase: 'Phase B (Oil)', inci_name: 'Octocrylene', rm_code: 'EI-RM-UVF-003', pct_w_w: 8.00, uom: 'kg' },
-          { phase: 'Phase B (Oil)', inci_name: 'Butyl Methoxydibenzoylmethane', rm_code: 'EI-RM-UVF-004', pct_w_w: 3.00, uom: 'kg' },
-          { phase: 'Phase B (Oil)', inci_name: 'Cetearyl Alcohol', rm_code: 'EI-RM-EMUL-001', pct_w_w: 3.00, uom: 'kg' },
-          { phase: 'Phase B (Oil)', inci_name: 'Ceteareth-20', rm_code: 'EI-RM-EMUL-002', pct_w_w: 2.00, uom: 'kg' },
-          { phase: 'Phase B (Oil)', inci_name: 'Tocopheryl Acetate', rm_code: 'EI-RM-ACT-005', pct_w_w: 0.50, uom: 'kg' },
-          { phase: 'Phase C (Active)', inci_name: 'Niacinamide', rm_code: 'EI-RM-ACT-002', pct_w_w: 2.00, uom: 'kg' },
-          { phase: 'Phase C (Active)', inci_name: 'Ascorbyl Glucoside', rm_code: 'EI-RM-ACT-003', pct_w_w: 1.00, uom: 'kg' },
-          { phase: 'Phase C (Active)', inci_name: 'Allantoin', rm_code: 'EI-RM-ACT-004', pct_w_w: 0.20, uom: 'kg' },
-          { phase: 'Phase C (Active)', inci_name: 'Parfum', rm_code: 'EI-RM-FRAG-001', pct_w_w: 0.30, uom: 'kg' },
-          { phase: 'Phase D (Pres)', inci_name: 'Phenoxyethanol', rm_code: 'EI-RM-PRES-001', pct_w_w: 0.80, uom: 'kg' },
-          { phase: 'Phase E (Adjust)', inci_name: 'Sodium Hydroxide', rm_code: 'EI-RM-EXCIP-001', pct_w_w: 0.40, uom: 'kg' },
+          { phase: 'Phase A', inci_name: 'Aqua', rm_code: 'EI-RM-BASE-001', pct_w_w: 52.30, uom: 'kg', specific_gravity: 1.0 },
+          { phase: 'Phase A', inci_name: 'Glycerin', rm_code: 'EI-RM-ACT-001', pct_w_w: 3.00, uom: 'kg', specific_gravity: 1.26 },
+          { phase: 'Phase A', inci_name: 'Carbomer 980', rm_code: 'EI-RM-POLY-001', pct_w_w: 0.30, uom: 'kg', specific_gravity: 1.0 },
+          { phase: 'Phase B (Oil)', inci_name: 'Homosalate', rm_code: 'EI-RM-UVF-001', pct_w_w: 10.00, uom: 'kg', specific_gravity: 1.0 },
+          { phase: 'Phase B (Oil)', inci_name: 'Ethylhexyl Methoxycinnamate', rm_code: 'EI-RM-UVF-002', pct_w_w: 7.50, uom: 'kg', specific_gravity: 1.0 },
+          { phase: 'Phase B (Oil)', inci_name: 'Octocrylene', rm_code: 'EI-RM-UVF-003', pct_w_w: 8.00, uom: 'kg', specific_gravity: 1.0 },
+          { phase: 'Phase B (Oil)', inci_name: 'Butyl Methoxydibenzoylmethane', rm_code: 'EI-RM-UVF-004', pct_w_w: 3.00, uom: 'kg', specific_gravity: 1.0 },
+          { phase: 'Phase B (Oil)', inci_name: 'Cetearyl Alcohol', rm_code: 'EI-RM-EMUL-001', pct_w_w: 3.00, uom: 'kg', specific_gravity: 0.85 },
+          { phase: 'Phase B (Oil)', inci_name: 'Ceteareth-20', rm_code: 'EI-RM-EMUL-002', pct_w_w: 2.00, uom: 'kg', specific_gravity: 1.0 },
+          { phase: 'Phase B (Oil)', inci_name: 'Tocopheryl Acetate', rm_code: 'EI-RM-ACT-005', pct_w_w: 0.50, uom: 'kg', specific_gravity: 0.96 },
+          { phase: 'Phase C (Active)', inci_name: 'Niacinamide', rm_code: 'EI-RM-ACT-002', pct_w_w: 2.00, uom: 'kg', specific_gravity: 1.0 },
+          { phase: 'Phase C (Active)', inci_name: 'Ascorbyl Glucoside', rm_code: 'EI-RM-ACT-003', pct_w_w: 1.00, uom: 'kg', specific_gravity: 1.0 },
+          { phase: 'Phase C (Active)', inci_name: 'Allantoin', rm_code: 'EI-RM-ACT-004', pct_w_w: 0.20, uom: 'kg', specific_gravity: 1.0 },
+          { phase: 'Phase C (Active)', inci_name: 'Parfum', rm_code: 'EI-RM-FRAG-001', pct_w_w: 0.30, uom: 'kg', specific_gravity: 0.9 },
+          { phase: 'Phase D (Pres)', inci_name: 'Phenoxyethanol', rm_code: 'EI-RM-PRES-001', pct_w_w: 0.80, uom: 'kg', specific_gravity: 1.1 },
+          { phase: 'Phase E (Adjust)', inci_name: 'Sodium Hydroxide', rm_code: 'EI-RM-EXCIP-001', pct_w_w: 0.40, uom: 'kg', specific_gravity: 1.0 },
         ],
         pm_lines: [
           { pm_code: 'EI-PM-TUB-001', description: '50g Aluminium Laminated Tube', pack_type: 'Primary', qty_per_unit: 1, uom: 'pc/unit' },
@@ -761,13 +762,13 @@ async function seed() {
         bom_code: 'PR-BOM-002', name: 'EI Gentle Foaming Facewash 150ml', product_id: productB.product_id,
         type: 'FG', status: 'Approved', version: 'v1.0', ph_range: '5.5-6.5', yield_pct: '98.5',
         rm_lines: [
-          { phase: 'Phase A', inci_name: 'Aqua', rm_code: 'EI-RM-BASE-001', pct_w_w: 70, uom: 'kg' },
-          { phase: 'Phase A', inci_name: 'Glycerin', rm_code: 'EI-RM-ACT-001', pct_w_w: 5, uom: 'kg' },
-          { phase: 'Phase A', inci_name: 'SLES 70%', rm_code: 'EI-RM-SURF-001', pct_w_w: 12, uom: 'kg' },
-          { phase: 'Phase A', inci_name: 'Cocamidopropyl Betaine', rm_code: 'EI-RM-SURF-002', pct_w_w: 3, uom: 'kg' },
-          { phase: 'Phase A', inci_name: 'Niacinamide', rm_code: 'EI-RM-ACT-002', pct_w_w: 2, uom: 'kg' },
-          { phase: 'Phase A', inci_name: 'Phenoxyethanol', rm_code: 'EI-RM-PRES-001', pct_w_w: 0.8, uom: 'kg' },
-          { phase: 'Phase A', inci_name: 'Sodium Hydroxide', rm_code: 'EI-RM-EXCIP-001', pct_w_w: 0.4, uom: 'kg' },
+          { phase: 'Phase A', inci_name: 'Aqua', rm_code: 'EI-RM-BASE-001', pct_w_w: 70, uom: 'kg', specific_gravity: 1.0 },
+          { phase: 'Phase A', inci_name: 'Glycerin', rm_code: 'EI-RM-ACT-001', pct_w_w: 5, uom: 'kg', specific_gravity: 1.26 },
+          { phase: 'Phase A', inci_name: 'SLES 70%', rm_code: 'EI-RM-SURF-001', pct_w_w: 12, uom: 'kg', specific_gravity: 1.05 },
+          { phase: 'Phase A', inci_name: 'Cocamidopropyl Betaine', rm_code: 'EI-RM-SURF-002', pct_w_w: 3, uom: 'kg', specific_gravity: 1.04 },
+          { phase: 'Phase A', inci_name: 'Niacinamide', rm_code: 'EI-RM-ACT-002', pct_w_w: 2, uom: 'kg', specific_gravity: 1.0 },
+          { phase: 'Phase A', inci_name: 'Phenoxyethanol', rm_code: 'EI-RM-PRES-001', pct_w_w: 0.8, uom: 'kg', specific_gravity: 1.1 },
+          { phase: 'Phase A', inci_name: 'Sodium Hydroxide', rm_code: 'EI-RM-EXCIP-001', pct_w_w: 0.4, uom: 'kg', specific_gravity: 1.0 },
         ],
         pm_lines: [
           { pm_code: 'EI-PM-BTL-001', description: '150ml Clear PET Pump Bottle', pack_type: 'Primary', qty_per_unit: 1, uom: 'pc/unit' },
@@ -1057,11 +1058,11 @@ async function seed() {
     console.log('Seeding Vendor / Client master (before Items List)...');
     await VendorClient.destroy({ where: {} });
     const vendorClientSeed = [
-      { entity_code: 'EI-VEN-00001', type: 'vendor', name: 'Chemspec India', email: 'orders@chemspecindia.com', phone: '+91-9876543210', location: 'Mumbai', country: 'India', city: 'Mumbai', category: 'RAW MATERIAL', status: 'active', payment_terms: 'NET 30', notes: '', rating: 4, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
-      { entity_code: 'EI-VEN-00002', type: 'vendor', name: 'Sigma Chemicals Pvt Ltd', email: 'sales@sigmachem.in', phone: '+91-9876543211', location: 'Pune', country: 'India', city: 'Pune', category: 'RAW MATERIAL', status: 'active', payment_terms: 'NET 45', notes: '', rating: 4, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
-      { entity_code: 'EI-VEN-00003', type: 'vendor', name: 'UV Filters & Actives Co', email: 'procurement@uvfilters.co.in', phone: '+91-9876543212', location: 'Hyderabad', country: 'India', city: 'Hyderabad', category: 'UV FILTER / ACTIVE', status: 'active', payment_terms: 'NET 30', notes: '', rating: 5, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
-      { entity_code: 'EI-VEN-00004', type: 'vendor', name: 'Packaging Solutions India', email: 'orders@packsol.in', phone: '+91-9876543213', location: 'Chennai', country: 'India', city: 'Chennai', category: 'PACKAGING', status: 'active', payment_terms: 'NET 30', notes: '', rating: 4, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
-      { entity_code: 'EI-CLI-00001', type: 'client', name: 'Luminos Skincare', email: 'bd@luminos.in', phone: '+91-9812345001', location: 'Maharashtra', country: 'India', city: 'Mumbai', category: 'CDMO', status: 'active', payment_terms: 'NET 45', notes: '', rating: 5, moq: '—', lead_time: '—', data: {}, priority: 'high', segment: 'Skin Care', since_year: 2022, revenue_value: 4200000, avatar_color: 'orange', account_manager_id: amPriya.userid, contacts: [{ name: 'Rajeev Sharma', role: 'BD Head' }], created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00001', type: 'vendor', zoho_id: '5012345678901001', name: 'Chemspec India', email: 'orders@chemspecindia.com', phone: '+91-9876543210', location: 'Mumbai', country: 'India', city: 'Mumbai', category: 'RAW MATERIAL', status: 'active', payment_terms: 'NET 30', notes: '', rating: 4, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00002', type: 'vendor', zoho_id: '5012345678901002', name: 'Sigma Chemicals Pvt Ltd', email: 'sales@sigmachem.in', phone: '+91-9876543211', location: 'Pune', country: 'India', city: 'Pune', category: 'RAW MATERIAL', status: 'active', payment_terms: 'NET 45', notes: '', rating: 4, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00003', type: 'vendor', zoho_id: '5012345678901003', name: 'UV Filters & Actives Co', email: 'procurement@uvfilters.co.in', phone: '+91-9876543212', location: 'Hyderabad', country: 'India', city: 'Hyderabad', category: 'UV FILTER / ACTIVE', status: 'active', payment_terms: 'NET 30', notes: '', rating: 5, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00004', type: 'vendor', zoho_id: '5012345678901004', name: 'Packaging Solutions India', email: 'orders@packsol.in', phone: '+91-9876543213', location: 'Chennai', country: 'India', city: 'Chennai', category: 'PACKAGING', status: 'active', payment_terms: 'NET 30', notes: '', rating: 4, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-CLI-00001', type: 'client', zoho_id: '6012345678901001', name: 'Luminos Skincare', email: 'bd@luminos.in', phone: '+91-9812345001', location: 'Maharashtra', country: 'India', city: 'Mumbai', category: 'CDMO', status: 'active', payment_terms: 'NET 45', notes: '', rating: 5, moq: '—', lead_time: '—', data: { shipping_address: 'Luminos Skincare, 456 Andheri East, Mumbai, Maharashtra 400069, India' }, priority: 'high', segment: 'Skin Care', since_year: 2022, revenue_value: 4200000, avatar_color: 'orange', account_manager_id: amPriya.userid, contacts: [{ name: 'Rajeev Sharma', role: 'BD Head' }], created_at: now, updated_at: now },
     ];
     await VendorClient.bulkCreate(vendorClientSeed);
 
@@ -1191,15 +1192,9 @@ async function seed() {
       { code: 'IM-PROD-001', name: 'EI Sunscreen Lotion SPF50+', type: 'product', status: 'Active', bom_ids: b1 ? [b1] : [], raw_material_ids: [], pack_material_ids: p1 ? [p1] : [], created_at: now, updated_at: now },
     ]);
 
-    console.log('Seeding Sales Orders and Purchase Orders...');
+    // Sales Orders and Purchase Orders: not seeded (test with real data).
     await SalesOrder.destroy({ where: {} });
     await PurchaseOrder.destroy({ where: {} });
-    await SalesOrder.bulkCreate([
-      { order_id: 'EI-SO-2026-001', customer_name: 'Planning Client A', branch: 'Branch A', order_date: '2026-02-10', expected_shipment_date: '2026-03-20', reference: 'REF-PLN-001', payment_terms: 'NET 30', status: 'Planning', order_status: { orderStatus: 'Planning', invoiced: 'pending', payment: 'pending', packed: 'pending', shipped: 'pending', deliveryMethod: 'road' }, form_data: {}, items: [{ itemName: 'EI Gentle Foaming Facewash 150ml', product_code: 'EI-PR-00002', quantity: 50000, rate: '299', tax: '18' }], created_at: now, updated_at: now },
-    ]);
-    await PurchaseOrder.bulkCreate([
-      { order_id: 'PO-00001', vendor_name: 'Chemspec India', branch: 'Branch A', order_date: '2026-02-05', expected_shipment_date: '2026-02-20', reference: 'REF-PO-001', payment_terms: 'NET 30', status: 'Submitted', order_status: {}, form_data: {}, items: [{ itemName: 'Raw Material X', quantity: 50, rate: '200', tax: '12' }], created_at: now, updated_at: now },
-    ]);
 
     // Planning PR phase: SO data lives in sales_orders; planning_extracted references it by sales_order_id (FK).
     console.log('Seeding Planning Extracted (PR extracted tab)...');
@@ -1316,16 +1311,8 @@ async function seed() {
       ]);
     }
 
-    console.log('Seeding GRN (Goods Received Notes) for Inbound...');
+    // GRN: not seeded (test with real data).
     await GoodsReceivedNote.destroy({ where: {} });
-    const grnPo = await PurchaseOrder.findOne({ where: { order_id: 'PO-00001' } });
-    const grnRms = await RawMaterial.findAll({ attributes: ['id', 'code'] });
-    const grnRmByCode = {};
-    grnRms.forEach((r) => { grnRmByCode[r.code] = r.id; });
-    const grnSeed = grnPo ? [
-      { grn_no: 'EI-GRN-2026-001', purchase_order_id: grnPo.id, po_no: 'PO-00001', vendor: 'Chemspec India', type: 'RM', items: 1, po_value: 10000, expected_date: '2026-02-20', received_date: '2026-02-19', assigned_to: 'WH Supervisor', qc_status: 'Passed', status: 'GRN Complete', invoice_no: 'INV-001', invoice_amount: 10000, grn_date: '2026-02-20', line_items: [{ id: 'l1', raw_material_id: grnRmByCode['EI-RM-BASE-001'], poQty: 50, rcvdQty: 50, invoiceQty: 50, unitPrice: 200, qcStatus: 'Pass', qcBy: 'QC' }], workflow_steps: ['PO Received', 'Qty Check', 'QC Inspection', 'Label Generation', 'Dispatch Ready'], created_at: now, updated_at: now },
-    ] : [];
-    await GoodsReceivedNote.bulkCreate(grnSeed);
 
     console.log('Seeding MRN (Material Request Notes)...');
     await MaterialRequestNote.destroy({ where: {} });
@@ -1336,10 +1323,12 @@ async function seed() {
     const mrnPmByCode = {};
     mrnPms.forEach((p) => { mrnPmByCode[p.code] = p.id; });
     const mrnSeed = [
-      { mrn_no: 'EI-MRN-2026-001', requested_by: 'Batch Mfg', status: 'Pending', assigned_picker: '', transfer_team: '', notes: 'RM transfer for production', is_inbound_from_mu: false, line_items: [
-        { id: 'm1', raw_material_id: mrnRmByCode['EI-RM-BASE-001'], quantity: 100, unit: 'KG', notes: '' },
-        { id: 'm2', raw_material_id: mrnRmByCode['EI-RM-ACT-001'], quantity: 10, unit: 'KG', notes: '' },
-      ], created_at: now, updated_at: now },
+      {
+        mrn_no: 'EI-MRN-2026-001', requested_by: 'Batch Mfg', status: 'Pending', assigned_picker: '', transfer_team: '', notes: 'RM transfer for production', is_inbound_from_mu: false, line_items: [
+          { id: 'm1', raw_material_id: mrnRmByCode['EI-RM-BASE-001'], quantity: 100, unit: 'KG', notes: '' },
+          { id: 'm2', raw_material_id: mrnRmByCode['EI-RM-ACT-001'], quantity: 10, unit: 'KG', notes: '' },
+        ], created_at: now, updated_at: now
+      },
     ];
     await MaterialRequestNote.bulkCreate(mrnSeed);
 
@@ -1372,48 +1361,26 @@ async function seed() {
     await ProductionEquipment.destroy({ where: {} });
     await ProductionEquipment.bulkCreate([
       { equipment_id: 'MV-01', name: 'Manufacturing Vessel 01', category: 'manufacturing', capacity: 500, type: 'jacketed', homogenizer: true, process_types: ['hot', 'cold'], status: 'idle', created_at: now, updated_at: now },
+      { equipment_id: 'MV-02', name: 'Manufacturing Vessel 02', category: 'manufacturing', capacity: 300, type: 'jacketed', homogenizer: true, process_types: ['hot', 'cold'], status: 'idle', created_at: now, updated_at: now },
+      { equipment_id: 'MV-03', name: 'Manufacturing Vessel 03', category: 'manufacturing', capacity: 200, type: 'simple', homogenizer: false, process_types: ['cold'], status: 'idle', created_at: now, updated_at: now },
       { equipment_id: 'ST-01', name: 'Supporting Tank 01', category: 'manufacturing', capacity: 100, type: 'support', homogenizer: false, process_types: ['hot', 'cold'], status: 'idle', created_at: now, updated_at: now },
+      { equipment_id: 'ST-02', name: 'Supporting Tank 02', category: 'manufacturing', capacity: 100, type: 'support', homogenizer: false, process_types: ['hot', 'cold'], status: 'idle', created_at: now, updated_at: now },
+      { equipment_id: 'ST-03', name: 'Supporting Tank 03', category: 'manufacturing', capacity: 50, type: 'support', homogenizer: false, process_types: ['cold'], status: 'idle', created_at: now, updated_at: now },
       { equipment_id: 'FL-01', name: 'Filling Line 01 (Bottle)', category: 'filling', speed: 3000, type: 'bottle', compatible: ['bottle'], status: 'idle', created_at: now, updated_at: now },
+      { equipment_id: 'FL-02', name: 'Filling Line 02 (Tube)', category: 'filling', speed: 2000, type: 'tube', compatible: ['tube'], status: 'idle', created_at: now, updated_at: now },
+      { equipment_id: 'FL-03', name: 'Filling Line 03 (Jar)', category: 'filling', speed: 500, type: 'jar', compatible: ['jar'], status: 'idle', created_at: now, updated_at: now },
+      { equipment_id: 'FL-04', name: 'Filling Line 04 (Manual)', category: 'filling', speed: 200, type: 'manual', compatible: ['bottle', 'tube', 'jar', 'sachet'], status: 'idle', created_at: now, updated_at: now },
       { equipment_id: 'PL-01', name: 'Packaging Line 01', category: 'packaging', speed: 4000, type: 'auto', supports: ['carton', 'label', 'shrink'], status: 'idle', created_at: now, updated_at: now },
+      { equipment_id: 'PL-02', name: 'Packaging Line 02', category: 'packaging', speed: 2500, type: 'semi', supports: ['carton', 'label'], status: 'idle', created_at: now, updated_at: now },
+      { equipment_id: 'SK-01', name: 'Shrink Wrap Station', category: 'packaging', speed: 1500, type: 'shrink', supports: ['shrink'], status: 'idle', created_at: now, updated_at: now },
     ]);
 
     /* ── Production Team Members ── */
     console.log('Seeding Production Team Members (empty — add via Team Management UI)...');
     await ProductionTeamMember.destroy({ where: {} });
 
-    /* ── Production Batches (BMR / BPR) ── */
-    console.log('Seeding Production Batches...');
+    /* ── Production Batches: not seeded (test with real data). ── */
     await ProductionBatch.destroy({ where: {} });
-    await ProductionBatch.bulkCreate([
-      {
-        bmr_no: 'BMR-2026-001', bpr_no: 'BPR-2026-001', product_name: 'Gentle Foaming Facewash', sku: 'EI-FW-150',
-        so_no: 'EI-SO-2026-001', order_qty: 30000, batch_size: 500, batch_no: 'B-01', batch_index: 1, total_batches: 3,
-        bmr_status: 'in_production', bpr_status: 'draft', color: 'teal',
-        process_type: 'hot', homogenizer: true, main_vessel: 'MV-01', supporting_tanks: ['ST-01'],
-        filling_line: 'FL-01', filling_type: 'bottle', packaging_line: 'PL-01', monocarton: true, shrink: false,
-        team_bmr: ['T01', 'T02', 'T04'], team_bpr: ['T08', 'T10'], qc_officer_bmr: 'T05', qc_officer_bpr: 'T07',
-        mfg_date: '2026-03-04', fill_date: '2026-03-08', pack_date: '2026-03-09', fg_date: '2026-03-10',
-        rm_connect_date: '2026-03-02', pm_connect_date: '2026-03-06',
-        rm_reserved: true, pm_reserved: false, rm_connected: true, pm_connected: false,
-        dispensing_rm: [
-          { code: 'RM-001', inci: 'Aqua (Water)', required: 350, dispensed: 350, done: true },
-          { code: 'RM-002', inci: 'Sodium Laureth Sulfate', required: 75, dispensed: 75, done: true },
-          { code: 'RM-003', inci: 'Cocamidopropyl Betaine', required: 40, dispensed: 40, done: true },
-          { code: 'RM-004', inci: 'Glycerin', required: 25, dispensed: 25, done: true },
-          { code: 'RM-005', inci: 'Fragrance', required: 10, dispensed: 10, done: true },
-        ],
-        dispensing_pm: [
-          { code: 'PM-001', name: '150ml Bottle', required: 10000, dispensed: 0, done: false },
-          { code: 'PM-002', name: 'Flip Cap', required: 10000, dispensed: 0, done: false },
-          { code: 'PM-003', name: 'Label', required: 10000, dispensed: 0, done: false },
-          { code: 'PM-004', name: 'Mono Carton', required: 10000, dispensed: 0, done: false },
-        ],
-        bulk_yield: null, fill_yield: null, fg_yield: null,
-        bulk_batch_accepted: null, fill_batch_accepted: null, fg_batch_accepted: null,
-        qc_specs: [], remarks: '', due_date: '2026-03-12',
-        created_at: now, updated_at: now,
-      },
-    ]);
 
     /* ── Transporters ── */
     console.log('Seeding Transporters...');
@@ -1426,88 +1393,16 @@ async function seed() {
     console.log('Seeding Fulfillment Invoices...');
     await FulfillmentInvoice.destroy({ where: {} });
 
-    /* ── Fulfillment Orders ── */
-    console.log('Seeding Fulfillment Orders...');
+    /* ── Fulfillment Orders: not seeded (no SO/batch). ── */
     await FulfillmentBatchSplit.destroy({ where: {} });
     await FulfillmentOrderItem.destroy({ where: {} });
     await FulfillmentOrder.destroy({ where: {} });
 
-    const soEI001 = await SalesOrder.findOne({ where: { order_id: 'EI-SO-2026-001' } });
-    const pbBMR001 = await ProductionBatch.findOne({ where: { bmr_no: 'BMR-2026-001' } });
-
-    const ffOrder1 = await FulfillmentOrder.create({
-      so_no: 'EI-SO-2026-001', sales_order_id: soEI001?.id || null,
-      customer_name: 'BeautyBox Retail', customer_city: 'Mumbai',
-      order_date: '2026-01-10', due_date: '2026-03-15', priority: 'high', so_status: 'in_production',
-      so_value: 750000, ship_address: '12th Floor, Trade Centre, BKC, Bandra East, Mumbai 400051',
-      payment_terms: 'Net 30', notes: '',
-      created_at: now, updated_at: now,
-    });
-    const ffItem1 = await FulfillmentOrderItem.create({
-      fulfillment_order_id: ffOrder1.id, item_no: '001', sku: 'EI-PR-00002',
-      product_name: 'EI Gentle Foaming Facewash 150ml', pack: '150ml Tube',
-      ordered_qty: 50000, rate: 15, unit_price: 15,
-      created_at: now, updated_at: now,
-    });
-    await FulfillmentBatchSplit.bulkCreate([
-      {
-        fulfillment_order_item_id: ffItem1.id, fulfillment_order_id: ffOrder1.id,
-        production_batch_id: pbBMR001?.id || null, bmr_no: 'BMR-2026-001', bpr_no: 'BPR-2026-001',
-        planned_qty: 20000, fg_qty: 0, fg_location: null, ff_status: 'fg_pending',
-        picked_qty: 0, created_at: now, updated_at: now,
-      },
-    ]);
-
-    /* ── Reserved batch items (Pack BOM + RM reserved for EI-SO-2026-001 / BMR-2026-001) ── */
-    console.log('Seeding reserved_batch_items for SO Facewash...');
+    /* ── Reserved batch items: not seeded (no batch). ── */
     await ReservedBatchItem.destroy({ where: {} });
-    const productFacewash = await Product.findOne({ where: { product_code: 'EI-PR-00002' } });
-    const bomFacewash = productFacewash ? await BOM.findOne({ where: { product_id: productFacewash.product_id } }) : null;
-    const plannedQty = 20000;
-    if (bomFacewash && pbBMR001 && ffItem1) {
-      const rmByCode = await RawMaterial.findAll({ attributes: ['id', 'code'] }).then(rows => new Map(rows.map(r => [r.code, r.id])));
-      const pmByCode = await PackMaterial.findAll({ attributes: ['id', 'code'] }).then(rows => new Map(rows.map(p => [p.code, p.id])));
-      const rmLines = Array.isArray(bomFacewash.rm_lines) ? bomFacewash.rm_lines : [];
-      const pmLines = Array.isArray(bomFacewash.pm_lines) ? bomFacewash.pm_lines : [];
-      for (const line of rmLines) {
-        const code = line.rm_code || line.rmCode || line.code;
-        const rmId = code ? rmByCode.get(code) : null;
-        if (!rmId) continue;
-        const qtyPerUnit = line.quantity != null ? Number(line.quantity) : (line.pct_w_w != null ? Number(line.pct_w_w) / 100 : 0);
-        const qtyReserved = qtyPerUnit * plannedQty;
-        if (qtyReserved <= 0) continue;
-        await ReservedBatchItem.create({
-          production_batch_id: pbBMR001.id,
-          fulfillment_order_item_id: ffItem1.id,
-          raw_material_id: rmId,
-          pack_material_id: null,
-          quantity_reserved: qtyReserved,
-          unit: line.uom || 'KG',
-          so_no: 'EI-SO-2026-001',
-          created_at: now,
-          updated_at: now,
-        });
-      }
-      for (const line of pmLines) {
-        const code = line.pm_code || line.pmCode || line.code;
-        const pmId = code ? pmByCode.get(code) : null;
-        if (!pmId) continue;
-        const qtyPerUnit = line.qty_per_unit != null ? Number(line.qty_per_unit) : 1;
-        const qtyReserved = qtyPerUnit * plannedQty;
-        if (qtyReserved <= 0) continue;
-        await ReservedBatchItem.create({
-          production_batch_id: pbBMR001.id,
-          fulfillment_order_item_id: ffItem1.id,
-          raw_material_id: null,
-          pack_material_id: pmId,
-          quantity_reserved: qtyReserved,
-          unit: line.uom || 'PCS',
-          so_no: 'EI-SO-2026-001',
-          created_at: now,
-          updated_at: now,
-        });
-      }
-    }
+
+    /* ── Warehouse inventory location history: not seeded (no batch). ── */
+    await WarehouseInventoryLocationHistory.destroy({ where: {} }).catch(() => { });
 
     console.log('Seeding complete.');
     process.exit(0);

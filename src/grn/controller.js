@@ -5,6 +5,7 @@ const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const { Product } = require('../products/models');
 const WarehouseInventory = require('../warehouseInventory/models');
+const { logLocationMovement } = require('../warehouseInventory/locationHistoryHelpers');
 
 /** Usertypes that have order-management (warehouse/GRN) access — can be assigned to GRN. */
 const ASSIGNABLE_USERTYPES = ['super_admin', 'admin', 'bd_manager'];
@@ -131,6 +132,7 @@ function formatRow(r, enrichedLineItems) {
     receivedDate: d.received_date || null,
     assignedTo: d.assigned_to || '',
     qcStatus: d.qc_status || 'Pending',
+    qcBy: d.qc_by || '',
     status: d.status || 'Pending',
     lineItems,
     workflowSteps: d.workflow_steps || [],
@@ -205,6 +207,7 @@ async function create(req, res) {
       received_date: body.receivedDate ?? body.received_date,
       assigned_to: body.assignedTo ?? body.assigned_to,
       qc_status: body.qcStatus ?? body.qc_status ?? 'Pending',
+      qc_by: body.qcBy ?? body.qc_by ?? null,
       status: body.status ?? 'Pending',
       line_items: body.lineItems ?? body.line_items ?? [],
       workflow_steps: body.workflowSteps ?? body.workflow_steps ?? [],
@@ -305,7 +308,7 @@ async function applyGrnCompletionToInventory(grnRow) {
       await whRow.update({ wh_stock: whStock, stock_in_hand: whStock + ml1 + ml2 });
       console.log('[grn] GRN Complete: added RM id=%d qty=%s -> wh_stock=%s', rawMaterialId, qty, whStock);
     } else {
-      await WarehouseInventory.create({
+      whRow = await WarehouseInventory.create({
         item_type: 'RM',
         raw_material_id: rawMaterialId,
         pack_material_id: null,
@@ -323,6 +326,23 @@ async function applyGrnCompletionToInventory(grnRow) {
       });
       console.log('[grn] GRN Complete: created RM warehouse_inventory id=%d wh_stock=%s', rawMaterialId, qty);
     }
+
+    // Optional history entry – location may be null if not yet assigned.
+    const plainWh = whRow.get ? whRow.get({ plain: true }) : whRow;
+    await logLocationMovement({
+      warehouseInventoryId: plainWh.id,
+      itemType: plainWh.item_type,
+      rawMaterialId: plainWh.raw_material_id,
+      packMaterialId: plainWh.pack_material_id,
+      productId: plainWh.product_id,
+      fromZone: null,
+      fromRack: null,
+      toZone: plainWh.zone || null,
+      toRack: plainWh.rack || null,
+      qtyDelta: qty,
+      actionType: 'GRN_IN',
+      sourceGrnId: d.id,
+    });
   }
 
   for (const [packMaterialId, qty] of toAddByPm) {
@@ -335,7 +355,7 @@ async function applyGrnCompletionToInventory(grnRow) {
       await whRow.update({ wh_stock: whStock, stock_in_hand: whStock + ml1 + ml2 });
       console.log('[grn] GRN Complete: added PM id=%d qty=%s -> wh_stock=%s', packMaterialId, qty, whStock);
     } else {
-      await WarehouseInventory.create({
+      whRow = await WarehouseInventory.create({
         item_type: 'PM',
         raw_material_id: null,
         pack_material_id: packMaterialId,
@@ -353,6 +373,22 @@ async function applyGrnCompletionToInventory(grnRow) {
       });
       console.log('[grn] GRN Complete: created PM warehouse_inventory id=%d wh_stock=%s', packMaterialId, qty);
     }
+
+    const plainWh = whRow.get ? whRow.get({ plain: true }) : whRow;
+    await logLocationMovement({
+      warehouseInventoryId: plainWh.id,
+      itemType: plainWh.item_type,
+      rawMaterialId: plainWh.raw_material_id,
+      packMaterialId: plainWh.pack_material_id,
+      productId: plainWh.product_id,
+      fromZone: null,
+      fromRack: null,
+      toZone: plainWh.zone || null,
+      toRack: plainWh.rack || null,
+      qtyDelta: qty,
+      actionType: 'GRN_IN',
+      sourceGrnId: d.id,
+    });
   }
 
   for (const [productId, qty] of toAddByProduct) {
@@ -365,7 +401,7 @@ async function applyGrnCompletionToInventory(grnRow) {
       await whRow.update({ wh_stock: whStock, stock_in_hand: whStock + ml1 + ml2 });
       console.log('[grn] GRN Complete: added PR product_id=%d qty=%s -> wh_stock=%s', productId, qty, whStock);
     } else {
-      await WarehouseInventory.create({
+      whRow = await WarehouseInventory.create({
         item_type: 'PR',
         raw_material_id: null,
         pack_material_id: null,
@@ -383,6 +419,22 @@ async function applyGrnCompletionToInventory(grnRow) {
       });
       console.log('[grn] GRN Complete: created PR warehouse_inventory product_id=%d wh_stock=%s', productId, qty);
     }
+
+    const plainWh = whRow.get ? whRow.get({ plain: true }) : whRow;
+    await logLocationMovement({
+      warehouseInventoryId: plainWh.id,
+      itemType: plainWh.item_type,
+      rawMaterialId: plainWh.raw_material_id,
+      packMaterialId: plainWh.pack_material_id,
+      productId: plainWh.product_id,
+      fromZone: null,
+      fromRack: null,
+      toZone: plainWh.zone || null,
+      toRack: plainWh.rack || null,
+      qtyDelta: qty,
+      actionType: 'GRN_IN',
+      sourceGrnId: d.id,
+    });
   }
 }
 
@@ -405,6 +457,8 @@ async function update(req, res) {
     if (body.received_date !== undefined) updates.received_date = body.received_date;
     if (body.qcStatus !== undefined) updates.qc_status = body.qcStatus;
     if (body.qc_status !== undefined) updates.qc_status = body.qc_status;
+    if (body.qcBy !== undefined) updates.qc_by = body.qcBy;
+    if (body.qc_by !== undefined) updates.qc_by = body.qc_by;
     if (body.status !== undefined) updates.status = body.status;
     if (body.lineItems !== undefined) updates.line_items = body.lineItems;
     if (body.line_items !== undefined) updates.line_items = body.line_items;
@@ -473,6 +527,13 @@ async function generateLabels(req, res) {
     if (!row) return res.status(404).json({ error: 'GRN not found' });
     const body = req.body || {};
     const d = row.get ? row.get({ plain: true }) : row;
+    const qcStatus = (d.qc_status || '').trim();
+    // Block only when QC was explicitly set to something other than Passed (e.g. Rejected, Under test)
+    if (qcStatus && qcStatus !== 'Passed') {
+      return res.status(403).json({
+        error: 'QC must be Passed before generating labels. Set QC status to Passed and save, then try again.',
+      });
+    }
     const noOfBoxes = body.noOfBoxes ?? body.no_of_boxes ?? d.no_of_boxes ?? 1;
     const unitsPerBox = body.unitsPerBox ?? body.units_per_box ?? d.units_per_box ?? 0;
     const locationPrefix = body.locationPrefix ?? body.location_prefix ?? d.location_prefix ?? '';
@@ -524,4 +585,4 @@ async function generateLabels(req, res) {
   }
 }
 
-module.exports = { list, getById, create, update, remove, assignableUsers, generateLabels };
+module.exports = { list, getById, create, update, remove, assignableUsers, generateLabels, applyGrnCompletionToInventory };

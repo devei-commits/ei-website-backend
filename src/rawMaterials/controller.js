@@ -21,6 +21,11 @@ function formatRawMaterial(row) {
     status: d.status,
     products: Array.isArray(d.products) ? d.products : [],
     group: d.group,
+    zoho_id: d.zoho_id ?? null,
+    sku: d.sku ?? null,
+    hsn_code: d.hsn_code ?? null,
+    tax_pref: d.tax_pref ?? null,
+    sales_purchase_account: d.sales_purchase_account ?? null,
     created_at: d.created_at,
     updated_at: d.updated_at,
   };
@@ -98,6 +103,11 @@ function payloadToListFields(b, omitGroupIfUnset = false) {
     status: (fd.status && String(fd.status).toLowerCase() === 'inactive') ? 'inactive' : 'active',
     products: Array.isArray(fd.products) ? fd.products : [],
     ...(omitGroupIfUnset && !hasGroup ? {} : { group: fd.group ?? b.group ?? null }),
+    zoho_id: fd.zoho_id ?? fd.zohoId ?? b.zoho_id ?? null,
+    sku: fd.sku ?? fd.rmSku ?? fd.code ?? b.sku ?? null,
+    hsn_code: fd.hsnCode ?? fd.hsn_code ?? b.hsn_code ?? null,
+    tax_pref: fd.rmTaxPreference ?? fd.tax_pref ?? fd.taxPref ?? b.tax_pref ?? null,
+    sales_purchase_account: fd.accountingCategory ?? fd.sales_purchase_account ?? fd.salesPurchaseAccount ?? b.sales_purchase_account ?? null,
   };
   const form_data = b.form_data !== undefined ? b.form_data : (typeof fd.rmSku !== 'undefined' || typeof fd.inciName !== 'undefined' ? fd : null);
   return { ...listFields, form_data };

@@ -116,12 +116,15 @@ app.use((req, res) => {
     res.status(404).send('Not Found');
 });
 
-db.authenticate().then(async () => {
-    // Database will be synced by seed.js before the server starts
+if (process.env.NODE_ENV !== 'test') {
+  db.authenticate().then(async () => {
     app.listen(port, () => {
-        console.log(`Server is running on port ${port}`);
+      console.log(`Server is running on port ${port}`);
     });
-}).catch(err => {
+  }).catch(err => {
     console.error('Failed to connect to the database', err);
     process.exit(1);
-});
+  });
+}
+
+module.exports = app;

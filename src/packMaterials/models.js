@@ -1,5 +1,6 @@
 /**
  * Pack Materials model for Pack Materials dashboard (tubes, bottles, cartons, labels, closures).
+ * Primary info for Zoho sync (TODO: implement sync): name (description), zoho_id, sku, hsn_code, unit, tax_pref, sales_purchase_account.
  * Table: pack_materials
  */
 const { DataTypes, Model } = require('sequelize');
@@ -26,6 +27,13 @@ PackMaterial.init(
     lead_time_days: { type: DataTypes.INTEGER, allowNull: true },
     print_status: { type: DataTypes.STRING(100), allowNull: true },
     products: { type: DataTypes.JSON, allowNull: true }, // array of product codes e.g. ['PR-002']
+    // Primary info for Zoho sync (TODO: implement Zoho integration)
+    zoho_id: { type: DataTypes.STRING(100), allowNull: true },
+    sku: { type: DataTypes.STRING(100), allowNull: true },
+    hsn_code: { type: DataTypes.STRING(50), allowNull: true },
+    unit: { type: DataTypes.STRING(20), allowNull: true },
+    tax_pref: { type: DataTypes.STRING(50), allowNull: true },
+    sales_purchase_account: { type: DataTypes.STRING(255), allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
   },

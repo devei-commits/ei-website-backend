@@ -4,6 +4,7 @@ const RawMaterial = require('../rawMaterials/models');
 const ItemGroup = require('../itemGroups/models');
 const BOM = require('../bom/models');
 const { Product } = require('../products/models');
+const { applySwapRatioToPct } = require('../lib/swapRatio');
 
 function toIntList(val) {
   if (val == null) return [];
@@ -35,8 +36,34 @@ function formatSwapRow(row, fromRm = null, toRm = null) {
     approvedBy: d.approved_by || '',
     date: d.created_at ? new Date(d.created_at).toISOString().split('T')[0] : '',
     affectedGroupIds: Array.isArray(d.affected_group_ids) ? d.affected_group_ids : [],
+    affectedBomIds: Array.isArray(d.affected_bom_ids) ? d.affected_bom_ids : [],
     createdAt: d.created_at,
   };
+}
+
+/**
+ * Helper for mapping BOM rows + products to a compact PR BOM descriptor.
+ */
+function mapBomsWithProducts(boms, products) {
+  const productMap = new Map(
+    products.map((p) => {
+      const plain = p.get ? p.get({ plain: true }) : p;
+      return [plain.product_id, plain];
+    })
+  );
+
+  return boms.map((bom) => {
+    const plain = bom.get ? bom.get({ plain: true }) : bom;
+    const product = productMap.get(plain.product_id);
+    const productName = product ? (product.product_name || product.product_code || '') : '';
+    return {
+      id: String(plain.id),
+      bom_code: plain.bom_code,
+      name: plain.name || plain.bom_code,
+      product_id: plain.product_id,
+      product_name: productName,
+    };
+  });
 }
 
 /**
@@ -68,26 +95,16 @@ async function getAffected(req, res) {
     });
 
     const productIds = [...new Set(bomsContainingFrom.map((b) => (b.get ? b.get({ plain: true }) : b).product_id).filter(Boolean))];
-    const products = productIds.length ? await Product.findAll({ where: { product_id: productIds }, attributes: ['product_id', 'product_name', 'product_code'] }) : [];
-    const productMap = new Map(products.map((p) => [p.product_id, p.get ? p.get({ plain: true }) : p]));
+    const products = productIds.length
+      ? await Product.findAll({ where: { product_id: productIds }, attributes: ['product_id', 'product_name', 'product_code'] })
+      : [];
 
     res.json({
       itemGroups: itemGroups.map((g) => {
         const plain = g.get ? g.get({ plain: true }) : g;
         return { id: String(plain.id), code: plain.code, name: plain.name || plain.description || plain.code, type: plain.type, member_ids: toIntList(plain.member_ids) };
       }),
-      boms: bomsContainingFrom.map((bom) => {
-        const plain = bom.get ? bom.get({ plain: true }) : bom;
-        const product = productMap.get(plain.product_id);
-        const productName = product ? (product.product_name || product.product_code || '') : '';
-        return {
-          id: String(plain.id),
-          bom_code: plain.bom_code,
-          name: plain.name || plain.bom_code,
-          product_id: plain.product_id,
-          product_name: productName,
-        };
-      }),
+      boms: mapBomsWithProducts(bomsContainingFrom, products),
     });
   } catch (err) {
     console.error('getAffected error', err);
@@ -168,6 +185,7 @@ async function applySwap(req, res) {
       approved_by: approvedBy,
       approved_by_user_id: Number.isNaN(approvedByUserId) ? null : approvedByUserId,
       affected_group_ids: numericGroupIds.length > 0 ? numericGroupIds : null,
+      affected_bom_ids: numericBomIds.length > 0 ? numericBomIds : null,
     });
 
     let updatedGroupsCount = 0;
@@ -202,8 +220,7 @@ async function applySwap(req, res) {
           continue;
         }
         changed = true;
-        const newPct = Math.round(pct * swapRatio * 100) / 100;
-        const remainderPct = Math.round(pct * (1 - swapRatio) * 100) / 100;
+        const { newPct, remainderPct } = applySwapRatioToPct(pct, swapRatio);
         if (newPct > 0) {
           const newLine = {
             phase: line.phase,
@@ -245,9 +262,53 @@ async function applySwap(req, res) {
   }
 }
 
+/**
+ * GET /api/v1/universal-swap/history/:id/affected
+ * Returns PR BOMs (with product names) that were affected for a given history row.
+ */
+async function getHistoryAffected(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id) || id < 1) {
+      return res.status(400).json({ error: 'Invalid history id' });
+    }
+
+    const row = await UniversalSwapHistory.findByPk(id);
+    if (!row) {
+      return res.status(404).json({ error: 'Swap history entry not found' });
+    }
+
+    const plain = row.get ? row.get({ plain: true }) : row;
+    const bomIds = toIntList(plain.affected_bom_ids);
+    if (!bomIds.length) {
+      return res.json({ boms: [] });
+    }
+
+    const boms = await BOM.findAll({
+      where: { id: bomIds, product_id: { [Op.ne]: null } },
+      order: [['bom_code', 'ASC']],
+    });
+    if (!boms.length) {
+      return res.json({ boms: [] });
+    }
+
+    const productIds = [...new Set(boms.map((b) => (b.get ? b.get({ plain: true }) : b).product_id).filter(Boolean))];
+    const products = productIds.length
+      ? await Product.findAll({ where: { product_id: productIds }, attributes: ['product_id', 'product_name', 'product_code'] })
+      : [];
+
+    const mapped = mapBomsWithProducts(boms, products);
+    res.json({ boms: mapped });
+  } catch (err) {
+    console.error('getHistoryAffected error', err);
+    res.status(500).json({ error: 'Failed to load affected PR BOMs for this swap' });
+  }
+}
+
 module.exports = {
   getAffected,
   listHistory,
   applySwap,
+  getHistoryAffected,
   formatSwapRow,
 };

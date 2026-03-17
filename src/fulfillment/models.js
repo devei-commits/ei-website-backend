@@ -251,6 +251,12 @@ ReservedBatchItem.init(
       references: { model: 'fulfillment_order_items', key: 'id' },
       onDelete: 'CASCADE',
     },
+    planning_extracted_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: 'planning_extracted', key: 'id' },
+      onDelete: 'CASCADE',
+    },
     raw_material_id: {
       type: DataTypes.INTEGER,
       allowNull: true,

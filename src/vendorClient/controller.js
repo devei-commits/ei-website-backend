@@ -7,6 +7,7 @@ function formatRow(row) {
   return {
     id: String(d.id),
     type: d.type,
+    zohoId: d.zoho_id ?? '',
     name: d.name || '',
     email: d.email || '',
     phone: d.phone || '',
@@ -89,6 +90,7 @@ function bodyToPayload(body, type) {
   return {
     entity_code: body.entityCode ?? data.entityCode ?? null,
     type: type || body.type || 'vendor',
+    zoho_id: body.zohoId ?? body.zoho_id ?? data.zohoId ?? data.zoho_id ?? null,
     name: body.name ?? data.tradeName ?? data.legalName ?? null,
     email: body.email ?? data.primaryEmail ?? null,
     phone: body.phone ?? data.primaryPhone ?? null,
@@ -123,6 +125,7 @@ async function createVendorClient(req, res) {
     const row = await VendorClient.create({
       entity_code: String(payload.entity_code).trim(),
       type: payload.type,
+      zoho_id: payload.zoho_id || null,
       name: payload.name,
       email: payload.email,
       phone: payload.phone,
@@ -156,6 +159,7 @@ async function updateVendorClient(req, res) {
     const payload = bodyToPayload(body, row.type);
 
     if (payload.entity_code !== undefined) row.entity_code = String(payload.entity_code).trim();
+    if (payload.zoho_id !== undefined) row.zoho_id = payload.zoho_id || null;
     if (payload.name !== undefined) row.name = payload.name;
     if (payload.email !== undefined) row.email = payload.email;
     if (payload.phone !== undefined) row.phone = payload.phone;

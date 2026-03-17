@@ -86,6 +86,9 @@ WarehouseRackItem.init(
       references: { model: 'warehouse_inventory', key: 'id' },
       onDelete: 'CASCADE',
     },
+    // Quantity of this item stored on this rack (warehouse-level stock).
+    qty_wh: { type: DataTypes.DECIMAL(14, 2), allowNull: true, defaultValue: 0 },
+    // Optional: if we later split ML1/ML2 by rack, we can extend here.
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
   },

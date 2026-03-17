@@ -155,24 +155,25 @@ async function createProcurementQuotation(req, res) {
     const body = req.body || {};
     const procurementRequestId = body.procurementRequestId ?? body.procurement_request_id;
     const vendorId = body.vendorId ?? body.vendor_id;
-    if (procurementRequestId == null) {
-      return res.status(400).json({ error: 'procurementRequestId is required' });
-    }
     if (vendorId == null) {
       return res.status(400).json({ error: 'vendorId is required' });
     }
-    const prId = parseInt(procurementRequestId, 10);
     const vId = parseInt(vendorId, 10);
-    if (Number.isNaN(prId)) return res.status(400).json({ error: 'Invalid procurementRequestId' });
     if (Number.isNaN(vId)) return res.status(400).json({ error: 'Invalid vendorId' });
-    const [prRow, vendorRow] = await Promise.all([
-      ProcurementRequest.findByPk(prId),
-      VendorClient.findByPk(vId),
-    ]);
-    if (!prRow) return res.status(404).json({ error: 'Procurement request not found' });
+    const vendorRow = await VendorClient.findByPk(vId);
     if (!vendorRow) return res.status(404).json({ error: 'Vendor not found' });
 
-    const prItems = Array.isArray(prRow.items) ? prRow.items : [];
+    let prId = null;
+    let prRow = null;
+    if (procurementRequestId != null && String(procurementRequestId).trim() !== '') {
+      prId = parseInt(procurementRequestId, 10);
+      if (!Number.isNaN(prId)) {
+        prRow = await ProcurementRequest.findByPk(prId);
+        if (!prRow) return res.status(404).json({ error: 'Procurement request not found' });
+      }
+    }
+
+    const prItems = prRow && Array.isArray(prRow.items) ? prRow.items : [];
     let items = Array.isArray(body.items) && body.items.length > 0 ? body.items : prItems.map((it) => ({
       type: it.type || 'RM',
       raw_material_id: it.raw_material_id ?? null,
@@ -184,6 +185,10 @@ async function createProcurementQuotation(req, res) {
       pricePerUnit: it.pricePerUnit,
       totalValue: it.totalValue,
     }));
+
+    if (!items || items.length === 0) {
+      return res.status(400).json({ error: 'At least one item is required. Add items to the quote or select a procurement request to pull items from.' });
+    }
 
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
@@ -207,7 +212,7 @@ async function createProcurementQuotation(req, res) {
     const totalValue = items.reduce((sum, it) => sum + (Number(it.totalValue) || 0), 0);
 
     const row = await ProcurementQuotation.create({
-      procurement_request_id: prId,
+      procurement_request_id: prId ?? null,
       vendor_id: vId,
       quote_date: body.quoteDate ?? body.quote_date ?? null,
       quoted_by: body.quotedBy ?? body.quoted_by ?? req.user?.email ?? null,

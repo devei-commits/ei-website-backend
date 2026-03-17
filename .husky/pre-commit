@@ -1,0 +1,3 @@
+#!/bin/sh
+# Run backend math & data-flow tests on every commit.
+NODE_ENV=test npm run test:math

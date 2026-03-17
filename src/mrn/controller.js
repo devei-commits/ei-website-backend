@@ -5,6 +5,9 @@ const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const { Product } = require('../products/models');
 const WarehouseInventory = require('../warehouseInventory/models');
+const { applyDeltaToRack, recalculateInventoryForItem, computeStockInHand } = require('../warehouseInventory/inventoryMath');
+const { logLocationMovement } = require('../warehouseInventory/locationHistoryHelpers');
+const WarehouseInventoryLocationHistory = require('../warehouseInventory/locationHistoryModel');
 
 /** Usertypes that can be assigned as Picker / Transfer Team (same as GRN). */
 const ASSIGNABLE_USERTYPES = ['super_admin', 'admin', 'bd_manager'];
@@ -158,6 +161,17 @@ function formatRow(r, enrichedLineItems) {
     bmrNo: d.bmr_no || '',
     source: d.source || '',
     isInboundFromMu: Boolean(d.is_inbound_from_mu),
+    receivedAtMu: d.received_at_mu || null,
+    generatedLabels: d.generated_labels || null,
+    noOfBoxes: d.no_of_boxes ?? null,
+    unitsPerBox: d.units_per_box ?? null,
+    locationPrefix: d.location_prefix ?? null,
+    grnBatchMfg: d.grn_batch_mfg ?? null,
+    expiry: d.expiry ?? null,
+    mfgBatch: d.mfg_batch ?? null,
+    muReceiveZone: d.mu_receive_zone ?? null,
+    muReceiveRack: d.mu_receive_rack ?? null,
+    createdAt: d.created_at || null,
   };
 }
 
@@ -253,6 +267,25 @@ async function update(req, res) {
     if (body.source !== undefined) updates.source = body.source;
     if (body.isInboundFromMu !== undefined) updates.is_inbound_from_mu = Boolean(body.isInboundFromMu);
     if (body.is_inbound_from_mu !== undefined) updates.is_inbound_from_mu = Boolean(body.is_inbound_from_mu);
+    if (body.receivedAtMu !== undefined) updates.received_at_mu = body.receivedAtMu ? new Date(body.receivedAtMu) : null;
+    if (body.received_at_mu !== undefined) updates.received_at_mu = body.received_at_mu ? new Date(body.received_at_mu) : null;
+    if (body.generatedLabels !== undefined) updates.generated_labels = body.generatedLabels;
+    if (body.generated_labels !== undefined) updates.generated_labels = body.generated_labels;
+    if (body.noOfBoxes !== undefined) updates.no_of_boxes = body.noOfBoxes;
+    if (body.no_of_boxes !== undefined) updates.no_of_boxes = body.no_of_boxes;
+    if (body.unitsPerBox !== undefined) updates.units_per_box = body.unitsPerBox;
+    if (body.units_per_box !== undefined) updates.units_per_box = body.units_per_box;
+    if (body.locationPrefix !== undefined) updates.location_prefix = body.locationPrefix;
+    if (body.location_prefix !== undefined) updates.location_prefix = body.location_prefix;
+    if (body.grnBatchMfg !== undefined) updates.grn_batch_mfg = body.grnBatchMfg;
+    if (body.grn_batch_mfg !== undefined) updates.grn_batch_mfg = body.grn_batch_mfg;
+    if (body.expiry !== undefined) updates.expiry = body.expiry;
+    if (body.mfgBatch !== undefined) updates.mfg_batch = body.mfgBatch;
+    if (body.mfg_batch !== undefined) updates.mfg_batch = body.mfg_batch;
+    if (body.muReceiveZone !== undefined) updates.mu_receive_zone = body.muReceiveZone;
+    if (body.mu_receive_zone !== undefined) updates.mu_receive_zone = body.mu_receive_zone;
+    if (body.muReceiveRack !== undefined) updates.mu_receive_rack = body.muReceiveRack;
+    if (body.mu_receive_rack !== undefined) updates.mu_receive_rack = body.mu_receive_rack;
 
     const plainBefore = row.get ? row.get({ plain: true }) : row;
     const previousStatus = plainBefore.status || '';
@@ -264,6 +297,9 @@ async function update(req, res) {
     const newStatus = updates.status !== undefined ? updates.status : previousStatus;
     if (newStatus === 'Completed' && previousStatus !== 'Completed' && d.source === 'MTR' && d.bmr_no) {
       await applyMrnCompletionToInventory(d);
+      if (d.mu_receive_zone || d.mu_receive_rack) {
+        await logMrnReceiveAtMuLocation(d);
+      }
     }
 
     const { rmMap, pmMap, productMap } = await getMastersForLineItems([refreshed]);
@@ -276,12 +312,28 @@ async function update(req, res) {
 }
 
 /**
- * When an MRN from MTR is marked Completed, reduce warehouse SIH (consumption).
- * For each line item: find warehouse_inventory by raw_material_id or pack_material_id and decrement wh_stock.
+ * Map MU receive zone code to which manufacturing location stock to credit.
+ * LOC-MU01 -> ml1_stock, LOC-MU02 -> ml2_stock; default ml1.
+ */
+function muZoneToMl(zone) {
+  if (!zone || typeof zone !== 'string') return 'ml1';
+  const z = String(zone).toUpperCase();
+  if (z.includes('MU02') || z === 'LOC-MU02') return 'ml2';
+  return 'ml1';
+}
+
+/**
+ * When an MRN from MTR is marked Completed, move stock WH -> MU (or MU -> WH for inbound).
+ * Updates warehouse_inventory: wh_stock, ml1_stock, ml2_stock, stock_in_hand so that
+ * /warehouse/inventory shows correct WH Stock, ML1 Stock, ML2 Stock.
  */
 async function applyMrnCompletionToInventory(plainMrn) {
   if (plainMrn.source !== 'MTR' || !plainMrn.bmr_no) return;
   const lineItems = Array.isArray(plainMrn.line_items) ? plainMrn.line_items : [];
+  const isInbound = !!plainMrn.is_inbound_from_mu;
+  const muZone = plainMrn.mu_receive_zone || null;
+  const targetMl = muZoneToMl(muZone);
+
   for (const line of lineItems) {
     const qty = Number(line.quantity) || 0;
     if (qty <= 0) continue;
@@ -297,14 +349,102 @@ async function applyMrnCompletionToInventory(plainMrn) {
     }
     if (!whRow) continue;
     const plain = whRow.get ? whRow.get({ plain: true }) : whRow;
-    const whStock = Number(plain.wh_stock) || 0;
-    const ml1 = Number(plain.ml1_stock) || 0;
-    const ml2 = Number(plain.ml2_stock) || 0;
-    const newWhStock = Math.max(0, whStock - qty);
-    const newSih = newWhStock + ml1 + ml2;
+
+    let whStock = Number(plain.wh_stock) || 0;
+    let ml1 = Number(plain.ml1_stock) || 0;
+    let ml2 = Number(plain.ml2_stock) || 0;
+    let reserved = Number(plain.reserved) || 0;
+
+    console.log('[mrn][MTR] before move', {
+      source: isInbound ? 'MU->WH' : 'WH->MU',
+      mrnId: plainMrn.id,
+      raw_material_id: line.raw_material_id,
+      pack_material_id: line.pack_material_id,
+      qty,
+      whStockBefore: whStock,
+      ml1Before: ml1,
+      ml2Before: ml2,
+      reservedBefore: reserved,
+    });
+
+    if (isInbound) {
+      // MU -> WH: decrease ML (source), increase WH
+      if (targetMl === 'ml2') {
+        ml2 = Math.max(0, ml2 - qty);
+      } else {
+        ml1 = Math.max(0, ml1 - qty);
+      }
+      whStock += qty;
+    } else {
+      // WH -> MU: decrease WH, increase ML (target)
+      whStock = Math.max(0, whStock - qty);
+      if (targetMl === 'ml2') {
+        ml2 += qty;
+      } else {
+        ml1 += qty;
+      }
+    }
+
+    // Reduce reserved by moved qty so RM/PM availability table reflects that this batch's need is now at MU
+    reserved = Math.max(0, reserved - qty);
+
+    const stockInHand = computeStockInHand(whStock, ml1, ml2);
     await whRow.update({
-      wh_stock: newWhStock,
-      stock_in_hand: newSih,
+      wh_stock: whStock,
+      ml1_stock: ml1,
+      ml2_stock: ml2,
+      stock_in_hand: stockInHand,
+      reserved,
+    });
+    console.log('[mrn][MTR] after move', {
+      source: isInbound ? 'MU->WH' : 'WH->MU',
+      whInventoryId: plain.id,
+      qty,
+      whStock,
+      ml1,
+      ml2,
+      stockInHand,
+      reserved,
+    });
+  }
+}
+
+/**
+ * When MRN is completed with MU receive zone/rack, log movement history (MRN_IN_MU) for each line.
+ */
+async function logMrnReceiveAtMuLocation(plainMrn) {
+  const lineItems = Array.isArray(plainMrn.line_items) ? plainMrn.line_items : [];
+  const toZone = plainMrn.mu_receive_zone || null;
+  const toRack = plainMrn.mu_receive_rack || null;
+  if (!toZone && !toRack) return;
+  for (const line of lineItems) {
+    const qty = Number(line.quantity) || 0;
+    if (qty <= 0) continue;
+    let whRow = null;
+    if (line.raw_material_id != null) {
+      whRow = await WarehouseInventory.findOne({
+        where: { item_type: 'RM', raw_material_id: line.raw_material_id },
+      });
+    } else if (line.pack_material_id != null) {
+      whRow = await WarehouseInventory.findOne({
+        where: { item_type: 'PM', pack_material_id: line.pack_material_id },
+      });
+    }
+    if (!whRow) continue;
+    const plain = whRow.get ? whRow.get({ plain: true }) : whRow;
+    await logLocationMovement({
+      warehouseInventoryId: plain.id,
+      itemType: plain.item_type,
+      rawMaterialId: plain.raw_material_id ?? line.raw_material_id,
+      packMaterialId: plain.pack_material_id ?? line.pack_material_id,
+      productId: plain.product_id ?? line.product_id,
+      fromZone: null,
+      fromRack: null,
+      toZone,
+      toRack,
+      qtyDelta: qty,
+      actionType: 'MRN_IN_MU',
+      sourceMrnId: plainMrn.id,
     });
   }
 }
@@ -322,4 +462,105 @@ async function remove(req, res) {
   }
 }
 
-module.exports = { list, getById, create, update, remove, assignablePickers };
+/**
+ * POST /api/v1/mrn/:id/generate-labels
+ * Body: noOfBoxes, unitsPerBox, locationPrefix (MU location), grnBatchMfg, expiry, mfgBatch, productName, itemCode.
+ * Generates QR labels for MU put-away (same shape as GRN labels).
+ */
+async function generateLabels(req, res) {
+  try {
+    const id = parseInt(String(req.params.id), 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const row = await MaterialRequestNote.findByPk(id);
+    if (!row) return res.status(404).json({ error: 'MRN not found' });
+    const body = req.body || {};
+    const d = row.get ? row.get({ plain: true }) : row;
+    const noOfBoxes = body.noOfBoxes ?? body.no_of_boxes ?? d.no_of_boxes ?? 1;
+    const unitsPerBox = body.unitsPerBox ?? body.units_per_box ?? d.units_per_box ?? 0;
+    const locationPrefix = body.locationPrefix ?? body.location_prefix ?? d.location_prefix ?? '';
+    const grnBatchMfg = body.grnBatchMfg ?? body.grn_batch_mfg ?? d.grn_batch_mfg ?? '';
+    const expiry = body.expiry ?? d.expiry ?? '';
+    const mfgBatch = body.mfgBatch ?? body.mfg_batch ?? d.mfg_batch ?? '';
+    const productName = body.productName ?? '';
+    const itemCode = body.itemCode ?? '';
+
+    const updates = {};
+    if (body.noOfBoxes !== undefined) updates.no_of_boxes = body.noOfBoxes;
+    if (body.unitsPerBox !== undefined) updates.units_per_box = body.unitsPerBox;
+    if (body.locationPrefix !== undefined) updates.location_prefix = body.locationPrefix;
+    if (body.grnBatchMfg !== undefined) updates.grn_batch_mfg = body.grnBatchMfg;
+    if (body.expiry !== undefined) updates.expiry = body.expiry;
+    if (body.mfgBatch !== undefined) updates.mfg_batch = body.mfgBatch;
+    if (Object.keys(updates).length) await row.update(updates);
+
+    const QRCode = require('qrcode');
+    const n = Math.max(1, parseInt(noOfBoxes, 10) || 1);
+    const labels = [];
+    for (let boxIndex = 1; boxIndex <= n; boxIndex++) {
+      const payload = {
+        mrn_id: id,
+        mrn_no: d.mrn_no,
+        product_name: productName || null,
+        item_code: itemCode || null,
+        units_per_box: unitsPerBox,
+        location_prefix: locationPrefix,
+        grn_batch_mfg: grnBatchMfg,
+        expiry: expiry || null,
+        mfg_batch: mfgBatch,
+        box_index: boxIndex,
+      };
+      const qrPayload = JSON.stringify(payload);
+      const qrImageDataUrl = await QRCode.toDataURL(qrPayload, { type: 'image/png', margin: 2 });
+      labels.push({ boxIndex, qrPayload, qrImageDataUrl });
+    }
+
+    await row.update({ generated_labels: labels });
+    res.json({ labels });
+  } catch (err) {
+    console.error('[mrn] generateLabels error:', err);
+    res.status(500).json({ error: err.message || 'Failed to generate labels' });
+  }
+}
+
+/**
+ * GET /api/v1/mrn/:id/location-history
+ * Returns movement history entries linked to this MRN (source_mrn_id), e.g. MRN_IN_MU put-away at MU.
+ */
+async function getLocationHistory(req, res) {
+  try {
+    const id = parseInt(String(req.params.id), 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const rows = await WarehouseInventoryLocationHistory.findAll({
+      where: { source_mrn_id: id },
+      order: [['moved_at', 'DESC']],
+    });
+    const history = rows.map((r) => {
+      const h = r.get ? r.get({ plain: true }) : r;
+      return {
+        id: h.id,
+        warehouseInventoryId: h.warehouse_inventory_id,
+        itemType: h.item_type,
+        rawMaterialId: h.raw_material_id,
+        packMaterialId: h.pack_material_id,
+        productId: h.product_id,
+        fromZone: h.from_zone,
+        fromRack: h.from_rack,
+        toZone: h.to_zone,
+        toRack: h.to_rack,
+        qtyDelta: h.qty_delta != null ? Number(h.qty_delta) : null,
+        actionType: h.action_type ?? null,
+        movedAt: h.moved_at,
+      };
+    });
+    res.json({ history });
+  } catch (err) {
+    const msg = err && err.message ? String(err.message) : '';
+    if (/warehouse_inventory_location_history/i.test(msg)) {
+      return res.json({ history: [] });
+    }
+    console.error('[mrn] getLocationHistory error:', err);
+    res.status(500).json({ error: err.message || 'Failed to fetch location history' });
+  }
+}
+
+module.exports = { list, getById, create, update, remove, assignablePickers, generateLabels, getLocationHistory };

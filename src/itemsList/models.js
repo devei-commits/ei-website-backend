@@ -12,9 +12,10 @@ class ItemsList extends Model {}
 ItemsList.init(
   {
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
-    type: { type: DataTypes.STRING(10), allowNull: false }, // 'RM' | 'PM'
+    type: { type: DataTypes.STRING(10), allowNull: false }, // 'RM' | 'PM' | 'PR'
     raw_material_id: { type: DataTypes.INTEGER, allowNull: true },
     pack_material_id: { type: DataTypes.INTEGER, allowNull: true },
+    product_id: { type: DataTypes.INTEGER, allowNull: true },
     status: { type: DataTypes.STRING(50), allowNull: true, defaultValue: 'Active' },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
@@ -39,6 +40,7 @@ ItemListVendorRate.init(
     default_rate: { type: DataTypes.DECIMAL(14, 2), allowNull: true },
     default_moq: { type: DataTypes.INTEGER, allowNull: true },
     currency: { type: DataTypes.STRING(10), allowNull: true, defaultValue: 'INR' },
+    payment_terms: { type: DataTypes.STRING(100), allowNull: true },
     status: { type: DataTypes.STRING(50), allowNull: true, defaultValue: 'active' },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },

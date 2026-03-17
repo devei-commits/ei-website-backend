@@ -46,11 +46,14 @@ PlanningExtracted.init(
 );
 
 const PlanningBomOverride = require('./planningBomOverrideModel');
+const PlanningBatch = require('./planningBatchModel');
 
 PlanningExtracted.belongsTo(SalesOrder, { foreignKey: 'sales_order_id', as: 'salesOrder' });
 PlanningExtracted.belongsTo(Product, { foreignKey: 'product_id', as: 'product' });
 PlanningExtracted.hasOne(PlanningBomOverride, { foreignKey: 'planning_extracted_id', as: 'bomOverride' });
 PlanningBomOverride.belongsTo(PlanningExtracted, { foreignKey: 'planning_extracted_id' });
+PlanningExtracted.hasMany(PlanningBatch, { foreignKey: 'planning_extracted_id', as: 'batches' });
+PlanningBatch.belongsTo(PlanningExtracted, { foreignKey: 'planning_extracted_id', as: 'planningExtracted' });
 SalesOrder.hasMany(PlanningExtracted, { foreignKey: 'sales_order_id' });
 Product.hasMany(PlanningExtracted, { foreignKey: 'product_id' });
 

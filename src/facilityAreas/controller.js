@@ -1,19 +1,36 @@
 const FacilityArea = require('./models');
-const { WarehouseLocation } = require('../warehouseLocations/models');
+const { WarehouseLocation, WarehouseRack } = require('../warehouseLocations/models');
+
+function formatRack(r) {
+  const plain = r.get ? r.get({ plain: true }) : r;
+  return {
+    id: plain.id,
+    locationId: plain.location_id,
+    code: plain.code,
+    name: plain.name || null,
+    description: plain.description || null,
+    levels: plain.levels != null ? Number(plain.levels) : 4,
+    slotsTotal: plain.slots_total != null ? Number(plain.slots_total) : 16,
+  };
+}
 
 function formatArea(row) {
   const d = row.get ? row.get({ plain: true }) : row;
-  const zones = (d.zones || []).map((z) => ({
-    id: z.id,
-    code: z.code,
-    name: z.name,
-    locationType: z.location_type || d.area_type,
-    zoneLabel: z.zone_label,
-    icon: z.icon,
-    areaSqm: z.area_sqm,
-    description: z.description,
-    utilisationPct: z.utilisation_pct != null ? Number(z.utilisation_pct) : 0,
-  }));
+  const zones = (d.zones || []).map((z) => {
+    const racks = (z.WarehouseRacks || []).map(formatRack);
+    return {
+      id: z.id,
+      code: z.code,
+      name: z.name,
+      locationType: z.location_type || d.area_type,
+      zoneLabel: z.zone_label,
+      icon: z.icon,
+      areaSqm: z.area_sqm,
+      description: z.description,
+      utilisationPct: z.utilisation_pct != null ? Number(z.utilisation_pct) : 0,
+      racks,
+    };
+  });
   return {
     id: d.id,
     code: d.code,
@@ -32,7 +49,13 @@ async function listAreas(req, res) {
     const rows = await FacilityArea.findAll({
       where,
       order: [['id', 'ASC']],
-      include: [{ model: WarehouseLocation, as: 'zones', required: false, order: [['id', 'ASC']] }],
+      include: [{
+        model: WarehouseLocation,
+        as: 'zones',
+        required: false,
+        order: [['id', 'ASC']],
+        include: [{ model: WarehouseRack, as: 'WarehouseRacks', required: false, attributes: ['id', 'location_id', 'code', 'name', 'description', 'levels', 'slots_total'] }],
+      }],
     });
     res.json(rows.map(formatArea));
   } catch (err) {
@@ -46,7 +69,12 @@ async function getAreaById(req, res) {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await FacilityArea.findByPk(id, {
-      include: [{ model: WarehouseLocation, as: 'zones', required: false }],
+      include: [{
+        model: WarehouseLocation,
+        as: 'zones',
+        required: false,
+        include: [{ model: WarehouseRack, as: 'WarehouseRacks', required: false }],
+      }],
     });
     if (!row) return res.status(404).json({ error: 'Facility area not found' });
     res.json(formatArea(row));
@@ -68,7 +96,12 @@ async function createArea(req, res) {
       description: description || null,
     });
     const full = await FacilityArea.findByPk(row.id, {
-      include: [{ model: WarehouseLocation, as: 'zones', required: false }],
+      include: [{
+        model: WarehouseLocation,
+        as: 'zones',
+        required: false,
+        include: [{ model: WarehouseRack, as: 'WarehouseRacks', required: false }],
+      }],
     });
     res.status(201).json(formatArea(full));
   } catch (err) {
@@ -92,7 +125,12 @@ async function updateArea(req, res) {
     }
     await row.save();
     const full = await FacilityArea.findByPk(id, {
-      include: [{ model: WarehouseLocation, as: 'zones', required: false }],
+      include: [{
+        model: WarehouseLocation,
+        as: 'zones',
+        required: false,
+        include: [{ model: WarehouseRack, as: 'WarehouseRacks', required: false }],
+      }],
     });
     res.json(formatArea(full));
   } catch (err) {

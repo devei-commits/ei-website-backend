@@ -30,6 +30,12 @@ function formatPackMaterial(row) {
     lead_time_days: d.lead_time_days,
     print_status: d.print_status,
     products: Array.isArray(d.products) ? d.products : [],
+    zoho_id: d.zoho_id ?? null,
+    sku: d.sku ?? null,
+    hsn_code: d.hsn_code ?? null,
+    unit: d.unit ?? null,
+    tax_pref: d.tax_pref ?? null,
+    sales_purchase_account: d.sales_purchase_account ?? null,
     created_at: d.created_at,
     updated_at: d.updated_at,
   };
@@ -112,6 +118,12 @@ function bodyToPackMaterial(b) {
     lead_time_days: b.lead_time_days != null ? Number(b.lead_time_days) : (b.leadTimeDays != null ? Number(b.leadTimeDays) : null),
     print_status: b.print_status ?? b.printStatus ?? null,
     products: Array.isArray(b.products) ? b.products : [],
+    zoho_id: b.zoho_id ?? b.zohoId ?? null,
+    sku: b.sku ?? b.pkgSku ?? b.code ?? b.itemCode ?? null,
+    hsn_code: b.hsn_code ?? b.pkgHsn ?? b.hsnCode ?? null,
+    unit: b.unit ?? b.pkgUnit ?? null,
+    tax_pref: b.tax_pref ?? b.pkgTaxPreference ?? b.taxPref ?? null,
+    sales_purchase_account: b.sales_purchase_account ?? b.salesPurchaseAccount ?? null,
   };
 }
 
@@ -130,6 +142,61 @@ async function createPackMaterial(req, res) {
   } catch (err) {
     console.error('createPackMaterial error', err);
     res.status(500).json({ error: err.message || 'Failed to create pack material' });
+  }
+}
+
+/**
+ * GET /api/v1/pack-materials/:id — get one by id for edit.
+ */
+async function getPackMaterialById(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const row = await PackMaterial.findByPk(id);
+    if (!row) return res.status(404).json({ error: 'Pack material not found' });
+    res.json(formatPackMaterial(row));
+  } catch (err) {
+    console.error('getPackMaterialById error', err);
+    res.status(500).json({ error: 'Failed to get pack material' });
+  }
+}
+
+/**
+ * PUT /api/v1/pack-materials/:id — update pack material.
+ */
+async function updatePackMaterial(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const row = await PackMaterial.findByPk(id);
+    if (!row) return res.status(404).json({ error: 'Pack material not found' });
+    const b = req.body || {};
+    const fields = bodyToPackMaterial(b);
+    Object.keys(fields).forEach((key) => {
+      if (fields[key] !== undefined) row.set(key, fields[key]);
+    });
+    await row.save();
+    res.json(formatPackMaterial(row));
+  } catch (err) {
+    console.error('updatePackMaterial error', err);
+    res.status(500).json({ error: err.message || 'Failed to update pack material' });
+  }
+}
+
+/**
+ * DELETE /api/v1/pack-materials/:id — delete pack material.
+ */
+async function deletePackMaterial(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const row = await PackMaterial.findByPk(id);
+    if (!row) return res.status(404).json({ error: 'Pack material not found' });
+    await row.destroy();
+    res.status(204).send();
+  } catch (err) {
+    console.error('deletePackMaterial error', err);
+    res.status(500).json({ error: 'Failed to delete pack material' });
   }
 }
 
@@ -163,7 +230,10 @@ async function getReservedStock(req, res) {
 module.exports = {
   listPackMaterials,
   getNextCode,
+  getPackMaterialById,
   createPackMaterial,
+  updatePackMaterial,
+  deletePackMaterial,
   getReservedStock,
   formatPackMaterial,
 };

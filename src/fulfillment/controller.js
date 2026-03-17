@@ -116,12 +116,13 @@ function formatSplit(d, batchMap = {}) {
 function recalculateSOStatusFromSplits(splits) {
   if (!splits.length) return 'planned';
   const fgSplits = splits.filter(s => s.fgQty > 0 || ['fg_ready', 'picking', 'invoiced', 'shipped', 'delivered', 'closed'].includes(s.ffStatus));
+  // SO is closed only when every batch (split) is delivered/closed
+  if (splits.every(s => ['delivered', 'closed'].includes(s.ffStatus))) return 'closed';
   if (!fgSplits.length) {
     if (splits.some(s => ['bulk_qc', 'wip'].includes(s.ffStatus))) return 'in_production';
     return 'planned';
   }
-  if (fgSplits.every(s => ['delivered', 'closed'].includes(s.ffStatus))) return 'closed';
-  if (fgSplits.some(s => ['shipped', 'delivered'].includes(s.ffStatus))) return 'shipped';
+  if (fgSplits.some(s => ['shipped', 'delivered', 'closed'].includes(s.ffStatus))) return 'shipped';
   if (fgSplits.some(s => s.ffStatus === 'invoiced')) return 'invoiced';
   if (fgSplits.some(s => s.ffStatus === 'picking')) return 'picking';
   if (fgSplits.every(s => s.ffStatus === 'fg_ready')) return 'fg_ready';
@@ -133,12 +134,13 @@ function recalculateSOStatusFromSplits(splits) {
 function recalculateSOStatus(splits) {
   if (!splits.length) return 'planned';
   const fgSplits = splits.filter(s => s.fg_qty > 0 || ['fg_ready', 'picking', 'invoiced', 'shipped', 'delivered', 'closed'].includes(s.ff_status));
+  // SO is closed only when every batch (split) is delivered/closed, not just the FG subset
+  if (splits.every(s => ['delivered', 'closed'].includes(s.ff_status))) return 'closed';
   if (!fgSplits.length) {
     if (splits.some(s => ['bulk_qc', 'wip'].includes(s.ff_status))) return 'in_production';
     return 'planned';
   }
-  if (fgSplits.every(s => ['delivered', 'closed'].includes(s.ff_status))) return 'closed';
-  if (fgSplits.some(s => ['shipped', 'delivered'].includes(s.ff_status))) return 'shipped';
+  if (fgSplits.some(s => ['shipped', 'delivered', 'closed'].includes(s.ff_status))) return 'shipped';
   if (fgSplits.some(s => s.ff_status === 'invoiced')) return 'invoiced';
   if (fgSplits.some(s => s.ff_status === 'picking')) return 'picking';
   if (fgSplits.every(s => s.ff_status === 'fg_ready')) return 'fg_ready';
@@ -164,11 +166,103 @@ async function getNextBMRBPRSequence(year) {
   return { bmrNo: `BMR-${year}-${suffix}`, bprNo: `BPR-${year}-${suffix}` };
 }
 
+/**
+ * Ensure fulfillment has a batch split for every production batch linked to this SO (from Planning).
+ * So the SO detail shows all batches and which are FG ready.
+ */
+async function syncOrderSplitsFromProduction(orderRow) {
+  const d = orderRow.get ? orderRow.get({ plain: true }) : orderRow;
+  const soNo = d.so_no;
+  if (!soNo) return;
+  const orderId = d.id;
+  const items = d.items || [];
+  if (!items.length) return;
+
+  const prodBatches = await ProductionBatch.findAll({
+    where: { so_no: soNo },
+    attributes: ['id', 'bmr_no', 'bpr_no', 'sku', 'product_name', 'batch_size', 'order_qty', 'total_batches', 'bpr_status'],
+    order: [['batch_index', 'ASC'], ['id', 'ASC']],
+  });
+  if (!prodBatches.length) return;
+
+  for (const item of items) {
+    const itemSku = (item.sku || '').trim().toLowerCase();
+    const itemProductName = (item.product_name || '').trim().toLowerCase();
+    const matchingBatches = prodBatches.filter((pb) => {
+      const pbSku = (pb.sku || '').trim().toLowerCase();
+      const pbName = (pb.product_name || '').trim().toLowerCase();
+      return (itemSku && pbSku && itemSku === pbSku) || (itemProductName && pbName && (itemProductName === pbName || itemProductName.includes(pbName) || pbName.includes(itemProductName)));
+    });
+
+    const existingSplitBatchIds = new Set((item.batchSplits || []).map((s) => s.production_batch_id).filter(Boolean));
+
+    for (const pb of matchingBatches) {
+      const plain = pb.get ? pb.get({ plain: true }) : pb;
+      if (existingSplitBatchIds.has(plain.id)) continue;
+
+      const plannedQty = Math.max(0, Number(plain.batch_size) || 0) || Math.max(0, Math.floor((Number(plain.order_qty) || 0) / (Number(plain.total_batches) || 1)));
+      const producedQty = Math.max(0, parseInt(plain.batch_size || plain.order_qty || 0, 10) || 0);
+      const isFgReady = plain.bpr_status === 'fg_ready';
+      const fgQty = isFgReady ? Math.min(plannedQty, producedQty) : 0;
+      await FulfillmentBatchSplit.create({
+        fulfillment_order_item_id: item.id,
+        fulfillment_order_id: orderId,
+        production_batch_id: plain.id,
+        bmr_no: plain.bmr_no || '',
+        bpr_no: plain.bpr_no || '',
+        planned_qty: plannedQty,
+        fg_qty: fgQty,
+        ff_status: isFgReady ? 'fg_ready' : 'fg_pending',
+      });
+      existingSplitBatchIds.add(plain.id);
+    }
+  }
+
+  // Backfill fg_qty on existing splits that have production_batch_id but fg_qty 0 when the batch is already fg_ready
+  // (e.g. split was created by sync after BPR was already marked fg_ready, so applyBprFgReadyToInventory never ran for it)
+  const batchIdToProduced = {};
+  prodBatches.forEach((pb) => {
+    const plain = pb.get ? pb.get({ plain: true }) : pb;
+    if (plain.bpr_status === 'fg_ready') {
+      batchIdToProduced[plain.id] = Math.max(0, parseInt(plain.batch_size || plain.order_qty || 0, 10) || 0);
+    }
+  });
+  const batchIdsToBackfill = Object.keys(batchIdToProduced).map(Number).filter(Boolean);
+  if (batchIdsToBackfill.length === 0) return;
+
+  const existingSplits = await FulfillmentBatchSplit.findAll({
+    where: { fulfillment_order_id: orderId, production_batch_id: batchIdsToBackfill },
+    order: [['production_batch_id', 'ASC'], ['id', 'ASC']],
+  });
+  const splitsWithZeroFg = existingSplits.filter((s) => !(Number(s.fg_qty) > 0));
+  if (splitsWithZeroFg.length === 0) return;
+
+  let remainingByBatch = { ...batchIdToProduced };
+  for (const split of splitsWithZeroFg) {
+    const bid = split.production_batch_id;
+    const produced = remainingByBatch[bid];
+    if (produced == null || produced <= 0) continue;
+    const planned = Number(split.planned_qty) || 0;
+    const qty = Math.min(planned, produced);
+    if (qty > 0) {
+      await split.update({ fg_qty: qty, ff_status: 'fg_ready' });
+      remainingByBatch[bid] = produced - qty;
+    }
+  }
+}
+
 /* ── CRUD ── */
 
 async function listOrders(req, res) {
   try {
-    const rows = await FulfillmentOrder.findAll({
+    let rows = await FulfillmentOrder.findAll({
+      include: INCLUDE_FULL,
+      order: [['due_date', 'ASC'], ['id', 'ASC']],
+    });
+    for (const row of rows) {
+      await syncOrderSplitsFromProduction(row);
+    }
+    rows = await FulfillmentOrder.findAll({
       include: INCLUDE_FULL,
       order: [['due_date', 'ASC'], ['id', 'ASC']],
     });
@@ -188,8 +282,10 @@ async function getOrderById(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
-    const row = await FulfillmentOrder.findByPk(id, { include: INCLUDE_FULL });
+    let row = await FulfillmentOrder.findByPk(id, { include: INCLUDE_FULL });
     if (!row) return res.status(404).json({ error: 'Fulfillment order not found' });
+    await syncOrderSplitsFromProduction(row);
+    row = await FulfillmentOrder.findByPk(id, { include: INCLUDE_FULL });
     const d = row.get ? row.get({ plain: true }) : row;
     const batchIds = (d.items || []).flatMap((i) => (i.batchSplits || []).map((s) => s.production_batch_id).filter(Boolean));
     const batchMap = await getBatchStatusMap(batchIds);
@@ -529,7 +625,15 @@ async function pickSplits(req, res) {
       const split = await FulfillmentBatchSplit.findOne({
         where: { fulfillment_order_id: id, bpr_no: pickInfo.bprNo },
       });
-      if (split && split.ff_status === 'fg_ready') {
+      if (!split) continue;
+      const stored = split.ff_status;
+      let canPick = stored === 'fg_ready';
+      if (!canPick && stored === 'fg_pending' && split.production_batch_id) {
+        const batch = await ProductionBatch.findByPk(split.production_batch_id, { attributes: ['bpr_status'] });
+        const bprStatus = batch && (batch.get ? batch.get('bpr_status') : batch.bpr_status);
+        canPick = bprStatus === 'fg_ready';
+      }
+      if (canPick) {
         split.set({
           ff_status: 'picking',
           picked_qty: pickInfo.pickedQty || split.fg_qty,
@@ -562,12 +666,16 @@ async function invoiceSplits(req, res) {
     const order = await FulfillmentOrder.findByPk(id, { include: INCLUDE_FULL });
     if (!order) return res.status(404).json({ error: 'Fulfillment order not found' });
 
-    const { invoiceNo, invoiceDate, courier } = req.body;
+    const { invoiceNo, invoiceDate, courier, bprNos } = req.body;
     if (!invoiceNo) return res.status(400).json({ error: 'invoiceNo is required' });
 
+    const where = { fulfillment_order_id: id, ff_status: 'picking' };
+    if (Array.isArray(bprNos) && bprNos.length > 0) {
+      where.bpr_no = { [Op.in]: bprNos };
+    }
     await FulfillmentBatchSplit.update(
       { ff_status: 'invoiced', invoice_no: invoiceNo },
-      { where: { fulfillment_order_id: id, ff_status: 'picking' } }
+      { where }
     );
 
     order.set({
@@ -596,8 +704,12 @@ async function shipSplits(req, res) {
     const order = await FulfillmentOrder.findByPk(id, { include: INCLUDE_FULL });
     if (!order) return res.status(404).json({ error: 'Fulfillment order not found' });
 
-    const { awbNo, courier, dispatchDate, eta } = req.body;
+    const { awbNo, courier, dispatchDate, eta, bprNos } = req.body;
 
+    const where = { fulfillment_order_id: id, ff_status: 'invoiced' };
+    if (Array.isArray(bprNos) && bprNos.length > 0) {
+      where.bpr_no = { [Op.in]: bprNos };
+    }
     await FulfillmentBatchSplit.update(
       {
         ff_status: 'shipped',
@@ -606,7 +718,7 @@ async function shipSplits(req, res) {
         dispatch_date: dispatchDate || new Date().toISOString().slice(0, 10),
         eta_date: eta || null,
       },
-      { where: { fulfillment_order_id: id, ff_status: 'invoiced' } }
+      { where }
     );
 
     order.set({
@@ -635,30 +747,27 @@ async function deliverSplits(req, res) {
     const order = await FulfillmentOrder.findByPk(id, { include: INCLUDE_FULL });
     if (!order) return res.status(404).json({ error: 'Fulfillment order not found' });
 
-    const { deliveryDate, receivedBy, remarks } = req.body;
+    const { deliveryDate, receivedBy, remarks, bprNos } = req.body;
 
+    const where = { fulfillment_order_id: id, ff_status: 'shipped' };
+    if (Array.isArray(bprNos) && bprNos.length > 0) {
+      where.bpr_no = { [Op.in]: bprNos };
+    }
+
+    // Mark the delivered batch(es) as closed (done). SO closes only when all batches are closed.
     await FulfillmentBatchSplit.update(
       {
-        ff_status: 'delivered',
+        ff_status: 'closed',
         delivery_date: deliveryDate || new Date().toISOString().slice(0, 10),
         received_by: receivedBy || null,
         delivery_remarks: remarks || null,
       },
-      { where: { fulfillment_order_id: id, ff_status: 'shipped' } }
+      { where }
     );
 
     const allSplits = await FulfillmentBatchSplit.findAll({ where: { fulfillment_order_id: id } });
     const newStatus = recalculateSOStatus(allSplits);
-
-    if (newStatus === 'closed') {
-      await FulfillmentBatchSplit.update(
-        { ff_status: 'closed' },
-        { where: { fulfillment_order_id: id, ff_status: 'delivered' } }
-      );
-      order.set('so_status', 'closed');
-    } else {
-      order.set('so_status', newStatus);
-    }
+    order.set('so_status', newStatus);
     await order.save();
 
     const refreshed = await FulfillmentOrder.findByPk(id, { include: INCLUDE_FULL });
@@ -683,16 +792,23 @@ async function listBatchSplits(req, res) {
         {
           model: FulfillmentOrder,
           as: 'fulfillmentOrder',
-          attributes: ['id', 'so_no', 'customer_name', 'customer_city', 'due_date', 'priority'],
+          attributes: ['id', 'so_no', 'customer_name', 'customer_city', 'order_date', 'due_date', 'priority'],
         },
       ],
       order: [['fulfillment_order_id', 'ASC'], ['id', 'ASC']],
     });
 
+    const batchIds = splits.map((row) => {
+      const d = row.get({ plain: true });
+      return d.production_batch_id;
+    }).filter(Boolean);
+    const batchMap = await getBatchStatusMap(batchIds);
+
     res.json(splits.map(row => {
       const d = row.get({ plain: true });
+      const formatted = formatSplit(d, batchMap);
       return {
-        ...formatSplit(d),
+        ...formatted,
         product: {
           sku: d.orderItem?.sku || '',
           productName: d.orderItem?.product_name || '',
@@ -705,6 +821,7 @@ async function listBatchSplits(req, res) {
           soNo: d.fulfillmentOrder?.so_no || '',
           customer: d.fulfillmentOrder?.customer_name || '',
           customerCity: d.fulfillmentOrder?.customer_city || '',
+          orderDate: d.fulfillmentOrder?.order_date,
           dueDate: d.fulfillmentOrder?.due_date,
           priority: d.fulfillmentOrder?.priority || 'normal',
         },
@@ -744,18 +861,21 @@ async function getCustomers(_req, res) {
   try {
     const clients = await VendorClient.findAll({
       where: { type: 'client', status: 'active' },
-      attributes: ['id', 'entity_code', 'name', 'city', 'location', 'payment_terms'],
+      attributes: ['id', 'entity_code', 'name', 'city', 'location', 'payment_terms', 'data'],
       order: [['name', 'ASC']],
     });
 
     res.json(clients.map(c => {
       const d = c.get({ plain: true });
+      const data = d.data && typeof d.data === 'object' ? d.data : {};
+      const shippingAddress = data.shipping_address || data.shippingAddress || '';
       return {
         id: d.id,
         code: d.entity_code,
         name: d.name,
         city: d.city || d.location || '',
         paymentTerms: d.payment_terms || '',
+        shippingAddress: shippingAddress || '',
       };
     }));
   } catch (err) {
@@ -839,7 +959,7 @@ async function createInvoice(req, res) {
     const {
       fulfillmentOrderId, invoiceNo, invoiceDate, dueDate,
       preparedBy, transporterId, transporterName, lrAwbNo,
-      remarks, subtotal, gstPercent, totalValue, lineItems,
+      remarks, subtotal, gstPercent, totalValue, lineItems, bprNos,
     } = req.body;
 
     if (!fulfillmentOrderId || !invoiceNo) {
@@ -848,6 +968,11 @@ async function createInvoice(req, res) {
 
     const order = await FulfillmentOrder.findByPk(fulfillmentOrderId);
     if (!order) return res.status(404).json({ error: 'Fulfillment order not found' });
+
+    const splitWhere = { fulfillment_order_id: fulfillmentOrderId, ff_status: 'picking' };
+    if (Array.isArray(bprNos) && bprNos.length > 0) {
+      splitWhere.bpr_no = { [Op.in]: bprNos };
+    }
 
     const invoice = await FulfillmentInvoice.create({
       invoice_no: invoiceNo,
@@ -868,7 +993,7 @@ async function createInvoice(req, res) {
 
     await FulfillmentBatchSplit.update(
       { ff_status: 'invoiced', invoice_no: invoiceNo },
-      { where: { fulfillment_order_id: fulfillmentOrderId, ff_status: 'picking' } }
+      { where: splitWhere }
     );
 
     order.set({ invoice_no: invoiceNo, invoice_date: invoiceDate || new Date().toISOString().slice(0, 10), courier: transporterName || null });

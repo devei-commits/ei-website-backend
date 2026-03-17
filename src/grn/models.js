@@ -20,7 +20,8 @@ GoodsReceivedNote.init(
     expected_date: { type: DataTypes.DATEONLY, allowNull: true },
     received_date: { type: DataTypes.DATEONLY, allowNull: true },
     assigned_to: { type: DataTypes.STRING(200), allowNull: true },
-    qc_status: { type: DataTypes.STRING(50), allowNull: true }, // Passed | In Progress | Pending | Failed
+    qc_status: { type: DataTypes.STRING(50), allowNull: true }, // Under test | Quality checked | Passed | Rejected
+    qc_by: { type: DataTypes.STRING(200), allowNull: true }, // display name of user who performed QC
     status: { type: DataTypes.STRING(50), allowNull: true }, // GRN Complete | Under GRN | In Transit | On Hold | Delayed | Pending
     line_items: { type: DataTypes.JSON, allowNull: true },
     workflow_steps: { type: DataTypes.JSON, allowNull: true },

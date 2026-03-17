@@ -80,6 +80,13 @@ ProductionBatch.init(
     batch_no: { type: DataTypes.STRING(20), allowNull: true },
     batch_index: { type: DataTypes.INTEGER, allowNull: true },
     total_batches: { type: DataTypes.INTEGER, allowNull: true },
+    /** FK to planning_batches.id — batch-specific BOM copy (rm_lines, pm_lines) for this BMR. When set, BOM is always loaded from that row, not from product master. */
+    planning_batch_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: 'planning_batches', key: 'id' },
+      onDelete: 'SET NULL',
+    },
 
     bmr_status: {
       type: DataTypes.STRING(30),
@@ -140,6 +147,9 @@ ProductionBatch.init(
     compatible_vessels: { type: DataTypes.JSON, allowNull: true },
     compatible_fill_lines: { type: DataTypes.JSON, allowNull: true },
     compatible_pack_lines: { type: DataTypes.JSON, allowNull: true },
+
+    /** Batch volume in liters (from BOM rm_lines: sum of quantity_kg/specific_gravity per RM). Used for vessel capacity checks. */
+    required_volume_liters: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
 
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },

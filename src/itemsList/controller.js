@@ -3,6 +3,7 @@ const { ItemsList, ItemListVendorRate, ItemListTier } = require('./models');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const VendorClient = require('../vendorClient/models');
+const { Product } = require('../products/models');
 
 function toNum(x) {
   if (x == null) return null;
@@ -19,19 +20,25 @@ async function resolveItemMaster(row) {
     const rm = await RawMaterial.findByPk(d.raw_material_id);
     if (!rm) return null;
     const r = rm.get ? rm.get({ plain: true }) : rm;
-    return resolveItemMasterFromMaps(d, r, null);
+    return resolveItemMasterFromMaps(d, r, null, null);
   }
   if (d.type === 'PM' && d.pack_material_id) {
     const pm = await PackMaterial.findByPk(d.pack_material_id);
     if (!pm) return null;
     const p = pm.get ? pm.get({ plain: true }) : pm;
-    return resolveItemMasterFromMaps(d, null, p);
+    return resolveItemMasterFromMaps(d, null, p, null);
+  }
+  if (d.type === 'PR' && d.product_id) {
+    const prod = await Product.findByPk(d.product_id);
+    if (!prod) return null;
+    const p = prod.get ? prod.get({ plain: true }) : prod;
+    return resolveItemMasterFromMaps(d, null, null, p);
   }
   return null;
 }
 
-/** Sync resolution when RM/PM maps are already loaded (for batch list). */
-function resolveItemMasterFromMaps(d, r, p) {
+/** Sync resolution when RM/PM/PR maps are already loaded (for batch list). */
+function resolveItemMasterFromMaps(d, r, p, prod) {
   if (r) {
     const price = toNum(r.price_per_kg);
     return {
@@ -46,6 +53,7 @@ function resolveItemMasterFromMaps(d, r, p) {
       status: d.status || r.status || 'Active',
       raw_material_id: d.raw_material_id ?? null,
       pack_material_id: null,
+      product_id: null,
     };
   }
   if (p) {
@@ -62,6 +70,24 @@ function resolveItemMasterFromMaps(d, r, p) {
       status: d.status || 'Active',
       raw_material_id: null,
       pack_material_id: d.pack_material_id ?? null,
+      product_id: null,
+    };
+  }
+  if (prod) {
+    const price = toNum(prod.mrp_price);
+    return {
+      id: String(d.id),
+      code: prod.product_code || String(prod.product_id),
+      name: prod.product_name || prod.generic_name || prod.brand_name || prod.product_code || String(prod.product_id),
+      type: 'PR',
+      category: prod.category || '',
+      pricePerUnit: price ?? 0,
+      uom: 'UNIT',
+      gst: toNum(prod.tax_rate) ?? 0,
+      status: d.status || prod.status || 'Active',
+      raw_material_id: null,
+      pack_material_id: null,
+      product_id: d.product_id ?? null,
     };
   }
   return null;
@@ -74,8 +100,8 @@ function resolveItemMasterFromMaps(d, r, p) {
 async function pageItemsList(req, res) {
   try {
     const type = req.query.type;
-    if (type !== 'RM' && type !== 'PM') {
-      return res.status(400).json({ error: 'Query type must be RM or PM' });
+    if (type !== 'RM' && type !== 'PM' && type !== 'PR') {
+      return res.status(400).json({ error: 'Query type must be RM, PM, or PR' });
     }
     const items = [];
     if (type === 'RM') {
@@ -114,6 +140,7 @@ async function pageItemsList(req, res) {
             vendor_name: v ? v.name : null,
             vendor_code: v ? v.entity_code : null,
             currency: rate.currency || 'INR',
+            payment_terms: rate.payment_terms || null,
             tiers: tiers.map((t) => ({
               id: t.id,
               moq_min: t.moq_min,
@@ -126,7 +153,7 @@ async function pageItemsList(req, res) {
         }
         items.push({ ...base, itemsListId: listRow.id, vendorRates: ratesWithTiers });
       }
-    } else {
+    } else if (type === 'PM') {
       const pms = await PackMaterial.findAll({ order: [['code', 'ASC']] });
       const listRows = await ItemsList.findAll({ where: { type: 'PM' }, order: [['id']] });
       const byPmId = new Map(listRows.map((r) => [r.pack_material_id, r]));
@@ -163,6 +190,57 @@ async function pageItemsList(req, res) {
             vendor_name: v ? v.name : null,
             vendor_code: v ? v.entity_code : null,
             currency: rate.currency || 'INR',
+            payment_terms: rate.payment_terms || null,
+            tiers: tiers.map((t) => ({
+              id: t.id,
+              moq_min: t.moq_min,
+              moq_max: t.moq_max,
+              price_per_unit: toNum(t.price_per_unit),
+              valid_till: t.valid_till || null,
+              note: t.note || null,
+            })),
+          });
+        }
+        items.push({ ...base, itemsListId: listRow.id, vendorRates: ratesWithTiers });
+      }
+    } else {
+      const prods = await Product.findAll({ order: [['product_code', 'ASC']] });
+      const listRows = await ItemsList.findAll({ where: { type: 'PR' }, order: [['id']] });
+      const byProductId = new Map(listRows.map((r) => [r.product_id, r]));
+      const vendorIds = [...new Set((await ItemListVendorRate.findAll({ attributes: ['vendor_id'] })).map((r) => r.vendor_id))];
+      const vendors = vendorIds.length ? await VendorClient.findAll({ where: { id: vendorIds } }) : [];
+      const vendorById = new Map(vendors.map((v) => [v.id, v.get ? v.get({ plain: true }) : v]));
+
+      for (const prod of prods) {
+        const p = prod.get ? prod.get({ plain: true }) : prod;
+        const base = {
+          code: p.product_code || String(p.product_id),
+          name: p.product_name || p.generic_name || p.brand_name || p.product_code || String(p.product_id),
+          type: 'PR',
+          uom: 'UNIT',
+          gst: toNum(p.tax_rate) ?? 0,
+          pricePerUnit: toNum(p.mrp_price) ?? 0,
+          raw_material_id: null,
+          pack_material_id: null,
+          product_id: prod.product_id,
+        };
+        const listRow = byProductId.get(prod.product_id);
+        if (!listRow) {
+          items.push({ ...base, itemsListId: null, vendorRates: [] });
+          continue;
+        }
+        const rates = await ItemListVendorRate.findAll({ where: { items_list_id: listRow.id }, order: [['id']] });
+        const ratesWithTiers = [];
+        for (const rate of rates) {
+          const tiers = await ItemListTier.findAll({ where: { item_list_vendor_rate_id: rate.id }, order: [['moq_min', 'ASC']] });
+          const v = vendorById.get(rate.vendor_id);
+          ratesWithTiers.push({
+            id: rate.id,
+            vendor_id: rate.vendor_id,
+            vendor_name: v ? v.name : null,
+            vendor_code: v ? v.entity_code : null,
+            currency: rate.currency || 'INR',
+            payment_terms: rate.payment_terms || null,
             tiers: tiers.map((t) => ({
               id: t.id,
               moq_min: t.moq_min,
@@ -188,19 +266,21 @@ async function pageItemsList(req, res) {
  */
 async function listItemsList(req, res) {
   try {
-    const typeFilter = req.query.type; // 'RM' | 'PM' | omit = all
+    const typeFilter = req.query.type; // 'RM' | 'PM' | 'PR' | omit = all
     const where = {};
-    if (typeFilter === 'RM' || typeFilter === 'PM') where.type = typeFilter;
+    if (typeFilter === 'RM' || typeFilter === 'PM' || typeFilter === 'PR') where.type = typeFilter;
 
     const rows = await ItemsList.findAll({ where, order: [['id', 'ASC']] });
     const rowIds = rows.map((r) => r.id);
     const rmIds = [...new Set(rows.map((r) => (r.get ? r.get({ plain: true }) : r).raw_material_id).filter(Boolean))];
     const pmIds = [...new Set(rows.map((r) => (r.get ? r.get({ plain: true }) : r).pack_material_id).filter(Boolean))];
+    const prodIds = [...new Set(rows.map((r) => (r.get ? r.get({ plain: true }) : r).product_id).filter(Boolean))];
 
-    const [ratesList, rmsList, pmsList] = await Promise.all([
+    const [ratesList, rmsList, pmsList, prodsList] = await Promise.all([
       rowIds.length ? ItemListVendorRate.findAll({ where: { items_list_id: { [Op.in]: rowIds } }, order: [['id', 'ASC']] }) : Promise.resolve([]),
       rmIds.length ? RawMaterial.findAll({ where: { id: rmIds } }) : Promise.resolve([]),
       pmIds.length ? PackMaterial.findAll({ where: { id: pmIds } }) : Promise.resolve([]),
+      prodIds.length ? Product.findAll({ where: { product_id: prodIds } }) : Promise.resolve([]),
     ]);
     const rateIds = (ratesList || []).map((r) => r.id);
     const tiersList = rateIds.length
@@ -226,13 +306,18 @@ async function listItemsList(req, res) {
       const d = x.get ? x.get({ plain: true }) : x;
       return [d.id, d];
     }));
+    const prodMap = new Map((prodsList || []).map((x) => {
+      const d = x.get ? x.get({ plain: true }) : x;
+      return [d.product_id, d];
+    }));
 
     const list = [];
     for (const row of rows) {
       const d = row.get ? row.get({ plain: true }) : row;
       const r = d.type === 'RM' && d.raw_material_id ? rmMap.get(d.raw_material_id) : null;
       const p = d.type === 'PM' && d.pack_material_id ? pmMap.get(d.pack_material_id) : null;
-      const base = resolveItemMasterFromMaps(d, r, p);
+      const prod = d.type === 'PR' && d.product_id ? prodMap.get(d.product_id) : null;
+      const base = resolveItemMasterFromMaps(d, r, p, prod);
       if (!base) continue;
       const rates = ratesByListId.get(row.id) || [];
       const tierCount = rates.reduce((sum, rate) => sum + (tierCountByRateId.get(rate.id) || 0), 0);
@@ -303,6 +388,7 @@ async function getItemsListById(req, res) {
         default_rate: toNum(r.default_rate),
         default_moq: toNum(r.default_moq),
         currency: r.currency || 'INR',
+        payment_terms: r.payment_terms || null,
         status: r.status,
         tiers: tiers.map((t) => ({
           id: t.id,
@@ -329,29 +415,35 @@ async function getItemsListById(req, res) {
 }
 
 /**
- * POST / — add item (type + raw_material_id or pack_material_id).
+ * POST / — add item (type + raw_material_id, pack_material_id, or product_id).
  */
 async function createItemsList(req, res) {
   try {
-    const { type, raw_material_id, pack_material_id, status } = req.body;
-    if (type !== 'RM' && type !== 'PM') {
-      return res.status(400).json({ error: 'type must be RM or PM' });
+    const { type, raw_material_id, pack_material_id, product_id, status } = req.body;
+    if (type !== 'RM' && type !== 'PM' && type !== 'PR') {
+      return res.status(400).json({ error: 'type must be RM, PM, or PR' });
     }
     const rmId = raw_material_id != null ? parseInt(raw_material_id, 10) : null;
     const pmId = pack_material_id != null ? parseInt(pack_material_id, 10) : null;
+    const prodId = product_id != null ? parseInt(product_id, 10) : null;
     if (type === 'RM') {
       if (rmId == null || Number.isNaN(rmId)) return res.status(400).json({ error: 'raw_material_id required for RM' });
       const existing = await ItemsList.findOne({ where: { type: 'RM', raw_material_id: rmId } });
       if (existing) return res.status(409).json({ error: 'This raw material is already in the items list' });
-    } else {
+    } else if (type === 'PM') {
       if (pmId == null || Number.isNaN(pmId)) return res.status(400).json({ error: 'pack_material_id required for PM' });
       const existing = await ItemsList.findOne({ where: { type: 'PM', pack_material_id: pmId } });
       if (existing) return res.status(409).json({ error: 'This pack material is already in the items list' });
+    } else {
+      if (prodId == null || Number.isNaN(prodId)) return res.status(400).json({ error: 'product_id required for PR' });
+      const existing = await ItemsList.findOne({ where: { type: 'PR', product_id: prodId } });
+      if (existing) return res.status(409).json({ error: 'This product is already in the items list' });
     }
     const row = await ItemsList.create({
       type,
       raw_material_id: type === 'RM' ? rmId : null,
       pack_material_id: type === 'PM' ? pmId : null,
+      product_id: type === 'PR' ? prodId : null,
       status: status || 'Active',
     });
     const base = await resolveItemMaster(row);
@@ -438,6 +530,7 @@ async function listRates(req, res) {
         default_rate: toNum(r.default_rate),
         default_moq: toNum(r.default_moq),
         currency: r.currency || 'INR',
+        payment_terms: r.payment_terms || null,
         status: r.status,
         tiers: tiers.map((t) => ({ id: t.id, moq_min: t.moq_min, moq_max: t.moq_max, price_per_unit: toNum(t.price_per_unit), valid_till: t.valid_till || null, note: t.note || null })),
       });
@@ -455,7 +548,7 @@ async function createRate(req, res) {
     if (Number.isNaN(itemsListId)) return res.status(400).json({ error: 'Invalid id' });
     const item = await ItemsList.findByPk(itemsListId);
     if (!item) return res.status(404).json({ error: 'Item not found' });
-    const { vendor_id, default_rate, default_moq, currency } = req.body;
+    const { vendor_id, default_rate, default_moq, currency, payment_terms } = req.body;
     const vendorId = vendor_id != null ? parseInt(vendor_id, 10) : null;
     if (vendorId == null || Number.isNaN(vendorId)) return res.status(400).json({ error: 'vendor_id required' });
     const existing = await ItemListVendorRate.findOne({ where: { items_list_id: itemsListId, vendor_id: vendorId } });
@@ -466,6 +559,7 @@ async function createRate(req, res) {
       default_rate: default_rate != null ? parseFloat(default_rate) : null,
       default_moq: default_moq != null ? parseInt(default_moq, 10) : null,
       currency: currency || 'INR',
+      payment_terms: payment_terms || null,
       status: 'active',
     });
     const v = await VendorClient.findByPk(vendorId);
@@ -478,6 +572,7 @@ async function createRate(req, res) {
       default_rate: toNum(row.default_rate),
       default_moq: toNum(row.default_moq),
       currency: row.currency || 'INR',
+      payment_terms: row.payment_terms || null,
       status: row.status,
       tiers: [],
     });
@@ -493,10 +588,11 @@ async function updateRate(req, res) {
     if (Number.isNaN(rateId)) return res.status(400).json({ error: 'Invalid rateId' });
     const row = await ItemListVendorRate.findByPk(rateId);
     if (!row) return res.status(404).json({ error: 'Rate not found' });
-    const { default_rate, default_moq, currency, status } = req.body;
+    const { default_rate, default_moq, currency, payment_terms, status } = req.body;
     if (default_rate !== undefined) row.default_rate = default_rate;
     if (default_moq !== undefined) row.default_moq = default_moq;
     if (currency !== undefined) row.currency = currency;
+    if (payment_terms !== undefined) row.payment_terms = payment_terms;
     if (status !== undefined) row.status = status;
     await row.save();
     const v = await VendorClient.findByPk(row.vendor_id);
@@ -510,6 +606,7 @@ async function updateRate(req, res) {
       default_rate: toNum(row.default_rate),
       default_moq: toNum(row.default_moq),
       currency: row.currency || 'INR',
+      payment_terms: row.payment_terms || null,
       status: row.status,
       tiers: tiers.map((t) => ({ id: t.id, moq_min: t.moq_min, moq_max: t.moq_max, price_per_unit: toNum(t.price_per_unit), valid_till: t.valid_till || null, note: t.note || null })),
     });

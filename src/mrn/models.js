@@ -21,6 +21,18 @@ MaterialRequestNote.init(
     source: { type: DataTypes.STRING(20), allowNull: true },
     /** true = transfer from MU to Warehouse (inbound-from-MU); false/null = outbound (WH→MU). */
     is_inbound_from_mu: { type: DataTypes.BOOLEAN, allowNull: true, defaultValue: false },
+    /** MU receive flow (mirrors GRN): received date, label params, generated QR labels. */
+    received_at_mu: { type: DataTypes.DATE, allowNull: true },
+    generated_labels: { type: DataTypes.JSON, allowNull: true },
+    no_of_boxes: { type: DataTypes.INTEGER, allowNull: true },
+    units_per_box: { type: DataTypes.INTEGER, allowNull: true },
+    location_prefix: { type: DataTypes.STRING(100), allowNull: true },
+    grn_batch_mfg: { type: DataTypes.STRING(100), allowNull: true },
+    expiry: { type: DataTypes.DATEONLY, allowNull: true },
+    mfg_batch: { type: DataTypes.STRING(100), allowNull: true },
+    /** MU zone/rack when transfer is completed (for location history). */
+    mu_receive_zone: { type: DataTypes.STRING(100), allowNull: true },
+    mu_receive_rack: { type: DataTypes.STRING(100), allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
   },
