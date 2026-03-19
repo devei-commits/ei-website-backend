@@ -13,10 +13,10 @@ const ProductCustomization = require('./src/productCustomizations/models');
 const Enquiry = require('./src/enquiries/models');
 const { Item, excelRowToItem } = require('./src/items/models');
 const itemsSeedDataRaw = require('./src/items/itemsSeedData');
-const { Vendor, contactRowToVendor } = require('./src/Vendors/models');
-const contactsSeedDataRaw = require('./src/Vendors/contactsSeedData');
-const { Contact, customerRowToModel } = require('./src/Contacts/models');
-const seedContactData = require('./src/Contacts/seedContact');
+const { Vendor, contactRowToVendor } = require('./src/vendors/models');
+const contactsSeedDataRaw = require('./src/vendors/contactsSeedData');
+const { Contact, customerRowToModel } = require('./src/contacts/models');
+const seedContactData = require('./src/contacts/seedContact');
 const Authentication = require('./src/otp/models');
 const { CompositeItem, compositeRowToModel } = require('./src/compositeItems/models');
 const compositeItemsSeedData = require('./src/compositeItems/compositeItemsSeedData');
@@ -118,11 +118,45 @@ async function seed() {
     console.log('Syncing database...');
     await db.sync({ alter: true });
 
+    // Postgres ENUM types don't automatically update with Sequelize when values change.
+    // Ensure 'pending' exists in orders.fulfillment_stage enum.
+    await db.query(
+      `DO $$
+       BEGIN
+         ALTER TYPE "enum_orders_fulfillment_stage" ADD VALUE IF NOT EXISTS 'pending';
+       EXCEPTION
+         WHEN undefined_object THEN
+           -- enum type may not exist yet; it will be created by db.sync
+           NULL;
+       END
+       $$;`,
+      { raw: true }
+    ).catch(() => {});
+
     // Ensure doctor_id in appointments is string-compatible (for legacy codes like DOC-SAR-101)
     await db.query(
       `ALTER TABLE appointments
        ALTER COLUMN doctor_id TYPE VARCHAR(255)
        USING doctor_id::text`,
+      { raw: true }
+    ).catch(() => { });
+
+    // Ensure production_batches.planning_batch_id exists (some older DBs were created before this column was added)
+    await db.query(
+      `ALTER TABLE production_batches
+       ADD COLUMN IF NOT EXISTS planning_batch_id INTEGER`,
+      { raw: true }
+    ).catch(() => { });
+
+    // Ensure website orders have pipeline tracking columns
+    await db.query(
+      `ALTER TABLE orders
+       ADD COLUMN IF NOT EXISTS so_no VARCHAR(64)`,
+      { raw: true }
+    ).catch(() => { });
+    await db.query(
+      `ALTER TABLE orders
+       ADD COLUMN IF NOT EXISTS fulfillment_stage VARCHAR(40) DEFAULT 'pending'`,
       { raw: true }
     ).catch(() => { });
 

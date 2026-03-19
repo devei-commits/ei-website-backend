@@ -3,6 +3,7 @@ const PlanningExtracted = require('./models');
 const PlanningBomOverride = require('./planningBomOverrideModel');
 const PlanningBatch = require('./planningBatchModel');
 const SalesOrder = require('../salesOrders/models');
+const { Order } = require('../orders/models');
 const { Product } = require('../products/models');
 const WarehouseInventory = require('../warehouseInventory/models');
 const RawMaterial = require('../rawMaterials/models');
@@ -314,8 +315,15 @@ async function updatePlanningExtracted(req, res) {
     const nowBomConfirmedAt = row.get ? row.get('bom_confirmed_at') : row.bom_confirmed_at;
     if (prevBomConfirmedAt == null && nowBomConfirmedAt != null) {
       await reserveStockForPlanningExtracted(id, row);
+      // If this planning row belongs to a website order, move it to in_production stage.
+      const so = await SalesOrder.findByPk(row.sales_order_id, { attributes: ['order_id'] });
+      const soNo = so && (so.get ? so.get('order_id') : so.order_id);
+      if (soNo) await Order.update({ fulfillment_stage: 'in_production' }, { where: { so_no: soNo } });
     } else if (prevBomConfirmedAt != null && nowBomConfirmedAt == null) {
       await releaseStockForPlanningExtracted(id);
+      const so = await SalesOrder.findByPk(row.sales_order_id, { attributes: ['order_id'] });
+      const soNo = so && (so.get ? so.get('order_id') : so.order_id);
+      if (soNo) await Order.update({ fulfillment_stage: 'in_development' }, { where: { so_no: soNo } });
     }
 
     const updated = await PlanningExtracted.findByPk(id, {

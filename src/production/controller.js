@@ -1,5 +1,6 @@
 const { Op } = require('sequelize');
 const { ProductionEquipment, ProductionTeamMember, ProductionBatch } = require('./models');
+const { Order } = require('../orders/models');
 const WarehouseInventory = require('../warehouseInventory/models');
 const { FulfillmentBatchSplit, ReservedBatchItem } = require('../fulfillment/models');
 const { Product } = require('../products/models');
@@ -951,6 +952,20 @@ async function updateBatch(req, res) {
     }
     if (prevBprStatus !== 'fg_ready' && nextPlain.bpr_status === 'fg_ready') {
       await applyBprFgReadyToInventory(row);
+    }
+
+    // Update website order pipeline stage when Production/BPR changes.
+    // Linked by shared so_no (EI-SO-YYYY-XXX) which is stored on Order.so_no and ProductionBatch.so_no.
+    const soNo = nextPlain.so_no;
+    if (soNo) {
+      let stage = null;
+      if (nextPlain.bpr_status === 'fg_ready') stage = 'completed_production';
+      else if (['packaging', 'pack_qc'].includes(nextPlain.bpr_status)) stage = 'packaged';
+      else if (nextPlain.bmr_status === 'rm_reserved' || nextPlain.bpr_status === 'pm_reserved') stage = 'in_production';
+      else if (['wip', 'bulk_qc'].includes(nextPlain.bmr_status)) stage = 'in_production';
+      if (stage) {
+        await Order.update({ fulfillment_stage: stage }, { where: { so_no: soNo } });
+      }
     }
     res.json(formatBatch(row));
   } catch (err) {

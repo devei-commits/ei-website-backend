@@ -5,6 +5,7 @@ const { ProductionBatch } = require('../production/models');
 const SalesOrder = require('../salesOrders/models');
 const VendorClient = require('../vendorClient/models');
 const { Product } = require('../products/models');
+const { Order } = require('../orders/models');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 
@@ -650,6 +651,9 @@ async function pickSplits(req, res) {
     order.set('so_status', recalculateSOStatus(allSplits));
     await order.save();
 
+    // Mirror stage into website orders table when picking starts
+    await Order.update({ fulfillment_stage: 'packaged' }, { where: { so_no: order.so_no } });
+
     const refreshed = await FulfillmentOrder.findByPk(id, { include: INCLUDE_FULL });
     res.json(formatOrder(refreshed));
   } catch (err) {
@@ -687,6 +691,9 @@ async function invoiceSplits(req, res) {
     const allSplits = await FulfillmentBatchSplit.findAll({ where: { fulfillment_order_id: id } });
     order.set('so_status', recalculateSOStatus(allSplits));
     await order.save();
+
+    // Mirror stage into website orders table when invoiced
+    await Order.update({ fulfillment_stage: 'invoiced' }, { where: { so_no: order.so_no } });
 
     const refreshed = await FulfillmentOrder.findByPk(id, { include: INCLUDE_FULL });
     res.json(formatOrder(refreshed));
@@ -730,6 +737,9 @@ async function shipSplits(req, res) {
     const allSplits = await FulfillmentBatchSplit.findAll({ where: { fulfillment_order_id: id } });
     order.set('so_status', recalculateSOStatus(allSplits));
     await order.save();
+
+    // Mirror stage into website orders table when shipped
+    await Order.update({ fulfillment_stage: 'shipped' }, { where: { so_no: order.so_no } });
 
     const refreshed = await FulfillmentOrder.findByPk(id, { include: INCLUDE_FULL });
     res.json(formatOrder(refreshed));

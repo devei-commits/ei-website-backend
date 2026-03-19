@@ -1,17 +1,21 @@
 const express = require('express');
 const router = express.Router();
 const {
-  getEnquiryTypes,
-  createEnquiry,
-  getMyEnquiries,
-  getEnquiryById,
-  updateEnquiry
+  getTicketTypes,
+  createTicket,
+  listTickets,
+  getTicketById,
+  updateTicket,
+  addMessage,
 } = require('./controller');
 
-router.get('/types', getEnquiryTypes);
-router.post('/', createEnquiry);
-router.get('/', getMyEnquiries);
-router.get('/:id', getEnquiryById);
-router.put('/:id', updateEnquiry);
+// All routes require authentication (enforced by app.js mounting with isAuthenticated)
+router.get('/types', getTicketTypes);
+router.post('/', createTicket);
+router.get('/', listTickets);
+router.get('/:id', getTicketById);
+router.patch('/:id', updateTicket);
+router.put('/:id', updateTicket);
+router.post('/:id/messages', addMessage);
 
 module.exports = router;

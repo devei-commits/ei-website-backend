@@ -45,6 +45,26 @@ Order.init({
         allowNull: false,
         defaultValue: 'pending'
     },
+    // Link to internal SO/Fulfillment/Production pipeline (EI-SO-YYYY-XXX)
+    so_no: {
+        type: DataTypes.STRING,
+        allowNull: true,
+        unique: true,
+    },
+    // Production/Fulfillment stage tracking for website orders (separate from ecommerce order_status)
+    fulfillment_stage: {
+        type: DataTypes.ENUM(
+            'pending',
+            'in_development',
+            'in_production',
+            'completed_production',
+            'packaged',
+            'invoiced',
+            'shipped'
+        ),
+        allowNull: false,
+        defaultValue: 'pending',
+    },
     subtotal: {
         type: DataTypes.DECIMAL(10, 2),
         allowNull: false
