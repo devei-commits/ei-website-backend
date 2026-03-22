@@ -8,11 +8,12 @@ const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const BOM = require('../bom/models');
 const { syncWarehouseReserved } = require('../planningExtracted/controller');
-const { logReservedChange } = require('../warehouseInventory/locationHistoryHelpers');
+const { logReservedChange, logLocationMovement } = require('../warehouseInventory/locationHistoryHelpers');
 const PlanningExtracted = require('../planningExtracted/models');
 const PlanningBatch = require('../planningExtracted/planningBatchModel');
 const { createRworkPlanningBatch } = require('../planningExtracted/controller');
 const SalesOrder = require('../salesOrders/models');
+const ProcurementRequest = require('../procurementRequests/models');
 
 /* ════════════════════════════════════════════════════════════
    EQUIPMENT
@@ -231,6 +232,8 @@ function formatBatch(row) {
     compatiblePackLines: d.compatible_pack_lines || undefined,
     requiredVolumeLiters: d.required_volume_liters != null ? Number(d.required_volume_liters) : null,
     planningBatchId: d.planning_batch_id ?? undefined,
+    muDispensingBundleId: d.mu_dispensing_bundle_id || null,
+    muDispensingBundles: Array.isArray(d.mu_dispensing_bundles) ? d.mu_dispensing_bundles : [],
   };
 }
 
@@ -559,7 +562,9 @@ async function createRworkBatch(req, res) {
     if (!pb) return res.status(404).json({ error: 'Planning batch not found' });
     const planId = pb.planning_extracted_id;
 
-    const newPb = await createRworkPlanningBatch(planId);
+    // Rework must inherit the *base planning batch BOM copy* (not just SO override / product master),
+    // so per-batch swap/BOM editor changes persist into the new batch pipeline.
+    const newPb = await createRworkPlanningBatch(planId, pb.id);
     if (!newPb) return res.status(404).json({ error: 'Planning extracted not found' });
     const newPbPlain = newPb.get ? newPb.get({ plain: true }) : newPb;
 
@@ -605,44 +610,130 @@ async function createRworkBatch(req, res) {
 async function applyBprFgReadyToInventory(batchRow) {
   const d = batchRow.get ? batchRow.get({ plain: true }) : batchRow;
 
-  // 1. Reduce RM (consumption from dispensing_rm)
+  // Dispensing consumption should already have happened during rm_dispensing/pm_dispensing stage
+  // (before reaching fg_ready). To prevent double-counting, only reduce RM/PM here if there is
+  // no recorded dispensed quantity yet.
+  // If dispensed quantities are present, we only add FG below.
   const dispensingRm = Array.isArray(d.dispensing_rm) ? d.dispensing_rm : [];
-  for (const line of dispensingRm) {
-    const qty = Number(line.dispensed ?? line.required ?? 0) || 0;
-    if (qty <= 0) continue;
-    const code = (line.code || '').trim();
-    if (!code) continue;
-    const rm = await RawMaterial.findOne({ where: { code } });
-    if (!rm) continue;
-    const wh = await WarehouseInventory.findOne({ where: { item_type: 'RM', raw_material_id: rm.id } });
-    if (!wh) continue;
-    const plain = wh.get ? wh.get({ plain: true }) : wh;
-    const whStock = Number(plain.wh_stock) || 0;
-    const ml1 = Number(plain.ml1_stock) || 0;
-    const ml2 = Number(plain.ml2_stock) || 0;
-    const newWhStock = Math.max(0, whStock - qty);
-    await wh.update({ wh_stock: newWhStock, stock_in_hand: newWhStock + ml1 + ml2 });
-    console.log('[production] BPR fg_ready: reduced RM id=%s qty=%s -> wh_stock=%s', rm.id, qty, newWhStock);
-  }
-
-  // 2. Reduce PM (consumption from dispensing_pm)
   const dispensingPm = Array.isArray(d.dispensing_pm) ? d.dispensing_pm : [];
-  for (const line of dispensingPm) {
-    const qty = Number(line.dispensed ?? line.required ?? 0) || 0;
-    if (qty <= 0) continue;
-    const code = (line.code || '').trim();
-    if (!code) continue;
-    const pm = await PackMaterial.findOne({ where: { code } });
-    if (!pm) continue;
-    const wh = await WarehouseInventory.findOne({ where: { item_type: 'PM', pack_material_id: pm.id } });
-    if (!wh) continue;
-    const plain = wh.get ? wh.get({ plain: true }) : wh;
-    const whStock = Number(plain.wh_stock) || 0;
-    const ml1 = Number(plain.ml1_stock) || 0;
-    const ml2 = Number(plain.ml2_stock) || 0;
-    const newWhStock = Math.max(0, whStock - qty);
-    await wh.update({ wh_stock: newWhStock, stock_in_hand: newWhStock + ml1 + ml2 });
-    console.log('[production] BPR fg_ready: reduced PM id=%s qty=%s -> wh_stock=%s', pm.id, qty, newWhStock);
+  const totalDispensedRm = dispensingRm.reduce((sum, l) => sum + (Number(l.dispensed) || 0), 0);
+  const totalDispensedPm = dispensingPm.reduce((sum, l) => sum + (Number(l.dispensed) || 0), 0);
+
+  const shouldConsumeRmPmNow = totalDispensedRm <= 0 && totalDispensedPm <= 0;
+
+  if (shouldConsumeRmPmNow) {
+    // 1. Reduce RM (consumption from dispensing_rm)
+    const newRmLines = [];
+    let rmDispensingPersist = false;
+    for (const line of dispensingRm) {
+      const qty = Number(line.dispensed ?? line.required ?? 0) || 0;
+      if (qty <= 0) {
+        newRmLines.push(line);
+        continue;
+      }
+      const code = (line.code || '').trim();
+      if (!code) {
+        newRmLines.push(line);
+        continue;
+      }
+      const rm = await RawMaterial.findOne({ where: { code } });
+      if (!rm) {
+        newRmLines.push(line);
+        continue;
+      }
+      const wh = await WarehouseInventory.findOne({ where: { item_type: 'RM', raw_material_id: rm.id } });
+      if (!wh) {
+        newRmLines.push(line);
+        continue;
+      }
+      const plain = wh.get ? wh.get({ plain: true }) : wh;
+      const whStock = Number(plain.wh_stock) || 0;
+      const ml1 = Number(plain.ml1_stock) || 0;
+      const ml2 = Number(plain.ml2_stock) || 0;
+
+      // Consume from manufacturing tank stock (ML1+ML2) at fg_ready fallback.
+      let newMl1 = ml1;
+      let newMl2 = ml2;
+      let remaining = qty;
+      const fromMl1 = Math.min(newMl1, remaining);
+      newMl1 = newMl1 - fromMl1;
+      remaining = remaining - fromMl1;
+      if (remaining > 0) {
+        const fromMl2 = Math.min(newMl2, remaining);
+        newMl2 = newMl2 - fromMl2;
+      }
+
+      const newStockInHand = whStock + newMl1 + newMl2;
+      await wh.update({ ml1_stock: newMl1, ml2_stock: newMl2, stock_in_hand: newStockInHand });
+      console.log('[production] BPR fg_ready: reduced RM id=%s qty=%s -> mu_stock=%s', rm.id, qty, newMl1 + newMl2);
+      const prevD = Number(line.dispensed) || 0;
+      if (prevD !== qty) rmDispensingPersist = true;
+      newRmLines.push(prevD === qty ? line : { ...line, dispensed: qty });
+    }
+
+    // 2. Reduce PM (consumption from dispensing_pm)
+    const newPmLines = [];
+    let pmDispensingPersist = false;
+    for (const line of dispensingPm) {
+      const qty = Number(line.dispensed ?? line.required ?? 0) || 0;
+      if (qty <= 0) {
+        newPmLines.push(line);
+        continue;
+      }
+      const code = (line.code || '').trim();
+      if (!code) {
+        newPmLines.push(line);
+        continue;
+      }
+      const pm = await PackMaterial.findOne({ where: { code } });
+      if (!pm) {
+        newPmLines.push(line);
+        continue;
+      }
+      const wh = await WarehouseInventory.findOne({ where: { item_type: 'PM', pack_material_id: pm.id } });
+      if (!wh) {
+        newPmLines.push(line);
+        continue;
+      }
+      const plain = wh.get ? wh.get({ plain: true }) : wh;
+      const whStock = Number(plain.wh_stock) || 0;
+      const ml1 = Number(plain.ml1_stock) || 0;
+      const ml2 = Number(plain.ml2_stock) || 0;
+
+      // Consume from manufacturing tank stock (ML1+ML2) at fg_ready fallback.
+      let newMl1 = ml1;
+      let newMl2 = ml2;
+      let remaining = qty;
+      const fromMl1 = Math.min(newMl1, remaining);
+      newMl1 = newMl1 - fromMl1;
+      remaining = remaining - fromMl1;
+      if (remaining > 0) {
+        const fromMl2 = Math.min(newMl2, remaining);
+        newMl2 = newMl2 - fromMl2;
+      }
+
+      const newStockInHand = whStock + newMl1 + newMl2;
+      await wh.update({ ml1_stock: newMl1, ml2_stock: newMl2, stock_in_hand: newStockInHand });
+      console.log('[production] BPR fg_ready: reduced PM id=%s qty=%s -> mu_stock=%s', pm.id, qty, newMl1 + newMl2);
+      const prevD = Number(line.dispensed) || 0;
+      if (prevD !== qty) pmDispensingPersist = true;
+      newPmLines.push(prevD === qty ? line : { ...line, dispensed: qty });
+    }
+
+    // Persist dispensed baselines when we consumed using `required` (dispensed was 0). Otherwise a
+    // later PATCH that only fills dispensing UI would run consumeDelta and double-reduce inventory.
+    if (rmDispensingPersist || pmDispensingPersist) {
+      batchRow.set('dispensing_rm', newRmLines);
+      batchRow.set('dispensing_pm', newPmLines);
+      await batchRow.save({ fields: ['dispensing_rm', 'dispensing_pm'] });
+    }
+  } else if (DISPENSING_DEBUG) {
+    console.log('[production] BPR fg_ready: skipping RM/PM reduction (dispensed already recorded)', {
+      totalDispensedRm,
+      totalDispensedPm,
+      bmr_no: d.bmr_no,
+      bpr_no: d.bpr_no,
+    });
   }
 
   // 3. Add FG (product) to warehouse_inventory
@@ -701,6 +792,10 @@ async function applyBprFgReadyToInventory(batchRow) {
 }
 
 const RESERVE_DEBUG = process.env.RESERVE_DEBUG !== '0';
+const DISPENSING_DEBUG = process.env.DISPENSING_DEBUG === '1';
+const DISPENSING_TRACE = process.env.DISPENSING_TRACE === '1';
+/** Filter server logs with this string to trace BMR dispensing → MU / warehouse_inventory. */
+const DISPENDING_MU_ERR_TAG = '[dispending-mu-error]';
 
 /**
  * When BMR status transitions to rm_reserved: create reserved_batch_items for RM from BOM,
@@ -920,6 +1015,343 @@ async function applyPmReservedToInventory(batchRow) {
   if (RESERVE_DEBUG) console.log('[RESERVE-DEBUG] applyPmReservedToInventory DONE');
 }
 
+/** Master codes seeded as EI-… on dispensing line text (e.g. inci "Niacinamide (EI-RM-ACT-002)"). */
+function extractEiCodeFromDispensingText(text) {
+  if (!text) return '';
+  const m = String(text).match(/EI-[A-Z0-9-]+/i);
+  return m && m[0] ? m[0] : '';
+}
+
+function pickDispensingLine(nextArr, prevArr, code) {
+  const c = String(code || '').trim();
+  if (!c) return null;
+  const fromNext = (nextArr || []).find((l) => String(l?.code || '').trim() === c);
+  if (fromNext) return fromNext;
+  return (prevArr || []).find((l) => String(l?.code || '').trim() === c) || null;
+}
+
+async function resolveRawMaterialForDispensingLine(line) {
+  if (!line) return null;
+  const rid = line.raw_material_id != null ? Number(line.raw_material_id) : null;
+  if (rid != null && !Number.isNaN(rid)) {
+    const rm = await RawMaterial.findByPk(rid);
+    if (rm) return rm;
+  }
+  const code = String(line.code || '').trim();
+  if (code) {
+    const byCode = await RawMaterial.findOne({ where: { code } });
+    if (byCode) return byCode;
+  }
+  const ei = extractEiCodeFromDispensingText(line.inci || line.name || line.item || '');
+  if (ei) {
+    const byEi = await RawMaterial.findOne({ where: { code: ei } });
+    if (byEi) return byEi;
+  }
+  const nameBase = String(line.inci || line.name || '').split('(')[0].trim();
+  if (nameBase) {
+    const byName = await RawMaterial.findOne({ where: { name: nameBase } });
+    if (byName) return byName;
+    const byLike = await RawMaterial.findOne({
+      where: { name: { [Op.iLike]: `%${nameBase}%` } },
+    });
+    if (byLike) return byLike;
+  }
+  return null;
+}
+
+async function resolvePackMaterialForDispensingLine(line) {
+  if (!line) return null;
+  const pid = line.pack_material_id != null ? Number(line.pack_material_id) : null;
+  if (pid != null && !Number.isNaN(pid)) {
+    const pm = await PackMaterial.findByPk(pid);
+    if (pm) return pm;
+  }
+  const code = String(line.code || '').trim();
+  if (code) {
+    const byCode = await PackMaterial.findOne({ where: { code } });
+    if (byCode) return byCode;
+  }
+  const ei = extractEiCodeFromDispensingText(line.name || line.description || line.item || '');
+  if (ei) {
+    const byEi = await PackMaterial.findOne({ where: { code: ei } });
+    if (byEi) return byEi;
+  }
+  const nameBase = String(line.name || line.description || '').split('(')[0].trim();
+  if (nameBase) {
+    const byDesc = await PackMaterial.findOne({ where: { description: nameBase } });
+    if (byDesc) return byDesc;
+    const byLike = await PackMaterial.findOne({
+      where: { description: { [Op.iLike]: `%${nameBase}%` } },
+    });
+    if (byLike) return byLike;
+  }
+  return null;
+}
+
+/**
+ * Apply dispensing delta: prefer ML1 then ML2 (manufacturing / MU stock), then WH if MU insufficient.
+ * qty_delta in history: negative when material leaves inventory (dispense), positive when restored.
+ * @returns {boolean} true if warehouse row was updated and history logged
+ */
+async function applyDispensingDeltaToWarehouseInventory({
+  type,
+  code,
+  delta,
+  sampleLine,
+  batchPlain,
+  dispensingBundleId,
+}) {
+  if (!Number.isFinite(delta) || Math.abs(delta) <= 1e-9) {
+    console.log(DISPENDING_MU_ERR_TAG, 'applyDispensingDelta: skip zero/invalid delta', { type, code, delta, batchId: batchPlain?.id, bmr_no: batchPlain?.bmr_no });
+    return false;
+  }
+
+  console.log(DISPENDING_MU_ERR_TAG, 'applyDispensingDelta: start', {
+    type,
+    code,
+    delta,
+    batchId: batchPlain?.id,
+    bmr_no: batchPlain?.bmr_no,
+    sampleLine: sampleLine ? { code: sampleLine.code, dispensed: sampleLine.dispensed, raw_material_id: sampleLine.raw_material_id } : null,
+  });
+
+  const rmOrPmRow = type === 'RM'
+    ? await resolveRawMaterialForDispensingLine(sampleLine || { code })
+    : await resolvePackMaterialForDispensingLine(sampleLine || { code });
+  if (!rmOrPmRow) {
+    console.warn(DISPENDING_MU_ERR_TAG, 'applyDispensingDelta: cannot resolve RM/PM master', { type, code, sampleLine });
+    if (DISPENSING_TRACE || DISPENSING_DEBUG) {
+      console.warn('[production][DISPENSING_TRACE] could not resolve master for line', { type, code, sampleLine });
+    }
+    return false;
+  }
+
+  const wh = await WarehouseInventory.findOne({
+    where: type === 'RM'
+      ? { item_type: 'RM', raw_material_id: rmOrPmRow.id }
+      : { item_type: 'PM', pack_material_id: rmOrPmRow.id },
+  });
+  if (!wh) {
+    console.warn(DISPENDING_MU_ERR_TAG, 'applyDispensingDelta: no warehouse_inventory row for master', {
+      type,
+      masterId: rmOrPmRow.id,
+      masterCode: rmOrPmRow.code,
+      code,
+    });
+    if (DISPENSING_TRACE || DISPENSING_DEBUG) {
+      console.warn('[production][DISPENSING_TRACE] no warehouse_inventory row', { type, id: rmOrPmRow.id, code });
+    }
+    return false;
+  }
+
+  // Fresh read so MU (ML1/ML2) reflects the latest DB state after MTR/GRN/reserve, avoiding stale totals.
+  try {
+    await wh.reload();
+  } catch (e) {
+    console.warn(DISPENDING_MU_ERR_TAG, 'applyDispensingDelta: warehouse_inventory reload failed', e?.message || e);
+    return false;
+  }
+
+  const plainWh = wh.get ? wh.get({ plain: true }) : wh;
+  let whStock = Number(plainWh.wh_stock) || 0;
+  let newMl1 = Number(plainWh.ml1_stock) || 0;
+  let newMl2 = Number(plainWh.ml2_stock) || 0;
+  const beforeSih = whStock + newMl1 + newMl2;
+
+  console.log(DISPENDING_MU_ERR_TAG, 'applyDispensingDelta: stock before (after reload)', {
+    whInventoryId: plainWh.id,
+    type,
+    code,
+    masterCode: rmOrPmRow.code,
+    delta,
+    wh_stock: whStock,
+    ml1_stock: newMl1,
+    ml2_stock: newMl2,
+    stock_in_hand: beforeSih,
+  });
+
+  if (DISPENSING_TRACE || DISPENSING_DEBUG) {
+    console.log('[production][DISPENSING_TRACE] applying delta', {
+      type,
+      code,
+      delta,
+      batch: { bmr_no: batchPlain?.bmr_no, bpr_no: batchPlain?.bpr_no, id: batchPlain?.id },
+      resolved: { masterId: rmOrPmRow.id, masterCode: rmOrPmRow.code },
+      whInventoryId: plainWh.id,
+      whBefore: { wh_stock: whStock, ml1_stock: newMl1, ml2_stock: newMl2, sih: beforeSih },
+      sampleLine: sampleLine ? { ...sampleLine, dispensed: sampleLine.dispensed } : null,
+    });
+  }
+
+  let fromMl1Used = 0;
+  let fromMl2Used = 0;
+  let fromWhUsed = 0;
+  if (delta > 0) {
+    let remaining = delta;
+    fromMl1Used = Math.min(newMl1, remaining);
+    newMl1 -= fromMl1Used;
+    remaining -= fromMl1Used;
+    if (remaining > 0) {
+      fromMl2Used = Math.min(newMl2, remaining);
+      newMl2 -= fromMl2Used;
+      remaining -= fromMl2Used;
+    }
+    if (remaining > 0) {
+      fromWhUsed = Math.min(whStock, remaining);
+      whStock -= fromWhUsed;
+      remaining -= fromWhUsed;
+      if (remaining > 1e-6) {
+        console.warn(DISPENDING_MU_ERR_TAG, 'applyDispensingDelta: insufficient WH+ML1+ML2', {
+          code,
+          type,
+          bmr_no: batchPlain?.bmr_no,
+          shortage: remaining,
+        });
+        console.warn('[production][DISPENSING_TRACE] insufficient WH+ML1+ML2; short by', {
+          code,
+          type,
+          batch: batchPlain?.bmr_no,
+          shortage: remaining,
+        });
+      }
+    }
+  } else {
+    const restore = Math.abs(delta);
+    newMl1 += restore;
+  }
+
+  const newStockInHand = whStock + newMl1 + newMl2;
+  console.log(DISPENDING_MU_ERR_TAG, 'applyDispensingDelta: computed consumption → will UPDATE', {
+    whInventoryId: plainWh.id,
+    code,
+    delta,
+    tookFrom: { ml1: fromMl1Used, ml2: fromMl2Used, wh: fromWhUsed },
+    after: { wh_stock: whStock, ml1_stock: newMl1, ml2_stock: newMl2, stock_in_hand: newStockInHand },
+  });
+
+  await wh.update({
+    wh_stock: whStock,
+    ml1_stock: newMl1,
+    ml2_stock: newMl2,
+    stock_in_hand: newStockInHand,
+  });
+
+  console.log(DISPENDING_MU_ERR_TAG, 'applyDispensingDelta: warehouse_inventory UPDATE committed', {
+    whInventoryId: plainWh.id,
+    code,
+    delta,
+    tookFrom: { ml1: fromMl1Used, ml2: fromMl2Used, wh: fromWhUsed },
+    sih_before: beforeSih,
+    sih_after: newStockInHand,
+  });
+
+  await logLocationMovement({
+    warehouseInventoryId: plainWh.id,
+    itemType: type,
+    rawMaterialId: type === 'RM' ? rmOrPmRow.id : null,
+    packMaterialId: type === 'PM' ? rmOrPmRow.id : null,
+    productId: null,
+    fromZone: plainWh.zone || null,
+    fromRack: plainWh.rack || null,
+    toZone: plainWh.zone || null,
+    toRack: plainWh.rack || null,
+    qtyDelta: -delta,
+    actionType: 'BMR_DISPENSING',
+    productionBatchId: batchPlain?.id ?? null,
+    batchNo: batchPlain?.bmr_no || null,
+    dispensingBundleId: dispensingBundleId || null,
+  });
+
+  if (DISPENSING_TRACE || DISPENSING_DEBUG) {
+    console.log('[production] DISPENSING applied', {
+      batch_id: batchPlain?.id,
+      bmr_no: batchPlain?.bmr_no,
+      type,
+      code,
+      masterResolved: rmOrPmRow.code || rmOrPmRow.id,
+      delta,
+      wh_ml_after: { wh: whStock, ml1: newMl1, ml2: newMl2, sih: newStockInHand },
+    });
+  }
+  return true;
+}
+
+function dispensingMapsHaveAnyDelta(prevMap, nextMap) {
+  const keys = new Set([...prevMap.keys(), ...nextMap.keys()]);
+  for (const k of keys) {
+    const prevQty = prevMap.get(k) || 0;
+    const nextQty = nextMap.get(k) || 0;
+    if (Math.abs(nextQty - prevQty) > 1e-9) return true;
+  }
+  return false;
+}
+
+function makeMuDispensingBundleId(bmrNo) {
+  const safe = String(bmrNo || 'BATCH').replace(/[^A-Za-z0-9-]/g, '-').replace(/-+/g, '-').slice(0, 48);
+  return `MU-${safe}-${Date.now()}`;
+}
+
+async function resolvePlanningExtractedIdForBatch(batchPlain) {
+  const pbid = batchPlain?.planning_batch_id != null ? Number(batchPlain.planning_batch_id) : null;
+  if (pbid && !Number.isNaN(pbid)) {
+    const pb = await PlanningBatch.findByPk(pbid, { attributes: ['planning_extracted_id'] });
+    if (pb) {
+      const p = pb.get ? pb.get({ plain: true }) : pb;
+      return p.planning_extracted_id != null ? Number(p.planning_extracted_id) : null;
+    }
+  }
+  return null;
+}
+
+async function persistMuDispensingBundleSnapshot(batchId, bundleId, consumed, planningExtractedId) {
+  const prRows = planningExtractedId
+    ? await ProcurementRequest.findAll({
+      where: { planning_extracted_id: planningExtractedId },
+      attributes: ['id', 'planning_batch_id', 'status'],
+      order: [['id', 'ASC']],
+    })
+    : [];
+  const procurementRequests = prRows.map((r) => {
+    const p = r.get ? r.get({ plain: true }) : r;
+    return { id: p.id, planningBatchId: p.planning_batch_id, status: p.status || null };
+  });
+  const rm = consumed.filter((c) => c.type === 'RM').map(({ code, qty }) => ({ code, qty: Math.round((qty + Number.EPSILON) * 1000) / 1000 }));
+  const pm = consumed.filter((c) => c.type === 'PM').map(({ code, qty }) => ({ code, qty: Math.round((qty + Number.EPSILON) * 1000) / 1000 }));
+  const entry = {
+    bundleId,
+    at: new Date().toISOString(),
+    procurementRequests,
+    rm,
+    pm,
+  };
+  const fresh = await ProductionBatch.findByPk(batchId);
+  if (!fresh) return;
+  let prevBundles = fresh.get('mu_dispensing_bundles');
+  if (typeof prevBundles === 'string') {
+    try {
+      prevBundles = JSON.parse(prevBundles);
+    } catch {
+      prevBundles = [];
+    }
+  }
+  if (!Array.isArray(prevBundles)) prevBundles = [];
+  const capped = [...prevBundles, entry].slice(-80);
+  await fresh.update({
+    mu_dispensing_bundles: capped,
+    mu_dispensing_bundle_id: bundleId,
+  });
+}
+
+/** Deep-clone JSON array columns — Sequelize plain objects often hold JSON by reference; row.set/save can mutate in place so "prev" dispensing would wrongly equal "next" and inventory deltas stay 0. */
+function cloneJsonArray(val) {
+  if (!Array.isArray(val) || val.length === 0) return [];
+  try {
+    return JSON.parse(JSON.stringify(val));
+  } catch {
+    return val.map((line) => (line && typeof line === 'object' ? { ...line } : line));
+  }
+}
+
 async function updateBatch(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
@@ -927,8 +1359,28 @@ async function updateBatch(req, res) {
     const row = await ProductionBatch.findByPk(id);
     if (!row) return res.status(404).json({ error: 'Batch not found' });
     const prevPlain = row.get ? row.get({ plain: true }) : row;
+    const prevDispensingRmSnapshot = cloneJsonArray(prevPlain?.dispensing_rm);
+    const prevDispensingPmSnapshot = cloneJsonArray(prevPlain?.dispensing_pm);
     const prevBmrStatus = prevPlain.bmr_status;
     const prevBprStatus = prevPlain.bpr_status;
+    const incomingHasDispensing =
+      req.body?.dispensing_rm != null ||
+      req.body?.dispensing_pm != null ||
+      req.body?.dispensingRM != null ||
+      req.body?.dispensingPM != null;
+    if (incomingHasDispensing) {
+      const bdrm = req.body.dispensingRM || req.body.dispensing_rm;
+      const bdpm = req.body.dispensingPM || req.body.dispensing_pm;
+      console.log(DISPENDING_MU_ERR_TAG, 'updateBatch: incoming PATCH (before save)', {
+        batchPk: id,
+        bmr_no: prevPlain.bmr_no,
+        prev_bpr_status: prevBprStatus,
+        prev_bmr_status: prevBmrStatus,
+        bodyKeys: Object.keys(req.body || {}),
+        dispensingRMLines: Array.isArray(bdrm) ? bdrm.map((l) => ({ code: l?.code, dispensed: l?.dispensed, required: l?.required })) : null,
+        dispensingPMLines: Array.isArray(bdpm) ? bdpm.map((l) => ({ code: l?.code, dispensed: l?.dispensed, required: l?.required })) : null,
+      });
+    }
     if (RESERVE_DEBUG && (req.body.bmr_status === 'rm_reserved' || req.body.bpr_status === 'pm_reserved')) {
       console.log('[RESERVE-DEBUG] updateBatch PATCH body (reserve):', {
         production_batch_id: id,
@@ -940,8 +1392,155 @@ async function updateBatch(req, res) {
     }
     applyBatchBody(row, req.body);
     await recomputeBatchVolume(row);
+    const nextPreview = row.get ? row.get({ plain: true }) : row;
+
+    if (prevBmrStatus !== 'cleared' && nextPreview.bmr_status === 'cleared') {
+      const by = Number(nextPreview.bulk_yield);
+      if (!(Number.isFinite(by) && by > 0)) {
+        return res.status(400).json({
+          error: 'Bulk yield quantity (KG) is required before BMR can be cleared from bulk QC.',
+        });
+      }
+    }
+    if (prevBprStatus !== 'packaging' && nextPreview.bpr_status === 'packaging' && nextPreview.fill_batch_accepted) {
+      const fy = Number(nextPreview.fill_yield);
+      if (!(Number.isFinite(fy) && fy > 0)) {
+        return res.status(400).json({
+          error: 'Fill yield (units) is required to approve fill QC and move to packaging.',
+        });
+      }
+    }
+    if (prevBprStatus !== 'fg_ready' && nextPreview.bpr_status === 'fg_ready' && nextPreview.fg_batch_accepted) {
+      const fgy = Number(nextPreview.fg_yield);
+      if (!(Number.isFinite(fgy) && fgy > 0)) {
+        return res.status(400).json({
+          error: 'Packaging / FG yield (units) is required to complete packaging QC and mark FG ready.',
+        });
+      }
+    }
+
     await row.save();
     const nextPlain = row.get ? row.get({ plain: true }) : row;
+
+    // --- Dispensing consumption (delta on dispensed qty) ---
+    // When dispensing_rm/dispensing_pm values change (even via Save Progress),
+    // consume the delta from RM/PM in warehouse_inventory (ML1 → ML2 → WH).
+    //
+    // IMPORTANT: This must run even when bpr_status is already fg_ready. Previously we skipped
+    // the whole block for fg_ready, which meant: (1) saving dispensing on a completed BPR never
+    // moved stock, and (2) a single PATCH that set fg_ready together with first dispensing
+    // amounts skipped consumption entirely (fg_ready path also skips RM/PM when dispensed > 0).
+    // Double consumption is avoided: applyBprFgReadyToInventory only reduces RM/PM when
+    // totalDispensedRm/totalDispensedPm are both <= 0 (dispensing never recorded incrementally).
+    const prevDispensingRm = prevDispensingRmSnapshot;
+    const nextDispensingRm = Array.isArray(nextPlain?.dispensing_rm) ? nextPlain.dispensing_rm : [];
+    const prevDispensingPm = prevDispensingPmSnapshot;
+    const nextDispensingPm = Array.isArray(nextPlain?.dispensing_pm) ? nextPlain.dispensing_pm : [];
+
+    const sumDispensedByCode = (arr, codeKey) => {
+      const m = new Map();
+      for (const line of arr) {
+        const code = (line?.[codeKey] ?? line?.code ?? '').toString().trim();
+        if (!code) continue;
+        const dispensed = Number(line.dispensed ?? 0) || 0;
+        m.set(code, (m.get(code) || 0) + dispensed);
+      }
+      return m;
+    };
+
+    const consumedForBundle = [];
+    const consumeDelta = async (type, prevMap, nextMap, nextLines, prevLines, bundleTagId) => {
+      const codes = new Set([...prevMap.keys(), ...nextMap.keys()]);
+      for (const code of codes) {
+        const prevQty = prevMap.get(code) || 0;
+        const nextQty = nextMap.get(code) || 0;
+        const delta = nextQty - prevQty;
+        const willApply = Number.isFinite(delta) && Math.abs(delta) > 1e-9;
+        console.log(DISPENDING_MU_ERR_TAG, 'consumeDelta: per code', {
+          batchPk: id,
+          type,
+          code,
+          prevQty,
+          nextQty,
+          delta,
+          willApply,
+        });
+        if (!willApply) continue;
+        const sampleLine = pickDispensingLine(nextLines, prevLines, code);
+        if (DISPENSING_TRACE) {
+          console.log('[production][DISPENSING_TRACE] consumeDelta', {
+            type,
+            code,
+            prevQty,
+            nextQty,
+            delta,
+            prevLine: prevLines?.find((l) => String(l?.code || '').trim() === code) ?? null,
+            nextLine: nextLines?.find((l) => String(l?.code || '').trim() === code) ?? null,
+          });
+        }
+        const applied = await applyDispensingDeltaToWarehouseInventory({
+          type,
+          code,
+          delta,
+          sampleLine,
+          batchPlain: nextPlain,
+          dispensingBundleId: bundleTagId || null,
+        });
+        if (applied && delta > 0) {
+          consumedForBundle.push({ type, code, qty: delta });
+        }
+      }
+    };
+
+    const prevRmMap = sumDispensedByCode(prevDispensingRm, 'code');
+    const nextRmMap = sumDispensedByCode(nextDispensingRm, 'code');
+    const prevPmMap = sumDispensedByCode(prevDispensingPm, 'code');
+    const nextPmMap = sumDispensedByCode(nextDispensingPm, 'code');
+
+    const dispensingDeltaThisPatch =
+      dispensingMapsHaveAnyDelta(prevRmMap, nextRmMap) || dispensingMapsHaveAnyDelta(prevPmMap, nextPmMap);
+    const muDispensingBundleTagId = dispensingDeltaThisPatch ? makeMuDispensingBundleId(nextPlain.bmr_no) : null;
+
+    console.log(DISPENDING_MU_ERR_TAG, 'updateBatch: DB state after save — dispensed totals by code', {
+      batchPk: id,
+      bmr_no: nextPlain.bmr_no,
+      bpr_status: nextPlain.bpr_status,
+      bmr_status: nextPlain.bmr_status,
+      prevRm: Object.fromEntries(prevRmMap),
+      nextRm: Object.fromEntries(nextRmMap),
+      prevPm: Object.fromEntries(prevPmMap),
+      nextPm: Object.fromEntries(nextPmMap),
+    });
+
+    if (DISPENSING_TRACE) {
+      const sumArr = (arr) => (arr || []).map((l) => ({ code: l?.code, dispensed: l?.dispensed, required: l?.required, done: l?.done }));
+      console.log('[production][DISPENSING_TRACE] updateBatch dispensing snapshot', {
+        batchId: id,
+        prevBmrStatus: prevPlain?.bmr_status,
+        nextBmrStatus: nextPlain?.bmr_status,
+        prevBprStatus: prevBprStatus,
+        nextBprStatus: nextPlain?.bpr_status,
+        prevDispensingRm: sumArr(prevDispensingRm),
+        nextDispensingRm: sumArr(nextDispensingRm),
+        prevDispensingPm: sumArr(prevDispensingPm),
+        nextDispensingPm: sumArr(nextDispensingPm),
+      });
+    }
+
+    await consumeDelta('RM', prevRmMap, nextRmMap, nextDispensingRm, prevDispensingRm, muDispensingBundleTagId);
+    await consumeDelta('PM', prevPmMap, nextPmMap, nextDispensingPm, prevDispensingPm, muDispensingBundleTagId);
+    console.log(DISPENDING_MU_ERR_TAG, 'updateBatch: dispensing consumeDelta pass finished', {
+      batchPk: id,
+      bmr_no: nextPlain.bmr_no,
+      muDispensingBundleTagId,
+      consumedLines: consumedForBundle.length,
+    });
+
+    if (consumedForBundle.length > 0 && muDispensingBundleTagId) {
+      const peId = await resolvePlanningExtractedIdForBatch(nextPlain);
+      await persistMuDispensingBundleSnapshot(id, muDispensingBundleTagId, consumedForBundle, peId);
+      await row.reload();
+    }
     if (prevBmrStatus !== 'rm_reserved' && nextPlain.bmr_status === 'rm_reserved') {
       if (RESERVE_DEBUG) console.log('[RESERVE-DEBUG] updateBatch: transition to rm_reserved -> applyRmReservedToInventory');
       await applyRmReservedToInventory(row);
@@ -1149,10 +1748,187 @@ async function getBomLinesForBatch(d) {
   return { rmLines, pmLines, source, batchSizeKg: null };
 }
 
+/** Master RM/PM "Quality specifications" keys stored in form_data (RawMaterialForm / PackagingForm). */
+const BULK_QUALITY_FORM_KEYS = [
+  ['assayPurity', 'Assay / Purity %'],
+  ['appearanceSpec', 'Appearance spec'],
+  ['phSpec', 'pH range'],
+  ['moistureLod', 'Moisture / LOD %'],
+  ['heavyMetalsSpec', 'Heavy metals'],
+  ['microbialSpec', 'Microbial'],
+  ['odorColorSpec', 'Odor & color'],
+  ['otherSpecs', 'Other specifications'],
+];
+
+function extractBulkQualityFromFormData(fd) {
+  if (!fd || typeof fd !== 'object') return {};
+  const out = {};
+  for (const [key, label] of BULK_QUALITY_FORM_KEYS) {
+    const v = fd[key];
+    if (v != null && String(v).trim()) out[label] = String(v).trim();
+  }
+  return out;
+}
+
+function flattenBomLines(lines) {
+  if (!Array.isArray(lines)) return [];
+  const out = [];
+  for (const item of lines) {
+    if (item && Array.isArray(item.ingredients)) {
+      for (const ing of item.ingredients) out.push(ing);
+    } else if (item) out.push(item);
+  }
+  return out;
+}
+
+async function buildIngredientBulkSpecsForBom(rmLines, pmLines) {
+  const flatRm = flattenBomLines(rmLines);
+  const flatPm = flattenBomLines(pmLines);
+  const rmIds = new Set();
+  const rmCodes = new Set();
+  for (const line of flatRm) {
+    const id = line.raw_material_id ?? line.rawMaterialId;
+    if (id != null && !Number.isNaN(Number(id))) rmIds.add(Number(id));
+    const code = line.rm_code ?? line.rmCode ?? line.code;
+    if (code != null && String(code).trim()) rmCodes.add(String(code).trim());
+  }
+  const pmIds = new Set();
+  const pmCodes = new Set();
+  for (const line of flatPm) {
+    const id = line.pack_material_id ?? line.packMaterialId;
+    if (id != null && !Number.isNaN(Number(id))) pmIds.add(Number(id));
+    const code = line.pm_code ?? line.pmCode ?? line.code;
+    if (code != null && String(code).trim()) pmCodes.add(String(code).trim());
+  }
+
+  const byRmId = new Map();
+  if (rmIds.size > 0) {
+    const rows = await RawMaterial.findAll({
+      where: { id: { [Op.in]: [...rmIds] } },
+      attributes: ['id', 'code', 'inci', 'name', 'form_data'],
+    });
+    for (const r of rows) {
+      const p = r.get ? r.get({ plain: true }) : r;
+      byRmId.set(p.id, p);
+    }
+  }
+  const rmByCode = new Map();
+  if (rmCodes.size > 0) {
+    const rows = await RawMaterial.findAll({
+      where: { code: { [Op.in]: [...rmCodes] } },
+      attributes: ['id', 'code', 'inci', 'name', 'form_data'],
+    });
+    for (const r of rows) {
+      const p = r.get ? r.get({ plain: true }) : r;
+      rmByCode.set(p.code, p);
+    }
+  }
+
+  const byPmId = new Map();
+  if (pmIds.size > 0) {
+    const rows = await PackMaterial.findAll({
+      where: { id: { [Op.in]: [...pmIds] } },
+      attributes: ['id', 'code', 'description', 'form_data'],
+    });
+    for (const r of rows) {
+      const p = r.get ? r.get({ plain: true }) : r;
+      byPmId.set(p.id, p);
+    }
+  }
+  const pmByCode = new Map();
+  if (pmCodes.size > 0) {
+    const rows = await PackMaterial.findAll({
+      where: { code: { [Op.in]: [...pmCodes] } },
+      attributes: ['id', 'code', 'description', 'form_data'],
+    });
+    for (const r of rows) {
+      const p = r.get ? r.get({ plain: true }) : r;
+      pmByCode.set(p.code, p);
+    }
+  }
+
+  const seenRm = new Set();
+  const seenPm = new Set();
+  const ingredientBulkSpecs = [];
+
+  for (const line of flatRm) {
+    let row = null;
+    const id = line.raw_material_id ?? line.rawMaterialId;
+    if (id != null) row = byRmId.get(Number(id));
+    if (!row) {
+      const c = line.rm_code ?? line.rmCode ?? line.code;
+      if (c) row = rmByCode.get(String(c).trim());
+    }
+    if (!row) continue;
+    const key = `rm:${row.id}`;
+    if (seenRm.has(key)) continue;
+    seenRm.add(key);
+    const fd = row.form_data && typeof row.form_data === 'object' ? row.form_data : {};
+    ingredientBulkSpecs.push({
+      type: 'RM',
+      id: row.id,
+      code: row.code,
+      name: row.name || row.inci || '',
+      inci: row.inci || '',
+      specs: extractBulkQualityFromFormData(fd),
+    });
+  }
+
+  for (const line of flatPm) {
+    let row = null;
+    const id = line.pack_material_id ?? line.packMaterialId;
+    if (id != null) row = byPmId.get(Number(id));
+    if (!row) {
+      const c = line.pm_code ?? line.pmCode ?? line.code;
+      if (c) row = pmByCode.get(String(c).trim());
+    }
+    if (!row) continue;
+    const key = `pm:${row.id}`;
+    if (seenPm.has(key)) continue;
+    seenPm.add(key);
+    const fd = row.form_data && typeof row.form_data === 'object' ? row.form_data : {};
+    ingredientBulkSpecs.push({
+      type: 'PM',
+      id: row.id,
+      code: row.code,
+      name: row.description || '',
+      inci: '',
+      specs: extractBulkQualityFromFormData(fd),
+    });
+  }
+
+  return ingredientBulkSpecs;
+}
+
+async function buildFgProductSpecsForBatch(batchPlain) {
+  let product = null;
+  if (batchPlain.sku) product = await Product.findOne({ where: { product_sku: batchPlain.sku } });
+  if (!product && batchPlain.product_name) {
+    product = await Product.findOne({ where: { product_name: batchPlain.product_name } });
+  }
+  if (!product) return {};
+  const p = product.get ? product.get({ plain: true }) : product;
+  const pairs = [
+    ['pH range', p.ph_range],
+    ['Viscosity (cPs)', p.viscosity_range],
+    ['SPF / PA', p.spf_pa_rating],
+    ['Appearance', p.appearance],
+    ['Odour', p.odour],
+    ['Fill weight', p.fill_weight_spec],
+    ['Stability', p.stability_summary],
+  ];
+  const out = {};
+  for (const [label, v] of pairs) {
+    if (v != null && String(v).trim()) out[label] = String(v).trim();
+  }
+  return out;
+}
+
 /**
  * GET /batches/:id/bom — BOM for this production batch.
  * Prefer batch-specific BOM from planning_batches (when batch was sent from Planning with edited BOM).
  * Fallback: product master BOM from boms table.
+ * Includes qcReference: master bulk specs per RM/PM line + product Specs & Stability for the batch SKU.
  */
 async function getBatchBom(req, res) {
   try {
@@ -1164,9 +1940,19 @@ async function getBatchBom(req, res) {
     if (BOM_DEBUG) console.log('[BOM-DEBUG] GET /batches/:id/bom called with production_batch id=', id, 'bmr_no=', d.bmr_no, 'so_no=', d.so_no);
     const { rmLines, pmLines, source, batchSizeKg } = await getBomLinesForBatch(d);
     if (BOM_DEBUG) console.log('[BOM-DEBUG] GET /batches/:id/bom response: source=', source, 'rmLines=', rmLines.length, 'pmLines=', pmLines.length);
+    const [ingredientBulkSpecs, fgProductSpecs] = await Promise.all([
+      buildIngredientBulkSpecsForBom(rmLines, pmLines),
+      buildFgProductSpecsForBatch(d),
+    ]);
     res.json({
       success: true,
-      data: { rmLines, pmLines, source, batchSizeKg: batchSizeKg ?? undefined },
+      data: {
+        rmLines,
+        pmLines,
+        source,
+        batchSizeKg: batchSizeKg ?? undefined,
+        qcReference: { ingredientBulkSpecs, fgProductSpecs },
+      },
     });
   } catch (err) {
     console.error('getBatchBom error', err);

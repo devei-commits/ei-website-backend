@@ -26,7 +26,7 @@ function daysLeftDisplay(dueDate) {
 function formatRow(row) {
   if (!row) return null;
   const d = row.get ? row.get({ plain: true }) : row;
-    const so = d.salesOrder || {};
+  const so = d.salesOrder || {};
   const prod = d.product || {};
   return {
     id: String(d.id),
@@ -227,7 +227,7 @@ async function syncPlanningExtractedFromSalesOrders() {
         due_date: so.expected_shipment_date || null,
         batch_size_display: batchSizeKg ? `${batchSizeKg} KG` : null,
         batches_required: batchesRequired,
-        batch_count: batchesRequired,
+        batch_count: 0,
         batch_size_kg: batchSizeKg,
         bom_status: bom ? 'Confirmed' : 'Pending',
         bom_confirmed_at: bom ? new Date() : null,
@@ -431,6 +431,22 @@ async function getBomCopyForPlanning(planningExtractedId) {
   if (override && ((Array.isArray(override.rm_lines) && override.rm_lines.length > 0) || (Array.isArray(override.pm_lines) && override.pm_lines.length > 0))) {
     return { rmLines: override.rm_lines || [], pmLines: override.pm_lines || [] };
   }
+
+  // If batch-level BOM edits were saved previously (planning_batches.rm_lines/pm_lines),
+  // reuse an existing batch BOM copy as the template for any newly created batches.
+  // This fixes cases where per-batch swaps/BOM editor changes should flow into "add more batches".
+  const lastExistingBatch = await PlanningBatch.findOne({
+    where: { planning_extracted_id: planningExtractedId },
+    order: [['sequence', 'DESC']],
+    attributes: ['rm_lines', 'pm_lines'],
+  });
+  const lastBatchPlain = lastExistingBatch && lastExistingBatch.get ? lastExistingBatch.get({ plain: true }) : lastExistingBatch;
+  const lastRmLines = Array.isArray(lastBatchPlain?.rm_lines) ? lastBatchPlain.rm_lines : [];
+  const lastPmLines = Array.isArray(lastBatchPlain?.pm_lines) ? lastBatchPlain.pm_lines : [];
+  if (lastRmLines.length > 0 || lastPmLines.length > 0) {
+    return { rmLines: lastRmLines, pmLines: lastPmLines };
+  }
+
   const planRow = await PlanningExtracted.findByPk(planningExtractedId, { attributes: ['product_id'] });
   if (!planRow || planRow.product_id == null) return { rmLines: [], pmLines: [] };
   const bom = await BOM.findOne({ where: { product_id: planRow.product_id }, attributes: ['rm_lines', 'pm_lines'] });
@@ -556,8 +572,13 @@ async function createOrUpdateBatches(req, res) {
       if (existingRow) {
         existingRow.batch_code = batchCode;
         if (sizeKg != null) existingRow.size_kg = sizeKg;
-        existingRow.rm_lines = bomCopy.rmLines;
-        existingRow.pm_lines = bomCopy.pmLines;
+
+        // Preserve per-batch BOM edits.
+        // Only backfill rm_lines/pm_lines from the current BOM copy when the existing row is empty.
+        const hasRm = Array.isArray(existingRow.rm_lines) ? existingRow.rm_lines.length > 0 : false;
+        const hasPm = Array.isArray(existingRow.pm_lines) ? existingRow.pm_lines.length > 0 : false;
+        if (!hasRm) existingRow.rm_lines = bomCopy.rmLines;
+        if (!hasPm) existingRow.pm_lines = bomCopy.pmLines;
         await existingRow.save();
       } else {
         await PlanningBatch.create({
@@ -576,6 +597,7 @@ async function createOrUpdateBatches(req, res) {
       });
     }
     const updated = await PlanningBatch.findAll({ where: { planning_extracted_id: id }, order: [['sequence', 'ASC']] });
+    await planRow.update({ batch_count: updated.length });
     res.json(updated.map((r) => formatBatchRow(r)));
   } catch (err) {
     console.error('createOrUpdateBatches error', err);
@@ -655,6 +677,8 @@ async function addOneBatchFromMaster(req, res) {
       rm_lines: rmLines,
       pm_lines: pmLines,
     });
+    const cnt = await PlanningBatch.count({ where: { planning_extracted_id: id } });
+    await PlanningExtracted.update({ batch_count: cnt }, { where: { id } });
     res.status(201).json(formatBatchRow(batch));
   } catch (err) {
     console.error('addOneBatchFromMaster error', err);
@@ -667,8 +691,10 @@ async function addOneBatchFromMaster(req, res) {
  * Batch code: PE-{id}-rw-01, rw-02, ... Also appends to sent_batch_indices.
  * Returns the new PlanningBatch instance (for production to create BMR-YYYY-NNN-rw-01).
  */
-async function createRworkPlanningBatch(planningExtractedId) {
+async function createRworkPlanningBatch(planningExtractedId, sourcePlanningBatchId = null) {
   const id = planningExtractedId;
+  // Optional: copy BOM from an existing planning batch (so rework inherits per-batch edits/swap).
+  // When not provided, falls back to SO override/product master via getBomCopyForPlanning().
   const planRow = await PlanningExtracted.findByPk(id, { attributes: ['id', 'product_id', 'batch_size_kg'] });
   if (!planRow) return null;
   const defaultSizeKg = Number(planRow.batch_size_kg) || 500;
@@ -687,7 +713,20 @@ async function createRworkPlanningBatch(planningExtractedId) {
   const rwSuffix = String(nextRwNum).padStart(2, '0');
   const batchCode = `PE-${id}-rw-${rwSuffix}`;
 
-  const bomCopy = await getBomCopyForPlanning(id);
+  let bomCopy = null;
+  if (sourcePlanningBatchId != null) {
+    const srcPb = await PlanningBatch.findByPk(sourcePlanningBatchId, { attributes: ['rm_lines', 'pm_lines'] });
+    const srcPlain = srcPb && srcPb.get ? srcPb.get({ plain: true }) : srcPb;
+    const srcRm = Array.isArray(srcPlain?.rm_lines) ? srcPlain.rm_lines : [];
+    const srcPm = Array.isArray(srcPlain?.pm_lines) ? srcPlain.pm_lines : [];
+    // Only use source BOM when it actually has content.
+    if (srcRm.length > 0 || srcPm.length > 0) {
+      bomCopy = { rmLines: srcRm, pmLines: srcPm };
+    }
+  }
+  if (!bomCopy) {
+    bomCopy = await getBomCopyForPlanning(id);
+  }
   const batch = await PlanningBatch.create({
     planning_extracted_id: id,
     sequence: nextSeq,
@@ -698,14 +737,17 @@ async function createRworkPlanningBatch(planningExtractedId) {
   });
 
   const plan = await PlanningExtracted.findByPk(id, { attributes: ['id', 'sent_batch_indices'] });
-  if (!plan) return batch;
-  const sentRaw = plan.get ? plan.get('sent_batch_indices') : plan.sent_batch_indices;
-  const sent = Array.isArray(sentRaw) ? sentRaw : [];
-  const indexToAdd = nextSeq - 1;
-  if (!sent.includes(indexToAdd)) {
-    const nextSent = [...sent, indexToAdd].sort((a, b) => a - b);
-    await plan.update({ sent_batch_indices: nextSent });
+  if (plan) {
+    const sentRaw = plan.get ? plan.get('sent_batch_indices') : plan.sent_batch_indices;
+    const sent = Array.isArray(sentRaw) ? sentRaw : [];
+    const indexToAdd = nextSeq - 1;
+    if (!sent.includes(indexToAdd)) {
+      const nextSent = [...sent, indexToAdd].sort((a, b) => a - b);
+      await plan.update({ sent_batch_indices: nextSent });
+    }
   }
+  const batchCnt = await PlanningBatch.count({ where: { planning_extracted_id: id } });
+  await PlanningExtracted.update({ batch_count: batchCnt }, { where: { id } });
 
   return batch;
 }
@@ -1027,6 +1069,14 @@ async function getItemsInvolved(req, res) {
     for (const [id, agg] of rmAgg) {
       const sih = sihByRm.get(id) ?? 0;
       const surplusShortage = sih - agg.totalRequired;
+      const plannedQty = Number(
+        await ReservedBatchItem.sum('quantity_reserved', {
+          where: {
+            raw_material_id: id,
+            production_batch_id: { [Op.ne]: null },
+          },
+        })
+      ) || 0;
       const info = rmInfo.get(id) || {};
       out.push({
         type: 'RM',
@@ -1047,6 +1097,7 @@ async function getItemsInvolved(req, res) {
         batchNumber: batchNumberByRm.get(id) ?? null,
         expiryDate: expiryByRm.get(id) ?? null,
         reserved: reservedByRm.get(id) ?? 0,
+        plannedQty,
         inTransit: inTransitByRm.get(id) ?? 0,
         reorderPt: reorderPtByRm.get(id) ?? 0,
         avgMo: avgMoByRm.get(id) ?? 0,
@@ -1056,6 +1107,14 @@ async function getItemsInvolved(req, res) {
     for (const [id, agg] of pmAgg) {
       const sih = sihByPm.get(id) ?? 0;
       const surplusShortage = sih - agg.totalRequired;
+      const plannedQty = Number(
+        await ReservedBatchItem.sum('quantity_reserved', {
+          where: {
+            pack_material_id: id,
+            production_batch_id: { [Op.ne]: null },
+          },
+        })
+      ) || 0;
       const info = pmInfo.get(id) || {};
       out.push({
         type: 'PM',
@@ -1076,6 +1135,7 @@ async function getItemsInvolved(req, res) {
         batchNumber: batchNumberByPm.get(id) ?? null,
         expiryDate: expiryByPm.get(id) ?? null,
         reserved: reservedByPm.get(id) ?? 0,
+        plannedQty,
         inTransit: inTransitByPm.get(id) ?? 0,
         reorderPt: reorderPtByPm.get(id) ?? 0,
         avgMo: avgMoByPm.get(id) ?? 0,

@@ -132,6 +132,14 @@ ProductionBatch.init(
     dispensing_rm: { type: DataTypes.JSON, allowNull: true },
     dispensing_pm: { type: DataTypes.JSON, allowNull: true },
 
+    /** Latest MU dispensing bundle id (from last PATCH that consumed RM/PM from ML1/ML2/WH). */
+    mu_dispensing_bundle_id: { type: DataTypes.STRING(80), allowNull: true },
+    /**
+     * Audit trail: each entry { bundleId, at, procurementRequests: [{id, planningBatchId, status}], rm: [{code, qty}], pm: [{code, qty}] }
+     * — RM + PM lines consumed in the same request share one bundleId; PRs = all procurement_requests for the plan (PE).
+     */
+    mu_dispensing_bundles: { type: DataTypes.JSON, allowNull: true },
+
     bulk_yield: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
     fill_yield: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
     fg_yield: { type: DataTypes.DECIMAL(10, 2), allowNull: true },

@@ -83,7 +83,42 @@ async function listProcurementQuotations(req, res) {
         { model: VendorClient, as: 'vendor', attributes: ['id', 'name', 'entity_code', 'category', 'payment_terms', 'rating'], required: false },
       ],
     });
-    res.json(rows.map((r) => formatQuotation(r)));
+    const formatted = rows.map((r) => formatQuotation(r));
+    const shouldDebug = process.env.NODE_ENV !== 'production';
+    if (shouldDebug) {
+      try {
+        // eslint-disable-next-line no-console
+        console.log('[procurementQuotations:list] count=', formatted.length);
+        formatted.slice(0, 25).forEach((q) => {
+          // eslint-disable-next-line no-console
+          console.log('[procurementQuotations:list] quotation', {
+            id: q.id,
+            procurementRequestId: q.procurementRequestId,
+            vendorId: q.vendorId,
+            vendorName: q.vendorName,
+            status: q.status,
+            itemsCount: Array.isArray(q.items) ? q.items.length : 0,
+          });
+          const items = Array.isArray(q.items) ? q.items : [];
+          items.slice(0, 30).forEach((it, idx) => {
+            // eslint-disable-next-line no-console
+            console.log('[procurementQuotations:list] item', {
+              idx,
+              itemId: it.itemId,
+              name: it.name,
+              raw_material_id: it.raw_material_id ?? null,
+              pack_material_id: it.pack_material_id ?? null,
+              orderQty: it.orderQty,
+              pricePerUnit: it.pricePerUnit,
+            });
+          });
+        });
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('[procurementQuotations:list] debug log failed', e);
+      }
+    }
+    res.json(formatted);
   } catch (err) {
     console.error('listProcurementQuotations error', err);
     res.status(500).json({ error: 'Failed to list procurement quotations' });
@@ -226,6 +261,33 @@ async function createProcurementQuotation(req, res) {
       notes: body.notes ?? null,
       status: body.status ?? 'pending',
     });
+    const shouldDebug = process.env.NODE_ENV !== 'production';
+    if (shouldDebug) {
+      try {
+        // eslint-disable-next-line no-console
+        console.log('[procurementQuotations:create] persisted', {
+          id: row.id,
+          vendorId: vId,
+          procurementRequestId: prId,
+          itemsCount: Array.isArray(items) ? items.length : 0,
+        });
+        (Array.isArray(items) ? items : []).slice(0, 50).forEach((it, idx) => {
+          // eslint-disable-next-line no-console
+          console.log('[procurementQuotations:create] item', {
+            idx,
+            itemId: it.itemId,
+            name: it.name,
+            raw_material_id: it.raw_material_id ?? null,
+            pack_material_id: it.pack_material_id ?? null,
+            orderQty: it.orderQty,
+            pricePerUnit: it.pricePerUnit,
+          });
+        });
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('[procurementQuotations:create] debug log failed', e);
+      }
+    }
     const created = await ProcurementQuotation.findByPk(row.id, {
       include: [
         { model: ProcurementRequest, as: 'procurementRequest', attributes: ['id', 'priority', 'required_by_date', 'status'], required: false },

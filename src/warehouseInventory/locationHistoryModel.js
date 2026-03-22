@@ -46,6 +46,8 @@ WarehouseInventoryLocationHistory.init(
     reserved_after: { type: DataTypes.DECIMAL(14, 4), allowNull: true },
     production_batch_id: { type: DataTypes.INTEGER, allowNull: true },
     batch_no: { type: DataTypes.STRING(50), allowNull: true },
+    /** Same id on all RM/PM history rows for one dispensing PATCH — ties MU consumption to production_batches.mu_dispensing_bundles. */
+    dispensing_bundle_id: { type: DataTypes.STRING(80), allowNull: true },
   },
   {
     sequelize: db,

@@ -8,6 +8,7 @@ const { Product } = require('../products/models');
 const { Order } = require('../orders/models');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
+const WarehouseInventory = require('../warehouseInventory/models');
 
 const INCLUDE_FULL = [
   {
@@ -195,7 +196,12 @@ async function syncOrderSplitsFromProduction(orderRow) {
       return (itemSku && pbSku && itemSku === pbSku) || (itemProductName && pbName && (itemProductName === pbName || itemProductName.includes(pbName) || pbName.includes(itemProductName)));
     });
 
+    // Used to avoid creating a 2nd split for the same production batch.
     const existingSplitBatchIds = new Set((item.batchSplits || []).map((s) => s.production_batch_id).filter(Boolean));
+    // When SO was created before Planning created production batches, we create placeholder splits
+    // with `production_batch_id = null`. Reuse those placeholders when the real batches arrive
+    // so the split count doesn't inflate.
+    const placeholderSplits = (item.batchSplits || []).filter((s) => !s.production_batch_id);
 
     for (const pb of matchingBatches) {
       const plain = pb.get ? pb.get({ plain: true }) : pb;
@@ -205,16 +211,33 @@ async function syncOrderSplitsFromProduction(orderRow) {
       const producedQty = Math.max(0, parseInt(plain.batch_size || plain.order_qty || 0, 10) || 0);
       const isFgReady = plain.bpr_status === 'fg_ready';
       const fgQty = isFgReady ? Math.min(plannedQty, producedQty) : 0;
-      await FulfillmentBatchSplit.create({
-        fulfillment_order_item_id: item.id,
-        fulfillment_order_id: orderId,
-        production_batch_id: plain.id,
-        bmr_no: plain.bmr_no || '',
-        bpr_no: plain.bpr_no || '',
-        planned_qty: plannedQty,
-        fg_qty: fgQty,
-        ff_status: isFgReady ? 'fg_ready' : 'fg_pending',
-      });
+
+      // Prefer updating an existing placeholder split (production_batch_id is null) to avoid duplicates.
+      const placeholder = placeholderSplits.shift();
+      if (placeholder && placeholder.id != null) {
+        await FulfillmentBatchSplit.update(
+          {
+            production_batch_id: plain.id,
+            bmr_no: plain.bmr_no || '',
+            bpr_no: plain.bpr_no || '',
+            planned_qty: plannedQty,
+            fg_qty: fgQty,
+            ff_status: isFgReady ? 'fg_ready' : 'fg_pending',
+          },
+          { where: { id: placeholder.id } }
+        );
+      } else {
+        await FulfillmentBatchSplit.create({
+          fulfillment_order_item_id: item.id,
+          fulfillment_order_id: orderId,
+          production_batch_id: plain.id,
+          bmr_no: plain.bmr_no || '',
+          bpr_no: plain.bpr_no || '',
+          planned_qty: plannedQty,
+          fg_qty: fgQty,
+          ff_status: isFgReady ? 'fg_ready' : 'fg_pending',
+        });
+      }
       existingSplitBatchIds.add(plain.id);
     }
   }
@@ -377,7 +400,7 @@ async function createOrder(req, res) {
             due_date: dueDate || null,
             batch_size_display: batchSizeKg ? `${batchSizeKg} KG` : null,
             batches_required: batchesRequired,
-            batch_count: batchesRequired,
+            batch_count: 0,
             batch_size_kg: batchSizeKg,
             bom_status: bom ? 'Confirmed' : 'Pending',
             bom_confirmed_at: bom ? new Date() : null,
@@ -428,37 +451,20 @@ async function createOrder(req, res) {
           let bmrNo = split.bmrNo || null;
           let bprNo = split.bprNo || null;
 
-          const year = new Date().getFullYear();
+          // IMPORTANT: Fulfillment SO creation MUST NOT auto-generate new BMR/BPR numbers.
+          // BMR/BPR should only be created later by Planning when the user confirms BOM per batch.
+          // Here we only link to *already existing* production batches when the request includes bmrNo/bprNo.
+          let pb = null;
           if (bmrNo) {
-            const pb = await ProductionBatch.findOne({ where: { bmr_no: bmrNo } });
-            if (pb) {
-              productionBatchId = pb.id;
-              if (!bprNo) bprNo = pb.bpr_no;
-            }
+            pb = await ProductionBatch.findOne({ where: { bmr_no: bmrNo } });
           }
-          if (!bmrNo) {
-            const nextSeq = await getNextBMRBPRSequence(year);
-            bmrNo = nextSeq.bmrNo;
-            bprNo = nextSeq.bprNo;
+          if (!pb && bprNo) {
+            pb = await ProductionBatch.findOne({ where: { bpr_no: bprNo } });
           }
-
-          if (!productionBatchId) {
-            const pb = await ProductionBatch.create({
-              bmr_no: bmrNo,
-              bpr_no: bprNo,
-              product_name: item.productName || 'Unknown Product',
-              sku: item.sku || soNo,
-              so_no: soNo,
-              order_qty: item.orderedQty || 0,
-              batch_size: split.plannedQty || item.orderedQty || 0,
-              batch_no: `B-${String(splitCounter).padStart(2, '0')}`,
-              batch_index: splitCounter,
-              total_batches: totalSplits,
-              bmr_status: 'draft',
-              bpr_status: 'draft',
-              due_date: dueDate || null,
-            });
+          if (pb) {
             productionBatchId = pb.id;
+            bmrNo = pb.bmr_no;
+            bprNo = pb.bpr_no;
           }
 
           await FulfillmentBatchSplit.create({
@@ -484,7 +490,9 @@ async function createOrder(req, res) {
             const prod = await Product.findOne({ where: { product_name: item.productName } });
             if (prod) productId = prod.product_id;
           }
-          if (productId && plannedQty > 0) {
+          // Only reserve if we are linked to an existing production batch.
+          // When BMR/BPR are not created yet (expected), reservation happens later in production flow.
+          if (productionBatchId && productId && plannedQty > 0) {
             const bom = await BOM.findOne({ where: { product_id: productId } });
             if (bom) {
               const rmLines = Array.isArray(bom.rm_lines) ? bom.rm_lines : [];
@@ -1073,6 +1081,424 @@ async function listInvoices(req, res) {
   }
 }
 
+/**
+ * GET /api/v1/fulfillment/so-planning-availability?so_no=EI-SO-YYYY-XXX
+ *
+ * Returns per-product planning batch availability (RM/PM) based on current
+ * warehouse inventory (available = stock_in_hand - reserved), plus for each planning
+ * batch: needed vs already requested (reserved_batch_items) totals.
+ */
+async function getSoPlanningAvailability(req, res) {
+  try {
+    const soNo = String(req.query.so_no || '').trim();
+    if (!soNo) return res.status(400).json({ error: 'so_no is required' });
+    console.log('[FULFILLMENT-AVAIL] START', { soNo });
+
+    const PlanningExtracted = require('../planningExtracted/models');
+    const PlanningBatch = require('../planningExtracted/planningBatchModel');
+    const { ProductionBatch: ProductionBatchModel } = require('../production/models');
+    const { Product: ProductModel } = require('../products/models');
+
+    const salesOrder = await SalesOrder.findOne({
+      where: { order_id: soNo },
+      attributes: ['id', 'order_id'],
+    });
+    if (!salesOrder) {
+      console.log('[FULFILLMENT-AVAIL] NO_SALES_ORDER_MATCH', { soNo });
+      return res.json({ success: true, soNo, items: [] });
+    }
+    console.log('[FULFILLMENT-AVAIL] SALES_ORDER_MATCH', { soNo, salesOrderId: salesOrder.id, orderId: salesOrder.order_id });
+
+    const planningRows = await PlanningExtracted.findAll({
+      where: { sales_order_id: salesOrder.id },
+      attributes: ['id', 'batch_count', 'order_qty_display', 'sent_batch_indices'],
+      include: [
+        { model: ProductModel, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'product_sku'] },
+      ],
+    });
+    console.log('[FULFILLMENT-AVAIL] PLANNING_ROWS', {
+      soNo,
+      planningRowCount: planningRows.length,
+      planningRowIds: planningRows.map((r) => (r.get ? r.get('id') : r.id)),
+    });
+
+    const items = [];
+
+    for (const plan of planningRows) {
+      const planPlain = plan.get ? plan.get({ plain: true }) : plan;
+      const planId = planPlain.id;
+      const totalBatches = Number(planPlain.batch_count ?? 0) || 0;
+      const sentIndices = Array.isArray(planPlain.sent_batch_indices) ? planPlain.sent_batch_indices : [];
+
+      const planningBatches = await PlanningBatch.findAll({
+        where: { planning_extracted_id: planId },
+        order: [['sequence', 'ASC']],
+        attributes: ['id', 'sequence', 'size_kg', 'rm_lines', 'pm_lines', 'batch_code'],
+      });
+      console.log('[FULFILLMENT-AVAIL] PLAN_BATCHES', {
+        soNo,
+        planningExtractedId: planId,
+        totalBatchesConfigured: totalBatches,
+        planningBatchCount: planningBatches.length,
+        sentIndices,
+      });
+
+      const effectiveTotalBatches = totalBatches > 0 ? totalBatches : planningBatches.length;
+      const sentCount = planningBatches.filter((b) => sentIndices.includes((b.sequence ?? 1) - 1)).length;
+
+      // Collect required RM/PM identifiers across planning batches for this PI.
+      // Prefer explicit IDs when present (raw_material_id / pack_material_id), else fall back to codes.
+      const requiredRmIds = new Set();
+      const requiredPmIds = new Set();
+      const requiredRmCodes = new Set();
+      const requiredPmCodes = new Set();
+      for (const b of planningBatches) {
+        const plain = b.get ? b.get({ plain: true }) : b;
+        const rmLines = Array.isArray(plain.rm_lines) ? plain.rm_lines : [];
+        const pmLines = Array.isArray(plain.pm_lines) ? plain.pm_lines : [];
+        for (const line of rmLines) {
+          const id = line.raw_material_id ?? line.rawMaterialId;
+          if (id != null) {
+            const n = Number(id);
+            if (!Number.isNaN(n)) requiredRmIds.add(n);
+          } else {
+            const code = line.rm_code || line.rmCode || line.code;
+            if (code) requiredRmCodes.add(code);
+          }
+        }
+        for (const line of pmLines) {
+          const id = line.pack_material_id ?? line.packMaterialId;
+          if (id != null) {
+            const n = Number(id);
+            if (!Number.isNaN(n)) requiredPmIds.add(n);
+          } else {
+            const code = line.pm_code || line.pmCode || line.code;
+            if (code) requiredPmCodes.add(code);
+          }
+        }
+      }
+
+      const rmListById = requiredRmIds.size
+        ? await RawMaterial.findAll({ where: { id: { [Op.in]: [...requiredRmIds] } }, attributes: ['id', 'code'] })
+        : [];
+      const rmListByCode = requiredRmCodes.size
+        ? await RawMaterial.findAll({ where: { code: { [Op.in]: [...requiredRmCodes] } }, attributes: ['id', 'code'] })
+        : [];
+      const rmList = [...rmListById, ...rmListByCode].filter((v, i, arr) => arr.findIndex((x) => x.id === v.id) === i);
+
+      const pmListById = requiredPmIds.size
+        ? await PackMaterial.findAll({ where: { id: { [Op.in]: [...requiredPmIds] } }, attributes: ['id', 'code'] })
+        : [];
+      const pmListByCode = requiredPmCodes.size
+        ? await PackMaterial.findAll({ where: { code: { [Op.in]: [...requiredPmCodes] } }, attributes: ['id', 'code'] })
+        : [];
+      const pmList = [...pmListById, ...pmListByCode].filter((v, i, arr) => arr.findIndex((x) => x.id === v.id) === i);
+      console.log('[FULFILLMENT-AVAIL] REQUIRED_ITEMS', {
+        soNo,
+        planningExtractedId: planId,
+        requiredRmIds: [...requiredRmIds],
+        requiredRmCodes: [...requiredRmCodes],
+        resolvedRmIds: rmList.map((r) => (r.get ? r.get('id') : r.id)),
+        requiredPmIds: [...requiredPmIds],
+        requiredPmCodes: [...requiredPmCodes],
+        resolvedPmIds: pmList.map((p) => (p.get ? p.get('id') : p.id)),
+      });
+
+      const rmCodeToId = new Map(rmList.map((r) => {
+        const d = r.get ? r.get({ plain: true }) : r;
+        return [d.code, d.id];
+      }));
+      const pmCodeToId = new Map(pmList.map((p) => {
+        const d = p.get ? p.get({ plain: true }) : p;
+        return [d.code, d.id];
+      }));
+
+      // Fetch current warehouse availability for these RM/PM codes.
+      const rmIds = rmList.map((r) => (r.get ? r.get({ plain: true }).id : r.id));
+      const pmIds = pmList.map((p) => (p.get ? p.get({ plain: true }).id : p.id));
+
+      const rmInvRows = rmIds.length
+        ? await WarehouseInventory.findAll({ where: { item_type: 'RM', raw_material_id: { [Op.in]: rmIds } }, attributes: ['raw_material_id', 'stock_in_hand', 'reserved'] })
+        : [];
+      const pmInvRows = pmIds.length
+        ? await WarehouseInventory.findAll({ where: { item_type: 'PM', pack_material_id: { [Op.in]: pmIds } }, attributes: ['pack_material_id', 'stock_in_hand', 'reserved'] })
+        : [];
+
+      const rmAvailableById = {};
+      rmInvRows.forEach((r) => {
+        const d = r.get ? r.get({ plain: true }) : r;
+        const avail = Number(d.stock_in_hand ?? 0) - Number(d.reserved ?? 0);
+        rmAvailableById[d.raw_material_id] = Math.max(0, avail);
+      });
+      const pmAvailableById = {};
+      pmInvRows.forEach((r) => {
+        const d = r.get ? r.get({ plain: true }) : r;
+        const avail = Number(d.stock_in_hand ?? 0) - Number(d.reserved ?? 0);
+        pmAvailableById[d.pack_material_id] = Math.max(0, avail);
+      });
+      console.log('[FULFILLMENT-AVAIL] INVENTORY_AVAILABLE', {
+        soNo,
+        planningExtractedId: planId,
+        rmAvailableById,
+        pmAvailableById,
+      });
+
+      // For each planning batch: compute RM/PM required totals + for simulation per-code availability.
+      const batchRequired = new Map(); // planningBatchId -> { rmReqById, rmNeededTotal, pmReqById, pmNeededTotal }
+      const batchNeededTotals = new Map(); // planningBatchId -> { rmNeededTotal, pmNeededTotal }
+      let rmLineTotalCount = 0;
+      let rmLineAvailableCount = 0;
+      let pmLineTotalCount = 0;
+      let pmLineAvailableCount = 0;
+
+      for (const b of planningBatches) {
+        const plain = b.get ? b.get({ plain: true }) : b;
+        const planningBatchId = plain.id;
+        const sizeKg = plain.size_kg != null ? Number(plain.size_kg) : 0;
+
+        const rmLines = Array.isArray(plain.rm_lines) ? plain.rm_lines : [];
+        const pmLines = Array.isArray(plain.pm_lines) ? plain.pm_lines : [];
+
+        const rmReqById = {};
+        let rmNeededTotal = 0;
+        for (const line of rmLines) {
+          let rid = line.raw_material_id ?? line.rawMaterialId;
+          if (rid == null) {
+            const code = line.rm_code || line.rmCode || line.code;
+            if (!code) continue;
+            rid = rmCodeToId.get(code);
+          }
+          const ridNum = rid != null ? Number(rid) : null;
+          if (ridNum == null || Number.isNaN(ridNum)) continue;
+          let qtyKg = 0;
+          const pct = Number(line.pct_w_w ?? line.pct ?? 0);
+          if (Number.isFinite(pct) && pct > 0 && sizeKg > 0) {
+            qtyKg = (sizeKg * pct) / 100;
+          } else if (line.quantity != null) {
+            // When saved from SO-level override, planning_bom_override may store precomputed quantities.
+            qtyKg = Number(line.quantity ?? 0) || 0;
+          }
+          if (qtyKg <= 0) continue;
+          rmReqById[ridNum] = (rmReqById[ridNum] ?? 0) + qtyKg;
+          rmNeededTotal += qtyKg;
+          rmLineTotalCount += 1;
+          if (Number(rmAvailableById[ridNum] ?? 0) >= qtyKg) rmLineAvailableCount += 1;
+        }
+
+        const pmReqById = {};
+        let pmNeededTotal = 0;
+        const batchSizeUnits = Math.round(sizeKg) || 0;
+        for (const line of pmLines) {
+          let pid = line.pack_material_id ?? line.packMaterialId;
+          if (pid == null) {
+            const code = line.pm_code || line.pmCode || line.code;
+            if (!code) continue;
+            pid = pmCodeToId.get(code);
+          }
+          const pidNum = pid != null ? Number(pid) : null;
+          if (pidNum == null || Number.isNaN(pidNum)) continue;
+          let qtyUnits = 0;
+          if (line.qty_per_unit != null) {
+            const qtyPerUnit = Number(line.qty_per_unit);
+            if (Number.isFinite(qtyPerUnit) && qtyPerUnit > 0 && batchSizeUnits > 0) {
+              qtyUnits = qtyPerUnit * batchSizeUnits;
+            }
+          } else if (line.quantity != null) {
+            qtyUnits = Number(line.quantity ?? 0) || 0;
+          } else if (line.value != null) {
+            // Some legacy payloads store "value" as qty_per_unit.
+            const qtyPerUnit = Number(line.value ?? 0);
+            if (Number.isFinite(qtyPerUnit) && qtyPerUnit > 0 && batchSizeUnits > 0) {
+              qtyUnits = qtyPerUnit * batchSizeUnits;
+            }
+          }
+          if (qtyUnits <= 0) continue;
+          pmReqById[pidNum] = (pmReqById[pidNum] ?? 0) + qtyUnits;
+          pmNeededTotal += qtyUnits;
+          pmLineTotalCount += 1;
+          if (Number(pmAvailableById[pidNum] ?? 0) >= qtyUnits) pmLineAvailableCount += 1;
+        }
+
+        batchRequired.set(planningBatchId, { rmReqById, rmNeededTotal, pmReqById, pmNeededTotal });
+        batchNeededTotals.set(planningBatchId, { rmNeededTotal, pmNeededTotal });
+      }
+
+      // Map planning_batch_id -> production_batch_id (for reserved requested).
+      const planningBatchIds = planningBatches.map((b) => (b.get ? b.get({ plain: true }).id : b.id));
+      const prodBatches = planningBatchIds.length
+        ? await ProductionBatchModel.findAll({
+          where: { planning_batch_id: { [Op.in]: planningBatchIds } },
+          attributes: ['id', 'planning_batch_id', 'bmr_status', 'bpr_status'],
+        })
+        : [];
+      const prodByPlanningId = {};
+      prodBatches.forEach((pb) => {
+        const d = pb.get ? pb.get({ plain: true }) : pb;
+        prodByPlanningId[d.planning_batch_id] = d.id;
+      });
+
+      const prodIds = prodBatches.map((pb) => (pb.get ? pb.get({ plain: true }).id : pb.id));
+      const reservedRows = prodIds.length
+        ? await ReservedBatchItem.findAll({
+          where: { production_batch_id: { [Op.in]: prodIds } },
+          attributes: ['production_batch_id', 'raw_material_id', 'pack_material_id', 'quantity_reserved'],
+        })
+        : [];
+
+      const reservedRMByProductionId = {};
+      const reservedPMByProductionId = {};
+      reservedRows.forEach((r) => {
+        const d = r.get ? r.get({ plain: true }) : r;
+        const qty = Number(d.quantity_reserved ?? 0) || 0;
+        const pid = d.production_batch_id;
+        if (d.raw_material_id != null) reservedRMByProductionId[pid] = (reservedRMByProductionId[pid] ?? 0) + qty;
+        if (d.pack_material_id != null) reservedPMByProductionId[pid] = (reservedPMByProductionId[pid] ?? 0) + qty;
+      });
+
+      // Simulate how many batches can be started with current warehouse availability.
+      const rmAvailableSim = { ...rmAvailableById };
+      let rmStartableCount = 0;
+      const rmStartableByPlanningId = {};
+
+      const pmAvailableSim = { ...pmAvailableById };
+      let pmStartableCount = 0;
+      const pmStartableByPlanningId = {};
+
+      for (const b of planningBatches) {
+        const plain = b.get ? b.get({ plain: true }) : b;
+        const planningBatchId = plain.id;
+        const { rmReqById, rmNeededTotal, pmReqById, pmNeededTotal } = batchRequired.get(planningBatchId) || {
+          rmReqById: {}, rmNeededTotal: 0, pmReqById: {}, pmNeededTotal: 0,
+        };
+
+        // RM simulation
+        const rmHasRequirements = Object.keys(rmReqById).length > 0 && rmNeededTotal > 0;
+        const rmOk = rmHasRequirements && Object.entries(rmReqById).every(([ridStr, reqQty]) => {
+          const rid = Number(ridStr);
+          return Number(reqQty ?? 0) <= Number(rmAvailableSim[rid] ?? 0);
+        });
+        if (rmOk) {
+          rmStartableCount += 1;
+          rmStartableByPlanningId[planningBatchId] = true;
+          for (const [ridStr, reqQty] of Object.entries(rmReqById)) {
+            const rid = Number(ridStr);
+            rmAvailableSim[rid] = Number(rmAvailableSim[rid] ?? 0) - Number(reqQty ?? 0);
+          }
+        } else {
+          rmStartableByPlanningId[planningBatchId] = false;
+        }
+
+        // PM simulation
+        const pmHasRequirements = Object.keys(pmReqById).length > 0 && pmNeededTotal > 0;
+        const pmOk = pmHasRequirements && Object.entries(pmReqById).every(([pidStr, reqQty]) => {
+          const pid = Number(pidStr);
+          return Number(reqQty ?? 0) <= Number(pmAvailableSim[pid] ?? 0);
+        });
+        if (pmOk) {
+          pmStartableCount += 1;
+          pmStartableByPlanningId[planningBatchId] = true;
+          for (const [pidStr, reqQty] of Object.entries(pmReqById)) {
+            const pid = Number(pidStr);
+            pmAvailableSim[pid] = Number(pmAvailableSim[pid] ?? 0) - Number(reqQty ?? 0);
+          }
+        } else {
+          pmStartableByPlanningId[planningBatchId] = false;
+        }
+      }
+
+      // Started counts = batches that already have reserved/requested RM/PM via production.
+      let rmStartedCount = 0;
+      let pmStartedCount = 0;
+      const batchRows = planningBatches.map((b) => {
+        const plain = b.get ? b.get({ plain: true }) : b;
+        const planningBatchId = plain.id;
+        const batchNo = Number(plain.sequence ?? 1);
+        const sent = sentIndices.includes(batchNo - 1);
+
+        const needed = batchNeededTotals.get(planningBatchId) || { rmNeededTotal: 0, pmNeededTotal: 0 };
+        const prodId = prodByPlanningId[planningBatchId] ?? null;
+        const rmRequested = prodId != null ? Number(reservedRMByProductionId[prodId] ?? 0) : 0;
+        const pmRequested = prodId != null ? Number(reservedPMByProductionId[prodId] ?? 0) : 0;
+
+        if (rmRequested > 0) rmStartedCount += 1;
+        if (pmRequested > 0) pmStartedCount += 1;
+
+        return {
+          sequence: batchNo,
+          sent,
+          rmNeededTotalKg: needed.rmNeededTotal,
+          rmRequestedTotalKg: rmRequested,
+          rmRemainingTotalKg: Math.max(0, needed.rmNeededTotal - rmRequested),
+          pmNeededTotalUnits: needed.pmNeededTotal,
+          pmRequestedTotalUnits: pmRequested,
+          pmRemainingTotalUnits: Math.max(0, needed.pmNeededTotal - pmRequested),
+          rmStartable: !!rmStartableByPlanningId[planningBatchId],
+          pmStartable: !!pmStartableByPlanningId[planningBatchId],
+        };
+      });
+
+      const product = planPlain.product || {};
+      console.log('[FULFILLMENT-AVAIL] PLAN_RESULT', {
+        soNo,
+        planningExtractedId: planId,
+        productName: product.product_name || '',
+        sku: product.product_sku || product.product_code || '',
+        effectiveTotalBatches,
+        sentCount,
+        rmStartableCount,
+        rmStartedCount,
+        pmStartableCount,
+        pmStartedCount,
+        rmLineAvailableCount,
+        rmLineTotalCount,
+        pmLineAvailableCount,
+        pmLineTotalCount,
+        batchRows: batchRows.map((b) => ({
+          sequence: b.sequence,
+          sent: b.sent,
+          rmStartable: b.rmStartable,
+          pmStartable: b.pmStartable,
+          rmNeededTotalKg: b.rmNeededTotalKg,
+          rmRequestedTotalKg: b.rmRequestedTotalKg,
+          pmNeededTotalUnits: b.pmNeededTotalUnits,
+          pmRequestedTotalUnits: b.pmRequestedTotalUnits,
+        })),
+      });
+      items.push({
+        productName: product.product_name || '',
+        sku: product.product_sku || product.product_code || '',
+        totalBatches: effectiveTotalBatches,
+        sentCount,
+        rmStartableCount,
+        rmStartedCount,
+        pmStartableCount,
+        pmStartedCount,
+        rmLineAvailableCount,
+        rmLineTotalCount,
+        pmLineAvailableCount,
+        pmLineTotalCount,
+        batches: batchRows,
+      });
+    }
+
+    console.log('[FULFILLMENT-AVAIL] END', {
+      soNo,
+      itemCount: items.length,
+      items: items.map((i) => ({
+        productName: i.productName,
+        sku: i.sku,
+        totalBatches: i.totalBatches,
+        rmStartableCount: i.rmStartableCount,
+        pmStartableCount: i.pmStartableCount,
+      })),
+    });
+    res.json({ success: true, soNo, items });
+  } catch (err) {
+    console.error('getSoPlanningAvailability error:', err);
+    res.status(500).json({ error: 'Failed to fetch so planning availability' });
+  }
+}
+
 module.exports = {
   listOrders,
   getOrderById,
@@ -1091,4 +1517,5 @@ module.exports = {
   getNextInvoiceNo,
   createInvoice,
   listInvoices,
+  getSoPlanningAvailability,
 };

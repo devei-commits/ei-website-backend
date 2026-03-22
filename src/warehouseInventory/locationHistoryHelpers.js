@@ -18,6 +18,9 @@ async function logLocationMovement({
   actionType,
   sourceGrnId,
   sourceMrnId,
+  productionBatchId,
+  batchNo,
+  dispensingBundleId,
 }) {
   if (!warehouseInventoryId || !itemType) return null;
 
@@ -36,6 +39,9 @@ async function logLocationMovement({
       action_type: actionType || null,
       source_grn_id: sourceGrnId ?? null,
       source_mrn_id: sourceMrnId ?? null,
+      production_batch_id: productionBatchId ?? null,
+      batch_no: batchNo ?? null,
+      dispensing_bundle_id: dispensingBundleId ?? null,
     });
     return row;
   } catch (err) {

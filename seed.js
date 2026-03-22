@@ -131,7 +131,7 @@ async function seed() {
        END
        $$;`,
       { raw: true }
-    ).catch(() => {});
+    ).catch(() => { });
 
     // Ensure doctor_id in appointments is string-compatible (for legacy codes like DOC-SAR-101)
     await db.query(
@@ -145,6 +145,21 @@ async function seed() {
     await db.query(
       `ALTER TABLE production_batches
        ADD COLUMN IF NOT EXISTS planning_batch_id INTEGER`,
+      { raw: true }
+    ).catch(() => { });
+    await db.query(
+      `ALTER TABLE production_batches
+       ADD COLUMN IF NOT EXISTS mu_dispensing_bundle_id VARCHAR(80)`,
+      { raw: true }
+    ).catch(() => { });
+    await db.query(
+      `ALTER TABLE production_batches
+       ADD COLUMN IF NOT EXISTS mu_dispensing_bundles JSONB`,
+      { raw: true }
+    ).catch(() => { });
+    await db.query(
+      `ALTER TABLE warehouse_inventory_location_history
+       ADD COLUMN IF NOT EXISTS dispensing_bundle_id VARCHAR(80)`,
       { raw: true }
     ).catch(() => { });
 
@@ -747,6 +762,29 @@ async function seed() {
       { code: 'EI-RM-SILI-002', name: 'Amodimethicone', inci: 'Amodimethicone', category: 'SILICONE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 920, gst: 18, shelf: '24M', specific_gravity: 0.98, status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
       { code: 'EI-RM-ACT-011', name: 'Hydrolyzed Keratin', inci: 'Hydrolyzed Keratin', category: 'ACTIVE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 1200, gst: 12, shelf: '18M', specific_gravity: 1.0, status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
     ]);
+
+    // Bulk quality specs (form_data) for BMR Bulk QC reference panel + PM master — keys match production.controller BULK_QUALITY_FORM_KEYS
+    const seedRmBulkForm = [
+      ['EI-RM-BASE-001', { appearanceSpec: 'Clear, colourless liquid', phSpec: '6.0-7.5', microbialSpec: 'TVC NMT 100 CFU/ml', otherSpecs: 'Purified / WFI-grade water' }],
+      ['EI-RM-ACT-001', { assayPurity: 'NLT 99.0%', appearanceSpec: 'Clear viscous liquid', moistureLod: 'NMT 0.5%', microbialSpec: 'Meets USP <61>' }],
+      ['EI-RM-ACT-002', { assayPurity: 'NLT 98.5%', appearanceSpec: 'White to off-white powder', moistureLod: 'NMT 0.5%', heavyMetalsSpec: 'NMT 20 ppm Pb' }],
+      ['EI-RM-POLY-001', { assayPurity: 'NLT 94.0%', appearanceSpec: 'Fluffy white powder', moistureLod: 'NMT 2.0%', phSpec: '2.5-3.5 (1% aq. disp.)' }],
+      ['EI-RM-PRES-001', { assayPurity: 'NLT 99.0%', appearanceSpec: 'Clear liquid', phSpec: '6.0-8.0', odorColorSpec: 'Mild characteristic odour' }],
+      ['EI-RM-UVF-001', { assayPurity: 'NLT 98.0%', appearanceSpec: 'Colourless to pale yellow liquid', moistureLod: 'NMT 0.2%', otherSpecs: 'UV filter — store away from light' }],
+      ['EI-RM-EMUL-001', { appearanceSpec: 'White waxy flakes', assayPurity: 'NLT 95%', odorColorSpec: 'Low odour', microbialSpec: 'Meets IP limits' }],
+    ];
+    for (const [code, fd] of seedRmBulkForm) {
+      await RawMaterial.update({ form_data: fd, updated_at: now }, { where: { code } });
+    }
+    const seedPmBulkForm = [
+      ['EI-PM-TUB-001', { appearanceSpec: 'No cracks, seam intact; print legible', phSpec: 'N/A', otherSpecs: 'WVTR per drawing' }],
+      ['EI-PM-CAP-001', { appearanceSpec: 'No flash; colour match approved swatch', microbialSpec: 'Bioburden per SOP', odorColorSpec: 'Neutral' }],
+      ['EI-PM-BOX-001', { appearanceSpec: 'Score lines intact; no rub-off', moistureLod: 'Board moisture NMT 8%', otherSpecs: '300 GSM duplex — lot COA on file' }],
+      ['EI-PM-BTL-001', { appearanceSpec: 'No stress whitening; neck finish within gauge', assayPurity: 'N/A', otherSpecs: '150ml HDPE — food-grade resin' }],
+    ];
+    for (const [code, fd] of seedPmBulkForm) {
+      await PackMaterial.update({ form_data: fd, updated_at: now }, { where: { code } });
+    }
 
     console.log('Seeding BOMs...');
     await BOM.destroy({ where: {} });

@@ -235,6 +235,8 @@ async function listLocationHistory(req, res) {
         productionBatchId: h.production_batch_id ?? null,
         batchNo: h.batch_no ?? null,
         actionType: h.action_type ?? null,
+        qtyDelta: h.qty_delta != null ? Number(h.qty_delta) : null,
+        dispensingBundleId: h.dispensing_bundle_id ?? null,
       };
     });
 
@@ -355,6 +357,7 @@ async function listAllLocationHistory(req, res) {
         code,
         name,
         subtitle,
+        dispensingBundleId: h.dispensing_bundle_id ?? null,
       };
     });
 

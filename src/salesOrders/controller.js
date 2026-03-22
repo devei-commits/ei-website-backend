@@ -134,7 +134,7 @@ async function createSalesOrder(req, res) {
           due_date: payload.expected_shipment_date || null,
           batch_size_display: batchSizeKg ? `${batchSizeKg} KG` : null,
           batches_required: batchesRequired,
-          batch_count: batchesRequired,
+          batch_count: 0,
           batch_size_kg: batchSizeKg,
           bom_status: bom ? 'Confirmed' : 'Pending',
           bom_confirmed_at: bom ? new Date() : null,

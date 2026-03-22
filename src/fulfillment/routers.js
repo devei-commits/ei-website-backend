@@ -7,6 +7,7 @@ const {
   listBatchSplits,
   getNextSoNo, getCustomers, getProducts,
   listTransporters, getNextInvoiceNo, createInvoice, listInvoices,
+  getSoPlanningAvailability,
 } = require('./controller');
 
 const guard = [isAuthenticated, requireModule('order-management')];
@@ -20,6 +21,8 @@ router.get('/transporters', guard, listTransporters);
 router.get('/next-invoice-no', guard, getNextInvoiceNo);
 router.get('/invoices', guard, listInvoices);
 router.post('/invoices', guard, createInvoice);
+// SO planning availability summary (RM/PM needed vs requested vs available)
+router.get('/so-planning-availability', guard, getSoPlanningAvailability);
 router.get('/:id', guard, getOrderById);
 router.post('/', guard, createOrder);
 router.patch('/:id', guard, updateOrder);

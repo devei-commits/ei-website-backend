@@ -47,8 +47,8 @@ async function assignableUsers(req, res) {
 function enrichLineItems(lineItems, rmMap, pmMap, productMap) {
   if (!Array.isArray(lineItems)) return [];
   return lineItems.map((line) => {
-    const poQty = Number(line.poQty) || 0;
-    const rcvdQty = Number(line.rcvdQty) || 0;
+    const poQty = Number(line.poQty ?? line.po_qty) || 0;
+    const rcvdQty = Number(line.rcvdQty ?? line.rcvd_qty) || 0;
     const diff = rcvdQty - poQty; // positive = over-received, negative = shortfall
     let item = line.item || '';
     let itemCode = line.itemCode || '';
@@ -243,9 +243,48 @@ async function applyGrnCompletionToInventory(grnRow) {
   const lineItems = d.line_items || [];
   if (lineItems.length === 0) return;
 
+  // Some GRN UIs embed the master code inside the display text, e.g.:
+  // "Niacinamide (EI-RM-ACT-002)". When line.raw_material_id is missing/mismatched,
+  // we try to extract a code from the display text to resolve the correct RM/PM.
+  const extractMasterCodeFromText = (text) => {
+    if (!text) return '';
+    const s = String(text);
+    // Prefer codes that start with "EI-" (seeded master codes).
+    const m = s.match(/EI-[A-Z0-9-]+/i);
+    if (m && m[0]) return m[0];
+    // Fallback: allow parenthesized/all-caps-ish codes.
+    const m2 = s.match(/\(([A-Z0-9-]+)\)/);
+    if (m2 && m2[1]) return m2[1];
+    return '';
+  };
+
   const grnType = (d.type || 'RM').toUpperCase(); // 'RM' | 'PM'
-  const codes = [...new Set(lineItems.map((l) => (l.itemCode || l.item_code || '').trim()).filter(Boolean))];
-  const names = [...new Set(lineItems.map((l) => (l.item || '').trim()).filter(Boolean))];
+  console.log('[grn] GRN Complete inventory apply START', {
+    grnId: d.id,
+    grnNo: d.grn_no,
+    purchaseOrderId: d.purchase_order_id,
+    poNo: d.po_no,
+    type: d.type,
+    lineCount: lineItems.length,
+  });
+  const codes = [
+    ...new Set(
+      lineItems
+        .flatMap((l) => [
+          (l.itemCode || l.item_code || '').trim(),
+          extractMasterCodeFromText(l.item || l.item_text || ''),
+        ])
+        .filter(Boolean)
+    ),
+  ];
+  const names = [
+    ...new Set(
+      lineItems
+        .map((l) => (l.item || '').trim())
+        .filter(Boolean)
+        .map((s) => String(s).split('(')[0].trim())
+    ),
+  ];
   let rmByCode = {};
   let pmByCode = {};
   let rmByName = {};
@@ -266,9 +305,38 @@ async function applyGrnCompletionToInventory(grnRow) {
   const toAddByProduct = new Map(); // product_id -> qty to add
 
   for (const line of lineItems) {
-    const rcvdQty = Math.max(0, Number(line.rcvdQty ?? line.rcvd_qty) || 0);
+    // Some GRNs (e.g. created from Procurement) may arrive with rcvdQty=0 and rely
+    // on the warehouse UI to update quantities before marking "GRN Complete".
+    // To avoid "GRN Complete" not moving stock due to missing/zero received qty,
+    // fall back to poQty when rcvdQty is missing/zero.
+    const rawRcvdQty = Number(line.rcvdQty ?? line.rcvd_qty);
+    let rcvdQty = Math.max(0, Number.isFinite(rawRcvdQty) ? (rawRcvdQty || 0) : 0);
+    if (rcvdQty === 0) {
+      const poQtyFallback = Math.max(0, Number(line.poQty ?? line.po_qty ?? 0) || 0);
+      if (poQtyFallback > 0) {
+        rcvdQty = poQtyFallback;
+        console.warn('[grn] GRN Complete: rcvdQty was 0/missing; using poQty fallback', {
+          itemCode: line.itemCode ?? line.item_code ?? null,
+          item: line.item ?? null,
+          poQty: poQtyFallback,
+        });
+      }
+    }
     if (rcvdQty === 0) continue;
-    const code = (line.itemCode || line.item_code || '').trim();
+    const code =
+      (line.itemCode || line.item_code || '').trim() ||
+      extractMasterCodeFromText(line.item || line.item_text || '');
+
+    console.log('[grn] GRN Complete line resolved (qty -> WH)', {
+      grnId: d.id,
+      itemCode: code || null,
+      item: line.item || null,
+      poQty: Number(line.poQty ?? line.po_qty) || 0,
+      rcvdQtyUsed: rcvdQty,
+      raw_material_id: line.raw_material_id ?? null,
+      pack_material_id: line.pack_material_id ?? null,
+      product_id: line.product_id ?? null,
+    });
 
     if (line.raw_material_id != null) {
       const id = line.raw_material_id;
@@ -281,7 +349,10 @@ async function applyGrnCompletionToInventory(grnRow) {
       toAddByProduct.set(id, (toAddByProduct.get(id) || 0) + rcvdQty);
     } else if (code || (line.item && String(line.item).trim())) {
       // Resolve by itemCode or by item name (Procurement-created GRNs may have only item name e.g. "Niacinamide")
-      const nameKey = (line.item || '').trim().toLowerCase();
+      const nameKey = String(line.item || '')
+        .split('(')[0]
+        .trim()
+        .toLowerCase();
       let rmId = rmByCode[code];
       let pmId = pmByCode[code];
       if (rmId == null && nameKey) rmId = rmByName[nameKey];
@@ -298,14 +369,55 @@ async function applyGrnCompletionToInventory(grnRow) {
     }
   }
 
+  console.log('[grn] GRN Complete totals by inventory bucket', {
+    toAddByRm: Array.from(toAddByRm.entries()),
+    toAddByPm: Array.from(toAddByPm.entries()),
+    toAddByProduct: Array.from(toAddByProduct.entries()),
+  });
+
+  if (toAddByRm.size === 0 && toAddByPm.size === 0 && toAddByProduct.size === 0) {
+    console.warn('[grn] GRN Complete: nothing to add into warehouse_inventory (bucket maps empty)', {
+      grnId: d.id,
+      grnNo: d.grn_no,
+      poNo: d.po_no,
+      type: d.type,
+      resolvedCodes: codes,
+      resolvedNames: names,
+      lineItemsDebug: lineItems.map((li) => ({
+        itemCode: li.itemCode ?? li.item_code ?? null,
+        item: li.item ?? null,
+        poQty: li.poQty ?? null,
+        rcvdQty: li.rcvdQty ?? li.rcvd_qty ?? null,
+        raw_material_id: li.raw_material_id ?? null,
+        pack_material_id: li.pack_material_id ?? null,
+        product_id: li.product_id ?? null,
+      })),
+    });
+  }
+
   for (const [rawMaterialId, qty] of toAddByRm) {
     let whRow = await WarehouseInventory.findOne({ where: { item_type: 'RM', raw_material_id: rawMaterialId } });
     if (whRow) {
       const wh = whRow.get ? whRow.get({ plain: true }) : whRow;
+      const whStockBefore = Number(wh.wh_stock) || 0;
+      const ml1Before = Number(wh.ml1_stock) || 0;
+      const ml2Before = Number(wh.ml2_stock) || 0;
       const whStock = (Number(wh.wh_stock) || 0) + qty;
       const ml1 = Number(wh.ml1_stock) || 0;
       const ml2 = Number(wh.ml2_stock) || 0;
       await whRow.update({ wh_stock: whStock, stock_in_hand: whStock + ml1 + ml2 });
+      console.log('[grn] WH inventory RM wh_stock update', {
+        rawMaterialId,
+        qtyToAdd: qty,
+        whInventoryId: wh.id ?? null,
+        whStockBefore,
+        whStockAfter: whStock,
+        stockInHandAfter: whStock + ml1 + ml2,
+        ml1Before,
+        ml1After: ml1,
+        ml2Before,
+        ml2After: ml2,
+      });
       console.log('[grn] GRN Complete: added RM id=%d qty=%s -> wh_stock=%s', rawMaterialId, qty, whStock);
     } else {
       whRow = await WarehouseInventory.create({
@@ -323,6 +435,11 @@ async function applyGrnCompletionToInventory(grnRow) {
         reorder_pt: 0,
         avg_mo: 0,
         qc_status: 'In Stock',
+      });
+      console.log('[grn] WH inventory RM created', {
+        rawMaterialId,
+        qtyToAdd: qty,
+        newWarehouseInventoryId: whRow.id ?? null,
       });
       console.log('[grn] GRN Complete: created RM warehouse_inventory id=%d wh_stock=%s', rawMaterialId, qty);
     }
@@ -349,10 +466,25 @@ async function applyGrnCompletionToInventory(grnRow) {
     let whRow = await WarehouseInventory.findOne({ where: { item_type: 'PM', pack_material_id: packMaterialId } });
     if (whRow) {
       const wh = whRow.get ? whRow.get({ plain: true }) : whRow;
+      const whStockBefore = Number(wh.wh_stock) || 0;
+      const ml1Before = Number(wh.ml1_stock) || 0;
+      const ml2Before = Number(wh.ml2_stock) || 0;
       const whStock = (Number(wh.wh_stock) || 0) + qty;
       const ml1 = Number(wh.ml1_stock) || 0;
       const ml2 = Number(wh.ml2_stock) || 0;
       await whRow.update({ wh_stock: whStock, stock_in_hand: whStock + ml1 + ml2 });
+      console.log('[grn] WH inventory PM wh_stock update', {
+        packMaterialId,
+        qtyToAdd: qty,
+        whInventoryId: wh.id ?? null,
+        whStockBefore,
+        whStockAfter: whStock,
+        stockInHandAfter: whStock + ml1 + ml2,
+        ml1Before,
+        ml1After: ml1,
+        ml2Before,
+        ml2After: ml2,
+      });
       console.log('[grn] GRN Complete: added PM id=%d qty=%s -> wh_stock=%s', packMaterialId, qty, whStock);
     } else {
       whRow = await WarehouseInventory.create({
@@ -370,6 +502,11 @@ async function applyGrnCompletionToInventory(grnRow) {
         reorder_pt: 0,
         avg_mo: 0,
         qc_status: 'In Stock',
+      });
+      console.log('[grn] WH inventory PM created', {
+        packMaterialId,
+        qtyToAdd: qty,
+        newWarehouseInventoryId: whRow.id ?? null,
       });
       console.log('[grn] GRN Complete: created PM warehouse_inventory id=%d wh_stock=%s', packMaterialId, qty);
     }
@@ -395,10 +532,25 @@ async function applyGrnCompletionToInventory(grnRow) {
     let whRow = await WarehouseInventory.findOne({ where: { item_type: 'PR', product_id: productId } });
     if (whRow) {
       const wh = whRow.get ? whRow.get({ plain: true }) : whRow;
+      const whStockBefore = Number(wh.wh_stock) || 0;
+      const ml1Before = Number(wh.ml1_stock) || 0;
+      const ml2Before = Number(wh.ml2_stock) || 0;
       const whStock = (Number(wh.wh_stock) || 0) + qty;
       const ml1 = Number(wh.ml1_stock) || 0;
       const ml2 = Number(wh.ml2_stock) || 0;
       await whRow.update({ wh_stock: whStock, stock_in_hand: whStock + ml1 + ml2 });
+      console.log('[grn] WH inventory PR wh_stock update', {
+        productId,
+        qtyToAdd: qty,
+        whInventoryId: wh.id ?? null,
+        whStockBefore,
+        whStockAfter: whStock,
+        stockInHandAfter: whStock + ml1 + ml2,
+        ml1Before,
+        ml1After: ml1,
+        ml2Before,
+        ml2After: ml2,
+      });
       console.log('[grn] GRN Complete: added PR product_id=%d qty=%s -> wh_stock=%s', productId, qty, whStock);
     } else {
       whRow = await WarehouseInventory.create({
@@ -416,6 +568,11 @@ async function applyGrnCompletionToInventory(grnRow) {
         reorder_pt: 0,
         avg_mo: 0,
         qc_status: 'In Stock',
+      });
+      console.log('[grn] WH inventory PR created', {
+        productId,
+        qtyToAdd: qty,
+        newWarehouseInventoryId: whRow.id ?? null,
       });
       console.log('[grn] GRN Complete: created PR warehouse_inventory product_id=%d wh_stock=%s', productId, qty);
     }
@@ -436,6 +593,14 @@ async function applyGrnCompletionToInventory(grnRow) {
       sourceGrnId: d.id,
     });
   }
+
+  console.log('[grn] GRN Complete inventory apply END', {
+    grnId: d.id,
+    grnNo: d.grn_no,
+    purchaseOrderId: d.purchase_order_id,
+    poNo: d.po_no,
+    type: d.type,
+  });
 }
 
 /**
@@ -483,6 +648,27 @@ async function update(req, res) {
     await row.update(updates);
     const refreshed = await GoodsReceivedNote.findByPk(id);
     if (updates.status === 'GRN Complete' && previousStatus !== 'GRN Complete') {
+      const refreshedPlain = refreshed.get ? refreshed.get({ plain: true }) : refreshed;
+      const lineItems = refreshedPlain.line_items || [];
+      console.log('[grn] Status transition -> GRN Complete', {
+        grnId: id,
+        grnNo: refreshedPlain.grn_no,
+        poNo: refreshedPlain.po_no,
+        vendor: refreshedPlain.vendor,
+        purchaseOrderId: refreshedPlain.purchase_order_id,
+        previousStatus,
+        newStatus: updates.status,
+        lineCount: lineItems.length,
+      });
+      console.log('[grn] GRN Complete line_items payload', lineItems.map((li) => ({
+        itemCode: li.itemCode ?? li.item_code ?? null,
+        item: li.item ?? null,
+        poQty: li.poQty ?? 0,
+        rcvdQty: li.rcvdQty ?? li.rcvd_qty ?? null,
+        raw_material_id: li.raw_material_id ?? null,
+        pack_material_id: li.pack_material_id ?? null,
+        product_id: li.product_id ?? null,
+      })));
       await applyGrnCompletionToInventory(refreshed);
     }
     const { rmMap, pmMap, productMap } = await getMastersForLineItems([refreshed]);

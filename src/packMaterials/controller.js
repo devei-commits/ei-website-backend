@@ -35,10 +35,19 @@ function formatPackMaterial(row) {
     hsn_code: d.hsn_code ?? null,
     unit: d.unit ?? null,
     tax_pref: d.tax_pref ?? null,
+    pkg_returnable: d.pkg_returnable ?? null,
+    pkg_associate_items: d.pkg_associate_items ?? null,
     sales_purchase_account: d.sales_purchase_account ?? null,
     created_at: d.created_at,
     updated_at: d.updated_at,
   };
+}
+
+function formatPackMaterialFull(row) {
+  const base = formatPackMaterial(row);
+  if (!base) return null;
+  const d = row.get ? row.get({ plain: true }) : row;
+  return { ...base, form_data: d.form_data ?? null };
 }
 
 /**
@@ -123,7 +132,10 @@ function bodyToPackMaterial(b) {
     hsn_code: b.hsn_code ?? b.pkgHsn ?? b.hsnCode ?? null,
     unit: b.unit ?? b.pkgUnit ?? null,
     tax_pref: b.tax_pref ?? b.pkgTaxPreference ?? b.taxPref ?? null,
+    pkg_returnable: b.pkg_returnable ?? b.pkgReturnable ?? null,
+    pkg_associate_items: b.pkg_associate_items ?? b.pkgAssociateItems ?? b.associateItems ?? null,
     sales_purchase_account: b.sales_purchase_account ?? b.salesPurchaseAccount ?? null,
+    ...(b.form_data !== undefined ? { form_data: b.form_data } : {}),
   };
 }
 
@@ -138,7 +150,7 @@ async function createPackMaterial(req, res) {
       return res.status(400).json({ error: 'code or itemCode is required' });
     }
     const row = await PackMaterial.create(fields);
-    res.status(201).json(formatPackMaterial(row));
+    res.status(201).json(formatPackMaterialFull(row));
   } catch (err) {
     console.error('createPackMaterial error', err);
     res.status(500).json({ error: err.message || 'Failed to create pack material' });
@@ -154,7 +166,7 @@ async function getPackMaterialById(req, res) {
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await PackMaterial.findByPk(id);
     if (!row) return res.status(404).json({ error: 'Pack material not found' });
-    res.json(formatPackMaterial(row));
+    res.json(formatPackMaterialFull(row));
   } catch (err) {
     console.error('getPackMaterialById error', err);
     res.status(500).json({ error: 'Failed to get pack material' });
@@ -175,8 +187,9 @@ async function updatePackMaterial(req, res) {
     Object.keys(fields).forEach((key) => {
       if (fields[key] !== undefined) row.set(key, fields[key]);
     });
+    if (b.form_data !== undefined) row.set('form_data', b.form_data);
     await row.save();
-    res.json(formatPackMaterial(row));
+    res.json(formatPackMaterialFull(row));
   } catch (err) {
     console.error('updatePackMaterial error', err);
     res.status(500).json({ error: err.message || 'Failed to update pack material' });

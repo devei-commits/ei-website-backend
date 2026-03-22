@@ -33,7 +33,11 @@ PackMaterial.init(
     hsn_code: { type: DataTypes.STRING(50), allowNull: true },
     unit: { type: DataTypes.STRING(20), allowNull: true },
     tax_pref: { type: DataTypes.STRING(50), allowNull: true },
+    pkg_returnable: { type: DataTypes.BOOLEAN, allowNull: true },
+    pkg_associate_items: { type: DataTypes.TEXT, allowNull: true },
     sales_purchase_account: { type: DataTypes.STRING(255), allowNull: true },
+    /** Full PM form payload (quality specs, sections) — same pattern as raw_materials.form_data. */
+    form_data: { type: DataTypes.JSON, allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
   },

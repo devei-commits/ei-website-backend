@@ -12,6 +12,24 @@ const WarehouseInventoryLocationHistory = require('../warehouseInventory/locatio
 /** Usertypes that can be assigned as Picker / Transfer Team (same as GRN). */
 const ASSIGNABLE_USERTYPES = ['super_admin', 'admin', 'bd_manager'];
 
+/** Detect RM vs PM lines when ids are missing (codes not resolved) — MTR from Production sends KG / PCS. */
+function lineItemsIndicateRm(lineItems) {
+  if (!Array.isArray(lineItems)) return false;
+  return lineItems.some((l) => {
+    if (l.raw_material_id != null) return true;
+    return String(l.unit || '').toUpperCase() === 'KG';
+  });
+}
+
+function lineItemsIndicatePm(lineItems) {
+  if (!Array.isArray(lineItems)) return false;
+  return lineItems.some((l) => {
+    if (l.pack_material_id != null) return true;
+    const u = String(l.unit || '').toUpperCase();
+    return u === 'PCS' || u === 'PC' || u === 'PIECES';
+  });
+}
+
 /**
  * GET /api/v1/mrn/assignable-pickers — users with correct permissions for Assign Picker / Transfer Team.
  */
@@ -220,6 +238,38 @@ async function create(req, res) {
     let lineItems = body.lineItems ?? body.line_items ?? [];
     const itemType = body.itemType || body.item_type;
     lineItems = await resolveLineItemCodes(lineItems, itemType);
+    const bmrNoForMtr = body.bmrNo ?? body.bmr_no ?? null;
+    const sourceForMtr = body.source ?? null;
+    const inboundMu = Boolean(body.isInboundFromMu ?? body.is_inbound_from_mu);
+    if (sourceForMtr === 'MTR' && bmrNoForMtr && !inboundMu) {
+      const wantRm = lineItemsIndicateRm(lineItems);
+      const wantPm = lineItemsIndicatePm(lineItems);
+      if (wantRm || wantPm) {
+        const existing = await MaterialRequestNote.findAll({
+          where: {
+            bmr_no: bmrNoForMtr,
+            source: 'MTR',
+            [Op.or]: [{ is_inbound_from_mu: false }, { is_inbound_from_mu: null }],
+          },
+          attributes: ['line_items'],
+        });
+        for (const ex of existing) {
+          const elis = ex.get ? ex.get('line_items') : ex.line_items;
+          if (wantRm && lineItemsIndicateRm(elis)) {
+            return res.status(409).json({
+              error:
+                'An RM transfer request (MTR) already exists for this batch. Complete it in Transfer orders (or remove the duplicate MRN) before creating another.',
+            });
+          }
+          if (wantPm && lineItemsIndicatePm(elis)) {
+            return res.status(409).json({
+              error:
+                'A PM transfer request (MTR) already exists for this batch. Complete it in Transfer orders (or remove the duplicate MRN) before creating another.',
+            });
+          }
+        }
+      }
+    }
     const mrnNo = body.mrnNo || body.mrn_no || (await generateMrnNo());
     const payload = {
       mrn_no: mrnNo,
@@ -300,6 +350,7 @@ async function update(req, res) {
       if (d.mu_receive_zone || d.mu_receive_rack) {
         await logMrnReceiveAtMuLocation(d);
       }
+      await applyMtrCompletionToProductionBatch(d);
     }
 
     const { rmMap, pmMap, productMap } = await getMastersForLineItems([refreshed]);
@@ -308,6 +359,71 @@ async function update(req, res) {
   } catch (err) {
     console.error('[mrn] update error:', err);
     res.status(500).json({ error: err.message || 'Failed to update MRN' });
+  }
+}
+
+/**
+ * True if another outbound MTR for this BMR is still not Completed, with RM (or PM) lines.
+ * RM and PM are tracked separately. Uses unit fallback when line ids were not resolved.
+ */
+async function hasPendingMtrOfKind(bmrNo, kind) {
+  const rows = await MaterialRequestNote.findAll({
+    where: {
+      bmr_no: bmrNo,
+      source: 'MTR',
+      [Op.or]: [{ is_inbound_from_mu: false }, { is_inbound_from_mu: null }],
+      status: { [Op.ne]: 'Completed' },
+    },
+    attributes: ['line_items'],
+  });
+  return rows.some((row) => {
+    const lis = row.get ? row.get('line_items') : row.line_items;
+    if (kind === 'rm') return lineItemsIndicateRm(lis);
+    if (kind === 'pm') return lineItemsIndicatePm(lis);
+    return false;
+  });
+}
+
+/**
+ * After MTR MRN is Completed and WH→MU stock is applied, allow Production to enter dispense:
+ * set rm_connected / pm_connected and advance status only when no other pending MTR of that kind remains.
+ */
+async function applyMtrCompletionToProductionBatch(plainMrn) {
+  if (plainMrn.source !== 'MTR' || !plainMrn.bmr_no || plainMrn.is_inbound_from_mu) return;
+
+  const lineItems = Array.isArray(plainMrn.line_items) ? plainMrn.line_items : [];
+  const hasRm = lineItemsIndicateRm(lineItems);
+  const hasPm = lineItemsIndicatePm(lineItems);
+  if (!hasRm && !hasPm) return;
+
+  const { ProductionBatch } = require('../production/models');
+  const batch = await ProductionBatch.findOne({ where: { bmr_no: plainMrn.bmr_no } });
+  if (!batch) return;
+
+  const plain = batch.get ? batch.get({ plain: true }) : batch;
+  const updates = {};
+
+  if (hasRm) {
+    const pendingRm = await hasPendingMtrOfKind(plainMrn.bmr_no, 'rm');
+    if (!pendingRm) {
+      updates.rm_connected = true;
+      if (['rm_reserved', 'scheduled'].includes(plain.bmr_status)) {
+        updates.bmr_status = 'rm_connected';
+      }
+    }
+  }
+  if (hasPm) {
+    const pendingPm = await hasPendingMtrOfKind(plainMrn.bmr_no, 'pm');
+    if (!pendingPm) {
+      updates.pm_connected = true;
+      if (plain.bpr_status === 'pm_reserved') {
+        updates.bpr_status = 'pm_connected';
+      }
+    }
+  }
+
+  if (Object.keys(updates).length > 0) {
+    await batch.update(updates);
   }
 }
 

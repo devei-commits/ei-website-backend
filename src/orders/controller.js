@@ -247,7 +247,7 @@ const saveOrder = async (req, res) => {
                 due_date: null,
                 batch_size_display: `${batchSizeKg} KG`,
                 batches_required: batchesRequired,
-                batch_count: batchesRequired,
+                batch_count: 0,
                 batch_size_kg: batchSizeKg,
                 bom_status: bom ? 'Confirmed' : 'Pending',
                 approved_by: createdByName,

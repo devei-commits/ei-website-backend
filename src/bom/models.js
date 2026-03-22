@@ -8,6 +8,7 @@ BOM.init(
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     bom_code: { type: DataTypes.STRING(100), allowNull: false },
     bom_sku: { type: DataTypes.STRING(100), allowNull: true },
+    zoho_id: { type: DataTypes.STRING(100), allowNull: true },
     bom_category: { type: DataTypes.STRING(100), allowNull: true },
     bom_unit: { type: DataTypes.STRING(20), allowNull: true },
     bom_hsn: { type: DataTypes.STRING(50), allowNull: true },
