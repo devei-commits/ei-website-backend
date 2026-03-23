@@ -1,7 +1,18 @@
 const RawMaterial = require('./models');
 const { Op } = require('sequelize');
 const WarehouseInventory = require('../warehouseInventory/models');
+const WarehouseInventoryLocationHistory = require('../warehouseInventory/locationHistoryModel');
 const { ReservedBatchItem } = require('../fulfillment/models');
+
+/**
+ * Parse numeric suffix from code after prefix (e.g. "EI-RM-ACT-00001" -> 1).
+ */
+function parseSuffix(code, prefix) {
+  if (!code || !prefix || !String(code).startsWith(prefix)) return null;
+  const rest = String(code).slice(prefix.length).replace(/^-+/, '');
+  const num = parseInt(rest, 10);
+  return Number.isNaN(num) ? null : num;
+}
 
 /** List-view only (no form_data). */
 function formatRawMaterial(row) {
@@ -43,9 +54,38 @@ function formatRawMaterialFull(row) {
  * GET /api/v1/raw-materials — list all raw materials, optional ?search= for filter.
  * Search matches code, name, inci, category (case-insensitive).
  */
+/**
+ * GET /api/v1/raw-materials/next-code?prefix=EI-RM-ACT — next code for series (e.g. EI-RM-ACT-00002).
+ */
+async function getNextCode(req, res) {
+  try {
+    const prefix = req.query.prefix != null ? String(req.query.prefix).trim() : '';
+    if (!prefix) {
+      return res.status(400).json({ error: 'Query parameter "prefix" is required' });
+    }
+    const rows = await RawMaterial.findAll({
+      attributes: ['code'],
+      where: { code: { [Op.iLike]: `${prefix}%` } },
+    });
+    let maxNum = 0;
+    for (const row of rows) {
+      const code = row.get ? row.get('code') : row.code;
+      const n = parseSuffix(code, prefix);
+      if (n != null && n > maxNum) maxNum = n;
+    }
+    const nextNum = maxNum + 1;
+    const nextCode = `${prefix}-${String(nextNum).padStart(5, '0')}`;
+    res.json({ nextCode });
+  } catch (err) {
+    console.error('getNextCode (RM) error', err);
+    res.status(500).json({ error: 'Failed to get next code' });
+  }
+}
+
 async function listRawMaterials(req, res) {
   try {
     const search = req.query.search != null ? String(req.query.search).trim() : '';
+    const statusParam = req.query.status != null ? String(req.query.status).trim() : '';
     const where = {};
 
     if (search.length > 0) {
@@ -57,6 +97,39 @@ async function listRawMaterials(req, res) {
         { category: like },
         { rm_type: like },
       ];
+    }
+
+    // Optional status filtering for list screens (e.g. active/inactive).
+    // When status=all (or empty), the filter is ignored.
+    if (statusParam.length > 0 && statusParam.toLowerCase() !== 'all') {
+      where.status = statusParam.toLowerCase();
+    }
+
+    const limitQ = req.query.limit;
+    const offsetQ = req.query.offset;
+    const wantsPagination = limitQ != null || offsetQ != null;
+
+    const normalizeInt = (v) => {
+      const n = parseInt(String(v), 10);
+      return Number.isNaN(n) ? null : n;
+    };
+
+    if (wantsPagination) {
+      const limit = limitQ != null ? normalizeInt(limitQ) : 20;
+      const offset = offsetQ != null ? normalizeInt(offsetQ) : 0;
+      if (limit == null || offset == null || limit <= 0 || offset < 0) {
+        return res.status(400).json({ error: 'Invalid pagination params (limit must be > 0, offset must be >= 0)' });
+      }
+
+      const result = await RawMaterial.findAndCountAll({
+        where,
+        order: [['code', 'ASC']],
+        limit,
+        offset,
+      });
+
+      const listRows = result.rows.map(formatRawMaterial);
+      return res.json({ rows: listRows, total: result.count, limit, offset });
     }
 
     const rows = await RawMaterial.findAll({
@@ -152,10 +225,31 @@ async function deleteRawMaterial(req, res) {
   try {
     const row = await RawMaterial.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Raw material not found' });
+
+    // warehouse_inventory has FK (raw_material_id -> raw_materials.id) which blocks the master-row delete.
+    // Delete the dependent inventory row(s) (and location history) first so the raw material can be removed cleanly.
+    const whInv = await WarehouseInventory.findOne({ where: { item_type: 'RM', raw_material_id: row.id } });
+    if (whInv) {
+      await WarehouseInventoryLocationHistory.destroy({ where: { warehouse_inventory_id: whInv.id } });
+      await whInv.destroy(); // cascades to rack items via FK onDelete: CASCADE
+    }
+
     await row.destroy();
     res.status(204).send();
   } catch (err) {
     console.error('deleteRawMaterial error', err);
+    const isFk =
+      err &&
+      (err.name === 'SequelizeForeignKeyConstraintError' ||
+        err.name === 'SequelizeDatabaseError' ||
+        err.original?.code === '23503');
+    if (isFk) {
+      return res.status(409).json({
+        error:
+          'Cannot delete raw material because it is referenced by other records (e.g. BOM / warehouse stock / batches). Remove dependencies first.',
+        code: 'RM_DELETE_FK_CONSTRAINT',
+      });
+    }
     res.status(500).json({ error: err.message || 'Failed to delete raw material' });
   }
 }
@@ -190,6 +284,7 @@ async function getReservedStock(req, res) {
 module.exports = {
   listRawMaterials,
   getRawMaterialById,
+  getNextCode,
   createRawMaterial,
   updateRawMaterial,
   deleteRawMaterial,

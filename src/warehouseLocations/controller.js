@@ -3,6 +3,7 @@
  * Stored items are warehouse_inventory ids; resolved to code, name, type for display.
  */
 const { WarehouseLocation, WarehouseRack, WarehouseRackItem } = require('./models');
+const { Op } = require('sequelize');
 const FacilityArea = require('../facilityAreas/models');
 const WarehouseInventory = require('../warehouseInventory/models');
 const RawMaterial = require('../rawMaterials/models');
@@ -72,29 +73,88 @@ async function buildInventorySummaryMap() {
  */
 async function list(req, res) {
   try {
-    const invMap = await buildInventorySummaryMap();
     const where = {};
     if (req.query.location_type) where.location_type = req.query.location_type;
     if (req.query.area_id) where.area_id = parseInt(req.query.area_id, 10);
-    const locations = await WarehouseLocation.findAll({
-      where,
-      order: [['id', 'ASC']],
-      include: [
-        { model: FacilityArea, as: 'area', required: false, attributes: ['id', 'name', 'area_type'] },
-        {
-          model: WarehouseRack,
-          as: 'WarehouseRacks',
-          required: false,
-          include: [
-            {
-              model: WarehouseRackItem,
-              as: 'WarehouseRackItems',
-              required: false,
-            },
-          ],
-        },
-      ],
-    });
+
+    const limitQ = req.query.limit;
+    const offsetQ = req.query.offset;
+    const wantsPagination = limitQ != null || offsetQ != null;
+
+    const normalizeInt = (v) => {
+      const n = parseInt(String(v), 10);
+      return Number.isNaN(n) ? null : n;
+    };
+
+    let locations = [];
+    let total = null;
+    let limit = null;
+    let offset = null;
+
+    if (wantsPagination) {
+      limit = limitQ != null ? normalizeInt(limitQ) : 20;
+      offset = offsetQ != null ? normalizeInt(offsetQ) : 0;
+      if (limit == null || offset == null || limit <= 0 || offset < 0) {
+        return res.status(400).json({ error: 'Invalid pagination params (limit must be > 0, offset must be >= 0)' });
+      }
+
+      total = await WarehouseLocation.count({ where });
+
+      // Pagination must apply to the base "locations" rows; includes can otherwise distort row counts.
+      const idRows = await WarehouseLocation.findAll({
+        where,
+        attributes: ['id'],
+        order: [['id', 'ASC']],
+        limit,
+        offset,
+        raw: true,
+      });
+      const ids = idRows.map((r) => r.id);
+
+      if (ids.length === 0) return res.json({ rows: [], total, limit, offset });
+
+      locations = await WarehouseLocation.findAll({
+        where: { id: { [Op.in]: ids } },
+        order: [['id', 'ASC']],
+        include: [
+          { model: FacilityArea, as: 'area', required: false, attributes: ['id', 'name', 'area_type'] },
+          {
+            model: WarehouseRack,
+            as: 'WarehouseRacks',
+            required: false,
+            include: [
+              {
+                model: WarehouseRackItem,
+                as: 'WarehouseRackItems',
+                required: false,
+              },
+            ],
+          },
+        ],
+      });
+    } else {
+      locations = await WarehouseLocation.findAll({
+        where,
+        order: [['id', 'ASC']],
+        include: [
+          { model: FacilityArea, as: 'area', required: false, attributes: ['id', 'name', 'area_type'] },
+          {
+            model: WarehouseRack,
+            as: 'WarehouseRacks',
+            required: false,
+            include: [
+              {
+                model: WarehouseRackItem,
+                as: 'WarehouseRackItems',
+                required: false,
+              },
+            ],
+          },
+        ],
+      });
+    }
+
+    const invMap = await buildInventorySummaryMap();
 
     const result = locations.map((loc) => {
       const locPlain = loc.get ? loc.get({ plain: true }) : loc;
@@ -150,6 +210,9 @@ async function list(req, res) {
       };
     });
 
+    if (wantsPagination) {
+      return res.json({ rows: result, total, limit, offset });
+    }
     res.json(result);
   } catch (err) {
     console.error('[warehouse-locations] list error:', err);

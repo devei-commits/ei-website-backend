@@ -9,12 +9,16 @@ const app = require('../../app');
 const RawMaterial = require('../../src/rawMaterials/models');
 const WarehouseInventory = require('../../src/warehouseInventory/models');
 const { User } = require('../../src/users/models');
+const { isDbAvailable } = require('../helpers/dbAvailability');
 
 describe('warehouse PATCH stock_in_hand', () => {
   let invId;
   let token;
+  let dbAvailable = true;
 
   beforeAll(async () => {
+    dbAvailable = await isDbAvailable(db);
+    if (!dbAvailable) return;
     await db.sync({ force: true });
     const rm = await RawMaterial.create({ code: 'RM-PATCH-001', name: 'Test RM', status: 'Active' });
     const inv = await WarehouseInventory.create({
@@ -44,10 +48,11 @@ describe('warehouse PATCH stock_in_hand', () => {
   });
 
   afterAll(async () => {
-    await db.close();
+    if (dbAvailable) await db.close();
   });
 
   test('PATCH updates wh_stock and recomputes stock_in_hand = wh + ml1 + ml2', async () => {
+    if (!dbAvailable) return;
     const res = await request(app)
       .patch(`/api/v1/warehouse-inventory/${invId}`)
       .set('Authorization', `Bearer ${token}`)
@@ -59,6 +64,7 @@ describe('warehouse PATCH stock_in_hand', () => {
   });
 
   test('PATCH with zero ml1 and ml2: stock_in_hand equals wh_stock only', async () => {
+    if (!dbAvailable) return;
     const res = await request(app)
       .patch(`/api/v1/warehouse-inventory/${invId}`)
       .set('Authorization', `Bearer ${token}`)

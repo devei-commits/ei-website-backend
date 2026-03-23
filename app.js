@@ -40,6 +40,7 @@ const clientHubRouters = require('./src/clientHub/routers');
 const errorHandler = require('./src/middleware/error_handler');
 const logginHandler = require('./src/middleware/logging')
 const { isAuthenticated } = require('./src/middleware/security')
+const { cacheInvalidationMiddleware } = require('./src/cache/cacheInvalidationMiddleware');
 const dotenv = require('dotenv');
 const cors = require('cors');
 dotenv.config();
@@ -66,6 +67,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cookieParser())
 app.use(logginHandler);
+app.use(cacheInvalidationMiddleware);
 
 const apiPrefix = '/api/v1';
 

@@ -1,9 +1,42 @@
+const db = require('../../db');
 const { Product } = require('./models');
 const { productSchema, productUpdateSchema, categorySchema, categoryUpdateSchema } = require('./schemas');
 const { Op } = require('sequelize');
 const BOM = require('../bom/models');
 const PackMaterial = require('../packMaterials/models');
 const SalesOrder = require('../salesOrders/models');
+const WarehouseInventory = require('../warehouseInventory/models');
+const WarehouseInventoryLocationHistory = require('../warehouseInventory/locationHistoryModel');
+const PlanningExtracted = require('../planningExtracted/models');
+const redisCache = require('../cache/redis');
+
+/** At least one non-empty formula line (INCI / RM code / positive %). */
+function countMeaningfulRmLines(lines) {
+  if (!Array.isArray(lines)) return 0;
+  return lines.filter((line) => {
+    const inci = String(line?.inci_name ?? line?.inciName ?? '').trim();
+    const code = String(line?.rm_code ?? line?.rmCode ?? '').trim();
+    const pctRaw = line?.pct_w_w ?? line?.pctWw ?? line?.pct;
+    const pct =
+      pctRaw != null && pctRaw !== ''
+        ? parseFloat(String(pctRaw).replace(/[^\d.-]/g, ''))
+        : NaN;
+    const hasPct = !Number.isNaN(pct) && pct > 0;
+    return Boolean(inci || code || hasPct);
+  }).length;
+}
+
+/** At least one non-empty pack line (description / PM code). */
+function countMeaningfulPmLines(lines) {
+  if (!Array.isArray(lines)) return 0;
+  return lines.filter((line) => {
+    const desc = String(
+      line?.description ?? line?.pm_description ?? line?.pmDescription ?? ''
+    ).trim();
+    const code = String(line?.pm_code ?? line?.pmCode ?? '').trim();
+    return Boolean(desc || code);
+  }).length;
+}
 
 const saveProduct = async (req, res) => {
   try {
@@ -34,6 +67,171 @@ const saveProduct = async (req, res) => {
   }
 };
 
+/**
+ * POST /products/pr-registration — PR Master wizard: create `products` row + linked `boms` row.
+ * Expects product_name, product_code (or name, bomCode); optional rm_lines, pm_lines, process_steps.
+ */
+const createPRRegistration = async (req, res) => {
+  try {
+    const b = req.body || {};
+    const product_name = String(b.product_name ?? b.name ?? '').trim();
+    const product_code = String(b.product_code ?? b.bomCode ?? '').trim();
+    if (!product_name) return res.status(400).json({ error: 'product_name is required' });
+    if (!product_code) return res.status(400).json({ error: 'product_code is required' });
+
+    const existsCode = await Product.findOne({ where: { product_code } });
+    if (existsCode) {
+      return res.status(409).json({
+        error: `Product code "${product_code}" is already registered. Regenerate the PR code or edit that product.`,
+        code: 'PRODUCT_CODE_EXISTS',
+      });
+    }
+    const existsName = await Product.findOne({ where: { product_name } });
+    if (existsName) {
+      return res.status(409).json({
+        error: `Product name "${product_name}" is already in use. Use a different name or edit the existing PR.`,
+        code: 'PRODUCT_NAME_EXISTS',
+      });
+    }
+
+    const now = new Date();
+    const bomSku = String(b.product_sku ?? b.bomSku ?? product_code).trim();
+    const rm_lines = Array.isArray(b.rm_lines) ? b.rm_lines : (Array.isArray(b.rmLines) ? b.rmLines : []);
+    const pm_lines = Array.isArray(b.pm_lines) ? b.pm_lines : (Array.isArray(b.pmLines) ? b.pmLines : []);
+    const process_steps = Array.isArray(b.process_steps) ? b.process_steps : (Array.isArray(b.processSteps) ? b.processSteps : []);
+
+    if (countMeaningfulRmLines(rm_lines) < 1) {
+      return res.status(400).json({
+        error:
+          'At least one formula (RM) line is required. Add ingredients in Formula BOM before registering.',
+        code: 'PR_MISSING_RM_LINES',
+      });
+    }
+    if (countMeaningfulPmLines(pm_lines) < 1) {
+      return res.status(400).json({
+        error:
+          'At least one packaging (PM) line is required. Add pack components in Pack BOM before registering.',
+        code: 'PR_MISSING_PM_LINES',
+      });
+    }
+
+    const mrpRaw = b.mrp_price ?? b.mrp;
+    let mrp_price = null;
+    if (mrpRaw != null && mrpRaw !== '') {
+      const n = parseFloat(String(mrpRaw).replace(/[^\d.]/g, ''));
+      if (!Number.isNaN(n)) mrp_price = n;
+    }
+
+    const productRow = {
+      product_name,
+      product_code,
+      product_sku: bomSku,
+      generic_name: b.generic_name ?? b.category ?? null,
+      brand_name: b.brand_name ?? b.client ?? null,
+      category: b.category ?? null,
+      status: b.status ?? 'Draft',
+      lifecycle_status: b.lifecycle_status ?? b.status ?? 'Draft',
+      form: b.form ?? b.type ?? null,
+      fill_size: b.fill_size ?? b.packSize ?? null,
+      product_description: b.product_description ?? b.description ?? null,
+      storage_conditions: b.storage_conditions ?? null,
+      mrp_price,
+      ph_range: b.ph_range ?? null,
+      viscosity_range: b.viscosity_range ?? null,
+      appearance: b.appearance ?? null,
+      odour: b.odour ?? null,
+      fill_weight_spec: b.fill_weight_spec ?? null,
+      stability_summary: b.stability_summary ?? null,
+      approved_claims: b.approved_claims ?? null,
+      created_at: now,
+      updated_at: now,
+    };
+
+    const notesParts = [];
+    if (b.pr_qc_group) notesParts.push(`QC Group: ${b.pr_qc_group}`);
+    if (b.pr_sub_category) notesParts.push(`PR Sub-category: ${b.pr_sub_category}`);
+    const bomNotes = notesParts.length ? notesParts.join(' | ') : null;
+
+    const t = await db.transaction();
+    try {
+      const product = await Product.create(productRow, { transaction: t });
+      const bomRow = {
+        bom_code: product_code,
+        bom_sku: bomSku,
+        zoho_id: b.zoho_id ?? b.zohoId ?? null,
+        bom_tax_preference: b.bom_tax_preference ?? b.bomTaxPreference ?? null,
+        bom_returnable: b.bom_returnable ?? b.bomReturnable ?? false,
+        bom_associate_items: b.bom_associate_items ?? b.bomAssociateItems ?? null,
+        type: b.type ?? productRow.form ?? null,
+        status: 'Draft',
+        client: b.client ?? null,
+        name: product_name,
+        pack_size: productRow.fill_size,
+        site: b.site ?? null,
+        category: productRow.category,
+        ph_range: productRow.ph_range,
+        regulatory: b.regulatory ?? b.applicable_regulation ?? null,
+        description: b.desc ?? null,
+        notes: bomNotes,
+        stability_summary: productRow.stability_summary,
+        rm_lines,
+        pm_lines,
+        process_steps,
+        product_id: product.product_id,
+        created_at: now,
+        updated_at: now,
+      };
+
+      const existingBom = await BOM.findOne({
+        where: { bom_code: product_code },
+        transaction: t,
+      });
+
+      let bom;
+      if (existingBom) {
+        if (existingBom.product_id != null) {
+          await t.rollback();
+          return res.status(409).json({
+            error: `BOM code "${product_code}" is already linked to another product. Regenerate the PR code.`,
+            code: 'BOM_CODE_LINKED',
+          });
+        }
+        const { created_at: _c, ...bomUpdate } = bomRow;
+        await existingBom.update(
+          { ...bomUpdate, updated_at: now },
+          { transaction: t }
+        );
+        bom = existingBom;
+      } else {
+        bom = await BOM.create(bomRow, { transaction: t });
+      }
+
+      await t.commit();
+      res.status(201).json({
+        product: product.get({ plain: true }),
+        bom: {
+          id: String(bom.id),
+          bom_code: bom.bom_code,
+          product_id: bom.product_id,
+        },
+      });
+    } catch (inner) {
+      await t.rollback();
+      throw inner;
+    }
+  } catch (err) {
+    console.error('createPRRegistration error', err);
+    if (err.name === 'SequelizeUniqueConstraintError') {
+      const paths = (err.errors || []).map((e) => e.path).filter(Boolean);
+      const hint = paths.some((p) => String(p).includes('bom_code'))
+        ? 'This PR/BOM code is already used. Use “Generate Code Now” again or pick another code.'
+        : 'A unique constraint failed (code or name may already exist).';
+      return res.status(409).json({ error: hint, code: 'UNIQUE_VIOLATION', fields: paths });
+    }
+    res.status(500).json({ error: err.message || 'Failed to register PR product' });
+  }
+};
+
 /** Format product for list: add rm_ingredients_count, pack_items_count, open_sos_count */
 function formatProductForList(p) {
   const d = p.get ? p.get({ plain: true }) : p;
@@ -47,9 +245,41 @@ function formatProductForList(p) {
 
 const getAllProducts = async (req, res) => {
   try {
-    const products = await Product.findAll({ order: [['product_code', 'ASC']] });
+    const limitQ = req.query.limit;
+    const offsetQ = req.query.offset;
+    const wantsPagination = limitQ != null || offsetQ != null;
+
+    const normalizeInt = (v) => {
+      const n = parseInt(String(v), 10);
+      return Number.isNaN(n) ? null : n;
+    };
+
+    let products;
+    let total = null;
+    let limit = null;
+    let offset = null;
+
+    if (wantsPagination) {
+      limit = limitQ != null ? normalizeInt(limitQ) : 20;
+      offset = offsetQ != null ? normalizeInt(offsetQ) : 0;
+      if (limit == null || offset == null || limit <= 0 || offset < 0) {
+        return res.status(400).json({ error: 'Invalid pagination params (limit must be > 0, offset must be >= 0)' });
+      }
+
+      const result = await Product.findAndCountAll({
+        order: [['product_code', 'ASC']],
+        limit,
+        offset,
+      });
+      products = result.rows;
+      total = result.count;
+    } else {
+      products = await Product.findAll({ order: [['product_code', 'ASC']] });
+    }
+
     const productCodes = products.map((p) => p.product_code).filter(Boolean);
     const productIds = products.map((p) => p.product_id);
+    const productCodesSet = new Set(productCodes);
 
     const openStatuses = ['Draft', 'Submitted', 'Confirmed', 'Processing', 'Pending', 'In Progress'];
     const bomsPromise = productIds.length > 0
@@ -72,6 +302,7 @@ const getAllProducts = async (req, res) => {
     allPack.forEach((pm) => {
       const prods = Array.isArray(pm.products) ? pm.products : [];
       prods.forEach((code) => {
+        if (!productCodesSet.has(code)) return;
         if (!packMaterialsByCode[code]) packMaterialsByCode[code] = [];
         packMaterialsByCode[code].push(pm);
       });
@@ -82,7 +313,7 @@ const getAllProducts = async (req, res) => {
       const items = Array.isArray(so.items) ? so.items : [];
       items.forEach((line) => {
         const code = line.product_code || line.productCode;
-        if (code) {
+        if (code && productCodesSet.has(code)) {
           openSoCountByCode[code] = (openSoCountByCode[code] || 0) + 1;
         }
       });
@@ -101,6 +332,10 @@ const getAllProducts = async (req, res) => {
       open_sos_count: openSos,
     };
     });
+
+    if (wantsPagination) {
+      return res.json({ rows: list, total, limit, offset });
+    }
 
     res.json(list);
   } catch (err) {
@@ -249,7 +484,19 @@ const updateProduct = async (req, res) => {
     const bomPayload = req.body.bom;
     if (bomPayload && typeof bomPayload === 'object') {
       let bom = await BOM.findOne({ where: { product_id: productId } });
+      const rmFromPayload = Array.isArray(bomPayload.rm_lines);
+      const pmFromPayload = Array.isArray(bomPayload.pm_lines);
+
       if (!bom) {
+        const nextRm = rmFromPayload ? bomPayload.rm_lines : [];
+        const nextPm = pmFromPayload ? bomPayload.pm_lines : [];
+        if (countMeaningfulRmLines(nextRm) < 1 || countMeaningfulPmLines(nextPm) < 1) {
+          return res.status(400).json({
+            error:
+              'BOM must include at least one formula (RM) line and one packaging (PM) line.',
+            code: 'BOM_MISSING_LINES',
+          });
+        }
         const productCode = (product && product.product_code) ? product.product_code : `PR-${productId}`;
         bom = await BOM.create({
           bom_code: `BOM-${productCode}`,
@@ -257,8 +504,8 @@ const updateProduct = async (req, res) => {
           product_id: productId,
           type: 'FG',
           status: 'Draft',
-          rm_lines: Array.isArray(bomPayload.rm_lines) ? bomPayload.rm_lines : [],
-          pm_lines: Array.isArray(bomPayload.pm_lines) ? bomPayload.pm_lines : [],
+          rm_lines: nextRm,
+          pm_lines: nextPm,
           process_steps: Array.isArray(bomPayload.process_steps) ? bomPayload.process_steps : [],
           ph_range: bomPayload.ph_range ?? null,
           yield_pct: bomPayload.yield_pct ?? null,
@@ -267,9 +514,20 @@ const updateProduct = async (req, res) => {
           updated_at: new Date(),
         });
       } else {
+        const mergedRm = rmFromPayload ? bomPayload.rm_lines : bom.rm_lines || [];
+        const mergedPm = pmFromPayload ? bomPayload.pm_lines : bom.pm_lines || [];
+        if (rmFromPayload || pmFromPayload) {
+          if (countMeaningfulRmLines(mergedRm) < 1 || countMeaningfulPmLines(mergedPm) < 1) {
+            return res.status(400).json({
+              error:
+                'BOM must keep at least one formula (RM) line and one packaging (PM) line.',
+              code: 'BOM_MISSING_LINES',
+            });
+          }
+        }
         const bomUpdate = { updated_at: new Date() };
-        if (Array.isArray(bomPayload.rm_lines)) bomUpdate.rm_lines = bomPayload.rm_lines;
-        if (Array.isArray(bomPayload.pm_lines)) bomUpdate.pm_lines = bomPayload.pm_lines;
+        if (rmFromPayload) bomUpdate.rm_lines = bomPayload.rm_lines;
+        if (pmFromPayload) bomUpdate.pm_lines = bomPayload.pm_lines;
         if (Array.isArray(bomPayload.process_steps)) bomUpdate.process_steps = bomPayload.process_steps;
         if (bomPayload.ph_range !== undefined) bomUpdate.ph_range = bomPayload.ph_range;
         if (bomPayload.yield_pct !== undefined) bomUpdate.yield_pct = bomPayload.yield_pct;
@@ -294,14 +552,63 @@ const updateProduct = async (req, res) => {
 
 const deleteProduct = async (req, res) => {
     try {
-        const product = await Product.findByPk(req.params.id);
+        const productId = parseInt(req.params.id, 10);
+        if (Number.isNaN(productId)) return res.status(400).json({ error: 'Invalid product id' });
+
+        const product = await Product.findByPk(productId);
         if (!product) {
             return res.status(404).json({ error: 'Product not found' });
         }
+        const resolvedProductId = product.product_id;
+
+        // FK blockers:
+        // - warehouse_inventory.product_id -> products.product_id (restricts product delete)
+        // - planning_extracted.product_id -> products.product_id (restricts product delete)
+        // Remove these dependents first.
+
+        // warehouse_inventory may store item_type as 'PR', while UI labels it 'FG/PR'.
+        // Don't rely on item_type here; just remove any warehouse_inventory row tied to the product.
+        const whInvRows = await WarehouseInventory.findAll({ where: { product_id: resolvedProductId } });
+        for (const whInv of whInvRows) {
+          await WarehouseInventoryLocationHistory.destroy({ where: { warehouse_inventory_id: whInv.id } });
+          await whInv.destroy(); // cascades to rack items via FK onDelete: CASCADE
+        }
+
+        await PlanningExtracted.destroy({ where: { product_id: resolvedProductId } }); // cascades to planning_batches/bom_override/reserved rows
+
         await product.destroy();
-        res.json({ message: 'Product deleted' });
+
+        // Invalidate cached product lists/details so the UI refreshes immediately.
+        // Cache key pattern is built by createCacheReadMiddleware:
+        //   products:v1:/api/v1/products:<stableQuery>:auth:<scope>
+        await redisCache.delByPattern('products:v1:/api/v1/products:');
+
+        res.status(204).send();
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error('deleteProduct error', {
+          productId: req?.params?.id,
+          name: err?.name,
+          message: err?.message,
+          originalCode: err?.original?.code,
+          originalDetail: err?.original?.detail,
+        });
+        const isFk =
+          err &&
+          (err.name === 'SequelizeForeignKeyConstraintError' ||
+            err.name === 'SequelizeDatabaseError' ||
+            err.original?.code === '23503');
+        if (isFk) {
+          return res.status(409).json({
+            error:
+              'Cannot delete product because it is referenced by other records (e.g. BOM / planning / batches). Remove dependencies first.',
+            code: 'PR_DELETE_FK_CONSTRAINT',
+          });
+        }
+        res.status(500).json({
+          error: err?.message || 'Failed to delete product',
+          name: err?.name,
+          code: err?.original?.code,
+        });
     }
 };
 
@@ -386,6 +693,7 @@ const deleteCategory = async (req, res) => {
 
 module.exports = {
     saveProduct,
+    createPRRegistration,
     getAllProducts,
     getProductById,
     getProductDetail,

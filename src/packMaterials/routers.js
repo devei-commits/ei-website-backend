@@ -10,15 +10,19 @@ const {
   deletePackMaterial,
   getReservedStock,
 } = require('./controller');
+const { createCacheReadMiddleware } = require('../cache/cacheReadMiddleware');
 
 const requirePackMaterials = [isAuthenticated, requireModule('packaging-management')];
+
+const cachePackMaterialsList = createCacheReadMiddleware({ namespace: 'pack-materials', ttlSeconds: 120 });
+const cachePackMaterialsOne = createCacheReadMiddleware({ namespace: 'pack-materials', ttlSeconds: 300 });
 
 router.get('/next-code', requirePackMaterials, getNextCode);
 router.post('/', requirePackMaterials, createPackMaterial);
 router.get('/:id/reserved-stock', requirePackMaterials, getReservedStock);
-router.get('/:id', requirePackMaterials, getPackMaterialById);
+router.get('/:id', requirePackMaterials, cachePackMaterialsOne, getPackMaterialById);
 router.put('/:id', requirePackMaterials, updatePackMaterial);
 router.delete('/:id', requirePackMaterials, deletePackMaterial);
-router.get('/', requirePackMaterials, listPackMaterials);
+router.get('/', requirePackMaterials, cachePackMaterialsList, listPackMaterials);
 
 module.exports = router;

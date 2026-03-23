@@ -18,14 +18,20 @@ const {
   getItemsInvolved,
   getItemsInvolvedByPlanningId,
 } = require('./controller');
+const { createCacheReadMiddleware } = require('../cache/cacheReadMiddleware');
 
 const guard = [isAuthenticated, requireModule('order-management')];
 
-router.get('/', guard, listPlanningExtracted);
+const cachePlanningExtractedList = createCacheReadMiddleware({ namespace: 'planning-extracted', ttlSeconds: 300 });
+
+router.get('/', guard, cachePlanningExtractedList, listPlanningExtracted);
 router.get('/batches/all', guard, listAllBatches);
 router.get('/sent-summary', guard, getSentBatchSummary);
-router.get('/items-involved', guard, getItemsInvolved);
-router.get('/:id/items-involved', guard, getItemsInvolvedByPlanningId);
+const cachePlanningExtractedOne = createCacheReadMiddleware({ namespace: 'planning-extracted', ttlSeconds: 300 });
+const cachePlanningItemsInvolved = createCacheReadMiddleware({ namespace: 'planning-extracted', ttlSeconds: 120 });
+
+router.get('/items-involved', guard, cachePlanningItemsInvolved, getItemsInvolved);
+router.get('/:id/items-involved', guard, cachePlanningItemsInvolved, getItemsInvolvedByPlanningId);
 router.get('/:id/bom-override', guard, getBomOverride);
 router.put('/:id/bom-override', guard, putBomOverride);
 router.get('/:id/batches', guard, listBatches);
@@ -34,7 +40,7 @@ router.post('/:id/batches/add-one', guard, addOneBatchFromMaster);
 router.post('/:id/batches/add-rework', guard, addRworkBatch);
 router.get('/:id/batches/:batchId', guard, getBatchById);
 router.put('/:id/batches/:batchId', guard, updateBatch);
-router.get('/:id', guard, getPlanningExtractedById);
+router.get('/:id', guard, cachePlanningExtractedOne, getPlanningExtractedById);
 router.patch('/:id', guard, updatePlanningExtracted);
 
 module.exports = router;

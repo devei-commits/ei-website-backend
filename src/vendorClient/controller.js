@@ -1,4 +1,5 @@
 const VendorClient = require('./models');
+const { Op } = require('sequelize');
 
 function formatRow(row) {
   if (!row) return null;
@@ -30,8 +31,43 @@ function formatRow(row) {
 async function listVendorClients(req, res) {
   try {
     const typeFilter = req.query.type; // 'vendor' | 'client'
+    const search = req.query.search != null ? String(req.query.search).trim() : '';
+    const statusFilter = req.query.status != null ? String(req.query.status).trim() : '';
+    const categoryFilter = req.query.category != null ? String(req.query.category).trim() : '';
+    const wantsPagination = req.query.limit != null || req.query.offset != null;
+
     const where = {};
     if (typeFilter === 'vendor' || typeFilter === 'client') where.type = typeFilter;
+    if (statusFilter && statusFilter !== 'all') where.status = statusFilter;
+    if (categoryFilter && categoryFilter !== 'all') where.category = categoryFilter;
+    if (search) {
+      where[Op.or] = [
+        { entity_code: { [Op.iLike]: `%${search}%` } },
+        { name: { [Op.iLike]: `%${search}%` } },
+        { email: { [Op.iLike]: `%${search}%` } },
+        { phone: { [Op.iLike]: `%${search}%` } },
+        { location: { [Op.iLike]: `%${search}%` } },
+        { country: { [Op.iLike]: `%${search}%` } },
+        { category: { [Op.iLike]: `%${search}%` } },
+      ];
+    }
+
+    if (wantsPagination) {
+      const limit = req.query.limit != null ? parseInt(String(req.query.limit), 10) : undefined;
+      const offset = req.query.offset != null ? parseInt(String(req.query.offset), 10) : undefined;
+      if (limit == null || offset == null || Number.isNaN(limit) || Number.isNaN(offset) || limit <= 0 || offset < 0) {
+        return res.status(400).json({ error: 'Invalid limit/offset' });
+      }
+
+      const total = await VendorClient.count({ where });
+      const rows = await VendorClient.findAll({
+        where,
+        order: [['updated_at', 'DESC'], ['entity_code', 'ASC']],
+        limit,
+        offset,
+      });
+      return res.json({ rows: rows.map(formatRow), total, limit, offset });
+    }
 
     const rows = await VendorClient.findAll({
       where,

@@ -9,6 +9,7 @@ const WarehouseInventory = require('../../src/warehouseInventory/models');
 const { Product } = require('../../src/products/models');
 const { ProductionBatch } = require('../../src/production/models');
 const { applyBprFgReadyToInventory } = require('../../src/production/controller');
+const { isDbAvailable } = require('../helpers/dbAvailability');
 
 describe('production fg_ready', () => {
   let productId;
@@ -17,8 +18,11 @@ describe('production fg_ready', () => {
   let batchId;
   let whRmId;
   let whPmId;
+  let dbAvailable = true;
 
   beforeAll(async () => {
+    dbAvailable = await isDbAvailable(db);
+    if (!dbAvailable) return;
     await db.sync({ force: true });
     const product = await Product.create({
       product_sku: 'SKU-FG-001',
@@ -61,10 +65,11 @@ describe('production fg_ready', () => {
   });
 
   afterAll(async () => {
-    await db.close();
+    if (dbAvailable) await db.close();
   });
 
   test('applyBprFgReadyToInventory reduces RM and PM wh_stock, adds FG to warehouse', async () => {
+    if (!dbAvailable) return;
     const row = await ProductionBatch.findByPk(batchId);
     await applyBprFgReadyToInventory(row);
     const whRm = await WarehouseInventory.findByPk(whRmId);

@@ -2,6 +2,7 @@ const ItemGroup = require('./models');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const db = require('../../db');
+const { Op } = require('sequelize');
 
 function toIntList(val) {
   if (val == null) return [];
@@ -128,8 +129,47 @@ async function syncGroupIdToMembers(type, groupIdStr, memberIds, prevMemberIds =
 async function listItemGroups(req, res) {
   try {
     const typeFilter = req.query.type; // optional 'RM' | 'PM'
+    const search = req.query.search != null ? String(req.query.search).trim() : '';
+    const wantsPagination = req.query.limit != null || req.query.offset != null;
+
     const where = {};
     if (typeFilter === 'RM' || typeFilter === 'PM') where.type = typeFilter;
+    if (search) {
+      where[Op.or] = [
+        { code: { [Op.iLike]: `%${search}%` } },
+        { name: { [Op.iLike]: `%${search}%` } },
+      ];
+    }
+
+    const limit = req.query.limit != null ? parseInt(String(req.query.limit), 10) : undefined;
+    const offset = req.query.offset != null ? parseInt(String(req.query.offset), 10) : undefined;
+
+    const paginationMode = wantsPagination;
+    if (paginationMode) {
+      if (limit == null || offset == null || Number.isNaN(limit) || Number.isNaN(offset) || limit <= 0 || offset < 0) {
+        return res.status(400).json({ error: 'Invalid limit/offset' });
+      }
+
+      const total = await ItemGroup.count({ where });
+      const rows = await ItemGroup.findAll({
+        where,
+        order: [['code', 'ASC']],
+        limit,
+        offset,
+      });
+
+      const list = [];
+      for (const row of rows) {
+        const plain = row.get ? row.get({ plain: true }) : row;
+        const [members, proposedAlternates] = await Promise.all([
+          resolveMembers(plain.type, plain.member_ids),
+          resolveProposedAlternates(plain.type, plain.proposed_alternates),
+        ]);
+        list.push(formatGroup(row, members, proposedAlternates));
+      }
+
+      return res.json({ rows: list, total, limit, offset });
+    }
 
     const rows = await ItemGroup.findAll({ where, order: [['code', 'ASC']] });
     const list = [];

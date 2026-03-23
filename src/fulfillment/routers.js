@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { isAuthenticated, requireModule } = require('../middleware/security');
+const { createCacheReadMiddleware } = require('../cache/cacheReadMiddleware');
 const {
   listOrders, getOrderById, createOrder, updateOrder, deleteOrder,
   pickSplits, invoiceSplits, shipSplits, deliverSplits,
@@ -12,18 +13,20 @@ const {
 
 const guard = [isAuthenticated, requireModule('order-management')];
 
-router.get('/', guard, listOrders);
+const cacheFulfillment = createCacheReadMiddleware({ namespace: 'fulfillment', ttlSeconds: 120 });
+
+router.get('/', guard, cacheFulfillment, listOrders);
 router.get('/next-so-no', guard, getNextSoNo);
 router.get('/customers', guard, getCustomers);
 router.get('/products', guard, getProducts);
 router.get('/batch-splits', guard, listBatchSplits);
 router.get('/transporters', guard, listTransporters);
 router.get('/next-invoice-no', guard, getNextInvoiceNo);
-router.get('/invoices', guard, listInvoices);
+router.get('/invoices', guard, cacheFulfillment, listInvoices);
 router.post('/invoices', guard, createInvoice);
 // SO planning availability summary (RM/PM needed vs requested vs available)
 router.get('/so-planning-availability', guard, getSoPlanningAvailability);
-router.get('/:id', guard, getOrderById);
+router.get('/:id', guard, cacheFulfillment, getOrderById);
 router.post('/', guard, createOrder);
 router.patch('/:id', guard, updateOrder);
 router.delete('/:id', guard, deleteOrder);

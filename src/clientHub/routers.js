@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { isAuthenticated, requireModule } = require('../middleware/security');
+const { createCacheReadMiddleware } = require('../cache/cacheReadMiddleware');
 const {
   getDashboard,
   getClientById,
@@ -17,8 +18,10 @@ const {
 
 const guard = [isAuthenticated, requireModule('order-management')];
 
-router.get('/', guard, getDashboard);
-router.get('/:id', guard, getClientById);
+const cacheClientHub = createCacheReadMiddleware({ namespace: 'client-hub', ttlSeconds: 300 });
+
+router.get('/', guard, cacheClientHub, getDashboard);
+router.get('/:id', guard, cacheClientHub, getClientById);
 router.post('/clients', guard, createClient);
 
 router.post('/:clientId/queries', guard, addQuery);

@@ -1,14 +1,19 @@
 const express = require('express');
 const router = express.Router();
 const { isAuthenticated, requireModule } = require('../middleware/security');
-const { listRawMaterials, getRawMaterialById, createRawMaterial, updateRawMaterial, deleteRawMaterial, getReservedStock } = require('./controller');
+const { listRawMaterials, getRawMaterialById, getNextCode, createRawMaterial, updateRawMaterial, deleteRawMaterial, getReservedStock } = require('./controller');
+const { createCacheReadMiddleware } = require('../cache/cacheReadMiddleware');
 
 const requireRawMaterials = [isAuthenticated, requireModule('raw-materials-management')];
 
-router.get('/', requireRawMaterials, listRawMaterials);
+const cacheRawMaterialsList = createCacheReadMiddleware({ namespace: 'raw-materials', ttlSeconds: 120 });
+const cacheRawMaterialsOne = createCacheReadMiddleware({ namespace: 'raw-materials', ttlSeconds: 300 });
+
+router.get('/', requireRawMaterials, cacheRawMaterialsList, listRawMaterials);
+router.get('/next-code', requireRawMaterials, getNextCode);
 router.post('/', requireRawMaterials, createRawMaterial);
 router.get('/:id/reserved-stock', requireRawMaterials, getReservedStock);
-router.get('/:id', requireRawMaterials, getRawMaterialById);
+router.get('/:id', requireRawMaterials, cacheRawMaterialsOne, getRawMaterialById);
 router.put('/:id', requireRawMaterials, updateRawMaterial);
 router.delete('/:id', requireRawMaterials, deleteRawMaterial);
 

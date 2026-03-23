@@ -10,8 +10,14 @@ const {
   listLowThresholdAlerts,
   listUsageStats,
 } = require('./controller');
+const { createCacheReadMiddleware } = require('../cache/cacheReadMiddleware');
 
-router.get('/', isAuthenticated, list);
+const cacheWarehouseInventoryList = createCacheReadMiddleware({
+  namespace: 'warehouse-inventory',
+  ttlSeconds: 120,
+});
+
+router.get('/', isAuthenticated, cacheWarehouseInventoryList, list);
 router.get('/location-history', isAuthenticated, listAllLocationHistory);
 router.get('/low-threshold-alerts', isAuthenticated, listLowThresholdAlerts);
 router.get('/usage-stats', isAuthenticated, listUsageStats);

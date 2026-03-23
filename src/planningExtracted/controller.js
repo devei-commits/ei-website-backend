@@ -11,6 +11,12 @@ const PackMaterial = require('../packMaterials/models');
 const BOM = require('../bom/models');
 const { ReservedBatchItem } = require('../fulfillment/models');
 
+/** Whether `sent_batch_indices` includes this 0-based batch index (coerces string/number from JSON). */
+function isBatchIndexSent(sentRaw, batchIndex0) {
+  const sent = Array.isArray(sentRaw) ? sentRaw : [];
+  return sent.some((x) => Number(x) === Number(batchIndex0));
+}
+
 function daysLeftDisplay(dueDate) {
   if (!dueDate) return '';
   const due = new Date(dueDate);
@@ -246,6 +252,35 @@ async function syncPlanningExtractedFromSalesOrders() {
 async function listPlanningExtracted(req, res) {
   try {
     await syncPlanningExtractedFromSalesOrders();
+
+    const limitQ = req.query.limit;
+    const offsetQ = req.query.offset;
+    const wantsPagination = limitQ != null || offsetQ != null;
+
+    const normalizeInt = (v) => {
+      const n = parseInt(String(v), 10);
+      return Number.isNaN(n) ? null : n;
+    };
+
+    if (wantsPagination) {
+      const limit = limitQ != null ? normalizeInt(limitQ) : 20;
+      const offset = offsetQ != null ? normalizeInt(offsetQ) : 0;
+      if (limit == null || offset == null || limit <= 0 || offset < 0) {
+        return res.status(400).json({ error: 'Invalid pagination params (limit must be > 0, offset must be >= 0)' });
+      }
+
+      const total = await PlanningExtracted.count();
+      const rows = await PlanningExtracted.findAll({
+        include: [
+          { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'expected_shipment_date', 'status'], required: false },
+          { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code'], required: false },
+        ],
+        order: [['due_date', 'ASC'], ['id', 'ASC']],
+        limit,
+        offset,
+      });
+      return res.json({ rows: rows.map(formatRow), total, limit, offset });
+    }
 
     const rows = await PlanningExtracted.findAll({
       include: [
@@ -564,6 +599,17 @@ async function createOrUpdateBatches(req, res) {
     const batches = Array.isArray(body.batches) ? body.batches : [];
     const bomCopy = await getBomCopyForPlanning(id);
     const existing = await PlanningBatch.findAll({ where: { planning_extracted_id: id }, order: [['sequence', 'ASC']] });
+    if (batches.length > existing.length && existing.length > 0) {
+      const lastRow = existing[existing.length - 1];
+      const lastIdx = (Number(lastRow.sequence) || existing.length) - 1;
+      const sentRaw = planRow.get ? planRow.get('sent_batch_indices') : planRow.sent_batch_indices;
+      if (!isBatchIndexSent(sentRaw, lastIdx)) {
+        return res.status(400).json({
+          error: 'Send the latest batch to production before adding more batches.',
+          code: 'LAST_BATCH_NOT_SENT',
+        });
+      }
+    }
     for (let i = 0; i < batches.length; i++) {
       const seq = i + 1;
       const batchCode = `PE-${id}-B${seq}`;
@@ -646,7 +692,9 @@ async function addOneBatchFromMaster(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
-    const planRow = await PlanningExtracted.findByPk(id, { attributes: ['id', 'product_id', 'batch_size_kg'] });
+    const planRow = await PlanningExtracted.findByPk(id, {
+      attributes: ['id', 'product_id', 'batch_size_kg', 'sent_batch_indices'],
+    });
     if (!planRow) return res.status(404).json({ error: 'Planning extracted not found' });
     const productId = planRow.product_id;
     const defaultSizeKg = Number(planRow.batch_size_kg) || 500;
@@ -656,6 +704,17 @@ async function addOneBatchFromMaster(req, res) {
       attributes: ['sequence'],
       order: [['sequence', 'DESC']],
     });
+    if (existing.length > 0) {
+      const sentRaw = planRow.get ? planRow.get('sent_batch_indices') : planRow.sent_batch_indices;
+      const topSeq = Number(existing[0].sequence) || existing.length;
+      const lastIdx = topSeq - 1;
+      if (!isBatchIndexSent(sentRaw, lastIdx)) {
+        return res.status(400).json({
+          error: 'Send the latest batch to production before adding another.',
+          code: 'LAST_BATCH_NOT_SENT',
+        });
+      }
+    }
     const nextSeq = existing.length === 0 ? 1 : (existing[0].sequence || 0) + 1;
     const batchCode = `PE-${id}-B${nextSeq}`;
 
@@ -1140,6 +1199,45 @@ async function getItemsInvolved(req, res) {
         reorderPt: reorderPtByPm.get(id) ?? 0,
         avgMo: avgMoByPm.get(id) ?? 0,
         status: statusByPm.get(id) ?? 'In Stock',
+      });
+    }
+
+    // Stable ordering for pagination.
+    out.sort((a, b) => {
+      const aCode = a.code || '';
+      const bCode = b.code || '';
+      if (aCode !== bCode) return aCode.localeCompare(bCode);
+
+      const aType = a.type || '';
+      const bType = b.type || '';
+      if (aType !== bType) return aType.localeCompare(bType);
+
+      const aId = (a.raw_material_id ?? a.pack_material_id ?? 0) || 0;
+      const bId = (b.raw_material_id ?? b.pack_material_id ?? 0) || 0;
+      return Number(aId) - Number(bId);
+    });
+
+    const limitQ = req.query.limit;
+    const offsetQ = req.query.offset;
+    const wantsPagination = limitQ != null || offsetQ != null;
+
+    if (wantsPagination) {
+      const normalizeInt = (v) => {
+        const n = parseInt(String(v), 10);
+        return Number.isNaN(n) ? null : n;
+      };
+
+      const limit = limitQ != null ? normalizeInt(limitQ) : 20;
+      const offset = offsetQ != null ? normalizeInt(offsetQ) : 0;
+      if (limit == null || offset == null || limit <= 0 || offset < 0) {
+        return res.status(400).json({ error: 'Invalid pagination params (limit must be > 0, offset must be >= 0)' });
+      }
+
+      return res.json({
+        rows: out.slice(offset, offset + limit),
+        total: out.length,
+        limit,
+        offset,
       });
     }
 

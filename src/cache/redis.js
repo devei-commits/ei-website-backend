@@ -1,36 +1,163 @@
 /**
- * Redis cache layer for cache-aside pattern. Postgres remains source of truth.
- * When REDIS_URL is unset or Redis is unavailable, get returns null and set/del are no-ops.
+ * Redis cache layer for cache-aside pattern (no external ioredis dependency).
+ * Postgres remains source of truth.
+ *
+ * When REDIS_URL is unset or Redis is unavailable:
+ * - get returns null
+ * - set/del are no-ops
+ * - delByPattern no-ops
  */
-const Redis = require('ioredis');
 
-let client = null;
-let clientReady = false;
+const net = require('net');
+const { URL } = require('url');
 
-function getClient() {
-  if (client != null) return client;
+let redisConfig = null; // { host, port, password? }
+let lastRedisUrl = null;
+
+function getRedisConfig() {
   const url = process.env.REDIS_URL;
   if (!url || url.trim() === '') return null;
   try {
-    client = new Redis(url, {
-      maxRetriesPerRequest: 3,
-      retryStrategy(times) {
-        if (times > 3) return null;
-        return Math.min(times * 200, 2000);
-      },
-      lazyConnect: true,
-    });
-    client.on('error', (err) => {
-      console.warn('[cache] Redis error:', err.message);
-    });
-    client.on('connect', () => {
-      clientReady = true;
-    });
-    return client;
-  } catch (err) {
-    console.warn('[cache] Redis init failed:', err.message);
+    const u = new URL(url);
+    // redis://host:port or rediss://... (password optional)
+    const host = u.hostname;
+    const port = u.port ? parseInt(u.port, 10) : 6379;
+    const password = u.password ? u.password : null;
+    if (!host || Number.isNaN(port)) return null;
+    return { host, port, password };
+  } catch {
     return null;
   }
+}
+
+function ensureConfig() {
+  const currentUrl = process.env.REDIS_URL;
+  if (redisConfig && lastRedisUrl === currentUrl) return redisConfig;
+  lastRedisUrl = currentUrl;
+  redisConfig = getRedisConfig();
+  return redisConfig;
+}
+
+function respEncodeBulkString(s) {
+  const str = s == null ? '' : String(s);
+  return `$${Buffer.byteLength(str, 'utf8')}\r\n${str}\r\n`;
+}
+
+function respEncodeCommand(args) {
+  const parts = [`*${args.length}\r\n`];
+  for (const a of args) parts.push(respEncodeBulkString(a));
+  return parts.join('');
+}
+
+function tryParseRESP(buffer) {
+  if (!buffer || buffer.length < 1) return null;
+
+  const prefix = String.fromCharCode(buffer[0]);
+  const crlf = buffer.indexOf('\r\n', 1);
+  if (crlf === -1) return null;
+
+  if (prefix === '+') {
+    return { value: buffer.slice(1, crlf).toString('utf8'), bytesRead: crlf + 2 };
+  }
+  if (prefix === '-') {
+    // Error replies start with '-'
+    return { value: null, bytesRead: crlf + 2, error: buffer.slice(1, crlf).toString('utf8') };
+  }
+  if (prefix === ':') {
+    const numStr = buffer.slice(1, crlf).toString('utf8');
+    const num = parseInt(numStr, 10);
+    return { value: Number.isNaN(num) ? null : num, bytesRead: crlf + 2 };
+  }
+  if (prefix === '$') {
+    const lenStr = buffer.slice(1, crlf).toString('utf8');
+    const len = parseInt(lenStr, 10);
+    if (len === -1) return { value: null, bytesRead: crlf + 2 };
+    const needed = crlf + 2 + len + 2; // data + trailing CRLF
+    if (buffer.length < needed) return null;
+    const data = buffer.slice(crlf + 2, crlf + 2 + len).toString('utf8');
+    return { value: data, bytesRead: needed };
+  }
+  if (prefix === '*') {
+    const lenStr = buffer.slice(1, crlf).toString('utf8');
+    const len = parseInt(lenStr, 10);
+    if (len === -1) return { value: null, bytesRead: crlf + 2 };
+
+    let offset = crlf + 2;
+    const out = [];
+    for (let i = 0; i < len; i++) {
+      const parsed = tryParseRESP(buffer.slice(offset));
+      if (parsed == null) return null;
+      out.push(parsed.value);
+      offset += parsed.bytesRead;
+    }
+    return { value: out, bytesRead: offset };
+  }
+
+  return null;
+}
+
+function sendRedisCommand(args) {
+  const cfg = ensureConfig();
+  if (!cfg) return Promise.resolve(null);
+
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({ host: cfg.host, port: cfg.port });
+    socket.setTimeout(2000);
+
+    let buffer = Buffer.alloc(0);
+    let resolved = false;
+
+    const cleanup = () => {
+      try {
+        socket.end();
+      } catch {
+        // ignore
+      }
+    };
+
+    socket.on('data', (chunk) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      const parsed = tryParseRESP(buffer);
+      if (!parsed) return;
+
+      if (resolved) return;
+      resolved = true;
+
+      if (parsed.error) {
+        cleanup();
+        reject(new Error(parsed.error));
+        return;
+      }
+
+      cleanup();
+      resolve(parsed.value);
+    });
+
+    socket.on('timeout', () => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      resolve(null);
+    });
+    socket.on('error', () => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      resolve(null);
+    });
+
+    // If a password is configured, authenticate first.
+    const run = async () => {
+      if (cfg.password) {
+        // AUTH <password>
+        const authCmd = respEncodeCommand(['AUTH', cfg.password]);
+        socket.write(authCmd);
+      }
+      const cmd = respEncodeCommand(args);
+      socket.write(cmd);
+    };
+    run().catch(() => {});
+  });
 }
 
 /**
@@ -39,13 +166,11 @@ function getClient() {
  * @returns {Promise<object|array|null>}
  */
 async function get(key) {
-  const c = getClient();
-  if (!c) return null;
   try {
-    const raw = await c.get(key);
+    const raw = await sendRedisCommand(['GET', key]);
     if (raw == null) return null;
     return JSON.parse(raw);
-  } catch {
+  } catch (e) {
     return null;
   }
 }
@@ -57,13 +182,11 @@ async function get(key) {
  * @param {number} ttlSeconds
  */
 async function set(key, value, ttlSeconds = 60) {
-  const c = getClient();
-  if (!c) return;
   try {
     const serialized = JSON.stringify(value);
-    await c.setex(key, ttlSeconds, serialized);
+    await sendRedisCommand(['SETEX', key, ttlSeconds, serialized]);
   } catch (err) {
-    console.warn('[cache] Redis set failed:', err.message);
+    // No-op on cache errors
   }
 }
 
@@ -72,12 +195,10 @@ async function set(key, value, ttlSeconds = 60) {
  * @param {string} key
  */
 async function del(key) {
-  const c = getClient();
-  if (!c) return;
   try {
-    await c.del(key);
-  } catch (err) {
-    console.warn('[cache] Redis del failed:', err.message);
+    await sendRedisCommand(['DEL', key]);
+  } catch {
+    // No-op on cache errors
   }
 }
 
@@ -87,17 +208,22 @@ async function del(key) {
  * @param {string} prefix
  */
 async function delByPattern(prefix) {
-  const c = getClient();
-  if (!c) return;
+  const cfg = ensureConfig();
+  if (!cfg) return;
   try {
     let cursor = '0';
     do {
-      const [next, keys] = await c.scan(cursor, 'MATCH', `${prefix}*`, 'COUNT', 100);
+      const reply = await sendRedisCommand(['SCAN', cursor, 'MATCH', `${prefix}*`, 'COUNT', 100]);
+      if (!Array.isArray(reply) || reply.length < 2) return;
+      const next = reply[0];
+      const keys = reply[1];
       cursor = next;
-      if (keys.length > 0) await c.del(...keys);
-    } while (cursor !== '0');
-  } catch (err) {
-    console.warn('[cache] Redis delByPattern failed:', err.message);
+      if (Array.isArray(keys) && keys.length > 0) {
+        await sendRedisCommand(['DEL', ...keys]);
+      }
+    } while (String(cursor) !== '0');
+  } catch {
+    // No-op on cache errors
   }
 }
 
@@ -122,5 +248,6 @@ module.exports = {
   del,
   delByPattern,
   getOrSet,
-  getClient,
+  getRedisConfig,
 };
+

@@ -13,6 +13,7 @@ const {
   addRackItem,
   removeRackItem,
 } = require('./controller');
+const { createCacheReadMiddleware } = require('../cache/cacheReadMiddleware');
 
 // Rack routes first so "racks" is not captured as :id
 router.get('/racks/:rackId', getRackById);
@@ -22,8 +23,11 @@ router.delete('/racks/:rackId', deleteRack);
 router.post('/racks/:rackId/items', addRackItem);
 router.delete('/racks/:rackId/items/:warehouseInventoryId', removeRackItem);
 
-router.get('/', list);
-router.get('/:id', getLocationById);
+const cacheWarehouseLocationsList = createCacheReadMiddleware({ namespace: 'warehouse-locations', ttlSeconds: 120 });
+const cacheWarehouseLocationsOne = createCacheReadMiddleware({ namespace: 'warehouse-locations', ttlSeconds: 300 });
+
+router.get('/', cacheWarehouseLocationsList, list);
+router.get('/:id', cacheWarehouseLocationsOne, getLocationById);
 router.post('/', createLocation);
 router.patch('/:id', updateLocation);
 router.delete('/:id', deleteLocation);

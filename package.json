@@ -11,7 +11,7 @@
     "seed": "node seed.js",
     "prepare": "husky"
   },
-  "author": "Shyam Vadikari",
+  "author": "dhrv",
   "license": "ISC",
   "dependencies": {
     "bcrypt": "^6.0.0",

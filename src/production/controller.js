@@ -1352,6 +1352,38 @@ function cloneJsonArray(val) {
   }
 }
 
+/** True when leaving bulk / fill / pack QC with an outcome (pass path or qc_failed). */
+function qcTransitionRequiresNonEmptyResults(prevPlain, nextPreview) {
+  if (
+    prevPlain.bmr_status === 'bulk_qc' &&
+    (nextPreview.bmr_status === 'cleared' || nextPreview.bmr_status === 'qc_failed')
+  ) {
+    return true;
+  }
+  if (
+    prevPlain.bpr_status === 'fill_qc' &&
+    (nextPreview.bpr_status === 'packaging' || nextPreview.bpr_status === 'qc_failed')
+  ) {
+    return true;
+  }
+  if (
+    prevPlain.bpr_status === 'pack_qc' &&
+    (nextPreview.bpr_status === 'fg_ready' || nextPreview.bpr_status === 'qc_failed')
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function qcSpecsEveryResultNonEmpty(qcSpecs) {
+  const arr = Array.isArray(qcSpecs) ? qcSpecs : [];
+  if (arr.length === 0) return true;
+  return arr.every((row) => {
+    const r = row && row.result != null ? String(row.result) : '';
+    return r.trim().length > 0;
+  });
+}
+
 async function updateBatch(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
@@ -1393,6 +1425,16 @@ async function updateBatch(req, res) {
     applyBatchBody(row, req.body);
     await recomputeBatchVolume(row);
     const nextPreview = row.get ? row.get({ plain: true }) : row;
+
+    if (
+      qcTransitionRequiresNonEmptyResults(prevPlain, nextPreview) &&
+      !qcSpecsEveryResultNonEmpty(nextPreview.qc_specs)
+    ) {
+      return res.status(400).json({
+        error:
+          'Every QC parameter must have a non-empty Result before submitting bulk, fill, or pack QC.',
+      });
+    }
 
     if (prevBmrStatus !== 'cleared' && nextPreview.bmr_status === 'cleared') {
       const by = Number(nextPreview.bulk_yield);

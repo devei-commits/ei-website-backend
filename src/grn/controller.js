@@ -644,6 +644,25 @@ async function update(req, res) {
     if (body.expiry !== undefined) updates.expiry = body.expiry;
     if (body.mfgBatch !== undefined) updates.mfg_batch = body.mfgBatch;
     if (body.mfg_batch !== undefined) updates.mfg_batch = body.mfg_batch;
+    const rowPlain = row.get ? row.get({ plain: true }) : row;
+    const nextStatus = updates.status !== undefined ? updates.status : rowPlain.status;
+    const nextQcStatus = updates.qc_status !== undefined ? updates.qc_status : rowPlain.qc_status;
+    const nextQcByRaw = updates.qc_by !== undefined ? updates.qc_by : rowPlain.qc_by;
+    const nextAssignedToRaw = updates.assigned_to !== undefined ? updates.assigned_to : rowPlain.assigned_to;
+    const nextWorkflowSteps = updates.workflow_steps !== undefined ? updates.workflow_steps : rowPlain.workflow_steps;
+    const nextGeneratedLabels = rowPlain.generated_labels;
+    if (nextStatus === 'GRN Complete') {
+      const blockers = [];
+      if (String(nextQcStatus || '').trim() !== 'Passed') blockers.push('QC status must be Passed');
+      if (!String(nextQcByRaw || '').trim()) blockers.push('QC by (inspector name) is required');
+      if (!String(nextAssignedToRaw || '').trim()) blockers.push('Assigned To must be allocated');
+      const hasLabelGenerationStep = Array.isArray(nextWorkflowSteps) && nextWorkflowSteps.includes('Label Generation');
+      const hasGeneratedLabels = Array.isArray(nextGeneratedLabels) && nextGeneratedLabels.length > 0;
+      if (!hasLabelGenerationStep && !hasGeneratedLabels) blockers.push('QR labels must be generated');
+      if (blockers.length > 0) {
+        return res.status(400).json({ error: `Cannot mark GRN Complete: ${blockers.join('; ')}.` });
+      }
+    }
     const previousStatus = (row.get ? row.get({ plain: true }) : row).status;
     await row.update(updates);
     const refreshed = await GoodsReceivedNote.findByPk(id);

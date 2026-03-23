@@ -99,8 +99,38 @@ async function getPoQuantityByItem() {
  */
 async function list(req, res) {
   try {
+    const limitQ = req.query.limit;
+    const offsetQ = req.query.offset;
+    const wantsPagination = limitQ != null || offsetQ != null;
+
+    const normalizeInt = (v) => {
+      const n = parseInt(String(v), 10);
+      return Number.isNaN(n) ? null : n;
+    };
+
+    if (wantsPagination) {
+      const limit = limitQ != null ? normalizeInt(limitQ) : 20;
+      const offset = offsetQ != null ? normalizeInt(offsetQ) : 0;
+      if (limit == null || offset == null || limit <= 0 || offset < 0) {
+        return res.status(400).json({ error: 'Invalid pagination params (limit must be > 0, offset must be >= 0)' });
+      }
+      const payload = await listPayload({ limit, offset });
+      const total = await WarehouseInventory.count();
+      console.log(
+        '[warehouse-inventory] GET list (paginated): rows=%d, total=%d, itemGroups=%d',
+        payload.rows.length,
+        total,
+        payload.itemGroups.length
+      );
+      return res.json({ rows: payload.rows, total, limit, offset, itemGroups: payload.itemGroups });
+    }
+
     const payload = await listPayload();
-    console.log('[warehouse-inventory] GET list: rows=%d, itemGroups=%d', payload.rows.length, payload.itemGroups.length);
+    console.log(
+      '[warehouse-inventory] GET list: rows=%d, itemGroups=%d',
+      payload.rows.length,
+      payload.itemGroups.length
+    );
     res.json(payload);
   } catch (err) {
     console.error('[warehouse-inventory] GET list error:', err);
@@ -455,6 +485,9 @@ async function listLowThresholdAlerts(req, res) {
 
 /** Call list logic and return the payload without sending response (for internal use). */
 async function listPayload() {
+  const pagination = arguments.length > 0 && arguments[0] ? arguments[0] : null;
+  const paginationOpts = pagination && typeof pagination === 'object' ? pagination : null;
+
   const whRows = await WarehouseInventory.findAll({
     order: [
       ['item_type', 'ASC'],
@@ -462,6 +495,8 @@ async function listPayload() {
       ['pack_material_id', 'ASC'],
       ['product_id', 'ASC'],
     ],
+    ...(paginationOpts && paginationOpts.limit != null ? { limit: paginationOpts.limit } : {}),
+    ...(paginationOpts && paginationOpts.offset != null ? { offset: paginationOpts.offset } : {}),
   });
   const rmIds = [...new Set(whRows.map((r) => r.raw_material_id).filter(Boolean))];
   const pmIds = [...new Set(whRows.map((r) => r.pack_material_id).filter(Boolean))];

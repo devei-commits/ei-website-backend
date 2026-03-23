@@ -1,6 +1,7 @@
 const PackMaterial = require('./models');
 const { Op } = require('sequelize');
 const WarehouseInventory = require('../warehouseInventory/models');
+const WarehouseInventoryLocationHistory = require('../warehouseInventory/locationHistoryModel');
 const { ReservedBatchItem } = require('../fulfillment/models');
 
 /**
@@ -69,6 +70,33 @@ async function listPackMaterials(req, res) {
         { size_spec: like },
         { print_status: like },
       ];
+    }
+
+    const limitQ = req.query.limit;
+    const offsetQ = req.query.offset;
+    const wantsPagination = limitQ != null || offsetQ != null;
+
+    const normalizeInt = (v) => {
+      const n = parseInt(String(v), 10);
+      return Number.isNaN(n) ? null : n;
+    };
+
+    if (wantsPagination) {
+      const limit = limitQ != null ? normalizeInt(limitQ) : 20;
+      const offset = offsetQ != null ? normalizeInt(offsetQ) : 0;
+      if (limit == null || offset == null || limit <= 0 || offset < 0) {
+        return res.status(400).json({ error: 'Invalid pagination params (limit must be > 0, offset must be >= 0)' });
+      }
+
+      const result = await PackMaterial.findAndCountAll({
+        where,
+        order: [['code', 'ASC']],
+        limit,
+        offset,
+      });
+
+      const listRows = result.rows.map(formatPackMaterial);
+      return res.json({ rows: listRows, total: result.count, limit, offset });
     }
 
     const rows = await PackMaterial.findAll({
@@ -205,10 +233,31 @@ async function deletePackMaterial(req, res) {
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await PackMaterial.findByPk(id);
     if (!row) return res.status(404).json({ error: 'Pack material not found' });
+
+    // warehouse_inventory has FK (pack_material_id -> pack_materials.id) which blocks master-row delete.
+    // Clean warehouse_inventory + location history first.
+    const whInv = await WarehouseInventory.findOne({ where: { item_type: 'PM', pack_material_id: row.id } });
+    if (whInv) {
+      await WarehouseInventoryLocationHistory.destroy({ where: { warehouse_inventory_id: whInv.id } });
+      await whInv.destroy(); // cascades to rack items via FK onDelete: CASCADE
+    }
+
     await row.destroy();
     res.status(204).send();
   } catch (err) {
     console.error('deletePackMaterial error', err);
+    const isFk =
+      err &&
+      (err.name === 'SequelizeForeignKeyConstraintError' ||
+        err.name === 'SequelizeDatabaseError' ||
+        err.original?.code === '23503');
+    if (isFk) {
+      return res.status(409).json({
+        error:
+          'Cannot delete pack material because it is referenced by other records (e.g. BOM / warehouse stock / batches). Remove dependencies first.',
+        code: 'PM_DELETE_FK_CONSTRAINT',
+      });
+    }
     res.status(500).json({ error: 'Failed to delete pack material' });
   }
 }

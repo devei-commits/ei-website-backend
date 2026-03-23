@@ -339,12 +339,34 @@ async function update(req, res) {
 
     const plainBefore = row.get ? row.get({ plain: true }) : row;
     const previousStatus = plainBefore.status || '';
+    const newStatus = updates.status !== undefined ? updates.status : previousStatus;
+    const mergedZone =
+      updates.mu_receive_zone !== undefined ? updates.mu_receive_zone : plainBefore.mu_receive_zone;
+    const mergedRack =
+      updates.mu_receive_rack !== undefined ? updates.mu_receive_rack : plainBefore.mu_receive_rack;
+    const isOutboundMtr =
+      plainBefore.source === 'MTR' &&
+      !plainBefore.is_inbound_from_mu;
+
+    if (newStatus === 'Completed' && previousStatus !== 'Completed' && isOutboundMtr) {
+      if (previousStatus !== 'Received at MU') {
+        return res.status(400).json({
+          error: 'Status must be Received at MU before completing this transfer.',
+        });
+      }
+      const z = String(mergedZone || '').trim();
+      const r = String(mergedRack || '').trim();
+      if (!z || !r) {
+        return res.status(400).json({
+          error: 'MU zone and MU rack are required before completing this transfer.',
+        });
+      }
+    }
 
     await row.update(updates);
     const refreshed = await MaterialRequestNote.findByPk(id);
     const d = refreshed.get ? refreshed.get({ plain: true }) : refreshed;
 
-    const newStatus = updates.status !== undefined ? updates.status : previousStatus;
     if (newStatus === 'Completed' && previousStatus !== 'Completed' && d.source === 'MTR' && d.bmr_no) {
       await applyMrnCompletionToInventory(d);
       if (d.mu_receive_zone || d.mu_receive_rack) {

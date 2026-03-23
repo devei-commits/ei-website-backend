@@ -24,6 +24,21 @@ services:
     networks:
       - app-network
 
+  redis:
+    image: redis:7-alpine
+    container_name: orders_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "no"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
   app:
     image: node:20
     container_name: orders_app
@@ -36,6 +51,7 @@ services:
     environment:
       NODE_ENV: development
       DATABASE_URL: postgresql://${POSTGRES_USER:-orders_user}:${POSTGRES_PASSWORD:-orders_password}@db:5432/${POSTGRES_DB:-orders_db}
+      REDIS_URL: redis://redis:6379
     volumes:
       - ./:/usr/src/app
     command: sh -c "npm install && sh /usr/src/app/entrypoint.sh"
