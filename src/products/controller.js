@@ -9,6 +9,8 @@ const WarehouseInventory = require('../warehouseInventory/models');
 const WarehouseInventoryLocationHistory = require('../warehouseInventory/locationHistoryModel');
 const PlanningExtracted = require('../planningExtracted/models');
 const redisCache = require('../cache/redis');
+const { syncZohoItemForNewProduct } = require('./zohoItemSync');
+const zohoEnv = require('../services/zohoEnv');
 
 /** At least one non-empty formula line (INCI / RM code / positive %). */
 function countMeaningfulRmLines(lines) {
@@ -61,7 +63,23 @@ const saveProduct = async (req, res) => {
       created_at: new Date(),
     });
 
-    return res.status(201).json(product);
+    const zoho = await syncZohoItemForNewProduct(product, req.body);
+    const payload = product.get ? product.get({ plain: true }) : { ...product };
+    if (zoho.synced && zoho.itemId) {
+      await product.update({ zoho_item_id: zoho.itemId });
+      payload.zoho_item_id = zoho.itemId;
+    } else if (
+      zohoEnv.booksEnabled &&
+      zohoEnv.syncItems &&
+      zoho.error &&
+      zoho.error !== 'zoho_disabled' &&
+      zoho.error !== 'item_sync_disabled' &&
+      zoho.error !== 'already_has_zoho_item_id'
+    ) {
+      payload.zoho_sync = { synced: false, error: zoho.error };
+    }
+
+    return res.status(201).json(payload);
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }

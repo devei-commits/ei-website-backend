@@ -1,6 +1,6 @@
 /**
  * Raw Materials model for Masters → Raw Materials dashboard.
- * Primary info for Zoho sync (TODO: implement sync): name, zoho_id, sku, hsn_code, unit (uom), tax_pref, sales_purchase_account.
+ * Zoho Books: `zoho_id` is set on create via POST /items when Zoho is enabled (`zohoMasterItemSync`).
  * Table: raw_materials (code, name, inci, ..., zoho_id, sku, hsn_code, tax_pref, sales_purchase_account)
  */
 const { DataTypes, Model } = require('sequelize');
@@ -29,7 +29,6 @@ RawMaterial.init(
     status: { type: DataTypes.STRING(50), allowNull: true },
     products: { type: DataTypes.JSON, allowNull: true }, // array of product codes e.g. ['PR-001','PR-002']
     group: { type: DataTypes.STRING(100), allowNull: true },
-    // Primary info for Zoho sync (TODO: implement Zoho integration)
     zoho_id: { type: DataTypes.STRING(100), allowNull: true },
     sku: { type: DataTypes.STRING(100), allowNull: true },
     hsn_code: { type: DataTypes.STRING(50), allowNull: true },

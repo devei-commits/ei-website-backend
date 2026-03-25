@@ -218,6 +218,8 @@ async function syncPlanningExtractedFromSalesOrders() {
         rawMaterials = Array.isArray(b.rm_lines) ? b.rm_lines : [];
         packagingMaterials = Array.isArray(b.pm_lines) ? b.pm_lines : [];
       }
+      const hasBomLines =
+        rawMaterials.length > 0 || packagingMaterials.length > 0;
 
       const prodPlain = product.get ? product.get({ plain: true }) : product;
       const orderQty = item.quantity || item.orderedQty || 0;
@@ -235,8 +237,8 @@ async function syncPlanningExtractedFromSalesOrders() {
         batches_required: batchesRequired,
         batch_count: 0,
         batch_size_kg: batchSizeKg,
-        bom_status: bom ? 'Confirmed' : 'Pending',
-        bom_confirmed_at: bom ? new Date() : null,
+        bom_status: bom && hasBomLines ? 'Confirmed' : 'Pending',
+        bom_confirmed_at: bom && hasBomLines ? new Date() : null,
         approved_by: so.created_by || null,
         raw_materials: rawMaterials,
         packaging_materials: packagingMaterials,
@@ -1126,7 +1128,12 @@ async function getItemsInvolved(req, res) {
 
     const out = [];
     for (const [id, agg] of rmAgg) {
-      const sih = sihByRm.get(id) ?? 0;
+      // "sih" in the items-involved API should represent *available/free* stock
+      // (stock_in_hand minus already-reserved quantities). Otherwise the UI
+      // can incorrectly think there is no shortage and disable "Release to Planning".
+      const stockInHand = sihByRm.get(id) ?? 0;
+      const reserved = reservedByRm.get(id) ?? 0;
+      const sih = Math.max(0, stockInHand - reserved);
       const surplusShortage = sih - agg.totalRequired;
       const plannedQty = Number(
         await ReservedBatchItem.sum('quantity_reserved', {
@@ -1155,7 +1162,7 @@ async function getItemsInvolved(req, res) {
         warehouseInventoryId: whIdByRm.get(id) ?? null,
         batchNumber: batchNumberByRm.get(id) ?? null,
         expiryDate: expiryByRm.get(id) ?? null,
-        reserved: reservedByRm.get(id) ?? 0,
+        reserved,
         plannedQty,
         inTransit: inTransitByRm.get(id) ?? 0,
         reorderPt: reorderPtByRm.get(id) ?? 0,
@@ -1164,7 +1171,9 @@ async function getItemsInvolved(req, res) {
       });
     }
     for (const [id, agg] of pmAgg) {
-      const sih = sihByPm.get(id) ?? 0;
+      const stockInHand = sihByPm.get(id) ?? 0;
+      const reserved = reservedByPm.get(id) ?? 0;
+      const sih = Math.max(0, stockInHand - reserved);
       const surplusShortage = sih - agg.totalRequired;
       const plannedQty = Number(
         await ReservedBatchItem.sum('quantity_reserved', {
@@ -1193,7 +1202,7 @@ async function getItemsInvolved(req, res) {
         warehouseInventoryId: whIdByPm.get(id) ?? null,
         batchNumber: batchNumberByPm.get(id) ?? null,
         expiryDate: expiryByPm.get(id) ?? null,
-        reserved: reservedByPm.get(id) ?? 0,
+        reserved,
         plannedQty,
         inTransit: inTransitByPm.get(id) ?? 0,
         reorderPt: reorderPtByPm.get(id) ?? 0,

@@ -20,6 +20,10 @@ PurchaseOrder.init(
     order_status: { type: DataTypes.JSON, allowNull: true },
     form_data: { type: DataTypes.JSON, allowNull: true },
     items: { type: DataTypes.JSON, allowNull: true },
+    /** Zoho Books purchaseorder_id after POST /purchaseorders */
+    zoho_purchase_order_id: { type: DataTypes.STRING(100), allowNull: true },
+    /** Zoho Books bill_id after POST /bills (vendor purchase invoice) */
+    zoho_bill_id: { type: DataTypes.STRING(100), allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
   },

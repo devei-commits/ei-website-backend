@@ -84,6 +84,12 @@ User.init({
     allowNull: true
   },
 
+  /** Zoho Books API `contact.contact_id` (same customer record used for invoices, etc.). */
+  zoho_contact_id: {
+    type: DataTypes.STRING(64),
+    allowNull: true
+  },
+
   created_at: {
     type: DataTypes.DATE,
     allowNull: true

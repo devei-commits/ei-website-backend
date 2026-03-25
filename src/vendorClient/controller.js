@@ -1,5 +1,21 @@
 const VendorClient = require('./models');
 const { Op } = require('sequelize');
+const { syncZohoContactForVendorClient } = require('../users/zohoContactSync');
+const zohoEnv = require('../services/zohoEnv');
+
+function attachZohoVendorClientSync(out, zohoResult) {
+  if (!zohoEnv.booksEnabled || !zohoResult) return;
+  if (zohoResult.synced && zohoResult.contactId) {
+    out.zoho_sync = { synced: true, contact_id: zohoResult.contactId };
+  } else if (
+    zohoResult.error &&
+    zohoResult.error !== 'zoho_disabled' &&
+    zohoResult.error !== 'vendor_contact_sync_disabled' &&
+    zohoResult.error !== 'client_contact_sync_disabled'
+  ) {
+    out.zoho_sync = { synced: false, error: zohoResult.error };
+  }
+}
 
 function formatRow(row) {
   if (!row) return null;
@@ -98,7 +114,6 @@ async function getNextCode(req, res) {
   try {
     const type = (req.query.type || '').toLowerCase();
     const prefix = type === 'client' ? 'EI-CLI-' : 'EI-VEN-';
-    const { Op } = require('sequelize');
     const rows = await VendorClient.findAll({
       where: { entity_code: { [Op.like]: `${prefix}%` } },
       attributes: ['entity_code'],
@@ -178,7 +193,17 @@ async function createVendorClient(req, res) {
       data: payload.data,
     });
     console.log('[vendor-client] Created', type, 'id=', row.id, 'entity_code=', row.entity_code);
-    res.status(201).json(formatRow(row));
+    let zohoResult = null;
+    if (!row.zoho_id) {
+      zohoResult = await syncZohoContactForVendorClient(row);
+      if (zohoResult.synced && zohoResult.contactId) {
+        await row.update({ zoho_id: zohoResult.contactId });
+        await row.reload();
+      }
+    }
+    const out = formatRow(row);
+    attachZohoVendorClientSync(out, zohoResult);
+    res.status(201).json(out);
   } catch (err) {
     console.error('createVendorClient error', err);
     res.status(500).json({ error: 'Failed to create vendor/client' });
@@ -212,7 +237,18 @@ async function updateVendorClient(req, res) {
     if (payload.data !== undefined) row.data = payload.data;
 
     await row.save();
-    res.json(formatRow(row));
+    let zohoResult = null;
+    if (!row.zoho_id) {
+      await row.reload();
+      zohoResult = await syncZohoContactForVendorClient(row);
+      if (zohoResult.synced && zohoResult.contactId) {
+        await row.update({ zoho_id: zohoResult.contactId });
+        await row.reload();
+      }
+    }
+    const out = formatRow(row);
+    attachZohoVendorClientSync(out, zohoResult);
+    res.json(out);
   } catch (err) {
     console.error('updateVendorClient error', err);
     res.status(500).json({ error: 'Failed to update vendor/client' });

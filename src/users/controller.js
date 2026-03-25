@@ -9,6 +9,7 @@ const Address = require("../models/Addresses");
 const { Order, OrderItem } = require("../orders/models");
 const { Payment } = require("../payments/models");
 const db = require("../../db");
+const { syncZohoContactForNewUser } = require("./zohoContactSync");
 
 const isDev = process.env.DEV === "true" || process.env.NODE_ENV === "development";
 const DEV_BYPASS_EMAIL = "client1@example.com";
@@ -45,11 +46,12 @@ const createUser = async (req, res) => {
     billing_address,
   } = req.body;
 
+  const normalizedEmail = email != null ? String(email).trim().toLowerCase() : '';
   const t = await db.transaction();
 
   try {
     const existing = await User.findOne(
-      { where: { email } },
+      { where: { email: normalizedEmail } },
       { transaction: t }
     );
 
@@ -63,7 +65,7 @@ const createUser = async (req, res) => {
         fname,
         lname,
         display_name,
-        email,
+        email: normalizedEmail,
         mobile,
         password: bcrypt.hashSync(password, 10),
         doctor_id_legacy: doctor_id,
@@ -124,10 +126,22 @@ const createUser = async (req, res) => {
 
     await t.commit();
 
+    // Sync newly registered users to Zoho based on env-gated usertype policy.
+    const zoho = await syncZohoContactForNewUser(user, req.body || {});
+    if (zoho.synced && zoho.contactId) {
+      await user.update({ zoho_contact_id: zoho.contactId });
+    }
+
     return res.status(201).json({
       status: "Success",
       details: "User created!",
       userid: user.userid,
+      zoho_contact_id: zoho.contactId || null,
+      zoho_sync: {
+        synced: !!zoho.synced,
+        ...(zoho.contactId ? { contactId: zoho.contactId } : {}),
+        ...(zoho.error ? { error: zoho.error } : {}),
+      },
     });
 
   } catch (err) {
@@ -137,26 +151,27 @@ const createUser = async (req, res) => {
 };
 
 const userLogin = async (req, res) => {
-  console.log('Login attempt', { email: req.body.email });
-  const { error } = loginSchema.validate(req.body, { abortEarly: false });
-  if (error) {
-    console.log(error);
+  const loginEmail = req.body?.email != null ? String(req.body.email).trim().toLowerCase() : '';
+  console.log('Login attempt', { email: loginEmail });
+  // const { error } = loginSchema.validate(req.body, { abortEarly: false });
+  // if (error) {
+  //   console.log(error);
 
-    return res
-      .status(400)
-      .json({ errors: error.details.map((e) => e.message) });
-  }
-  const { email, password } = req.body;
-  const user = await User.findOne({ where: { email: email } });
+  //   return res
+  //     .status(400)
+  //     .json({ errors: error.details.map((e) => e.message) });
+  // }
+  const { password } = req.body;
+  const user = await User.findOne({ where: { email: loginEmail } });
   console.log('user object:', user);
 
   if (!user) {
-    return res.status(404).json({ error: "Invalid credentials!" });
+    return res.status(401).json({ error: "Invalid credentials!" });
   }
   const compare = await bcrypt.compare(password, user.password);
   console.log('password comparison result:', compare);
   if (!compare) {
-    return res.status(404).json({ error: "Invalid credentials!" });
+    return res.status(401).json({ error: "Invalid credentials!" });
   }
 
   // Staff/admin dashboard: skip OTP and return token directly (no auth table needed)
@@ -234,6 +249,7 @@ const getMe = async (req, res) => {
         "advance_payment",
         "advance_amount",
         "created_at",
+        "zoho_contact_id",
       ],
       include: [
         {
@@ -318,7 +334,7 @@ const getAllUsers = async (req, res) => {
   try {
     const staffOnly = req.query.staffOnly === 'true';
     const attributes = [
-      'userid', 'fname', 'lname', 'display_name', 'email', 'mobile', 'usertype', 'department', 'status', 'created_at',
+      'userid', 'fname', 'lname', 'display_name', 'email', 'mobile', 'usertype', 'department', 'status', 'created_at', 'zoho_contact_id',
     ];
     let where = {};
     let rolesByCode = null;
@@ -398,7 +414,7 @@ const searchUsers = async (req, res) => {
 const getUserById = async (req, res) => {
   try {
     const user = await User.findByPk(req.params.id, {
-      attributes: ['userid', 'fname', 'lname', 'display_name', 'email', 'mobile', 'usertype', 'department', 'status', 'created_at', 'updated_at'],
+      attributes: ['userid', 'fname', 'lname', 'display_name', 'email', 'mobile', 'usertype', 'department', 'status', 'created_at', 'updated_at', 'zoho_contact_id'],
     });
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -474,19 +490,29 @@ const createStaffUser = async (req, res) => {
   try {
     const body = req.body || {};
     const display_name = body.display_name ?? [body.firstName, body.lastName].filter(Boolean).join(' ').trim();
-    const email = body.email && String(body.email).trim();
+    const email = body.email && String(body.email).trim().toLowerCase();
     const mobile = body.mobile != null ? String(body.mobile) : null;
     const password = body.password;
     const roleId = body.roleId != null ? Number(body.roleId) : null;
+    const roleCodeRaw = body.role ?? body.roleCode ?? body.role_code;
+    const roleCode = roleCodeRaw != null ? String(roleCodeRaw).trim() : '';
     const department = body.department != null ? String(body.department).trim() || null : null;
     const status = body.status || 'active';
 
     if (!email) return res.status(400).json({ error: 'email is required' });
     if (!password || String(password).length < 6) return res.status(400).json({ error: 'password is required (min 6 characters)' });
-    if (roleId == null) return res.status(400).json({ error: 'roleId is required' });
+    if (roleId == null && !roleCode) {
+      return res.status(400).json({ error: 'role or roleId is required' });
+    }
 
-    const role = await Role.findByPk(roleId);
-    if (!role) return res.status(400).json({ error: 'Invalid roleId' });
+    let role = null;
+    if (roleCode) {
+      role = await Role.findOne({ where: { role_code: roleCode } });
+      if (!role) return res.status(400).json({ error: 'Invalid role' });
+    } else {
+      role = await Role.findByPk(roleId);
+      if (!role) return res.status(400).json({ error: 'Invalid roleId' });
+    }
     const usertype = role.role_code;
 
     const existing = await User.findOne({ where: { email } });
@@ -505,7 +531,21 @@ const createStaffUser = async (req, res) => {
       verify_status: 'verified',
     });
     const rolesByCode = { [usertype]: { role_id: role.role_id, role_name: role.role_name } };
-    res.status(201).json(formatUserForStaffList(user, rolesByCode));
+    const payload = formatUserForStaffList(user, rolesByCode);
+
+    const zoho = await syncZohoContactForNewUser(user, body);
+    if (zoho.synced && zoho.contactId) {
+      await user.update({ zoho_contact_id: zoho.contactId });
+      payload.zoho_contact_id = zoho.contactId;
+    }
+    // Always surface Zoho outcome so env misconfig (e.g. ZOHO_BOOKS_ENABLED=false) is visible in API.
+    payload.zoho_sync = {
+      synced: !!zoho.synced,
+      ...(zoho.contactId ? { contactId: zoho.contactId } : {}),
+      ...(zoho.error ? { error: zoho.error } : {}),
+    };
+
+    res.status(201).json(payload);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

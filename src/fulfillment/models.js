@@ -32,6 +32,8 @@ FulfillmentOrder.init(
     ship_address: { type: DataTypes.TEXT, allowNull: true },
     payment_terms: { type: DataTypes.STRING(50), allowNull: true },
     notes: { type: DataTypes.TEXT, allowNull: true },
+    /** Set when invoice is created via PATCH /invoice (no fulfillment_invoices row) */
+    zoho_invoice_id: { type: DataTypes.STRING(64), allowNull: true },
     invoice_no: { type: DataTypes.STRING(100), allowNull: true },
     invoice_date: { type: DataTypes.DATEONLY, allowNull: true },
     awb_no: { type: DataTypes.STRING(100), allowNull: true },
@@ -204,6 +206,8 @@ FulfillmentInvoice.init(
     total_value: { type: DataTypes.DECIMAL(14, 2), allowNull: true, defaultValue: 0 },
     status: { type: DataTypes.STRING(30), allowNull: false, defaultValue: 'draft' },
     line_items: { type: DataTypes.JSON, allowNull: true },
+    /** Zoho Books invoice_id after POST /invoices */
+    zoho_invoice_id: { type: DataTypes.STRING(64), allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
   },

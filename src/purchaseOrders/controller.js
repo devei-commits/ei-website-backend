@@ -1,4 +1,46 @@
 const PurchaseOrder = require('./models');
+const { syncZohoPurchaseOrderForPo, syncZohoBillForPo } = require('../services/zohoPurchaseOrderSync');
+const zohoEnv = require('../services/zohoEnv');
+
+// Some environments may not have Zoho columns migrated yet.
+// Keep read queries restricted to columns that always exist, so the PO APIs don't 500.
+const PO_SAFE_ATTRIBUTES = [
+  'id',
+  'order_id',
+  'vendor_name',
+  'branch',
+  'order_date',
+  'expected_shipment_date',
+  'reference',
+  'payment_terms',
+  'status',
+  'order_status',
+  'form_data',
+  'items',
+  'created_at',
+  'updated_at',
+];
+
+function isMissingColumnError(err, columnName) {
+  const code = err?.original?.code ?? err?.parent?.code;
+  if (code === '42703') return true; // postgres undefined_column
+  const msg = err?.message ? String(err.message) : '';
+  const col = columnName ? String(columnName) : '';
+  return col && msg.toLowerCase().includes(`column "${col.toLowerCase()}" does not exist`);
+}
+
+async function safeUpdateZohoColumn(row, columnName, value) {
+  if (value == null || value === '') return;
+  try {
+    await row.update({ [columnName]: value });
+  } catch (err) {
+    if (isMissingColumnError(err, columnName)) {
+      // DB schema doesn't yet include zoho_* columns; PO creation should still succeed.
+      return;
+    }
+    throw err;
+  }
+}
 
 function formatRow(row) {
   if (!row) return null;
@@ -17,14 +59,69 @@ function formatRow(row) {
     items: Array.isArray(d.items) ? d.items : [],
     formData: d.form_data && typeof d.form_data === 'object' ? d.form_data : {},
     orderStatus: d.order_status && typeof d.order_status === 'object' ? d.order_status : { orderStatus: '', invoiced: '', payment: '', packed: '', shipped: '', deliveryMethod: '' },
+    zohoPurchaseOrderId: d.zoho_purchase_order_id ?? null,
+    zohoBillId: d.zoho_bill_id ?? null,
     createdAt: d.created_at,
     updatedAt: d.updated_at,
   };
 }
 
+function attachZohoSyncToResponse(out, zohoPo, zohoBill) {
+  if (!zohoEnv.booksEnabled) return;
+  const zs = {};
+  if (zohoPo.synced && zohoPo.purchaseorderId) {
+    zs.purchase_order = { synced: true, purchaseorder_id: zohoPo.purchaseorderId };
+  } else if (
+    zohoPo.error &&
+    zohoPo.error !== 'zoho_disabled' &&
+    zohoPo.error !== 'po_sync_disabled' &&
+    zohoPo.error !== 'already_has_zoho_purchase_order'
+  ) {
+    zs.purchase_order = { synced: false, error: zohoPo.error };
+  }
+  if (zohoBill.synced && zohoBill.billId) {
+    zs.bill = { synced: true, bill_id: zohoBill.billId };
+  } else if (
+    zohoBill.error &&
+    zohoBill.error !== 'zoho_disabled' &&
+    zohoBill.error !== 'bill_sync_disabled' &&
+    zohoBill.error !== 'already_has_zoho_bill' &&
+    zohoBill.error !== 'bill_not_eligible'
+  ) {
+    zs.bill = { synced: false, error: zohoBill.error };
+  }
+  if (Object.keys(zs).length) out.zoho_sync = zs;
+}
+
+/**
+ * Run Zoho PO + Bill sync for a persisted row; updates zoho_* columns and returns API shape + zoho_sync.
+ * @param {*} row - Sequelize PurchaseOrder instance
+ * @param {Record<string, unknown>} body - original request body
+ */
+async function syncZohoAndFormatRow(row, body) {
+  await row.reload({ attributes: PO_SAFE_ATTRIBUTES });
+  const zohoPo = await syncZohoPurchaseOrderForPo(row, body);
+  if (zohoPo.synced && zohoPo.purchaseorderId) {
+    await safeUpdateZohoColumn(row, 'zoho_purchase_order_id', zohoPo.purchaseorderId);
+  }
+  await row.reload({ attributes: PO_SAFE_ATTRIBUTES });
+  const zohoBill = await syncZohoBillForPo(row, body);
+  if (zohoBill.synced && zohoBill.billId) {
+    await safeUpdateZohoColumn(row, 'zoho_bill_id', zohoBill.billId);
+  }
+  await row.reload({ attributes: PO_SAFE_ATTRIBUTES });
+  const out = formatRow(row);
+  attachZohoSyncToResponse(out, zohoPo, zohoBill);
+  return out;
+}
+
 async function listPurchaseOrders(req, res) {
   try {
-    const rows = await PurchaseOrder.findAll({ order: [['order_date', 'DESC'], ['id', 'DESC']] });
+    // Avoid selecting Zoho columns that may not exist in older DB schemas yet.
+    const rows = await PurchaseOrder.findAll({
+      attributes: PO_SAFE_ATTRIBUTES,
+      order: [['order_date', 'DESC'], ['id', 'DESC']],
+    });
     res.json(rows.map(formatRow));
   } catch (err) {
     console.error('listPurchaseOrders error', err);
@@ -36,7 +133,7 @@ async function getPurchaseOrderById(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
-    const row = await PurchaseOrder.findByPk(id);
+    const row = await PurchaseOrder.findByPk(id, { attributes: PO_SAFE_ATTRIBUTES });
     if (!row) return res.status(404).json({ error: 'Purchase order not found' });
     res.json(formatRow(row));
   } catch (err) {
@@ -95,8 +192,23 @@ async function createPurchaseOrder(req, res) {
   try {
     const payload = bodyToPayload(req.body || {});
     if (!payload.order_id || !String(payload.order_id).trim()) return res.status(400).json({ error: 'orderId or poNumber is required' });
-    const row = await PurchaseOrder.create(payload);
-    res.status(201).json(formatRow(row));
+    // Some DB schemas may not include Zoho sync columns yet.
+    // Limit what Postgres returns so INSERT ... RETURNING doesn't reference missing columns.
+    const row = await PurchaseOrder.create(payload, { returning: PO_SAFE_ATTRIBUTES });
+    const body = req.body || {};
+    const zohoPo = await syncZohoPurchaseOrderForPo(row, body);
+    if (zohoPo.synced && zohoPo.purchaseorderId) {
+      await safeUpdateZohoColumn(row, 'zoho_purchase_order_id', zohoPo.purchaseorderId);
+    }
+    await row.reload({ attributes: PO_SAFE_ATTRIBUTES });
+    const zohoBill = await syncZohoBillForPo(row, body);
+    if (zohoBill.synced && zohoBill.billId) {
+      await safeUpdateZohoColumn(row, 'zoho_bill_id', zohoBill.billId);
+    }
+    await row.reload({ attributes: PO_SAFE_ATTRIBUTES });
+    const out = formatRow(row);
+    attachZohoSyncToResponse(out, zohoPo, zohoBill);
+    res.status(201).json(out);
   } catch (err) {
     console.error('createPurchaseOrder error', err);
     res.status(500).json({ error: 'Failed to create purchase order' });
@@ -107,12 +219,29 @@ async function updatePurchaseOrder(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
-    const row = await PurchaseOrder.findByPk(id);
+    const row = await PurchaseOrder.findByPk(id, { attributes: PO_SAFE_ATTRIBUTES });
     if (!row) return res.status(404).json({ error: 'Purchase order not found' });
-    const payload = bodyToUpdatePayload(req.body || {});
-    if (Object.keys(payload).length === 0) return res.json(formatRow(row));
+    const body = req.body || {};
+    const payload = bodyToUpdatePayload(body);
+    // Shallow-merge form_data so partial updates (e.g. request link, release) keep vendorClientId / quoteId.
+    if (
+      body.formData !== undefined &&
+      body.formData &&
+      typeof body.formData === 'object' &&
+      !Array.isArray(body.formData)
+    ) {
+      const prev = row.get('form_data');
+      const existing =
+        prev && typeof prev === 'object' && !Array.isArray(prev) ? { ...prev } : {};
+      payload.form_data = { ...existing, ...body.formData };
+    }
+    if (Object.keys(payload).length === 0) {
+      const out = await syncZohoAndFormatRow(row, body);
+      return res.json(out);
+    }
     await row.update(payload);
-    res.json(formatRow(row));
+    const out = await syncZohoAndFormatRow(row, body);
+    res.json(out);
   } catch (err) {
     console.error('updatePurchaseOrder error', err);
     res.status(500).json({ error: 'Failed to update purchase order' });

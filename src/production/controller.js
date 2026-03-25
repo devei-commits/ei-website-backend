@@ -1650,6 +1650,32 @@ function soIdsMatch(a, b) {
 const BOM_DEBUG = process.env.BOM_DEBUG !== '0';
 
 /**
+ * Resolve product_id for filling an empty planning-batch BOM copy from master `boms`.
+ */
+async function resolveProductIdForBomFallback(d) {
+  if (d.sku) {
+    const prod = await Product.findOne({ where: { product_sku: d.sku }, attributes: ['product_id'] });
+    if (prod) return prod.product_id;
+  }
+  if (d.product_name) {
+    const prod = await Product.findOne({
+      where: { product_name: { [Op.iLike]: String(d.product_name).trim() } },
+      attributes: ['product_id'],
+    });
+    if (prod) return prod.product_id;
+  }
+  const pbId = d.planning_batch_id != null ? Number(d.planning_batch_id) : null;
+  if (pbId && !Number.isNaN(pbId)) {
+    const pb = await PlanningBatch.findByPk(pbId, { attributes: ['planning_extracted_id'] });
+    if (pb) {
+      const pe = await PlanningExtracted.findByPk(pb.planning_extracted_id, { attributes: ['product_id'] });
+      if (pe) return pe.product_id;
+    }
+  }
+  return null;
+}
+
+/**
  * Resolve BOM lines for a production batch.
  * Always prefer the batch-specific BOM copy: when production_batch.planning_batch_id is set, load
  * rm_lines/pm_lines from that planning_batches row (the BOM copy created for this batch). Otherwise
@@ -1660,6 +1686,10 @@ async function getBomLinesForBatch(d) {
   let rmLines = [];
   let pmLines = [];
   let source = 'product_bom';
+  /** When set, we already read planning_batches via planning_batch_id but rm_lines/pm_lines were empty — skip inferring the same row again. */
+  let skipInference = false;
+  /** Batch size from planning_batches when we use that row (even if BOM lines are filled from master below). */
+  let batchSizeKgOut = null;
 
   if (BOM_DEBUG) {
     console.log('[BOM-DEBUG] getBomLinesForBatch INPUT (production_batches row):', {
@@ -1695,7 +1725,14 @@ async function getBomLinesForBatch(d) {
           pm_lines_count: pmLines.length,
         });
       }
-      return { rmLines, pmLines, source, batchSizeKg: plain.size_kg != null ? Number(plain.size_kg) : null };
+      batchSizeKgOut = plain.size_kg != null ? Number(plain.size_kg) : null;
+      if (rmLines.length > 0 || pmLines.length > 0) {
+        return { rmLines, pmLines, source, batchSizeKg: batchSizeKgOut };
+      }
+      skipInference = true;
+      if (BOM_DEBUG) {
+        console.log('[BOM-DEBUG] planning batch copy empty — will try product master BOM merge');
+      }
     }
     if (BOM_DEBUG) console.log('[BOM-DEBUG] planning_batch_id', planningBatchId, 'set but PlanningBatch.findByPk returned null');
   } else if (BOM_DEBUG) {
@@ -1709,7 +1746,7 @@ async function getBomLinesForBatch(d) {
     : (d.batch_no ? parseInt(String(d.batch_no).replace(/^B-?/i, ''), 10) : null);
   const seq = (rawBatchIndex != null && !Number.isNaN(rawBatchIndex) && rawBatchIndex >= 1) ? rawBatchIndex : 1;
 
-  if (soNorm && (d.sku || d.product_name)) {
+  if (!skipInference && soNorm && (d.sku || d.product_name)) {
     let productId = null;
     if (d.sku) {
       const prod = await Product.findOne({ where: { product_sku: d.sku }, attributes: ['product_id'] });
@@ -1759,7 +1796,13 @@ async function getBomLinesForBatch(d) {
                 pm_lines_count: pmLines.length,
               });
             }
-            return { rmLines, pmLines, source, batchSizeKg: plain.size_kg != null ? Number(plain.size_kg) : null };
+            batchSizeKgOut = plain.size_kg != null ? Number(plain.size_kg) : null;
+            if (rmLines.length > 0 || pmLines.length > 0) {
+              return { rmLines, pmLines, source, batchSizeKg: batchSizeKgOut };
+            }
+            if (BOM_DEBUG) {
+              console.log('[BOM-DEBUG] inferred planning batch copy empty — will try product master BOM merge');
+            }
           }
           if (BOM_DEBUG) console.log('[BOM-DEBUG] Inference: no PlanningBatch row for plan.id=', plan.id, 'sequence=', seq);
         }
@@ -1786,8 +1829,29 @@ async function getBomLinesForBatch(d) {
     }
   }
 
+  // 4) planning_batches snapshot empty but product master `boms` may have RM/PM (or only master was maintained).
+  if (rmLines.length === 0 || pmLines.length === 0) {
+    const pid = await resolveProductIdForBomFallback(d);
+    if (pid != null) {
+      const bom = await BOM.findOne({ where: { product_id: pid }, attributes: ['rm_lines', 'pm_lines'] });
+      if (bom) {
+        const plain = bom.get ? bom.get({ plain: true }) : bom;
+        const masterRm = Array.isArray(plain.rm_lines) ? plain.rm_lines : [];
+        const masterPm = Array.isArray(plain.pm_lines) ? plain.pm_lines : [];
+        if (rmLines.length === 0 && masterRm.length > 0) {
+          rmLines = masterRm;
+          if (BOM_DEBUG) console.log('[BOM-DEBUG] Filled empty batch RM from product master BOM product_id=', pid);
+        }
+        if (pmLines.length === 0 && masterPm.length > 0) {
+          pmLines = masterPm;
+          if (BOM_DEBUG) console.log('[BOM-DEBUG] Filled empty batch PM from product master BOM product_id=', pid);
+        }
+      }
+    }
+  }
+
   if (BOM_DEBUG) console.log('[BOM-DEBUG] RESULT: source=', source, 'rmLines=', rmLines.length, 'pmLines=', pmLines.length);
-  return { rmLines, pmLines, source, batchSizeKg: null };
+  return { rmLines, pmLines, source, batchSizeKg: batchSizeKgOut };
 }
 
 /** Master RM/PM "Quality specifications" keys stored in form_data (RawMaterialForm / PackagingForm). */

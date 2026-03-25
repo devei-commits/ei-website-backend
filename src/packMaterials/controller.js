@@ -1,4 +1,6 @@
 const PackMaterial = require('./models');
+const { syncZohoItemForNewPackMaterial } = require('../services/zohoMasterItemSync');
+const zohoEnv = require('../services/zohoEnv');
 const { Op } = require('sequelize');
 const WarehouseInventory = require('../warehouseInventory/models');
 const WarehouseInventoryLocationHistory = require('../warehouseInventory/locationHistoryModel');
@@ -178,7 +180,23 @@ async function createPackMaterial(req, res) {
       return res.status(400).json({ error: 'code or itemCode is required' });
     }
     const row = await PackMaterial.create(fields);
-    res.status(201).json(formatPackMaterialFull(row));
+    const zoho = await syncZohoItemForNewPackMaterial(row, b);
+    if (zoho.synced && zoho.itemId) {
+      await row.update({ zoho_id: zoho.itemId });
+    }
+    await row.reload();
+    const out = formatPackMaterialFull(row);
+    if (
+      zohoEnv.booksEnabled &&
+      zohoEnv.syncItems &&
+      zoho.error &&
+      zoho.error !== 'zoho_disabled' &&
+      zoho.error !== 'item_sync_disabled' &&
+      zoho.error !== 'already_has_zoho_id'
+    ) {
+      out.zoho_sync = { synced: false, error: zoho.error };
+    }
+    res.status(201).json(out);
   } catch (err) {
     console.error('createPackMaterial error', err);
     res.status(500).json({ error: err.message || 'Failed to create pack material' });

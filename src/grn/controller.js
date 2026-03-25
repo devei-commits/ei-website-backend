@@ -289,6 +289,8 @@ async function applyGrnCompletionToInventory(grnRow) {
   let pmByCode = {};
   let rmByName = {};
   let pmByName = {};
+  let validRmIds = new Set();
+  let validPmIds = new Set();
   if (codes.length > 0 || names.length > 0) {
     const rmWhere = codes.length > 0 && names.length > 0 ? { [Op.or]: [{ code: { [Op.in]: codes } }, { name: { [Op.in]: names } }] } : (codes.length > 0 ? { code: { [Op.in]: codes } } : { name: { [Op.in]: names } });
     const pmWhere = codes.length > 0 && names.length > 0 ? { [Op.or]: [{ code: { [Op.in]: codes } }, { description: { [Op.in]: names } }] } : (codes.length > 0 ? { code: { [Op.in]: codes } } : { description: { [Op.in]: names } });
@@ -296,8 +298,18 @@ async function applyGrnCompletionToInventory(grnRow) {
       RawMaterial.findAll({ where: rmWhere, attributes: ['id', 'code', 'name'] }),
       PackMaterial.findAll({ where: pmWhere, attributes: ['id', 'code', 'description'] }),
     ]);
-    rms.forEach((r) => { const x = r.get ? r.get({ plain: true }) : r; rmByCode[x.code] = x.id; if (x.name) rmByName[String(x.name).trim().toLowerCase()] = x.id; });
-    pms.forEach((p) => { const x = p.get ? p.get({ plain: true }) : p; pmByCode[x.code] = x.id; if (x.description) pmByName[String(x.description).trim().toLowerCase()] = x.id; });
+    rms.forEach((r) => {
+      const x = r.get ? r.get({ plain: true }) : r;
+      validRmIds.add(Number(x.id));
+      if (x.code) rmByCode[String(x.code).trim().toUpperCase()] = x.id;
+      if (x.name) rmByName[String(x.name).trim().toLowerCase()] = x.id;
+    });
+    pms.forEach((p) => {
+      const x = p.get ? p.get({ plain: true }) : p;
+      validPmIds.add(Number(x.id));
+      if (x.code) pmByCode[String(x.code).trim().toUpperCase()] = x.id;
+      if (x.description) pmByName[String(x.description).trim().toLowerCase()] = x.id;
+    });
   }
 
   const toAddByRm = new Map(); // raw_material_id -> qty to add
@@ -323,9 +335,10 @@ async function applyGrnCompletionToInventory(grnRow) {
       }
     }
     if (rcvdQty === 0) continue;
-    const code =
+    const codeRaw =
       (line.itemCode || line.item_code || '').trim() ||
       extractMasterCodeFromText(line.item || line.item_text || '');
+    const code = String(codeRaw || '').trim().toUpperCase();
 
     console.log('[grn] GRN Complete line resolved (qty -> WH)', {
       grnId: d.id,
@@ -338,27 +351,46 @@ async function applyGrnCompletionToInventory(grnRow) {
       product_id: line.product_id ?? null,
     });
 
-    if (line.raw_material_id != null) {
-      const id = line.raw_material_id;
-      toAddByRm.set(id, (toAddByRm.get(id) || 0) + rcvdQty);
-    } else if (line.pack_material_id != null) {
-      const id = line.pack_material_id;
-      toAddByPm.set(id, (toAddByPm.get(id) || 0) + rcvdQty);
-    } else if (line.product_id != null) {
+    const explicitRmId = line.raw_material_id != null ? Number(line.raw_material_id) : null;
+    const explicitPmId = line.pack_material_id != null ? Number(line.pack_material_id) : null;
+    const explicitRmIdValid = explicitRmId != null && !Number.isNaN(explicitRmId) && validRmIds.has(explicitRmId);
+    const explicitPmIdValid = explicitPmId != null && !Number.isNaN(explicitPmId) && validPmIds.has(explicitPmId);
+    const nameKey = String(line.item || '')
+      .split('(')[0]
+      .trim()
+      .toLowerCase();
+    const resolvedRmId = rmByCode[code] ?? (nameKey ? rmByName[nameKey] : undefined);
+    const resolvedPmId = pmByCode[code] ?? (nameKey ? pmByName[nameKey] : undefined);
+
+    if (line.product_id != null) {
       const id = line.product_id;
       toAddByProduct.set(id, (toAddByProduct.get(id) || 0) + rcvdQty);
-    } else if (code || (line.item && String(line.item).trim())) {
-      // Resolve by itemCode or by item name (Procurement-created GRNs may have only item name e.g. "Niacinamide")
-      const nameKey = String(line.item || '')
-        .split('(')[0]
-        .trim()
-        .toLowerCase();
-      let rmId = rmByCode[code];
-      let pmId = pmByCode[code];
-      if (rmId == null && nameKey) rmId = rmByName[nameKey];
-      if (pmId == null && nameKey) pmId = pmByName[nameKey];
+    } else if (code || (line.item && String(line.item).trim()) || explicitRmIdValid || explicitPmIdValid) {
+      // Prefer master resolution from code/name when available, then fall back to validated explicit IDs.
+      const rmId = resolvedRmId ?? (explicitRmIdValid ? explicitRmId : null);
+      const pmId = resolvedPmId ?? (explicitPmIdValid ? explicitPmId : null);
+
+      if (explicitRmIdValid && resolvedRmId != null && Number(explicitRmId) !== Number(resolvedRmId)) {
+        console.warn('[grn] RM id mismatch on line, preferring code/name resolution', {
+          explicitRmId,
+          resolvedRmId,
+          itemCode: code || null,
+          item: line.item || null,
+        });
+      }
+      if (explicitPmIdValid && resolvedPmId != null && Number(explicitPmId) !== Number(resolvedPmId)) {
+        console.warn('[grn] PM id mismatch on line, preferring code/name resolution', {
+          explicitPmId,
+          resolvedPmId,
+          itemCode: code || null,
+          item: line.item || null,
+        });
+      }
+
       if (grnType === 'PM' && pmId != null) {
         toAddByPm.set(pmId, (toAddByPm.get(pmId) || 0) + rcvdQty);
+      } else if (grnType === 'RM' && rmId != null) {
+        toAddByRm.set(rmId, (toAddByRm.get(rmId) || 0) + rcvdQty);
       } else if (rmId != null) {
         toAddByRm.set(rmId, (toAddByRm.get(rmId) || 0) + rcvdQty);
       } else if (pmId != null) {

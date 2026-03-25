@@ -50,6 +50,7 @@ const { Department } = require('./src/departments/models');
 const { ModuleDefinition, Permission, RolePermission } = require('./src/models/index');
 const { StaffProfile } = require('./src/roles/models');
 const defaultModuleDef = require('./src/roles/defaultModuleDefinition');
+const zohoEnv = require('./src/services/zohoEnv');
 const bcrypt = require('bcrypt');
 
 const ROLES_TO_SEED = [
@@ -181,6 +182,16 @@ async function seed() {
       { raw: true }
     ).catch(() => { });
 
+    // Zoho Books: PO / bill idempotency (also on PurchaseOrder model; guards older DBs without full sync)
+    await db.query(
+      `ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS zoho_purchase_order_id VARCHAR(100)`,
+      { raw: true }
+    ).catch(() => { });
+    await db.query(
+      `ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS zoho_bill_id VARCHAR(100)`,
+      { raw: true }
+    ).catch(() => { });
+
     console.log('Seeding module definitions (if empty)...');
     await ModuleDefinition.findOrCreate({
       where: { name: 'default' },
@@ -220,6 +231,18 @@ async function seed() {
 
     const now = new Date();
 
+    const zohoBooksOn = zohoEnv.booksEnabled;
+    const zohoSeedFull = zohoEnv.seedFullSync;
+    const seedZohoItems = zohoEnv.seedSyncItems;
+    const seedZohoContact = zohoEnv.seedSyncContacts;
+    const seedZohoInvoice = zohoEnv.seedSyncInvoices;
+
+    if (zohoSeedFull && zohoBooksOn) {
+      console.log(
+        '[Seed] Zoho: ZOHO_SEED_FULL_SYNC — syncing FG/RM/PM + contacts to Books and local DB, then demo invoice using DB zoho_item_id / zoho_id.'
+      );
+    }
+
     console.log('Seeding users...');
     // Test credentials (admin dashboard login):
     //   superadmin@example.com  / SuperAdmin@123  (Super Admin, Administration)
@@ -230,6 +253,9 @@ async function seed() {
     //   dr.sarah@example.com    / Doctor@123      (Doctor)
     //   client1@example.com     / Client1@123     (Customer)
     //   client2@example.com     / Client2@123     (Customer)
+    // Zoho seed: ZOHO_BOOKS_ENABLED=true + OAuth/org/currency. Recommended single switch:
+    //   ZOHO_SEED_FULL_SYNC=true → items (FG/RM/PM) + contacts (client1, Luminos, Chemspec) + demo invoice, all IDs written to DB then invoice reads from DB.
+    // Granular (optional): ZOHO_SEED_SYNC_ITEMS, ZOHO_SEED_SYNC_CONTACT, ZOHO_SEED_SYNC_INVOICE — invoice alone will not call Zoho unless items+client zoho ids already exist in DB.
 
     // 1. Super Admin
     const superAdmin = await User.create({
@@ -478,6 +504,31 @@ async function seed() {
     // Capture specific address IDs for order seeding
     const client1Billing = await Address.findOne({ where: { user_id: client1.userid, address_type: 'billing' } });
     const client1Shipping = await Address.findOne({ where: { user_id: client1.userid, address_type: 'shipping' } });
+
+    if (seedZohoContact) {
+      const { syncZohoContactForNewUser } = require('./src/users/zohoContactSync');
+      const zohoUser = await User.findByPk(client1.userid);
+      if (zohoUser && !zohoUser.zoho_contact_id) {
+        const seedBody = {};
+        if (client1Billing) {
+          const br = client1Billing.get ? client1Billing.get({ plain: true }) : client1Billing;
+          seedBody.billing_address = {
+            address: [br.address_line1, br.address_line2].filter(Boolean).join(', '),
+            city: br.city_text,
+            state: br.state_text,
+            zip: br.pincode,
+            country: br.country_text || 'India',
+          };
+        }
+        const zoho = await syncZohoContactForNewUser(zohoUser, seedBody);
+        if (zoho.synced && zoho.contactId) {
+          await zohoUser.update({ zoho_contact_id: zoho.contactId });
+          console.log(`[Seed] Zoho Books contact linked: ${zohoUser.email} → zoho_contact_id=${zoho.contactId}`);
+        } else if (zoho.error && zoho.error !== 'zoho_disabled') {
+          console.warn('[Seed] Zoho contact sync (client1@example.com) skipped:', zoho.error);
+        }
+      }
+    }
 
     console.log('Seeding categories and products...');
     const [productA, productB] = await Product.bulkCreate([
@@ -776,6 +827,7 @@ async function seed() {
     for (const [code, fd] of seedRmBulkForm) {
       await RawMaterial.update({ form_data: fd, updated_at: now }, { where: { code } });
     }
+
     const seedPmBulkForm = [
       ['EI-PM-TUB-001', { appearanceSpec: 'No cracks, seam intact; print legible', phSpec: 'N/A', otherSpecs: 'WVTR per drawing' }],
       ['EI-PM-CAP-001', { appearanceSpec: 'No flash; colour match approved swatch', microbialSpec: 'Bioburden per SOP', odorColorSpec: 'Neutral' }],
@@ -784,6 +836,74 @@ async function seed() {
     ];
     for (const [code, fd] of seedPmBulkForm) {
       await PackMaterial.update({ form_data: fd, updated_at: now }, { where: { code } });
+    }
+
+    if (seedZohoItems) {
+      const { syncZohoItemForNewRawMaterial, syncZohoItemForNewPackMaterial } = require('./src/services/zohoMasterItemSync');
+      const { syncZohoItemForNewProduct } = require('./src/products/zohoItemSync');
+
+      const productsToSync = await Product.findAll({
+        where: { zoho_item_id: null },
+        order: [['product_id', 'ASC']],
+      });
+      let nOk = 0;
+      let nFail = 0;
+      for (const p of productsToSync) {
+        const z = await syncZohoItemForNewProduct(p, {});
+        if (z.synced && z.itemId) {
+          await p.update({ zoho_item_id: z.itemId });
+          nOk++;
+        } else if (
+          z.error &&
+          z.error !== 'zoho_disabled' &&
+          z.error !== 'item_sync_disabled' &&
+          z.error !== 'already_has_zoho_item_id'
+        ) {
+          console.warn(`[Seed] Zoho product item skipped (${p.product_code}):`, z.error);
+          nFail++;
+        }
+      }
+      console.log(`[Seed] Zoho Books products (FG): ${nOk} linked, ${nFail} skipped/errors`);
+
+      const rms = await RawMaterial.findAll({ where: { zoho_id: null }, order: [['id', 'ASC']] });
+      nOk = 0;
+      nFail = 0;
+      for (const rm of rms) {
+        const z = await syncZohoItemForNewRawMaterial(rm, {});
+        if (z.synced && z.itemId) {
+          await rm.update({ zoho_id: z.itemId });
+          nOk++;
+        } else if (
+          z.error &&
+          z.error !== 'zoho_disabled' &&
+          z.error !== 'item_sync_disabled' &&
+          z.error !== 'already_has_zoho_id'
+        ) {
+          console.warn(`[Seed] Zoho RM skipped (${rm.code}):`, z.error);
+          nFail++;
+        }
+      }
+      console.log(`[Seed] Zoho Books raw materials: ${nOk} linked, ${nFail} skipped/errors`);
+
+      const pms = await PackMaterial.findAll({ where: { zoho_id: null }, order: [['id', 'ASC']] });
+      nOk = 0;
+      nFail = 0;
+      for (const pm of pms) {
+        const z = await syncZohoItemForNewPackMaterial(pm, {});
+        if (z.synced && z.itemId) {
+          await pm.update({ zoho_id: z.itemId });
+          nOk++;
+        } else if (
+          z.error &&
+          z.error !== 'zoho_disabled' &&
+          z.error !== 'item_sync_disabled' &&
+          z.error !== 'already_has_zoho_id'
+        ) {
+          console.warn(`[Seed] Zoho PM skipped (${pm.code}):`, z.error);
+          nFail++;
+        }
+      }
+      console.log(`[Seed] Zoho Books pack materials: ${nOk} linked, ${nFail} skipped/errors`);
     }
 
     console.log('Seeding BOMs...');
@@ -1130,13 +1250,105 @@ async function seed() {
     console.log('Seeding Vendor / Client master (before Items List)...');
     await VendorClient.destroy({ where: {} });
     const vendorClientSeed = [
-      { entity_code: 'EI-VEN-00001', type: 'vendor', zoho_id: '5012345678901001', name: 'Chemspec India', email: 'orders@chemspecindia.com', phone: '+91-9876543210', location: 'Mumbai', country: 'India', city: 'Mumbai', category: 'RAW MATERIAL', status: 'active', payment_terms: 'NET 30', notes: '', rating: 4, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00001', type: 'vendor', zoho_id: null, name: 'Chemspec India', email: 'orders@chemspecindia.com', phone: '+91-9876543210', location: 'Mumbai', country: 'India', city: 'Mumbai', category: 'RAW MATERIAL', status: 'active', payment_terms: 'NET 30', notes: '', rating: 4, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
       { entity_code: 'EI-VEN-00002', type: 'vendor', zoho_id: '5012345678901002', name: 'Sigma Chemicals Pvt Ltd', email: 'sales@sigmachem.in', phone: '+91-9876543211', location: 'Pune', country: 'India', city: 'Pune', category: 'RAW MATERIAL', status: 'active', payment_terms: 'NET 45', notes: '', rating: 4, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
       { entity_code: 'EI-VEN-00003', type: 'vendor', zoho_id: '5012345678901003', name: 'UV Filters & Actives Co', email: 'procurement@uvfilters.co.in', phone: '+91-9876543212', location: 'Hyderabad', country: 'India', city: 'Hyderabad', category: 'UV FILTER / ACTIVE', status: 'active', payment_terms: 'NET 30', notes: '', rating: 5, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
       { entity_code: 'EI-VEN-00004', type: 'vendor', zoho_id: '5012345678901004', name: 'Packaging Solutions India', email: 'orders@packsol.in', phone: '+91-9876543213', location: 'Chennai', country: 'India', city: 'Chennai', category: 'PACKAGING', status: 'active', payment_terms: 'NET 30', notes: '', rating: 4, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
-      { entity_code: 'EI-CLI-00001', type: 'client', zoho_id: '6012345678901001', name: 'Luminos Skincare', email: 'bd@luminos.in', phone: '+91-9812345001', location: 'Maharashtra', country: 'India', city: 'Mumbai', category: 'CDMO', status: 'active', payment_terms: 'NET 45', notes: '', rating: 5, moq: '—', lead_time: '—', data: { shipping_address: 'Luminos Skincare, 456 Andheri East, Mumbai, Maharashtra 400069, India' }, priority: 'high', segment: 'Skin Care', since_year: 2022, revenue_value: 4200000, avatar_color: 'orange', account_manager_id: amPriya.userid, contacts: [{ name: 'Rajeev Sharma', role: 'BD Head' }], created_at: now, updated_at: now },
+      { entity_code: 'EI-CLI-00001', type: 'client', zoho_id: null, name: 'Luminos Skincare', email: 'bd@luminos.in', phone: '+91-9812345001', location: 'Maharashtra', country: 'India', city: 'Mumbai', category: 'CDMO', status: 'active', payment_terms: 'NET 45', notes: '', rating: 5, moq: '—', lead_time: '—', data: { shipping_address: 'Luminos Skincare, 456 Andheri East, Mumbai, Maharashtra 400069, India' }, priority: 'high', segment: 'Skin Care', since_year: 2022, revenue_value: 4200000, avatar_color: 'orange', account_manager_id: amPriya.userid, contacts: [{ name: 'Rajeev Sharma', role: 'BD Head' }], created_at: now, updated_at: now },
     ];
     await VendorClient.bulkCreate(vendorClientSeed);
+
+    if (seedZohoContact) {
+      const { syncZohoContactForVendorClient } = require('./src/users/zohoContactSync');
+      const luminos = await VendorClient.findOne({ where: { entity_code: 'EI-CLI-00001' } });
+      if (luminos && !luminos.zoho_id) {
+        const zohoVc = await syncZohoContactForVendorClient(luminos);
+        if (zohoVc.synced && zohoVc.contactId) {
+          await luminos.update({ zoho_id: zohoVc.contactId });
+          console.log(`[Seed] Zoho Books contact linked: Luminos Skincare (EI-CLI-00001) → zoho_id=${zohoVc.contactId}`);
+        } else if (zohoVc.error && zohoVc.error !== 'zoho_disabled') {
+          console.warn('[Seed] Zoho contact sync (Luminos Skincare) skipped:', zohoVc.error);
+        }
+      }
+      const chemspec = await VendorClient.findOne({ where: { entity_code: 'EI-VEN-00001' } });
+      if (chemspec && !chemspec.zoho_id) {
+        const zohoVen = await syncZohoContactForVendorClient(chemspec);
+        if (zohoVen.synced && zohoVen.contactId) {
+          await chemspec.update({ zoho_id: zohoVen.contactId });
+          console.log(`[Seed] Zoho Books vendor linked: Chemspec India (EI-VEN-00001) → zoho_id=${zohoVen.contactId}`);
+        } else if (zohoVen.error && zohoVen.error !== 'zoho_disabled') {
+          console.warn('[Seed] Zoho vendor sync (Chemspec India) skipped:', zohoVen.error);
+        }
+      }
+    }
+
+    // Demo invoice: customer_id from vendor_clients.zoho_id (Luminos), line item_id from products.zoho_item_id (EI-PR-00001). Always loaded fresh from DB after item+contact sync above.
+    if (seedZohoInvoice) {
+      const { pushZohoSeedDemoInvoice } = require('./src/fulfillment/zohoInvoiceSync');
+
+      // Bulk item seed (seedZohoItems) runs earlier; if only invoice+contact flags were set, EI-PR-00001 may still lack zoho_item_id. Push that one FG to Books here when item API sync is allowed.
+      if (zohoBooksOn && zohoEnv.syncItems) {
+        const demoPrRow = await Product.findOne({ where: { product_code: 'EI-PR-00001' } });
+        if (demoPrRow && (!demoPrRow.zoho_item_id || !String(demoPrRow.zoho_item_id).trim())) {
+          const { syncZohoItemForNewProduct } = require('./src/products/zohoItemSync');
+          const zPr = await syncZohoItemForNewProduct(demoPrRow, {});
+          if (zPr.synced && zPr.itemId) {
+            await demoPrRow.update({ zoho_item_id: zPr.itemId });
+            console.log(`[Seed] Zoho Books product (demo invoice): EI-PR-00001 → zoho_item_id=${zPr.itemId}`);
+          } else if (
+            zPr.error &&
+            zPr.error !== 'zoho_disabled' &&
+            zPr.error !== 'item_sync_disabled' &&
+            zPr.error !== 'already_has_zoho_item_id'
+          ) {
+            console.warn('[Seed] Zoho demo-invoice product sync (EI-PR-00001) skipped:', zPr.error);
+          }
+        }
+      }
+
+      const seedInvProduct = await Product.findOne({
+        where: { product_code: 'EI-PR-00001' },
+        attributes: ['product_id', 'zoho_item_id', 'mrp_price', 'product_name'],
+      });
+      const seedInvCustomer = await VendorClient.findOne({
+        where: { entity_code: 'EI-CLI-00001' },
+        attributes: ['id', 'zoho_id', 'name', 'entity_code'],
+      });
+      const prZoho = seedInvProduct && seedInvProduct.zoho_item_id ? String(seedInvProduct.zoho_item_id).trim() : '';
+      const cliZoho = seedInvCustomer && seedInvCustomer.zoho_id ? String(seedInvCustomer.zoho_id).trim() : '';
+      if (seedInvProduct && prZoho && seedInvCustomer && seedInvCustomer.id && cliZoho) {
+        const invNo = `EI-SEED-INV-${now.getFullYear()}-${String(now.getTime()).slice(-8)}`;
+        const invRes = await pushZohoSeedDemoInvoice({
+          vendorClientId: seedInvCustomer.id,
+          productId: seedInvProduct.product_id,
+          invoiceNo: invNo,
+          quantity: 48,
+          rate: Number(seedInvProduct.mrp_price) || 499,
+          invoiceDate: now.toISOString().slice(0, 10),
+        });
+        if (invRes.synced && invRes.invoiceId) {
+          console.log(
+            `[Seed] Zoho Books demo invoice: ${invNo} → zoho_invoice_id=${invRes.invoiceId} (vendor_clients.id=${seedInvCustomer.id} → zoho_id=${cliZoho}, PR zoho_item_id=${prZoho})`
+          );
+        } else if (invRes.error && invRes.error !== 'zoho_invoices_disabled') {
+          console.warn('[Seed] Zoho demo invoice API error:', invRes.error);
+        }
+      } else {
+        const reasons = [];
+        if (!seedInvProduct) reasons.push('product EI-PR-00001 missing');
+        else if (!prZoho) {
+          reasons.push(
+            'products.zoho_item_id empty for EI-PR-00001 (use ZOHO_SEED_SYNC_ITEMS / ZOHO_SEED_FULL_SYNC, or keep ZOHO_SYNC_ITEMS enabled so the demo-invoice step can create the Books item)'
+          );
+        }
+        if (!seedInvCustomer) reasons.push('vendor_client EI-CLI-00001 missing');
+        else if (!seedInvCustomer.id) reasons.push('vendor_clients.id missing');
+        else if (!cliZoho) reasons.push('vendor_clients.zoho_id empty for Luminos (EI-CLI-00001)');
+        console.warn(
+          `[Seed] Zoho demo invoice not called — ${reasons.join('; ')}. Set ZOHO_SEED_FULL_SYNC=true or the matching ZOHO_SEED_SYNC_* flags so contacts/items exist in Postgres (and Books) before the invoice step.`
+        );
+      }
+    }
 
     // ── Client Hub sub-entities ──
     console.log('Seeding Client Hub data (queries, developments, orders, appointments)...');

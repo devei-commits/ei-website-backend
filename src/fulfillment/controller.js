@@ -9,6 +9,8 @@ const { Order } = require('../orders/models');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const WarehouseInventory = require('../warehouseInventory/models');
+const { syncZohoInvoiceAfterFulfillment } = require('./zohoInvoiceSync');
+const zohoEnv = require('../services/zohoEnv');
 
 const INCLUDE_FULL = [
   {
@@ -67,6 +69,7 @@ function formatOrder(row, batchMap = {}) {
     awbNo: d.awb_no || undefined,
     dispatchDate: d.dispatch_date || undefined,
     courier: d.courier || undefined,
+    zohoInvoiceId: d.zoho_invoice_id || undefined,
     items,
   };
 }
@@ -671,15 +674,25 @@ async function pickSplits(req, res) {
 }
 
 async function invoiceSplits(req, res) {
+  const tx = await FulfillmentOrder.sequelize.transaction();
   try {
     const id = parseInt(req.params.id, 10);
-    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    if (Number.isNaN(id)) {
+      await tx.rollback();
+      return res.status(400).json({ error: 'Invalid id' });
+    }
 
-    const order = await FulfillmentOrder.findByPk(id, { include: INCLUDE_FULL });
-    if (!order) return res.status(404).json({ error: 'Fulfillment order not found' });
+    const order = await FulfillmentOrder.findByPk(id, { include: INCLUDE_FULL, transaction: tx });
+    if (!order) {
+      await tx.rollback();
+      return res.status(404).json({ error: 'Fulfillment order not found' });
+    }
 
     const { invoiceNo, invoiceDate, courier, bprNos } = req.body;
-    if (!invoiceNo) return res.status(400).json({ error: 'invoiceNo is required' });
+    if (!invoiceNo) {
+      await tx.rollback();
+      return res.status(400).json({ error: 'invoiceNo is required' });
+    }
 
     const where = { fulfillment_order_id: id, ff_status: 'picking' };
     if (Array.isArray(bprNos) && bprNos.length > 0) {
@@ -687,7 +700,7 @@ async function invoiceSplits(req, res) {
     }
     await FulfillmentBatchSplit.update(
       { ff_status: 'invoiced', invoice_no: invoiceNo },
-      { where }
+      { where, transaction: tx }
     );
 
     order.set({
@@ -696,17 +709,49 @@ async function invoiceSplits(req, res) {
       courier: courier || null,
     });
 
-    const allSplits = await FulfillmentBatchSplit.findAll({ where: { fulfillment_order_id: id } });
+    const allSplits = await FulfillmentBatchSplit.findAll({ where: { fulfillment_order_id: id }, transaction: tx });
     order.set('so_status', recalculateSOStatus(allSplits));
-    await order.save();
+    await order.save({ transaction: tx });
 
     // Mirror stage into website orders table when invoiced
-    await Order.update({ fulfillment_stage: 'invoiced' }, { where: { so_no: order.so_no } });
+    await Order.update({ fulfillment_stage: 'invoiced' }, { where: { so_no: order.so_no }, transaction: tx });
 
+    const {
+      vendorClientId,
+      vendor_client_id: vendorClientIdSnake,
+      userId,
+      user_id: userIdSnake,
+      lineItems: zohoLineItems,
+    } = req.body || {};
+
+    const zoho = await syncZohoInvoiceAfterFulfillment({
+      fulfillmentOrder: order,
+      lineItemsFromBody: Array.isArray(zohoLineItems) && zohoLineItems.length > 0 ? zohoLineItems : null,
+      invoiceNo,
+      invoiceDate: invoiceDate || new Date().toISOString().slice(0, 10),
+      dueDate: null,
+      vendorClientId: vendorClientId ?? vendorClientIdSnake,
+      userId: userId ?? userIdSnake,
+    });
+    if (zohoEnv.booksEnabled && zohoEnv.syncInvoices && !zoho.synced) {
+      const err = new Error(zoho.error || 'zoho_invoice_sync_failed');
+      err.statusCode = 502;
+      err.clientMessage = `Invoice created locally but Zoho sync failed (${zoho.error || 'unknown_error'}). Changes were rolled back.`;
+      throw err;
+    }
+    if (zoho.synced && zoho.invoiceId) {
+      await order.update({ zoho_invoice_id: zoho.invoiceId }, { transaction: tx });
+    }
+
+    await tx.commit();
     const refreshed = await FulfillmentOrder.findByPk(id, { include: INCLUDE_FULL });
     res.json(formatOrder(refreshed));
   } catch (err) {
+    if (!tx.finished) await tx.rollback();
     console.error('invoiceSplits error:', err);
+    if (err && err.statusCode) {
+      return res.status(err.statusCode).json({ error: err.clientMessage || err.message || 'Zoho invoice sync failed' });
+    }
     res.status(500).json({ error: 'Failed to process invoice' });
   }
 }
@@ -972,20 +1017,31 @@ async function getNextInvoiceNo(_req, res) {
   }
 }
 
+/**
+ * POST /fulfillment/invoices — Zoho sync reads Books ids from local DB:
+ * Body: `vendorClientId` / `vendor_client_id` (vendor_clients.id → zoho_id) or `userId` / `user_id` (users → zoho_contact_id).
+ * lineItems: `{ productId }` / `{ rawMaterialId }` / `{ packMaterialId }` (+ optional rate, qty, name) → products.zoho_item_id / raw_materials.zoho_id / pack_materials.zoho_id.
+ */
 async function createInvoice(req, res) {
+  const tx = await FulfillmentOrder.sequelize.transaction();
   try {
     const {
       fulfillmentOrderId, invoiceNo, invoiceDate, dueDate,
       preparedBy, transporterId, transporterName, lrAwbNo,
       remarks, subtotal, gstPercent, totalValue, lineItems, bprNos,
+      vendorClientId, vendor_client_id, userId, user_id,
     } = req.body;
 
     if (!fulfillmentOrderId || !invoiceNo) {
+      await tx.rollback();
       return res.status(400).json({ error: 'fulfillmentOrderId and invoiceNo are required' });
     }
 
-    const order = await FulfillmentOrder.findByPk(fulfillmentOrderId);
-    if (!order) return res.status(404).json({ error: 'Fulfillment order not found' });
+    const order = await FulfillmentOrder.findByPk(fulfillmentOrderId, { transaction: tx });
+    if (!order) {
+      await tx.rollback();
+      return res.status(404).json({ error: 'Fulfillment order not found' });
+    }
 
     const splitWhere = { fulfillment_order_id: fulfillmentOrderId, ff_status: 'picking' };
     if (Array.isArray(bprNos) && bprNos.length > 0) {
@@ -1007,17 +1063,39 @@ async function createInvoice(req, res) {
       total_value: totalValue || 0,
       status: 'confirmed',
       line_items: lineItems || null,
-    });
+    }, { transaction: tx });
 
     await FulfillmentBatchSplit.update(
       { ff_status: 'invoiced', invoice_no: invoiceNo },
-      { where: splitWhere }
+      { where: splitWhere, transaction: tx }
     );
 
     order.set({ invoice_no: invoiceNo, invoice_date: invoiceDate || new Date().toISOString().slice(0, 10), courier: transporterName || null });
-    const allSplits = await FulfillmentBatchSplit.findAll({ where: { fulfillment_order_id: fulfillmentOrderId } });
+    const allSplits = await FulfillmentBatchSplit.findAll({ where: { fulfillment_order_id: fulfillmentOrderId }, transaction: tx });
     order.set('so_status', recalculateSOStatus(allSplits));
-    await order.save();
+    await order.save({ transaction: tx });
+
+    const zoho = await syncZohoInvoiceAfterFulfillment({
+      fulfillmentOrder: order,
+      lineItemsFromBody: lineItems,
+      invoiceNo,
+      invoiceDate: invoiceDate || new Date().toISOString().slice(0, 10),
+      dueDate: dueDate || null,
+      vendorClientId: vendorClientId ?? vendor_client_id,
+      userId: userId ?? user_id,
+    });
+    if (zohoEnv.booksEnabled && zohoEnv.syncInvoices && !zoho.synced) {
+      const err = new Error(zoho.error || 'zoho_invoice_sync_failed');
+      err.statusCode = 502;
+      err.clientMessage = `Invoice created locally but Zoho sync failed (${zoho.error || 'unknown_error'}). Changes were rolled back.`;
+      throw err;
+    }
+    if (zoho.synced && zoho.invoiceId) {
+      await invoice.update({ zoho_invoice_id: zoho.invoiceId }, { transaction: tx });
+      await order.update({ zoho_invoice_id: zoho.invoiceId }, { transaction: tx });
+    }
+    await tx.commit();
+    await invoice.reload();
 
     const d = invoice.get({ plain: true });
     res.status(201).json({
@@ -1036,11 +1114,17 @@ async function createInvoice(req, res) {
       totalValue: d.total_value != null ? Number(d.total_value) : 0,
       status: d.status,
       lineItems: d.line_items,
+      zoho_invoice_id: zoho.invoiceId || d.zoho_invoice_id || null,
+      zoho_sync: zoho.synced ? { synced: true } : zoho.error && zoho.error !== 'zoho_invoices_disabled' ? { synced: false, error: zoho.error } : undefined,
     });
   } catch (err) {
+    if (!tx.finished) await tx.rollback();
     console.error('createInvoice error:', err);
     if (err.name === 'SequelizeUniqueConstraintError') {
       return res.status(409).json({ error: 'An invoice with this number already exists' });
+    }
+    if (err && err.statusCode) {
+      return res.status(err.statusCode).json({ error: err.clientMessage || err.message || 'Zoho invoice sync failed' });
     }
     res.status(500).json({ error: 'Failed to create invoice' });
   }
@@ -1073,6 +1157,7 @@ async function listInvoices(req, res) {
         totalValue: d.total_value != null ? Number(d.total_value) : 0,
         status: d.status,
         lineItems: d.line_items,
+        zohoInvoiceId: d.zoho_invoice_id || null,
       };
     }));
   } catch (err) {

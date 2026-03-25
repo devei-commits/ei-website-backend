@@ -123,6 +123,9 @@ Product.init(
     odour: { type: DataTypes.STRING(255), allowNull: true },
     fill_weight_spec: { type: DataTypes.STRING(100), allowNull: true },
     stability_summary: { type: DataTypes.TEXT, allowNull: true },
+
+    /** Zoho Books API item.item_id after POST /items sync */
+    zoho_item_id: { type: DataTypes.STRING(64), allowNull: true },
   },
   {
     sequelize: db,

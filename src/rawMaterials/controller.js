@@ -1,4 +1,6 @@
 const RawMaterial = require('./models');
+const { syncZohoItemForNewRawMaterial } = require('../services/zohoMasterItemSync');
+const zohoEnv = require('../services/zohoEnv');
 const { Op } = require('sequelize');
 const WarehouseInventory = require('../warehouseInventory/models');
 const WarehouseInventoryLocationHistory = require('../warehouseInventory/locationHistoryModel');
@@ -194,7 +196,25 @@ async function createRawMaterial(req, res) {
     const b = req.body || {};
     const fields = payloadToListFields(b);
     const row = await RawMaterial.create(fields);
-    res.status(201).json(formatRawMaterialFull(row));
+    const zoho = await syncZohoItemForNewRawMaterial(row, b);
+    if (zoho.synced && zoho.itemId) {
+      await row.update({ zoho_id: zoho.itemId });
+    }
+    await row.reload();
+    const out = formatRawMaterialFull(row);
+    if (zohoEnv.booksEnabled && zohoEnv.syncItems) {
+      if (zoho.synced && zoho.itemId) {
+        out.zoho_sync = { synced: true, item_id: zoho.itemId };
+      } else if (
+        zoho.error &&
+        zoho.error !== 'zoho_disabled' &&
+        zoho.error !== 'item_sync_disabled' &&
+        zoho.error !== 'already_has_zoho_id'
+      ) {
+        out.zoho_sync = { synced: false, error: zoho.error };
+      }
+    }
+    res.status(201).json(out);
   } catch (err) {
     console.error('createRawMaterial error', err);
     res.status(500).json({ error: err.message || 'Failed to create raw material' });

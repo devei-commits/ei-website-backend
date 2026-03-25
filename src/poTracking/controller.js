@@ -1,6 +1,10 @@
 const PoTracking = require('./models');
 const PurchaseOrder = require('../purchaseOrders/models');
 
+// Some DB schemas may not have Zoho sync columns migrated yet.
+// PO-tracking endpoints only need the PO existence, so fetch a minimal column set.
+const PO_TRACKING_SAFE_ATTRIBUTES = ['id'];
+
 function formatTracking(row) {
   if (!row) return null;
   const d = row.get ? row.get({ plain: true }) : row;
@@ -63,7 +67,7 @@ async function getByPurchaseOrderId(req, res) {
     if (Number.isNaN(purchaseOrderId)) return res.status(400).json({ error: 'Invalid purchase order id' });
 
     const [po, row] = await Promise.all([
-      PurchaseOrder.findByPk(purchaseOrderId),
+      PurchaseOrder.findByPk(purchaseOrderId, { attributes: PO_TRACKING_SAFE_ATTRIBUTES }),
       PoTracking.findOne({ where: { purchase_order_id: purchaseOrderId } }),
     ]);
     if (!po) return res.status(404).json({ error: 'Purchase order not found' });
@@ -86,7 +90,7 @@ async function upsertByPurchaseOrderId(req, res) {
 
     const updates = bodyToTracking(req.body || {});
     const [po, row] = await Promise.all([
-      PurchaseOrder.findByPk(purchaseOrderId),
+      PurchaseOrder.findByPk(purchaseOrderId, { attributes: PO_TRACKING_SAFE_ATTRIBUTES }),
       PoTracking.findOne({ where: { purchase_order_id: purchaseOrderId } }),
     ]);
     if (!po) return res.status(404).json({ error: 'Purchase order not found' });
