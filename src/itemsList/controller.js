@@ -139,6 +139,7 @@ async function pageItemsList(req, res) {
             vendor_id: rate.vendor_id,
             vendor_name: v ? v.name : null,
             vendor_code: v ? v.entity_code : null,
+            lead_time_days: rate.lead_time_days != null ? Number(rate.lead_time_days) : null,
             currency: rate.currency || 'INR',
             payment_terms: rate.payment_terms || null,
             tiers: tiers.map((t) => ({
@@ -189,6 +190,7 @@ async function pageItemsList(req, res) {
             vendor_id: rate.vendor_id,
             vendor_name: v ? v.name : null,
             vendor_code: v ? v.entity_code : null,
+            lead_time_days: rate.lead_time_days != null ? Number(rate.lead_time_days) : null,
             currency: rate.currency || 'INR',
             payment_terms: rate.payment_terms || null,
             tiers: tiers.map((t) => ({
@@ -239,6 +241,7 @@ async function pageItemsList(req, res) {
             vendor_id: rate.vendor_id,
             vendor_name: v ? v.name : null,
             vendor_code: v ? v.entity_code : null,
+            lead_time_days: rate.lead_time_days != null ? Number(rate.lead_time_days) : null,
             currency: rate.currency || 'INR',
             payment_terms: rate.payment_terms || null,
             tiers: tiers.map((t) => ({
@@ -387,6 +390,7 @@ async function getItemsListById(req, res) {
         vendor_code: v ? v.entity_code : null,
         default_rate: toNum(r.default_rate),
         default_moq: toNum(r.default_moq),
+        lead_time_days: r.lead_time_days != null ? Number(r.lead_time_days) : null,
         currency: r.currency || 'INR',
         payment_terms: r.payment_terms || null,
         status: r.status,
@@ -529,6 +533,7 @@ async function listRates(req, res) {
         vendor_code: v ? v.entity_code : null,
         default_rate: toNum(r.default_rate),
         default_moq: toNum(r.default_moq),
+        lead_time_days: r.lead_time_days != null ? Number(r.lead_time_days) : null,
         currency: r.currency || 'INR',
         payment_terms: r.payment_terms || null,
         status: r.status,
@@ -548,7 +553,7 @@ async function createRate(req, res) {
     if (Number.isNaN(itemsListId)) return res.status(400).json({ error: 'Invalid id' });
     const item = await ItemsList.findByPk(itemsListId);
     if (!item) return res.status(404).json({ error: 'Item not found' });
-    const { vendor_id, default_rate, default_moq, currency, payment_terms } = req.body;
+    const { vendor_id, default_rate, default_moq, currency, payment_terms, lead_time_days, leadTimeDays } = req.body;
     const vendorId = vendor_id != null ? parseInt(vendor_id, 10) : null;
     if (vendorId == null || Number.isNaN(vendorId)) return res.status(400).json({ error: 'vendor_id required' });
     const existing = await ItemListVendorRate.findOne({ where: { items_list_id: itemsListId, vendor_id: vendorId } });
@@ -558,6 +563,12 @@ async function createRate(req, res) {
       vendor_id: vendorId,
       default_rate: default_rate != null ? parseFloat(default_rate) : null,
       default_moq: default_moq != null ? parseInt(default_moq, 10) : null,
+      lead_time_days:
+        lead_time_days != null
+          ? parseInt(lead_time_days, 10)
+          : leadTimeDays != null
+            ? parseInt(leadTimeDays, 10)
+            : null,
       currency: currency || 'INR',
       payment_terms: payment_terms || null,
       status: 'active',
@@ -571,6 +582,7 @@ async function createRate(req, res) {
       vendor_code: plain.entity_code || null,
       default_rate: toNum(row.default_rate),
       default_moq: toNum(row.default_moq),
+      lead_time_days: row.lead_time_days != null ? Number(row.lead_time_days) : null,
       currency: row.currency || 'INR',
       payment_terms: row.payment_terms || null,
       status: row.status,
@@ -588,9 +600,11 @@ async function updateRate(req, res) {
     if (Number.isNaN(rateId)) return res.status(400).json({ error: 'Invalid rateId' });
     const row = await ItemListVendorRate.findByPk(rateId);
     if (!row) return res.status(404).json({ error: 'Rate not found' });
-    const { default_rate, default_moq, currency, payment_terms, status } = req.body;
+    const { default_rate, default_moq, currency, payment_terms, status, lead_time_days, leadTimeDays } = req.body;
     if (default_rate !== undefined) row.default_rate = default_rate;
     if (default_moq !== undefined) row.default_moq = default_moq;
+    if (lead_time_days !== undefined) row.lead_time_days = lead_time_days == null ? null : parseInt(lead_time_days, 10);
+    if (leadTimeDays !== undefined) row.lead_time_days = leadTimeDays == null ? null : parseInt(leadTimeDays, 10);
     if (currency !== undefined) row.currency = currency;
     if (payment_terms !== undefined) row.payment_terms = payment_terms;
     if (status !== undefined) row.status = status;
@@ -605,6 +619,7 @@ async function updateRate(req, res) {
       vendor_code: plain.entity_code || null,
       default_rate: toNum(row.default_rate),
       default_moq: toNum(row.default_moq),
+      lead_time_days: row.lead_time_days != null ? Number(row.lead_time_days) : null,
       currency: row.currency || 'INR',
       payment_terms: row.payment_terms || null,
       status: row.status,

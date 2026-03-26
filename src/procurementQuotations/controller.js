@@ -2,6 +2,7 @@ const ProcurementQuotation = require('./models');
 const ProcurementRequest = require('../procurementRequests/models');
 const VendorClient = require('../vendorClient/models');
 const { ItemsList, ItemListVendorRate, ItemListTier } = require('../itemsList/models');
+const db = require('../../db');
 
 /**
  * Resolve price_per_unit from Items List for a vendor + RM or PM.
@@ -18,13 +19,100 @@ async function getVendorPriceFromItemsList(vendorId, rawMaterialId, packMaterial
     where: { items_list_id: listRow.id, vendor_id: vendorId },
   });
   if (!rateRow) return null;
-  const tier = await ItemListTier.findOne({
-    where: { item_list_vendor_rate_id: rateRow.id },
-    order: [['moq_min', 'ASC']],
-  });
+  const tier = await ItemListTier.findOne({ where: { item_list_vendor_rate_id: rateRow.id }, order: [['moq_min', 'ASC']] });
   if (!tier || tier.price_per_unit == null) return null;
   const n = Number(tier.price_per_unit);
   return Number.isNaN(n) ? null : n;
+}
+
+async function getVendorTierPriceFromItemsList(vendorId, rawMaterialId, packMaterialId, qty) {
+  const where = rawMaterialId != null ? { raw_material_id: rawMaterialId } : { pack_material_id: packMaterialId };
+  const listRow = await ItemsList.findOne({ where });
+  if (!listRow) return null;
+  const rateRow = await ItemListVendorRate.findOne({ where: { items_list_id: listRow.id, vendor_id: vendorId } });
+  if (!rateRow) return null;
+  const tiers = await ItemListTier.findAll({ where: { item_list_vendor_rate_id: rateRow.id }, order: [['moq_min', 'ASC']] });
+  if (!tiers || tiers.length === 0) return null;
+  const q = Number(qty) || 0;
+  const match =
+    tiers.find((t) => q >= Number(t.moq_min || 0) && (t.moq_max == null || q <= Number(t.moq_max))) ||
+    tiers[tiers.length - 1];
+  const n = match && match.price_per_unit != null ? Number(match.price_per_unit) : null;
+  return n != null && !Number.isNaN(n) ? n : null;
+}
+
+async function upsertItemsListRateFromQuotationLine(t, vendorId, line, paymentTerms) {
+  const rmId = line.raw_material_id != null ? parseInt(String(line.raw_material_id), 10) : null;
+  const pmId = line.pack_material_id != null ? parseInt(String(line.pack_material_id), 10) : null;
+  if ((rmId == null || Number.isNaN(rmId)) && (pmId == null || Number.isNaN(pmId))) return;
+  const qty = Number(line.orderQty ?? line.quantity_requested ?? 0) || 0;
+  const price = Number(line.pricePerUnit ?? 0) || 0;
+  if (qty <= 0 || price <= 0) return;
+
+  const type = rmId != null && !Number.isNaN(rmId) ? 'RM' : 'PM';
+  const listWhere = type === 'RM' ? { type: 'RM', raw_material_id: rmId } : { type: 'PM', pack_material_id: pmId };
+  let listRow = await ItemsList.findOne({ where: listWhere, transaction: t });
+  if (!listRow) {
+    listRow = await ItemsList.create(
+      {
+        type,
+        raw_material_id: type === 'RM' ? rmId : null,
+        pack_material_id: type === 'PM' ? pmId : null,
+        product_id: null,
+        status: 'Active',
+      },
+      { transaction: t }
+    );
+  }
+
+  let rateRow = await ItemListVendorRate.findOne({
+    where: { items_list_id: listRow.id, vendor_id: vendorId },
+    transaction: t,
+  });
+  if (!rateRow) {
+    rateRow = await ItemListVendorRate.create(
+      {
+        items_list_id: listRow.id,
+        vendor_id: vendorId,
+        default_rate: price,
+        default_moq: qty,
+        currency: 'INR',
+        payment_terms: paymentTerms || null,
+        status: 'active',
+      },
+      { transaction: t }
+    );
+  } else {
+    await rateRow.update(
+      {
+        default_rate: price,
+        default_moq: qty,
+        ...(paymentTerms !== undefined ? { payment_terms: paymentTerms || null } : {}),
+        status: 'active',
+      },
+      { transaction: t }
+    );
+  }
+
+  const existingTier = await ItemListTier.findOne({
+    where: { item_list_vendor_rate_id: rateRow.id, moq_min: qty },
+    transaction: t,
+  });
+  if (existingTier) {
+    await existingTier.update({ price_per_unit: price }, { transaction: t });
+  } else {
+    await ItemListTier.create(
+      {
+        item_list_vendor_rate_id: rateRow.id,
+        moq_min: qty,
+        moq_max: null,
+        price_per_unit: price,
+        valid_till: null,
+        note: 'Synced from Procurement quotation',
+      },
+      { transaction: t }
+    );
+  }
 }
 
 function formatQuotation(row) {
@@ -83,7 +171,30 @@ async function listProcurementQuotations(req, res) {
         { model: VendorClient, as: 'vendor', attributes: ['id', 'name', 'entity_code', 'category', 'payment_terms', 'rating'], required: false },
       ],
     });
-    const formatted = rows.map((r) => formatQuotation(r));
+    const formatted = await Promise.all(
+      rows.map(async (r) => {
+        const out = formatQuotation(r);
+        const items = Array.isArray(out.items) ? out.items : [];
+        // Always reflect current Items List pricing (same source as Items List UI).
+        // This makes Procurement -> Quotations and Items List show consistent vendor rates.
+        const enriched = [];
+        for (const it of items) {
+          const qty = Number(it.orderQty ?? it.quantity_requested ?? 0) || 0;
+          const rawMaterialId = it.raw_material_id ?? null;
+          const packMaterialId = it.pack_material_id ?? null;
+          const price = await getVendorTierPriceFromItemsList(out.vendorId, rawMaterialId, packMaterialId, qty);
+          const priceNum = price != null ? price : (Number(it.pricePerUnit) || 0);
+          enriched.push({
+            ...it,
+            orderQty: qty,
+            pricePerUnit: priceNum,
+            totalValue: qty * priceNum,
+          });
+        }
+        const totalValue = enriched.reduce((sum, x) => sum + (Number(x.totalValue) || 0), 0);
+        return { ...out, items: enriched, totalValue };
+      })
+    );
     const shouldDebug = process.env.NODE_ENV !== 'production';
     if (shouldDebug) {
       try {
@@ -246,7 +357,10 @@ async function createProcurementQuotation(req, res) {
     }
     const totalValue = items.reduce((sum, it) => sum + (Number(it.totalValue) || 0), 0);
 
-    const row = await ProcurementQuotation.create({
+    const t = await db.transaction();
+    let row;
+    try {
+      row = await ProcurementQuotation.create({
       procurement_request_id: prId ?? null,
       vendor_id: vId,
       quote_date: body.quoteDate ?? body.quote_date ?? null,
@@ -260,7 +374,18 @@ async function createProcurementQuotation(req, res) {
       total_value: body.totalValue ?? body.total_value ?? totalValue,
       notes: body.notes ?? null,
       status: body.status ?? 'pending',
-    });
+      }, { transaction: t });
+
+      // Sync into Items List (single source of truth for vendor rates).
+      for (const it of items) {
+        await upsertItemsListRateFromQuotationLine(t, vId, it, body.paymentTerms ?? body.payment_terms);
+      }
+
+      await t.commit();
+    } catch (e) {
+      await t.rollback();
+      throw e;
+    }
     const shouldDebug = process.env.NODE_ENV !== 'production';
     if (shouldDebug) {
       try {
@@ -328,8 +453,24 @@ async function updateProcurementQuotation(req, res) {
     if (body.total_value !== undefined) updates.total_value = body.total_value;
     if (body.notes !== undefined) updates.notes = body.notes;
     if (body.status !== undefined) updates.status = body.status;
-    if (Object.keys(updates).length > 0) {
-      await row.update(updates);
+    const t = await db.transaction();
+    try {
+      if (Object.keys(updates).length > 0) {
+        await row.update(updates, { transaction: t });
+      }
+      // If items/paymentTerms updated, sync latest pricing into Items List.
+      const vendorId = row.vendor_id;
+      const paymentTerms = updates.payment_terms !== undefined ? updates.payment_terms : row.payment_terms;
+      const items = updates.items !== undefined ? updates.items : row.items;
+      if (vendorId != null && Array.isArray(items)) {
+        for (const it of items) {
+          await upsertItemsListRateFromQuotationLine(t, vendorId, it, paymentTerms);
+        }
+      }
+      await t.commit();
+    } catch (e) {
+      await t.rollback();
+      throw e;
     }
     const updated = await ProcurementQuotation.findByPk(id, {
       include: [
