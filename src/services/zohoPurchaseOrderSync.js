@@ -222,11 +222,11 @@ async function buildZohoPurchaseOrderPayload(row, body) {
  * @param {*} row
  * @param {Record<string, unknown>} body
  */
-function shouldCreateBill(row, body) {
+function shouldCreateBill(row, body, poPurchaseorderId) {
   if (!zohoEnv.syncPurchaseBills) return false;
   const existing = getAttr(row, 'zoho_bill_id');
   if (existing && String(existing).trim()) return false;
-  const poZid = getAttr(row, 'zoho_purchase_order_id');
+  const poZid = poPurchaseorderId ?? getAttr(row, 'zoho_purchase_order_id');
   if (!poZid || !String(poZid).trim()) return false;
 
   if (zohoEnv.syncBillWithPo) return true;
@@ -240,7 +240,7 @@ function shouldCreateBill(row, body) {
   return false;
 }
 
-async function buildZohoBillPayload(row, body) {
+async function buildZohoBillPayload(row, body, poPurchaseorderId) {
   const vendorName = getAttr(row, 'vendor_name') || (body && body.vendorName);
   const vendorId = await findVendorZohoId(vendorName, row, body);
   if (!vendorId) {
@@ -274,7 +274,7 @@ async function buildZohoBillPayload(row, body) {
     payload.bill_number = billNumber.slice(0, 50);
   }
 
-  const poId = getAttr(row, 'zoho_purchase_order_id');
+  const poId = poPurchaseorderId ?? getAttr(row, 'zoho_purchase_order_id');
   if (poId && String(poId).trim()) {
     const pid = zohoEnv.zohoNumericIdForJson(String(poId).trim());
     if (pid !== undefined) {
@@ -321,7 +321,7 @@ async function syncZohoPurchaseOrderForPo(row, body = {}) {
  * @param {*} row
  * @param {Record<string, unknown>} body
  */
-async function syncZohoBillForPo(row, body = {}) {
+async function syncZohoBillForPo(row, body = {}, opts = {}) {
   if (!zohoEnv.booksEnabled) {
     return { synced: false, error: 'zoho_disabled' };
   }
@@ -332,12 +332,13 @@ async function syncZohoBillForPo(row, body = {}) {
   if (existing && String(existing).trim()) {
     return { synced: false, error: 'already_has_zoho_bill' };
   }
-  if (!shouldCreateBill(row, body)) {
+  const purchaseorderId = opts.purchaseorderId ?? opts.purchaseorder_id;
+  if (!shouldCreateBill(row, body, purchaseorderId)) {
     return { synced: false, error: 'bill_not_eligible' };
   }
 
   try {
-    const payload = await buildZohoBillPayload(row, body);
+    const payload = await buildZohoBillPayload(row, body, purchaseorderId);
     const { billId, raw } = await createBillInBooks(payload);
     if (!billId) {
       return { synced: false, error: 'zoho_missing_bill_id', zohoMessage: raw && raw.message };

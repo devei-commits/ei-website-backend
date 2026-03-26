@@ -30,6 +30,8 @@ GoodsReceivedNote.init(
     grn_date: { type: DataTypes.DATEONLY, allowNull: true },
     no_of_boxes: { type: DataTypes.INTEGER, allowNull: true },
     units_per_box: { type: DataTypes.INTEGER, allowNull: true },
+    /** When set, box 1..(n-1) use units_per_box; box n uses this count (partial last carton). */
+    last_box_units: { type: DataTypes.INTEGER, allowNull: true },
     location_prefix: { type: DataTypes.STRING(50), allowNull: true },
     grn_batch_mfg: { type: DataTypes.STRING(100), allowNull: true },
     expiry: { type: DataTypes.DATEONLY, allowNull: true },

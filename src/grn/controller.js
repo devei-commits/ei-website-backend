@@ -6,6 +6,7 @@ const PackMaterial = require('../packMaterials/models');
 const { Product } = require('../products/models');
 const WarehouseInventory = require('../warehouseInventory/models');
 const { logLocationMovement } = require('../warehouseInventory/locationHistoryHelpers');
+const { WarehouseLocation, WarehouseRack } = require('../warehouseLocations/models');
 
 /** Usertypes that have order-management (warehouse/GRN) access — can be assigned to GRN. */
 const ASSIGNABLE_USERTYPES = ['super_admin', 'admin', 'bd_manager'];
@@ -141,6 +142,7 @@ function formatRow(r, enrichedLineItems) {
     grnDate: d.grn_date || null,
     noOfBoxes: d.no_of_boxes != null ? Number(d.no_of_boxes) : null,
     unitsPerBox: d.units_per_box != null ? Number(d.units_per_box) : null,
+    lastBoxUnits: d.last_box_units != null ? Number(d.last_box_units) : null,
     locationPrefix: d.location_prefix || null,
     grnBatchMfg: d.grn_batch_mfg || null,
     expiry: d.expiry || null,
@@ -669,6 +671,8 @@ async function update(req, res) {
     if (body.no_of_boxes !== undefined) updates.no_of_boxes = body.no_of_boxes;
     if (body.unitsPerBox !== undefined) updates.units_per_box = body.unitsPerBox;
     if (body.units_per_box !== undefined) updates.units_per_box = body.units_per_box;
+    if (body.lastBoxUnits !== undefined) updates.last_box_units = body.lastBoxUnits;
+    if (body.last_box_units !== undefined) updates.last_box_units = body.last_box_units;
     if (body.locationPrefix !== undefined) updates.location_prefix = body.locationPrefix;
     if (body.location_prefix !== undefined) updates.location_prefix = body.location_prefix;
     if (body.grnBatchMfg !== undefined) updates.grn_batch_mfg = body.grnBatchMfg;
@@ -750,8 +754,8 @@ async function remove(req, res) {
 
 /**
  * POST /api/v1/grn/:id/generate-labels
- * Body (optional): noOfBoxes, unitsPerBox, locationPrefix, grnBatchMfg, expiry, mfgBatch,
- *                  productName, itemCode (selected line item info).
+ * Body (optional): noOfBoxes, unitsPerBox, lastBoxUnits (partial last box — box n only),
+ *                  locationPrefix, grnBatchMfg, expiry, mfgBatch, productName, itemCode.
  * Uses GRN-stored values if not in body. Generates noOfBoxes QR codes per box.
  * Also advances workflow_steps to include 'Label Generation'.
  * Returns { labels, workflowSteps }.
@@ -773,6 +777,11 @@ async function generateLabels(req, res) {
     }
     const noOfBoxes = body.noOfBoxes ?? body.no_of_boxes ?? d.no_of_boxes ?? 1;
     const unitsPerBox = body.unitsPerBox ?? body.units_per_box ?? d.units_per_box ?? 0;
+    const lastExplicit =
+      Object.prototype.hasOwnProperty.call(body, 'lastBoxUnits') ||
+      Object.prototype.hasOwnProperty.call(body, 'last_box_units');
+    let lastBoxUnits = lastExplicit ? body.lastBoxUnits ?? body.last_box_units : d.last_box_units;
+    if (lastBoxUnits === '' || lastBoxUnits === undefined) lastBoxUnits = null;
     const locationPrefix = body.locationPrefix ?? body.location_prefix ?? d.location_prefix ?? '';
     const grnBatchMfg = body.grnBatchMfg ?? body.grn_batch_mfg ?? d.grn_batch_mfg ?? '';
     const expiry = body.expiry ?? d.expiry ?? '';
@@ -780,9 +789,60 @@ async function generateLabels(req, res) {
     const productName = body.productName ?? '';
     const itemCode = body.itemCode ?? '';
 
+    // Populate rack + zone in the QR payload for the GRN popup preview and downstream decoding.
+    // `locationPrefix` is expected to be the target rack code (e.g. `A1-L2-S3`), matching `warehouse_racks.code`.
+    const desiredRackCode = String(locationPrefix || '').trim();
+    let toRack = null;
+    let toZone = null;
+    if (desiredRackCode) {
+      const rack = await WarehouseRack.findOne({
+        where: { code: desiredRackCode },
+        include: [{ model: WarehouseLocation, as: 'WarehouseLocation' }],
+      });
+      if (rack) {
+        const loc =
+          rack.get && rack.get({ plain: true })
+            ? rack.get({ plain: true }).WarehouseLocation
+            : rack.WarehouseLocation;
+        const locPlain = loc && loc.get ? loc.get({ plain: true }) : loc;
+        toRack = rack.code || desiredRackCode;
+        toZone = locPlain?.zone_label || locPlain?.name || null;
+      } else {
+        // If user typed only a rack "prefix", attempt a relaxed match.
+        const dialect = WarehouseRack.sequelize?.getDialect?.() || '';
+        const likeOp = dialect === 'postgres' && Op.iLike ? Op.iLike : Op.like;
+        const rackByPrefix = await WarehouseRack.findOne({
+          where: { code: { [likeOp]: `${desiredRackCode}%` } },
+          include: [{ model: WarehouseLocation, as: 'WarehouseLocation' }],
+        });
+        if (rackByPrefix) {
+          const loc =
+            rackByPrefix.get && rackByPrefix.get({ plain: true })
+              ? rackByPrefix.get({ plain: true }).WarehouseLocation
+              : rackByPrefix.WarehouseLocation;
+          const locPlain = loc && loc.get ? loc.get({ plain: true }) : loc;
+          toRack = rackByPrefix.code || desiredRackCode;
+          toZone = locPlain?.zone_label || locPlain?.name || null;
+        } else {
+        // Fallback: if user entered a zone identifier instead of a rack code, set only zone.
+          const location = await WarehouseLocation.findOne({
+            where: {
+              [Op.or]: [
+                { zone_label: desiredRackCode },
+                { code: desiredRackCode },
+                { name: desiredRackCode },
+              ],
+            },
+          });
+          toZone = location?.zone_label || location?.name || null;
+        }
+      }
+    }
+
     const updates = {};
     if (body.noOfBoxes !== undefined) updates.no_of_boxes = body.noOfBoxes;
     if (body.unitsPerBox !== undefined) updates.units_per_box = body.unitsPerBox;
+    if (body.lastBoxUnits !== undefined) updates.last_box_units = body.lastBoxUnits;
     if (body.locationPrefix !== undefined) updates.location_prefix = body.locationPrefix;
     if (body.grnBatchMfg !== undefined) updates.grn_batch_mfg = body.grnBatchMfg;
     if (body.expiry !== undefined) updates.expiry = body.expiry;
@@ -791,20 +851,40 @@ async function generateLabels(req, res) {
 
     const QRCode = require('qrcode');
     const n = Math.max(1, parseInt(noOfBoxes, 10) || 1);
+    const U = Math.max(0, parseInt(unitsPerBox, 10) || 0);
+    const lastParsed = lastBoxUnits != null ? parseInt(lastBoxUnits, 10) : NaN;
+    const useRemainder = Number.isFinite(lastParsed) && lastParsed >= 1;
+    if (useRemainder && U < 1) {
+      return res.status(400).json({ error: 'Set units per full box before using remainder in last box.' });
+    }
+    if (useRemainder && lastParsed > U) {
+      return res.status(400).json({
+        error: `Last box units (${lastParsed}) cannot exceed units per full box (${U}).`,
+      });
+    }
+
     const labels = [];
     for (let boxIndex = 1; boxIndex <= n; boxIndex++) {
+      const unitsThisBox = useRemainder ? (boxIndex < n ? U : lastParsed) : U;
       const payload = {
         grn_id: id,
         grn_no: d.grn_no,
         product_name: productName || null,
         item_code: itemCode || null,
-        units_per_box: unitsPerBox,
+        units_per_box: unitsThisBox,
         location_prefix: locationPrefix,
+        // Rack + Zone for UI preview + QR decoder.
+        toRack,
+        toZone,
+        rack: toRack,
+        zone: toZone,
         grn_batch_mfg: grnBatchMfg,
         expiry: expiry || null,
         mfg_batch: mfgBatch,
         box_index: boxIndex,
       };
+      if (useRemainder && U > 0) payload.full_carton_units = U;
+      if (useRemainder && boxIndex === n && lastParsed < U) payload.partial_last_box = true;
       const qrPayload = JSON.stringify(payload);
       const qrImageDataUrl = await QRCode.toDataURL(qrPayload, { type: 'image/png', margin: 2 });
       labels.push({ boxIndex, qrPayload, qrImageDataUrl });

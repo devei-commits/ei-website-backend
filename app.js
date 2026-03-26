@@ -119,14 +119,16 @@ app.use((req, res) => {
 });
 
 if (process.env.NODE_ENV !== 'test') {
-  db.authenticate().then(async () => {
-    app.listen(port, () => {
-      console.log(`Server is running on port ${port}`);
+  db.authenticate()
+    .then(() => {
+      app.listen(port, () => {
+        console.log(`Server is running on port ${port}`);
+      });
+    })
+    .catch((err) => {
+      console.error('Failed to connect to the database', err);
+      process.exit(1);
     });
-  }).catch(err => {
-    console.error('Failed to connect to the database', err);
-    process.exit(1);
-  });
 }
 
 module.exports = app;
