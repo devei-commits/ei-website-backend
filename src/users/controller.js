@@ -1,4 +1,4 @@
-const { User, DoctorProfile, RefreshToken, Role } = require("../models/index");
+const { User, DoctorProfile, RefreshToken, Role, VendorClient } = require("../models/index");
 const { Op } = require("sequelize");
 const bcrypt = require("bcrypt");
 const { getAllowedModules } = require("../middleware/security");
@@ -10,9 +10,25 @@ const { Order, OrderItem } = require("../orders/models");
 const { Payment } = require("../payments/models");
 const db = require("../../db");
 const { syncZohoContactForNewUser } = require("./zohoContactSync");
+const {
+  ensureClientVendorMasterForUser,
+  syncLinkedVendorClientFromUser,
+} = require("../vendorClient/userLink");
 
 const isDev = process.env.DEV === "true" || process.env.NODE_ENV === "development";
 const DEV_BYPASS_EMAIL = "client1@example.com";
+
+const LINKED_VC_INCLUDE = {
+  model: VendorClient,
+  as: "linkedVendorClient",
+  attributes: ["id", "entity_code", "type"],
+  required: false,
+};
+
+async function reloadUserWithLinkedVendorClient(user) {
+  await user.reload({ include: [LINKED_VC_INCLUDE] });
+  return user;
+}
 
 // -----------------------------------------------------------------------------
 // PUBLIC USER CREATION (POST /api/v1/users)
@@ -26,13 +42,135 @@ const DEV_BYPASS_EMAIL = "client1@example.com";
 // avoid breaking this public flow and to keep admin-only creation behind auth.
 // -----------------------------------------------------------------------------
 const createUser = async (req, res) => {
-  // const { error } = userSchema.validate(req.body, { abortEarly: false });
-  // if (error) {
-  //   return res
-  //     .status(400)
-  //     .json({ errors: error.details.map((e) => e.message) });
-  // }
+  const siteRole = String(req.body.usertype || '').trim().toLowerCase();
+  const hasClinicShape =
+    req.body.clinic_address &&
+    req.body.shipping_address &&
+    req.body.billing_address;
+  const hasWebsiteStoreShape = !!(req.body.billing_company_name && req.body.delivery_address);
 
+  if (hasWebsiteStoreShape && !hasClinicShape) {
+    const {
+      fname,
+      lname,
+      display_name,
+      email,
+      mobile,
+      password,
+      billing_company_name,
+      billing_contact_name,
+      billing_phone,
+      delivery_address,
+      delivery_city,
+      delivery_state,
+      delivery_country,
+      delivery_phone,
+    } = req.body;
+
+    const normalizedEmail = email != null ? String(email).trim().toLowerCase() : '';
+    if (!normalizedEmail || !password) {
+      return res.status(400).json({ error: 'email and password are required' });
+    }
+
+    /** Website "customer" → customer; dermatologist / distributor → doctor (dashboard modules). */
+    const usertypeForDb = siteRole === 'customer' ? 'customer' : 'doctor';
+
+    const t = await db.transaction();
+    try {
+      const existing = await User.findOne({ where: { email: normalizedEmail }, transaction: t });
+      if (existing) {
+        await t.rollback();
+        return res.status(409).json({ error: 'Email already in use' });
+      }
+
+      // User's name comes from fname/lname (step 1). Billing contact is separate (step 2) and must not override display_name.
+      const nameFromProfile = [fname, lname].filter(Boolean).join(' ').trim();
+      const displayName =
+        (display_name && String(display_name).trim()) ||
+        nameFromProfile ||
+        (billing_contact_name && String(billing_contact_name).trim()) ||
+        normalizedEmail;
+
+      const user = await User.create(
+        {
+          fname: fname ?? null,
+          lname: lname ?? null,
+          display_name: displayName,
+          email: normalizedEmail,
+          mobile: mobile ?? billing_phone ?? delivery_phone ?? null,
+          password: bcrypt.hashSync(String(password), 10),
+          usertype: usertypeForDb,
+          portal_signup_role: siteRole || null,
+          status: 'active',
+          verify_status: 'pending',
+        },
+        { transaction: t }
+      );
+
+      const billLine1 =
+        [billing_company_name, billing_contact_name].filter(Boolean).join(' — ') || 'Billing';
+      await Address.create(
+        {
+          user_id: user.userid,
+          address_type: 'billing',
+          is_default_billing: true,
+          first_name: fname ?? '',
+          last_name: lname ?? '',
+          address_line1: billLine1,
+          city_text: '',
+          state_text: '',
+          country_text: '',
+          pincode: '',
+          phone: billing_phone ?? mobile ?? '',
+        },
+        { transaction: t }
+      );
+
+      await Address.create(
+        {
+          user_id: user.userid,
+          address_type: 'shipping',
+          is_default_shipping: true,
+          first_name: fname ?? '',
+          last_name: lname ?? '',
+          address_line1: delivery_address ?? '',
+          city_text: delivery_city ?? '',
+          state_text: delivery_state ?? '',
+          country_text: delivery_country ?? '',
+          pincode: '',
+          phone: delivery_phone ?? mobile ?? '',
+        },
+        { transaction: t }
+      );
+
+      await ensureClientVendorMasterForUser(user, { transaction: t, signupRole: siteRole });
+      await t.commit();
+
+      const zoho = await syncZohoContactForNewUser(user, req.body || {});
+      if (zoho.synced && zoho.contactId) {
+        await user.update({ zoho_contact_id: zoho.contactId });
+        await user.reload();
+      }
+      await ensureClientVendorMasterForUser(user, { signupRole: siteRole });
+
+      return res.status(201).json({
+        status: 'Success',
+        details: 'User created!',
+        userid: user.userid,
+        zoho_contact_id: user.zoho_contact_id || zoho.contactId || null,
+        zoho_sync: {
+          synced: !!zoho.synced,
+          ...(zoho.contactId ? { contactId: zoho.contactId } : {}),
+          ...(zoho.error ? { error: zoho.error } : {}),
+        },
+      });
+    } catch (err) {
+      await t.rollback();
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Professional signup (legacy doctor/clinic shape). Website roles dermatologist / distributor use this path.
   const {
     fname,
     lname,
@@ -57,7 +195,12 @@ const createUser = async (req, res) => {
 
     if (existing) {
       await t.rollback();
-      return res.status(409).json({ error: "Email already in use" });
+      return res.status(409).json({ error: 'Email already in use' });
+    }
+
+    if (!clinic_address || !shipping_address || !billing_address) {
+      await t.rollback();
+      return res.status(400).json({ error: 'clinic_address, shipping_address, and billing_address are required' });
     }
 
     const user = await User.create(
@@ -69,9 +212,9 @@ const createUser = async (req, res) => {
         mobile,
         password: bcrypt.hashSync(password, 10),
         doctor_id_legacy: doctor_id,
-        usertype: "doctor",
-        status: "active",
-        verify_status: "pending",
+        usertype: 'doctor',
+        status: 'active',
+        verify_status: 'pending',
       },
       { transaction: t }
     );
@@ -93,7 +236,7 @@ const createUser = async (req, res) => {
     await Address.create(
       {
         user_id: user.userid,
-        address_type: "shipping",
+        address_type: 'shipping',
         is_default_shipping: true,
         first_name: fname,
         last_name: lname,
@@ -110,7 +253,7 @@ const createUser = async (req, res) => {
     await Address.create(
       {
         user_id: user.userid,
-        address_type: "billing",
+        address_type: 'billing',
         is_default_billing: true,
         first_name: fname,
         last_name: lname,
@@ -124,26 +267,27 @@ const createUser = async (req, res) => {
       { transaction: t }
     );
 
+    await ensureClientVendorMasterForUser(user, { transaction: t });
     await t.commit();
 
-    // Sync newly registered users to Zoho based on env-gated usertype policy.
     const zoho = await syncZohoContactForNewUser(user, req.body || {});
     if (zoho.synced && zoho.contactId) {
       await user.update({ zoho_contact_id: zoho.contactId });
+      await user.reload();
     }
+    await ensureClientVendorMasterForUser(user);
 
     return res.status(201).json({
-      status: "Success",
-      details: "User created!",
+      status: 'Success',
+      details: 'User created!',
       userid: user.userid,
-      zoho_contact_id: zoho.contactId || null,
+      zoho_contact_id: user.zoho_contact_id || zoho.contactId || null,
       zoho_sync: {
         synced: !!zoho.synced,
         ...(zoho.contactId ? { contactId: zoho.contactId } : {}),
         ...(zoho.error ? { error: zoho.error } : {}),
       },
     });
-
   } catch (err) {
     await t.rollback();
     return res.status(500).json({ error: err.message });
@@ -308,6 +452,9 @@ function formatUserForStaffList(user, rolesByCode) {
   const roleInfo = rolesByCode && rolesByCode[usertype];
   const roleId = roleInfo ? roleInfo.role_id : (USERTYPE_TO_ROLE_ID[usertype] ?? 0);
   const role_name = roleInfo ? roleInfo.role_name : (USERTYPE_TO_ROLE_NAME[usertype] ?? usertype);
+  const plain = user.get ? user.get({ plain: true }) : user;
+  const vcRaw = plain.linkedVendorClient;
+  const vc = vcRaw && (vcRaw.get ? vcRaw.get({ plain: true }) : vcRaw);
   return {
     userid: user.userid,
     id: user.userid,
@@ -319,6 +466,9 @@ function formatUserForStaffList(user, rolesByCode) {
     department: user.department ?? null,
     status: user.status || 'active',
     created_at: user.created_at,
+    vendor_client_id: vc?.id ?? null,
+    vendor_client_code: vc?.entity_code ?? null,
+    vendor_client_type: vc?.type ?? null,
   };
 }
 
@@ -329,7 +479,8 @@ async function getRolesByCode() {
   return map;
 }
 
-// Admin-only: list users. ?staffOnly=true returns only staff (super_admin, admin, bd_manager, doctor) with role_id, role_name, department
+// Admin-only: list users. ?staffOnly=true returns formatted rows (role_id, role_name, vendor_client_*) for User Management.
+// Do not filter by roles table: portal users (customer/doctor) must appear even if `roles` seed is missing `customer`.
 const getAllUsers = async (req, res) => {
   try {
     const staffOnly = req.query.staffOnly === 'true';
@@ -342,13 +493,12 @@ const getAllUsers = async (req, res) => {
       const roles = await Role.findAll({ attributes: ['role_id', 'role_code', 'role_name'] });
       rolesByCode = {};
       roles.forEach((r) => { rolesByCode[r.role_code] = { role_id: r.role_id, role_name: r.role_name }; });
-      const roleCodes = roles.map((r) => r.role_code);
-      where = roleCodes.length ? { usertype: { [Op.in]: roleCodes } } : {};
     }
     const users = await User.findAll({
       attributes,
       where,
       order: [['userid', 'ASC']],
+      include: staffOnly ? [LINKED_VC_INCLUDE] : [],
     });
 
     if (staffOnly) {
@@ -415,6 +565,7 @@ const getUserById = async (req, res) => {
   try {
     const user = await User.findByPk(req.params.id, {
       attributes: ['userid', 'fname', 'lname', 'display_name', 'email', 'mobile', 'usertype', 'department', 'status', 'created_at', 'updated_at', 'zoho_contact_id'],
+      include: [LINKED_VC_INCLUDE],
     });
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -445,6 +596,8 @@ const updateUserRole = async (req, res) => {
     }
     user.updated_at = new Date();
     await user.save();
+    await user.reload();
+    await ensureClientVendorMasterForUser(user);
     const roleRow = await Role.findOne({ where: { role_code: user.usertype }, attributes: ['role_id', 'role_name'] });
     res.status(200).json({
       id: user.userid,
@@ -472,6 +625,9 @@ const updateUserProfile = async (req, res) => {
     if (status !== undefined) user.status = status;
     user.updated_at = new Date();
     await user.save();
+    await syncLinkedVendorClientFromUser(user);
+    await ensureClientVendorMasterForUser(user);
+    await reloadUserWithLinkedVendorClient(user);
     res.status(200).json(formatUserForStaffList(user));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -531,13 +687,17 @@ const createStaffUser = async (req, res) => {
       verify_status: 'verified',
     });
     const rolesByCode = { [usertype]: { role_id: role.role_id, role_name: role.role_name } };
-    const payload = formatUserForStaffList(user, rolesByCode);
 
     const zoho = await syncZohoContactForNewUser(user, body);
     if (zoho.synced && zoho.contactId) {
       await user.update({ zoho_contact_id: zoho.contactId });
-      payload.zoho_contact_id = zoho.contactId;
     }
+    await user.reload();
+    await ensureClientVendorMasterForUser(user);
+    await reloadUserWithLinkedVendorClient(user);
+
+    const payload = formatUserForStaffList(user, rolesByCode);
+    if (zoho.contactId) payload.zoho_contact_id = zoho.contactId;
     // Always surface Zoho outcome so env misconfig (e.g. ZOHO_BOOKS_ENABLED=false) is visible in API.
     payload.zoho_sync = {
       synced: !!zoho.synced,

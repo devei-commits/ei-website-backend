@@ -34,6 +34,31 @@ const saveOrder = async (req, res) => {
             });
         }
 
+        const orderDateStr = new Date().toISOString().slice(0, 10);
+        const defaultLeadTimeDaysNew = 90;
+        const defaultLeadTimeDaysReorder = 45;
+
+        // "Reorder of existing product" rule:
+        // mark a product as "reorder" if the user has previously placed a non-cancelled order for it.
+        const previousOrderItems = await OrderItem.findAll({
+            attributes: ['product_id'],
+            where: { product_id: { [Op.in]: productIds } },
+            include: [
+                {
+                    model: Order,
+                    required: true,
+                    attributes: [],
+                    where: { user_id, order_status: { [Op.ne]: 'cancelled' } },
+                },
+            ],
+            transaction: t,
+        });
+        const reorderProductIds = new Set(
+            (previousOrderItems || [])
+                .map((r) => Number(r.product_id))
+                .filter((x) => Number.isFinite(x) && x > 0)
+        );
+
         const subtotal = order_items.reduce((acc, item) => acc + (item.unit_price * item.quantity), 0);
         const tax_total = order_items.reduce((acc, item) => acc + (item.tax_amount || 0), 0);
         const grand_total = subtotal + tax_total + shipping_total - discount_total;
@@ -168,7 +193,7 @@ const saveOrder = async (req, res) => {
         const soRow = await SalesOrder.create({
             order_id: soNo,
             customer_name: customerName,
-            order_date: new Date().toISOString().slice(0, 10),
+            order_date: orderDateStr,
             expected_shipment_date: null,
             payment_terms: null,
             status: 'Approved',
@@ -189,6 +214,8 @@ const saveOrder = async (req, res) => {
         // If BOM exists for a product, create PlanningExtracted line with computed RM/PM quantities and reserve stock.
         const affectedRmIds = new Set();
         const affectedPmIds = new Set();
+        let computedOrderLeadTimeDays = 0;
+
         for (const it of orderItemsToCreate) {
             const productId = Number(it.product_id);
             if (!productId) continue;
@@ -226,9 +253,11 @@ const saveOrder = async (req, res) => {
                 if (!(totalQty > 0)) continue;
                 let pmId = line.pack_material_id != null ? Number(line.pack_material_id) : null;
                 if (!pmId && (line.pm_code || line.code)) {
-                    const pm = await PackMaterial.findOne({ where: { code: line.pm_code || line.code }, transaction: t });
+                    const pmCode = line.pm_code || line.code;
+                    const pm = await PackMaterial.findOne({ where: { code: pmCode }, transaction: t });
                     if (pm) pmId = pm.id;
                 }
+
                 packagingMaterials.push({
                     pack_material_id: pmId || null,
                     name: line.description ?? line.name ?? line.pm_code ?? '',
@@ -238,12 +267,15 @@ const saveOrder = async (req, res) => {
                 });
             }
 
+            const leadTimeDaysForProduct = reorderProductIds.has(productId) ? defaultLeadTimeDaysReorder : defaultLeadTimeDaysNew;
+            computedOrderLeadTimeDays = Math.max(computedOrderLeadTimeDays, leadTimeDaysForProduct);
+
             const planRow = await PlanningExtracted.create({
                 sales_order_id: soRow.id,
                 product_id: productId,
                 order_qty_display: `${qtyUnits} units`,
                 total_kg_display: null,
-                order_date: new Date().toISOString().slice(0, 10),
+                order_date: orderDateStr,
                 due_date: null,
                 batch_size_display: `${batchSizeKg} KG`,
                 batches_required: batchesRequired,
@@ -293,6 +325,22 @@ const saveOrder = async (req, res) => {
             await syncWarehouseReserved([...affectedRmIds], [...affectedPmIds]);
         }
 
+        const orderLeadTimeDays = computedOrderLeadTimeDays > 0 ? computedOrderLeadTimeDays : defaultLeadTimeDaysNew;
+        const addDaysToDateOnly = (dateOnlyStr, days) => {
+            const d = new Date(`${dateOnlyStr}T00:00:00Z`);
+            d.setUTCDate(d.getUTCDate() + Number(days || 0));
+            return d.toISOString().slice(0, 10);
+        };
+        const expectedShipmentDateStr = addDaysToDateOnly(orderDateStr, orderLeadTimeDays);
+
+        // Populate due dates so "Due Date + Days left" in Planning SO details reflects lead time.
+        await soRow.update({ expected_shipment_date: expectedShipmentDateStr }, { transaction: t });
+        await ffOrder.update({ due_date: expectedShipmentDateStr }, { transaction: t });
+        await PlanningExtracted.update(
+            { due_date: expectedShipmentDateStr },
+            { where: { sales_order_id: soRow.id }, transaction: t }
+        );
+
         // Create one production batch + split per fulfillment item (simple default: 1 batch per item).
         // BMR/BPR numbers follow the existing format: BMR-YYYY-XXX / BPR-YYYY-XXX
         async function getNextBMRBPR() {
@@ -331,7 +379,7 @@ const saveOrder = async (req, res) => {
                 total_batches: createdItems.length,
                 bmr_status: 'draft',
                 bpr_status: 'draft',
-                due_date: null,
+                due_date: expectedShipmentDateStr,
             }, { transaction: t });
 
             await FulfillmentBatchSplit.create({
@@ -349,7 +397,13 @@ const saveOrder = async (req, res) => {
         await t.commit();
 
         const result = await Order.findByPk(order.order_id, { include: [OrderItem] });
-        return res.status(201).json(result);
+        const resultPlain = result?.get ? result.get({ plain: true }) : result;
+        return res.status(201).json({
+            ...(resultPlain || {}),
+            lead_time_days: orderLeadTimeDays,
+            expected_shipment_date: expectedShipmentDateStr,
+            due_date: expectedShipmentDateStr,
+        });
     } catch (err) {
         await t.rollback();
         return res.status(400).json({ error: err.message });
@@ -377,7 +431,34 @@ const getAllOrders = async (req, res) => {
                 { model: Payment, as: 'payments', required: false, attributes: ['remainingAmount'] },
             ],
         });
-        return res.json(orders);
+
+        const { FulfillmentOrder } = require('../fulfillment/models');
+        const soNos = (orders || [])
+            .map((o) => (o?.so_no != null ? String(o.so_no) : null))
+            .filter((x) => x && x.trim());
+
+        const dueBySoNo = new Map();
+        if (soNos.length) {
+            const fulfillmentRows = await FulfillmentOrder.findAll({
+                where: { so_no: { [Op.in]: soNos } },
+                attributes: ['so_no', 'due_date'],
+                raw: true,
+            });
+            for (const r of fulfillmentRows) {
+                const key = r.so_no;
+                dueBySoNo.set(String(key), r.due_date ?? null);
+            }
+        }
+
+        const enriched = (orders || []).map((o) => {
+            const plain = o?.get ? o.get({ plain: true }) : o;
+            const due = plain?.so_no ? dueBySoNo.get(String(plain.so_no)) ?? null : null;
+            plain.expected_shipment_date = due;
+            plain.due_date = due;
+            return plain;
+        });
+
+        return res.json(enriched);
     } catch (err) {
         return res.status(500).json({ error: err.message });
     }
@@ -392,7 +473,21 @@ const getOrderById = async (req, res) => {
         if (!isAdmin && order.user_id !== req.user.id) {
             return res.status(403).json({ error: 'Not allowed to view this order' });
         }
-        res.json(order);
+        const { FulfillmentOrder } = require('../fulfillment/models');
+        const plain = order?.get ? order.get({ plain: true }) : order;
+        const soNo = plain?.so_no ? String(plain.so_no) : null;
+        let due = null;
+        if (soNo) {
+            const f = await FulfillmentOrder.findOne({
+                where: { so_no: soNo },
+                attributes: ['due_date'],
+                raw: true,
+            });
+            due = f?.due_date ?? null;
+        }
+        plain.expected_shipment_date = due;
+        plain.due_date = due;
+        res.json(plain);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -464,7 +559,34 @@ const getOrdersByUserId = async (req, res) => {
             return res.status(403).json({ error: 'Not allowed to view orders for this user' });
         }
         const orders = await Order.findAll({ where: { user_id: requestedUserId }, include: [OrderItem] });
-        res.json(orders);
+
+        const { FulfillmentOrder } = require('../fulfillment/models');
+        const soNos = (orders || [])
+            .map((o) => (o?.so_no != null ? String(o.so_no) : null))
+            .filter((x) => x && x.trim());
+
+        const dueBySoNo = new Map();
+        if (soNos.length) {
+            const fulfillmentRows = await FulfillmentOrder.findAll({
+                where: { so_no: { [Op.in]: soNos } },
+                attributes: ['so_no', 'due_date'],
+                raw: true,
+            });
+            for (const r of fulfillmentRows) {
+                const key = r.so_no;
+                dueBySoNo.set(String(key), r.due_date ?? null);
+            }
+        }
+
+        const enriched = (orders || []).map((o) => {
+            const plain = o?.get ? o.get({ plain: true }) : o;
+            const due = plain?.so_no ? dueBySoNo.get(String(plain.so_no)) ?? null : null;
+            plain.expected_shipment_date = due;
+            plain.due_date = due;
+            return plain;
+        });
+
+        res.json(enriched);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

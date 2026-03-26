@@ -34,6 +34,8 @@ VendorClient.init(
     revenue_value: { type: DataTypes.DECIMAL(15, 2), allowNull: true },
     avatar_color: { type: DataTypes.STRING(50), allowNull: true },
     account_manager_id: { type: DataTypes.INTEGER, allowNull: true },
+    /** FK to users.userid — portal user linked to this master (clients / optional vendor login). */
+    user_id: { type: DataTypes.INTEGER, allowNull: true, unique: true },
     contacts: { type: DataTypes.JSONB, allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },

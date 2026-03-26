@@ -19,6 +19,11 @@ function getNamespacesToInvalidate(req) {
   // Invalidate the root module itself for most writes.
   namespaces.add(root);
 
+  // Vendor master vendorItems sync updates items_list / item_list_vendor_rates (GET items-list/page).
+  if (root === 'vendor-client') {
+    namespaces.add('items-list');
+  }
+
   // Cross-domain invalidation:
   // - Warehouse inventory affects SIH and "items-involved"/planning availability.
   // - GRN/MRN completion applies stock changes into warehouse_inventory.

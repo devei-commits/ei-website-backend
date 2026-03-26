@@ -400,6 +400,23 @@ async function seed() {
       updated_at: now
     });
 
+    /** Portal user for seeded client master EI-CLI-00001 (Luminos) — 2-way link with vendor_clients.user_id */
+    const luminosPortalUser = await User.create({
+      fname: 'Rajeev',
+      lname: 'Sharma',
+      display_name: 'Luminos Skincare',
+      email: 'bd@luminos.in',
+      mobile: '+91-9812345001',
+      password: bcrypt.hashSync('LuminosPortal@123', 10),
+      usertype: 'customer',
+      status: 'active',
+      verify_status: 'verified',
+      advance_payment: false,
+      advance_amount: null,
+      created_at: now,
+      updated_at: now
+    });
+
     // 7. Account Managers (for Client Hub)
     const amPriya = await User.create({
       fname: 'Priya', lname: 'Mehta', display_name: 'Priya Mehta',
@@ -1257,6 +1274,21 @@ async function seed() {
       { entity_code: 'EI-CLI-00001', type: 'client', zoho_id: null, name: 'Luminos Skincare', email: 'bd@luminos.in', phone: '+91-9812345001', location: 'Maharashtra', country: 'India', city: 'Mumbai', category: 'CDMO', status: 'active', payment_terms: 'NET 45', notes: '', rating: 5, moq: '—', lead_time: '—', data: { shipping_address: 'Luminos Skincare, 456 Andheri East, Mumbai, Maharashtra 400069, India' }, priority: 'high', segment: 'Skin Care', since_year: 2022, revenue_value: 4200000, avatar_color: 'orange', account_manager_id: amPriya.userid, contacts: [{ name: 'Rajeev Sharma', role: 'BD Head' }], created_at: now, updated_at: now },
     ];
     await VendorClient.bulkCreate(vendorClientSeed);
+
+    await VendorClient.update(
+      { user_id: luminosPortalUser.userid },
+      { where: { entity_code: 'EI-CLI-00001' } }
+    );
+
+    try {
+      const { ensureClientVendorMasterForUser } = require('./src/vendorClient/userLink');
+      await ensureClientVendorMasterForUser(client1);
+      await ensureClientVendorMasterForUser(client2);
+      await ensureClientVendorMasterForUser(doctor);
+      await ensureClientVendorMasterForUser(luminosPortalUser);
+    } catch (e) {
+      console.warn('[Seed] vendor_clients ↔ users link:', e && e.message ? e.message : e);
+    }
 
     if (seedZohoContact) {
       const { syncZohoContactForVendorClient } = require('./src/users/zohoContactSync');

@@ -1,7 +1,39 @@
+const db = require('../../db');
 const VendorClient = require('./models');
 const { Op } = require('sequelize');
 const { syncZohoContactForVendorClient } = require('../users/zohoContactSync');
 const zohoEnv = require('../services/zohoEnv');
+const {
+  assertUserAvailableForVendorClientLink,
+  syncLinkedVendorClientFromUser,
+  linkOrCreateUserForClientVendorRow,
+} = require('./userLink');
+const { User } = require('../users/models');
+const {
+  syncVendorMasterItemsToPriceList,
+  deleteAllVendorPriceListRates,
+} = require('./syncVendorItemsPriceList');
+
+/**
+ * vendor-client `data` JSONB is expected to be an object, but in practice
+ * it can sometimes arrive/land as a JSON string (or null) and then nested
+ * fields like `vendorItems` disappear. Coerce safely here.
+ */
+function coerceDataObject(maybeJson) {
+  if (maybeJson == null) return {};
+  if (typeof maybeJson === 'object') return maybeJson;
+  if (typeof maybeJson === 'string') {
+    const s = maybeJson.trim();
+    if (!s) return {};
+    try {
+      const parsed = JSON.parse(s);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
 
 function attachZohoVendorClientSync(out, zohoResult) {
   if (!zohoEnv.booksEnabled || !zohoResult) return;
@@ -17,10 +49,19 @@ function attachZohoVendorClientSync(out, zohoResult) {
   }
 }
 
+function attachPriceListSync(out, priceSync) {
+  if (!priceSync) return;
+  out.priceListSync = {
+    synced: priceSync.synced,
+    removed: priceSync.removed,
+    skipped: priceSync.skipped,
+  };
+}
+
 function formatRow(row) {
   if (!row) return null;
   const d = row.get ? row.get({ plain: true }) : row;
-  const data = d.data && typeof d.data === 'object' ? d.data : {};
+  const data = coerceDataObject(d.data);
   return {
     id: String(d.id),
     type: d.type,
@@ -41,6 +82,7 @@ function formatRow(row) {
     createdAt: d.created_at,
     lastModified: d.updated_at,
     data: { ...data, entityCode: d.entity_code },
+    userId: d.user_id != null ? String(d.user_id) : null,
   };
 }
 
@@ -137,7 +179,16 @@ async function getNextCode(req, res) {
 }
 
 function bodyToPayload(body, type) {
-  const data = body.data && typeof body.data === 'object' ? body.data : {};
+  const data = coerceDataObject(body.data);
+  let user_id = undefined;
+  if (Object.prototype.hasOwnProperty.call(body, 'userId') || Object.prototype.hasOwnProperty.call(body, 'user_id')) {
+    const raw = body.userId !== undefined ? body.userId : body.user_id;
+    if (raw === null || raw === '') user_id = null;
+    else {
+      const n = parseInt(String(raw), 10);
+      user_id = Number.isNaN(n) ? undefined : n;
+    }
+  }
   return {
     entity_code: body.entityCode ?? data.entityCode ?? null,
     type: type || body.type || 'vendor',
@@ -156,6 +207,7 @@ function bodyToPayload(body, type) {
     moq: body.moq ?? null,
     lead_time: body.leadTime ?? null,
     data,
+    user_id,
   };
 }
 
@@ -173,25 +225,65 @@ async function createVendorClient(req, res) {
     if (existing) {
       return res.status(400).json({ error: 'An entry with this code already exists' });
     }
-    const row = await VendorClient.create({
-      entity_code: String(payload.entity_code).trim(),
-      type: payload.type,
-      zoho_id: payload.zoho_id || null,
-      name: payload.name,
-      email: payload.email,
-      phone: payload.phone,
-      location: payload.location,
-      country: payload.country,
-      city: payload.city,
-      category: payload.category,
-      status: payload.status,
-      payment_terms: payload.payment_terms,
-      notes: payload.notes,
-      rating: payload.rating,
-      moq: payload.moq,
-      lead_time: payload.lead_time,
-      data: payload.data,
-    });
+
+    let linkedUserId = null;
+    if (payload.user_id !== undefined && payload.user_id != null && !Number.isNaN(payload.user_id)) {
+      try {
+        await assertUserAvailableForVendorClientLink(payload.user_id, null);
+      } catch (e) {
+        const status = e.status || 500;
+        return res.status(status).json({ error: e.message || 'Invalid user link' });
+      }
+      const u = await User.findByPk(payload.user_id, { attributes: ['userid'] });
+      if (!u) return res.status(400).json({ error: 'userId not found' });
+      linkedUserId = payload.user_id;
+    }
+
+    let priceSync = null;
+    let row;
+    const t = await db.transaction();
+    try {
+      row = await VendorClient.create(
+        {
+          entity_code: String(payload.entity_code).trim(),
+          type: payload.type,
+          zoho_id: payload.zoho_id || null,
+          user_id: linkedUserId,
+          name: payload.name,
+          email: payload.email,
+          phone: payload.phone,
+          location: payload.location,
+          country: payload.country,
+          city: payload.city,
+          category: payload.category,
+          status: payload.status,
+          payment_terms: payload.payment_terms,
+          notes: payload.notes,
+          rating: payload.rating,
+          moq: payload.moq,
+          lead_time: payload.lead_time,
+          data: payload.data,
+        },
+        { transaction: t }
+      );
+      if (row.type === 'vendor') {
+        priceSync = await syncVendorMasterItemsToPriceList({
+          vendorId: row.id,
+          previousVendorItems: [],
+          nextVendorItems: payload.data?.vendorItems,
+          transaction: t,
+        });
+      }
+      await t.commit();
+    } catch (txErr) {
+      await t.rollback();
+      throw txErr;
+    }
+
+    if (linkedUserId) {
+      const u = await User.findByPk(linkedUserId);
+      if (u) await syncLinkedVendorClientFromUser(u).catch(() => {});
+    }
     console.log('[vendor-client] Created', type, 'id=', row.id, 'entity_code=', row.entity_code);
     let zohoResult = null;
     if (!row.zoho_id) {
@@ -201,8 +293,13 @@ async function createVendorClient(req, res) {
         await row.reload();
       }
     }
+    if (row.type === 'client' && !row.user_id) {
+      await linkOrCreateUserForClientVendorRow(row);
+      await row.reload();
+    }
     const out = formatRow(row);
     attachZohoVendorClientSync(out, zohoResult);
+    attachPriceListSync(out, priceSync);
     res.status(201).json(out);
   } catch (err) {
     console.error('createVendorClient error', err);
@@ -219,6 +316,12 @@ async function updateVendorClient(req, res) {
     const body = req.body || {};
     const payload = bodyToPayload(body, row.type);
 
+    const previousData = coerceDataObject(row.data);
+    const previousVendorItems =
+      previousData && Array.isArray(previousData.vendorItems)
+        ? JSON.parse(JSON.stringify(previousData.vendorItems))
+        : [];
+
     if (payload.entity_code !== undefined) row.entity_code = String(payload.entity_code).trim();
     if (payload.zoho_id !== undefined) row.zoho_id = payload.zoho_id || null;
     if (payload.name !== undefined) row.name = payload.name;
@@ -234,9 +337,51 @@ async function updateVendorClient(req, res) {
     if (payload.rating !== undefined) row.rating = payload.rating;
     if (payload.moq !== undefined) row.moq = payload.moq;
     if (payload.lead_time !== undefined) row.lead_time = payload.lead_time;
-    if (payload.data !== undefined) row.data = payload.data;
+    // Only overwrite the JSON blob when the client actually sends a `data` field.
+    // This prevents partial updates (e.g. status-only) from wiping `vendorItems`.
+    if (Object.prototype.hasOwnProperty.call(body, 'data')) row.data = payload.data;
 
-    await row.save();
+    if (payload.user_id !== undefined) {
+      if (payload.user_id === null) {
+        row.user_id = null;
+      } else {
+        try {
+          await assertUserAvailableForVendorClientLink(payload.user_id, row.id);
+        } catch (e) {
+          return res.status(e.status || 500).json({ error: e.message || 'Invalid user link' });
+        }
+        const u = await User.findByPk(payload.user_id, { attributes: ['userid'] });
+        if (!u) return res.status(400).json({ error: 'userId not found' });
+        row.user_id = payload.user_id;
+      }
+    }
+
+    let priceSync = null;
+    const t = await db.transaction();
+    try {
+      await row.save({ transaction: t });
+      if (row.type === 'vendor') {
+        priceSync = await syncVendorMasterItemsToPriceList({
+          vendorId: row.id,
+          previousVendorItems,
+          nextVendorItems: coerceDataObject(row.data)?.vendorItems,
+          transaction: t,
+        });
+      }
+      await t.commit();
+    } catch (txErr) {
+      await t.rollback();
+      throw txErr;
+    }
+
+    if (row.user_id) {
+      const u = await User.findByPk(row.user_id);
+      if (u) await syncLinkedVendorClientFromUser(u).catch(() => {});
+    }
+    if (row.type === 'client' && !row.user_id) {
+      await linkOrCreateUserForClientVendorRow(row);
+      await row.reload();
+    }
     let zohoResult = null;
     if (!row.zoho_id) {
       await row.reload();
@@ -248,6 +393,7 @@ async function updateVendorClient(req, res) {
     }
     const out = formatRow(row);
     attachZohoVendorClientSync(out, zohoResult);
+    attachPriceListSync(out, priceSync);
     res.json(out);
   } catch (err) {
     console.error('updateVendorClient error', err);
@@ -259,8 +405,20 @@ async function deleteVendorClient(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
-    const n = await VendorClient.destroy({ where: { id } });
-    if (n === 0) return res.status(404).json({ error: 'Vendor/Client not found' });
+    const existing = await VendorClient.findByPk(id);
+    if (!existing) return res.status(404).json({ error: 'Vendor/Client not found' });
+
+    const t = await db.transaction();
+    try {
+      if (existing.type === 'vendor') {
+        await deleteAllVendorPriceListRates(id, t);
+      }
+      await VendorClient.destroy({ where: { id }, transaction: t });
+      await t.commit();
+    } catch (txErr) {
+      await t.rollback();
+      throw txErr;
+    }
     res.status(204).send();
   } catch (err) {
     console.error('deleteVendorClient error', err);

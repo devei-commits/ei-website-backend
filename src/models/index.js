@@ -40,6 +40,8 @@ StaffProfile.belongsTo(Role, { foreignKey: "role_id", as: "role" });
 // VendorClient account_manager FK + Client Hub sub-entity associations
 const VendorClient = require("../vendorClient/models");
 VendorClient.belongsTo(User, { foreignKey: "account_manager_id", targetKey: "userid", as: "accountManager" });
+VendorClient.belongsTo(User, { foreignKey: "user_id", targetKey: "userid", as: "linkedUser" });
+User.hasOne(VendorClient, { foreignKey: "user_id", sourceKey: "userid", as: "linkedVendorClient" });
 require("../clientHub/models");
 
 module.exports = {
