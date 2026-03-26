@@ -122,7 +122,7 @@ async function seed() {
     // Postgres ENUM types don't automatically update with Sequelize when values change.
     // Ensure 'pending' exists in orders.fulfillment_stage enum.
     await db.query(
-      `DO $$
+      `DO $
        BEGIN
          ALTER TYPE "enum_orders_fulfillment_stage" ADD VALUE IF NOT EXISTS 'pending';
        EXCEPTION
@@ -130,7 +130,7 @@ async function seed() {
            -- enum type may not exist yet; it will be created by db.sync
            NULL;
        END
-       $$;`,
+       $;`,
       { raw: true }
     ).catch(() => { });
 
@@ -266,6 +266,7 @@ async function seed() {
       mobile: '+919876543201',
       password: bcrypt.hashSync('SuperAdmin@123', 10),
       usertype: 'super_admin',
+        zoho_contact_id: '3529895000000116003',
       department: 'Administration',
       status: 'active',
       verify_status: 'verified',
@@ -560,7 +561,7 @@ async function seed() {
         brand_name: 'EI',
         tax_rate: 18.00,
         mrp_price: 499.00,
-        buy_price: null,
+        buy_price: 299.00,
         category: 'Sunscreen',
         lifecycle_status: 'Production Released',
         form: 'Lotion/Cream',
@@ -596,7 +597,7 @@ async function seed() {
         brand_name: 'EI',
         tax_rate: 18.00,
         mrp_price: 299.00,
-        buy_price: null,
+        buy_price: 179.00,
         category: 'Face Wash',
         lifecycle_status: 'Production Released',
         form: 'Gel',
@@ -882,7 +883,7 @@ async function seed() {
       }
       console.log(`[Seed] Zoho Books products (FG): ${nOk} linked, ${nFail} skipped/errors`);
 
-      const rms = await RawMaterial.findAll({ where: { zoho_id: null }, order: [['id', 'ASC']] });
+      const rms = await RawMaterial.findAll({ where: { zoho_id: '3529895000000114003' }, order: [['id', 'ASC']] });
       nOk = 0;
       nFail = 0;
       for (const rm of rms) {
