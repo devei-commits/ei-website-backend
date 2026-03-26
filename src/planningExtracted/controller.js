@@ -29,11 +29,51 @@ function daysLeftDisplay(dueDate) {
   return `${diff} days`;
 }
 
+function addDaysDateOnly(baseDate, days) {
+  if (!baseDate) return '';
+  const d = new Date(`${String(baseDate).slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return '';
+  d.setUTCDate(d.getUTCDate() + (Number(days) || 0));
+  return d.toISOString().slice(0, 10);
+}
+
+function inferDefaultLeadTimeDays(so) {
+  const formData = so && typeof so.form_data === 'object' && so.form_data !== null ? so.form_data : {};
+  const hints = [
+    formData.orderType,
+    formData.order_type,
+    formData.type,
+    formData.orderCategory,
+    formData.order_category,
+    formData.requestType,
+    formData.request_type,
+    formData.businessType,
+    formData.business_type,
+    formData.productType,
+    formData.product_type,
+    formData.notes,
+  ]
+    .map((v) => String(v || '').trim().toLowerCase())
+    .filter(Boolean)
+    .join(' ');
+
+  // Rule parity: reorder existing => 45, new/new customization => 90.
+  if (hints.includes('reorder') || hints.includes('re-order') || hints.includes('repeat')) return 45;
+  if (hints.includes('custom') || hints.includes('new')) return 90;
+  return 90;
+}
+
 function formatRow(row) {
   if (!row) return null;
   const d = row.get ? row.get({ plain: true }) : row;
   const so = d.salesOrder || {};
   const prod = d.product || {};
+  const fallbackLeadDays = inferDefaultLeadTimeDays(so);
+  const dueDateResolved =
+    d.due_date ||
+    so.expected_shipment_date ||
+    addDaysDateOnly(d.order_date || so.order_date, fallbackLeadDays) ||
+    '';
   return {
     id: String(d.id),
     soNumber: so.order_id || '',
@@ -46,8 +86,8 @@ function formatRow(row) {
     orderQty: d.order_qty_display || '',
     totalKg: d.total_kg_display || '',
     orderDate: d.order_date || '',
-    dueDate: d.due_date || '',
-    daysLeft: daysLeftDisplay(d.due_date),
+    dueDate: dueDateResolved,
+    daysLeft: daysLeftDisplay(dueDateResolved),
     batchSize: d.batch_size_display || '',
     batchesRequired: d.batches_required ?? 0,
     bomStatus: d.bom_status || '',
@@ -274,7 +314,7 @@ async function listPlanningExtracted(req, res) {
       const total = await PlanningExtracted.count();
       const rows = await PlanningExtracted.findAll({
         include: [
-          { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'expected_shipment_date', 'status'], required: false },
+          { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'order_date', 'expected_shipment_date', 'status', 'form_data'], required: false },
           { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code'], required: false },
         ],
         order: [['due_date', 'ASC'], ['id', 'ASC']],
@@ -286,7 +326,7 @@ async function listPlanningExtracted(req, res) {
 
     const rows = await PlanningExtracted.findAll({
       include: [
-        { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'expected_shipment_date', 'status'], required: false },
+        { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'order_date', 'expected_shipment_date', 'status', 'form_data'], required: false },
         { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code'], required: false },
       ],
       order: [['due_date', 'ASC'], ['id', 'ASC']],
@@ -304,7 +344,7 @@ async function getPlanningExtractedById(req, res) {
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await PlanningExtracted.findByPk(id, {
       include: [
-        { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'order_date', 'expected_shipment_date', 'status'] },
+        { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'order_date', 'expected_shipment_date', 'status', 'form_data'] },
         { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code'] },
       ],
     });
@@ -365,7 +405,7 @@ async function updatePlanningExtracted(req, res) {
 
     const updated = await PlanningExtracted.findByPk(id, {
       include: [
-        { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'expected_shipment_date', 'status'] },
+        { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'order_date', 'expected_shipment_date', 'status', 'form_data'] },
         { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code'] },
       ],
     });
