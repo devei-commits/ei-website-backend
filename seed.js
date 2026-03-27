@@ -359,6 +359,7 @@ async function seed() {
       password: bcrypt.hashSync('Doctor@123', 10),
       doctor_id_legacy: 'DOC-SAR-101',
       usertype: 'doctor',
+      zoho_contact_id: '3529895000000092022',
       department: null,
       status: 'active',
       verify_status: 'verified',

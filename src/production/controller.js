@@ -1887,6 +1887,104 @@ function flattenBomLines(lines) {
   return out;
 }
 
+async function normalizeBatchBomLines(rmLinesInput, pmLinesInput) {
+  const rmLines = Array.isArray(rmLinesInput) ? rmLinesInput : [];
+  const pmLines = Array.isArray(pmLinesInput) ? pmLinesInput : [];
+
+  const rmIds = new Set();
+  const rmCodes = new Set();
+  for (const line of rmLines) {
+    const id = line.raw_material_id ?? line.rawMaterialId;
+    if (id != null && !Number.isNaN(Number(id))) rmIds.add(Number(id));
+    const code = line.rm_code ?? line.rmCode ?? line.code;
+    if (code != null && String(code).trim()) rmCodes.add(String(code).trim());
+  }
+  const pmIds = new Set();
+  const pmCodes = new Set();
+  for (const line of pmLines) {
+    const id = line.pack_material_id ?? line.packMaterialId;
+    if (id != null && !Number.isNaN(Number(id))) pmIds.add(Number(id));
+    const code = line.pm_code ?? line.pmCode ?? line.code;
+    if (code != null && String(code).trim()) pmCodes.add(String(code).trim());
+  }
+
+  const [rmRows, pmRows] = await Promise.all([
+    (rmIds.size || rmCodes.size)
+      ? RawMaterial.findAll({
+        where: {
+          [Op.or]: [
+            ...(rmIds.size ? [{ id: { [Op.in]: [...rmIds] } }] : []),
+            ...(rmCodes.size ? [{ code: { [Op.in]: [...rmCodes] } }] : []),
+          ],
+        },
+        attributes: ['id', 'code', 'name', 'inci'],
+      })
+      : Promise.resolve([]),
+    (pmIds.size || pmCodes.size)
+      ? PackMaterial.findAll({
+        where: {
+          [Op.or]: [
+            ...(pmIds.size ? [{ id: { [Op.in]: [...pmIds] } }] : []),
+            ...(pmCodes.size ? [{ code: { [Op.in]: [...pmCodes] } }] : []),
+          ],
+        },
+        attributes: ['id', 'code', 'description'],
+      })
+      : Promise.resolve([]),
+  ]);
+
+  const rmById = new Map();
+  const rmByCode = new Map();
+  for (const r of rmRows) {
+    const p = r.get ? r.get({ plain: true }) : r;
+    rmById.set(Number(p.id), p);
+    if (p.code) rmByCode.set(String(p.code).trim(), p);
+  }
+  const pmById = new Map();
+  const pmByCode = new Map();
+  for (const p0 of pmRows) {
+    const p = p0.get ? p0.get({ plain: true }) : p0;
+    pmById.set(Number(p.id), p);
+    if (p.code) pmByCode.set(String(p.code).trim(), p);
+  }
+
+  const normalizedRmLines = rmLines.map((line) => {
+    const id = line.raw_material_id ?? line.rawMaterialId;
+    const code = (line.rm_code ?? line.rmCode ?? line.code ?? '').toString().trim();
+    const row = (id != null && !Number.isNaN(Number(id)) ? rmById.get(Number(id)) : null) || (code ? rmByCode.get(code) : null);
+    if (!row) return line;
+    return {
+      ...line,
+      raw_material_id: row.id,
+      rawMaterialId: row.id,
+      rm_code: row.code,
+      rmCode: row.code,
+      code: row.code,
+      inci_name: line.inci_name || line.inciName || line.name || row.name || row.inci || '',
+      name: line.name || line.inci_name || row.name || row.inci || '',
+    };
+  });
+
+  const normalizedPmLines = pmLines.map((line) => {
+    const id = line.pack_material_id ?? line.packMaterialId;
+    const code = (line.pm_code ?? line.pmCode ?? line.code ?? '').toString().trim();
+    const row = (id != null && !Number.isNaN(Number(id)) ? pmById.get(Number(id)) : null) || (code ? pmByCode.get(code) : null);
+    if (!row) return line;
+    return {
+      ...line,
+      pack_material_id: row.id,
+      packMaterialId: row.id,
+      pm_code: row.code,
+      pmCode: row.code,
+      code: row.code,
+      description: line.description || line.name || row.description || '',
+      name: line.name || line.description || row.description || '',
+    };
+  });
+
+  return { rmLines: normalizedRmLines, pmLines: normalizedPmLines };
+}
+
 async function buildIngredientBulkSpecsForBom(rmLines, pmLines) {
   const flatRm = flattenBomLines(rmLines);
   const flatPm = flattenBomLines(pmLines);
@@ -2045,16 +2143,17 @@ async function getBatchBom(req, res) {
     const d = batch.get ? batch.get({ plain: true }) : batch;
     if (BOM_DEBUG) console.log('[BOM-DEBUG] GET /batches/:id/bom called with production_batch id=', id, 'bmr_no=', d.bmr_no, 'so_no=', d.so_no);
     const { rmLines, pmLines, source, batchSizeKg } = await getBomLinesForBatch(d);
+    const normalized = await normalizeBatchBomLines(rmLines, pmLines);
     if (BOM_DEBUG) console.log('[BOM-DEBUG] GET /batches/:id/bom response: source=', source, 'rmLines=', rmLines.length, 'pmLines=', pmLines.length);
     const [ingredientBulkSpecs, fgProductSpecs] = await Promise.all([
-      buildIngredientBulkSpecsForBom(rmLines, pmLines),
+      buildIngredientBulkSpecsForBom(normalized.rmLines, normalized.pmLines),
       buildFgProductSpecsForBatch(d),
     ]);
     res.json({
       success: true,
       data: {
-        rmLines,
-        pmLines,
+        rmLines: normalized.rmLines,
+        pmLines: normalized.pmLines,
         source,
         batchSizeKg: batchSizeKg ?? undefined,
         qcReference: { ingredientBulkSpecs, fgProductSpecs },

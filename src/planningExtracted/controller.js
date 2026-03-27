@@ -941,14 +941,24 @@ async function getItemsInvolved(req, res) {
         }
       }
       const rmByCode = new Map();
+      const rmByName = new Map();
       if (rmCodes.size > 0) {
         const rmsList = await RawMaterial.findAll({ where: { code: { [Op.in]: [...rmCodes] } }, attributes: ['id', 'code', 'name'] });
-        for (const r of rmsList) rmByCode.set(r.code, r);
+        for (const r of rmsList) {
+          rmByCode.set(r.code, r);
+          const key = String(r.name || '').trim().toLowerCase();
+          if (key) rmByName.set(key, r);
+        }
       }
       const pmByCode = new Map();
+      const pmByName = new Map();
       if (pmCodes.size > 0) {
         const pmsList = await PackMaterial.findAll({ where: { code: { [Op.in]: [...pmCodes] } }, attributes: ['id', 'code', 'description'] });
-        for (const p of pmsList) pmByCode.set(p.code, p);
+        for (const p of pmsList) {
+          pmByCode.set(p.code, p);
+          const key = String(p.description || '').trim().toLowerCase();
+          if (key) pmByName.set(key, p);
+        }
       }
 
       for (const batch of sentBatches) {
@@ -966,17 +976,29 @@ async function getItemsInvolved(req, res) {
         const rmIdsInThisBatch = new Set();
         for (const line of rmLines) {
           let id = line.raw_material_id != null ? Number(line.raw_material_id) : null;
+          let resolvedRm = null;
           if (id == null && (line.rm_code || line.code)) {
             const rm = rmByCode.get(line.rm_code || line.code);
-            if (rm) id = rm.id;
+            if (rm) {
+              id = rm.id;
+              resolvedRm = rm;
+            }
+          }
+          if (id == null && (line.inci_name || line.name)) {
+            const nameKey = String(line.inci_name || line.name || '').trim().toLowerCase();
+            const rm = nameKey ? rmByName.get(nameKey) : null;
+            if (rm) {
+              id = rm.id;
+              resolvedRm = rm;
+            }
           }
           if (id == null || Number.isNaN(id)) continue;
           rmIdsInThisBatch.add(id);
           const pct = line.pct_w_w ?? line.pct ?? 0;
           const qty = (sizeKg * pct) / 100;
           const unit = line.uom || 'KG';
-          const name = line.inci_name ?? line.name ?? line.rm_code ?? '';
-          const code = line.rm_code ?? line.code ?? '';
+          const name = resolvedRm?.name || line.inci_name || line.name || line.rm_code || '';
+          const code = resolvedRm?.code || line.rm_code || line.code || '';
           if (!rmAgg.has(id)) {
             rmAgg.set(id, { totalRequired: 0, unit, productNames: [], planningExtractedIds: [], name, code, batchCount: 0 });
           }
@@ -995,17 +1017,29 @@ async function getItemsInvolved(req, res) {
         const pmIdsInThisBatch = new Set();
         for (const line of pmLines) {
           let id = line.pack_material_id != null ? Number(line.pack_material_id) : null;
+          let resolvedPm = null;
           if (id == null && (line.pm_code || line.code)) {
             const pm = pmByCode.get(line.pm_code || line.code);
-            if (pm) id = pm.id;
+            if (pm) {
+              id = pm.id;
+              resolvedPm = pm;
+            }
+          }
+          if (id == null && (line.description || line.name)) {
+            const nameKey = String(line.description || line.name || '').trim().toLowerCase();
+            const pm = nameKey ? pmByName.get(nameKey) : null;
+            if (pm) {
+              id = pm.id;
+              resolvedPm = pm;
+            }
           }
           if (id == null || Number.isNaN(id)) continue;
           pmIdsInThisBatch.add(id);
           const qtyPerUnit = line.qty_per_unit ?? line.qty ?? 1;
           const qty = unitsForBatch * qtyPerUnit;
           const unit = 'PCS';
-          const name = line.description ?? line.name ?? line.pm_code ?? '';
-          const code = line.pm_code ?? line.code ?? '';
+          const name = resolvedPm?.description || line.description || line.name || line.pm_code || '';
+          const code = resolvedPm?.code || line.pm_code || line.code || '';
           if (!pmAgg.has(id)) {
             pmAgg.set(id, { totalRequired: 0, unit, productNames: [], planningExtractedIds: [], name, code, batchCount: 0 });
           }
@@ -1040,14 +1074,24 @@ async function getItemsInvolved(req, res) {
         }
       }
       const fallbackRmByCode = new Map();
+      const fallbackRmByName = new Map();
       const fallbackPmByCode = new Map();
+      const fallbackPmByName = new Map();
       if (fallbackRmCodes.size > 0) {
-        const rmsList = await RawMaterial.findAll({ where: { code: { [Op.in]: [...fallbackRmCodes] } }, attributes: ['id', 'code'] });
-        for (const r of rmsList) fallbackRmByCode.set(r.code, r);
+        const rmsList = await RawMaterial.findAll({ where: { code: { [Op.in]: [...fallbackRmCodes] } }, attributes: ['id', 'code', 'name'] });
+        for (const r of rmsList) {
+          fallbackRmByCode.set(r.code, r);
+          const key = String(r.name || '').trim().toLowerCase();
+          if (key) fallbackRmByName.set(key, r);
+        }
       }
       if (fallbackPmCodes.size > 0) {
-        const pmsList = await PackMaterial.findAll({ where: { code: { [Op.in]: [...fallbackPmCodes] } }, attributes: ['id', 'code'] });
-        for (const p of pmsList) fallbackPmByCode.set(p.code, p);
+        const pmsList = await PackMaterial.findAll({ where: { code: { [Op.in]: [...fallbackPmCodes] } }, attributes: ['id', 'code', 'description'] });
+        for (const p of pmsList) {
+          fallbackPmByCode.set(p.code, p);
+          const key = String(p.description || '').trim().toLowerCase();
+          if (key) fallbackPmByName.set(key, p);
+        }
       }
       for (const row of confirmed) {
         const plain = row.get ? row.get({ plain: true }) : row;
@@ -1058,6 +1102,10 @@ async function getItemsInvolved(req, res) {
           let id = r.raw_material_id != null ? Number(r.raw_material_id) : null;
           if (id == null && r.code) {
             const rm = fallbackRmByCode.get(r.code);
+            if (rm) id = rm.id;
+          }
+          if (id == null && r.name) {
+            const rm = fallbackRmByName.get(String(r.name).trim().toLowerCase());
             if (rm) id = rm.id;
           }
           if (id == null || Number.isNaN(id)) continue;
@@ -1078,6 +1126,10 @@ async function getItemsInvolved(req, res) {
           let id = p.pack_material_id != null ? Number(p.pack_material_id) : null;
           if (id == null && p.code) {
             const pm = fallbackPmByCode.get(p.code);
+            if (pm) id = pm.id;
+          }
+          if (id == null && p.name) {
+            const pm = fallbackPmByName.get(String(p.name).trim().toLowerCase());
             if (pm) id = pm.id;
           }
           if (id == null || Number.isNaN(id)) continue;
@@ -1188,8 +1240,8 @@ async function getItemsInvolved(req, res) {
         type: 'RM',
         raw_material_id: id,
         pack_material_id: null,
-        code: agg.code || info.code || `RM-${id}`,
-        name: agg.name || info.name || `RM ${id}`,
+        code: info.code || agg.code || `RM-${id}`,
+        name: info.name || agg.name || `RM ${id}`,
         category: 'RM',
         usedInProducts: agg.productNames,
         planningExtractedIds: agg.planningExtractedIds,
@@ -1228,8 +1280,8 @@ async function getItemsInvolved(req, res) {
         type: 'PM',
         raw_material_id: null,
         pack_material_id: id,
-        code: agg.code || info.code || `PM-${id}`,
-        name: agg.name || info.name || `PM ${id}`,
+        code: info.code || agg.code || `PM-${id}`,
+        name: info.name || agg.name || `PM ${id}`,
         category: 'PM',
         usedInProducts: agg.productNames,
         planningExtractedIds: agg.planningExtractedIds,
