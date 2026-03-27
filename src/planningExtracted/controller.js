@@ -57,10 +57,104 @@ function inferDefaultLeadTimeDays(so) {
     .filter(Boolean)
     .join(' ');
 
-  // Rule parity: reorder existing => 45, new/new customization => 90.
-  if (hints.includes('reorder') || hints.includes('re-order') || hints.includes('repeat')) return 45;
-  if (hints.includes('custom') || hints.includes('new')) return 90;
-  return 90;
+  // Standard finished product: 45 days; customisation / bespoke work: 90 days.
+  if (
+    hints.includes('customis')
+    || hints.includes('customiz')
+    || hints.includes('bespoke')
+    || hints.includes('tailor-made')
+    || hints.includes('tailor made')
+  ) {
+    return 90;
+  }
+  return 45;
+}
+
+function parseOrderQtyNum(raw) {
+  if (raw == null) return 0;
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : 0;
+  const n = parseInt(String(raw).replace(/[^\d]/g, ''), 10);
+  return Number.isNaN(n) ? 0 : n;
+}
+
+/**
+ * Parse product fill size to KG per unit.
+ * Supports formats like: 100g, 0.1 kg, 100 ml, 0.1 L.
+ * For volume units, convert using SG (kg = liters * specific gravity).
+ */
+function parseFillSizeToKgPerUnit(fillSizeRaw, sg = 1) {
+  const text = String(fillSizeRaw || '').trim().toLowerCase();
+  if (!text) return null;
+  const m = text.match(/([\d.]+)\s*([a-z]+)/i);
+  if (!m) return null;
+  const value = Number(m[1]);
+  const unit = String(m[2] || '').toLowerCase();
+  if (!(Number.isFinite(value) && value > 0)) return null;
+  const specificGravity = Number(sg) > 0 ? Number(sg) : 1;
+
+  if (unit.startsWith('kg')) return value;
+  if (unit === 'g' || unit === 'gm' || unit === 'gms' || unit.startsWith('gram')) return value / 1000;
+  if (unit === 'ml' || unit === 'millilitre' || unit === 'milliliter' || unit === 'milliliters' || unit === 'millilitres') {
+    return (value / 1000) * specificGravity;
+  }
+  if (unit === 'l' || unit === 'lt' || unit === 'ltr' || unit === 'litre' || unit === 'liter' || unit === 'liters' || unit === 'litres') {
+    return value * specificGravity;
+  }
+  return null;
+}
+
+function inferBlendSpecificGravity(rmLines) {
+  const lines = Array.isArray(rmLines) ? rmLines : [];
+  let weighted = 0;
+  let pctSum = 0;
+  for (const line of lines) {
+    const pct = Number(line?.pct_w_w ?? line?.pct ?? 0);
+    const sg = Number(line?.specific_gravity);
+    if (!(Number.isFinite(pct) && pct > 0 && Number.isFinite(sg) && sg > 0)) continue;
+    weighted += pct * sg;
+    pctSum += pct;
+  }
+  if (pctSum <= 0) return 1;
+  return weighted / pctSum;
+}
+
+function estimateTotalKgFromRmLines({ rmLines, orderQty, batchSizeKg, batchesRequired }) {
+  const lines = Array.isArray(rmLines) ? rmLines : [];
+  if (lines.length === 0) return 0;
+
+  let totalKg = 0;
+  for (const line of lines) {
+    const quantity = Number(line?.quantity);
+    if (Number.isFinite(quantity) && quantity > 0) {
+      totalKg += quantity;
+      continue;
+    }
+
+    const pct = Number(line?.pct_w_w ?? line?.pct ?? 0);
+    if (Number.isFinite(pct) && pct > 0 && Number(batchSizeKg) > 0 && Number(batchesRequired) > 0) {
+      totalKg += (Number(batchSizeKg) * pct / 100) * Number(batchesRequired);
+      continue;
+    }
+
+    const qtyPerUnit = Number(line?.qty_per_unit ?? line?.qty);
+    if (Number.isFinite(qtyPerUnit) && qtyPerUnit > 0 && Number(orderQty) > 0) {
+      const sg = Number(line?.specific_gravity) || 1; // default SG fallback requested
+      totalKg += Number(orderQty) * qtyPerUnit * sg;
+    }
+  }
+
+  return Math.round(totalKg * 1000) / 1000;
+}
+
+function estimateOrderTotalKg({ orderQty, product, rmLines, batchSizeKg, batchesRequired }) {
+  const qty = Number(orderQty) || 0;
+  if (qty <= 0) return 0;
+  const blendSg = inferBlendSpecificGravity(rmLines);
+  const kgPerUnit = parseFillSizeToKgPerUnit(product?.fill_size, blendSg);
+  if (kgPerUnit != null && kgPerUnit > 0) {
+    return Math.round(qty * kgPerUnit * 1000) / 1000;
+  }
+  return estimateTotalKgFromRmLines({ rmLines, orderQty: qty, batchSizeKg, batchesRequired });
 }
 
 function formatRow(row) {
@@ -111,6 +205,10 @@ function formatRow(row) {
 
 const RESERVE_DEBUG = process.env.RESERVE_DEBUG !== '0';
 
+/** kg tolerance for float compare; PCS treated as integers but allow tiny float noise */
+const RESERVE_EPS_KG = 1e-4;
+const RESERVE_EPS_PCS = 1e-6;
+
 /**
  * Recompute warehouse_inventory.reserved for given RM/PM ids from sum of reserved_batch_items.
  * Central table stays in sync so feasibility and everywhere else see correct reserved/available.
@@ -157,14 +255,21 @@ async function reserveStockForPlanningExtracted(planningExtractedId, planRow) {
     if (rmId == null) continue;
     const qty = Number(line.quantity);
     if (!(qty > 0)) continue;
+    const w = await WarehouseInventory.findOne({ where: { item_type: 'RM', raw_material_id: rmId } });
+    const stockInHand = Number(w?.stock_in_hand) || 0;
+    const reservedExisting = Number(w?.reserved) || 0;
+    const free = Math.max(0, stockInHand - reservedExisting);
+    const reserveQty = Math.min(qty, free);
+    if (reserveQty <= RESERVE_EPS_KG) continue;
     await ReservedBatchItem.create({
       planning_extracted_id: planningExtractedId,
       raw_material_id: rmId,
       pack_material_id: null,
-      quantity_reserved: qty,
+      quantity_reserved: reserveQty,
       unit: line.unit || 'KG',
     });
     affectedRmIds.add(rmId);
+    await syncWarehouseReserved([rmId], []);
   }
 
   for (const line of packagingMaterials) {
@@ -176,14 +281,21 @@ async function reserveStockForPlanningExtracted(planningExtractedId, planRow) {
     if (pmId == null) continue;
     const qty = Number(line.quantity);
     if (!(qty > 0)) continue;
+    const w = await WarehouseInventory.findOne({ where: { item_type: 'PM', pack_material_id: pmId } });
+    const stockInHand = Number(w?.stock_in_hand) || 0;
+    const reservedExisting = Number(w?.reserved) || 0;
+    const free = Math.max(0, stockInHand - reservedExisting);
+    const reserveQty = Math.min(qty, free);
+    if (reserveQty <= RESERVE_EPS_PCS) continue;
     await ReservedBatchItem.create({
       planning_extracted_id: planningExtractedId,
       raw_material_id: null,
       pack_material_id: pmId,
-      quantity_reserved: qty,
+      quantity_reserved: reserveQty,
       unit: line.unit || 'PCS',
     });
     affectedPmIds.add(pmId);
+    await syncWarehouseReserved([], [pmId]);
   }
 
   if (affectedRmIds.size || affectedPmIds.size) {
@@ -209,6 +321,74 @@ async function releaseStockForPlanningExtracted(planningExtractedId) {
   if (affectedRmIds.size || affectedPmIds.size) {
     await syncWarehouseReserved([...affectedRmIds], [...affectedPmIds]);
   }
+}
+
+/**
+ * Sum required reservation qty per RM/PM id (same id resolution as reserveStockForPlanningExtracted).
+ */
+async function aggregateReservationQuantities(planRow) {
+  const plain = planRow.get ? planRow.get({ plain: true }) : planRow;
+  const rawMaterials = Array.isArray(plain.raw_materials) ? plain.raw_materials : [];
+  const packagingMaterials = Array.isArray(plain.packaging_materials) ? plain.packaging_materials : [];
+  const rmTotals = new Map();
+  const pmTotals = new Map();
+
+  for (const line of rawMaterials) {
+    let rmId = line.raw_material_id != null ? line.raw_material_id : null;
+    if (rmId == null && (line.code || line.rm_code)) {
+      const rm = await RawMaterial.findOne({ where: { code: line.code || line.rm_code } });
+      if (rm) rmId = rm.id;
+    }
+    if (rmId == null) continue;
+    const qty = Number(line.quantity);
+    if (!(qty > 0)) continue;
+    const prev = rmTotals.get(rmId) || {
+      qty: 0,
+      unit: line.unit || 'KG',
+      code: line.code || line.rm_code || '',
+      name: line.name || '',
+    };
+    prev.qty += qty;
+    rmTotals.set(rmId, prev);
+  }
+
+  for (const line of packagingMaterials) {
+    let pmId = line.pack_material_id != null ? line.pack_material_id : null;
+    if (pmId == null && (line.code || line.pm_code)) {
+      const pm = await PackMaterial.findOne({ where: { code: line.code || line.pm_code } });
+      if (pm) pmId = pm.id;
+    }
+    if (pmId == null) continue;
+    const qty = Number(line.quantity);
+    if (!(qty > 0)) continue;
+    const prev = pmTotals.get(pmId) || {
+      qty: 0,
+      unit: line.unit || 'PCS',
+      code: line.code || line.pm_code || '',
+      name: line.name || '',
+    };
+    prev.qty += qty;
+    pmTotals.set(pmId, prev);
+  }
+
+  return { rmTotals, pmTotals };
+}
+
+/**
+ * Ensure the planning row has BOM lines with positive quantities to reserve.
+ * Full need vs free is not required: we reserve up to free stock (see reserveStockForPlanningExtracted); shortages remain for POs.
+ */
+async function validateWarehouseStockForReservation(planRow) {
+  const { rmTotals, pmTotals } = await aggregateReservationQuantities(planRow);
+  if (rmTotals.size === 0 && pmTotals.size === 0) {
+    return {
+      ok: false,
+      message: 'No materials with positive quantity to reserve. Adjust the BOM or batch sizes.',
+      code: 'EMPTY_RESERVATION',
+      details: [],
+    };
+  }
+  return { ok: true };
 }
 
 /**
@@ -242,13 +422,11 @@ async function syncPlanningExtractedFromSalesOrders() {
       }
       if (!productId) continue;
 
+      const product = await Product.findByPk(productId);
+      if (!product) continue;
       const existing = await PlanningExtracted.findOne({
         where: { sales_order_id: so.id, product_id: productId },
       });
-      if (existing) continue;
-
-      const product = await Product.findByPk(productId);
-      if (!product) continue;
 
       let rawMaterials = [];
       let packagingMaterials = [];
@@ -262,28 +440,47 @@ async function syncPlanningExtractedFromSalesOrders() {
         rawMaterials.length > 0 || packagingMaterials.length > 0;
 
       const prodPlain = product.get ? product.get({ plain: true }) : product;
-      const orderQty = item.quantity || item.orderedQty || 0;
+      const orderQty = parseOrderQtyNum(item.quantity || item.orderedQty || 0);
       const batchSizeKg = Number(prodPlain.batch_size_kg) || 100;
       const batchesRequired = batchSizeKg > 0 ? Math.ceil(orderQty / batchSizeKg) : 1;
+      const estimatedTotalKg = estimateOrderTotalKg({ orderQty, product: prodPlain, rmLines: rawMaterials, batchSizeKg, batchesRequired });
+      const safeTotalKg = estimatedTotalKg > 0
+        ? estimatedTotalKg
+        : (Math.round(batchSizeKg * batchesRequired * 1000) / 1000);
 
-      await PlanningExtracted.create({
-        sales_order_id: so.id,
-        product_id: productId,
-        order_qty_display: `${orderQty} units`,
-        total_kg_display: batchSizeKg ? `${orderQty} KG` : null,
-        order_date: so.order_date || null,
-        due_date: so.expected_shipment_date || null,
-        batch_size_display: batchSizeKg ? `${batchSizeKg} KG` : null,
-        batches_required: batchesRequired,
-        batch_count: 0,
-        batch_size_kg: batchSizeKg,
-        bom_status: bom && hasBomLines ? 'Confirmed' : 'Pending',
-        bom_confirmed_at: bom && hasBomLines ? new Date() : null,
-        approved_by: so.created_by || null,
-        raw_materials: rawMaterials,
-        packaging_materials: packagingMaterials,
-      });
-      created++;
+      if (existing) {
+        await existing.update({
+          order_qty_display: `${orderQty} units`,
+          total_kg_display: `${safeTotalKg} KG`,
+          order_date: so.order_date || null,
+          due_date: so.expected_shipment_date || null,
+          batch_size_display: batchSizeKg ? `${batchSizeKg} KG` : null,
+          batches_required: batchesRequired,
+          batch_size_kg: batchSizeKg,
+          raw_materials: rawMaterials,
+          packaging_materials: packagingMaterials,
+          approved_by: so.created_by || null,
+        });
+      } else {
+        await PlanningExtracted.create({
+          sales_order_id: so.id,
+          product_id: productId,
+          order_qty_display: `${orderQty} units`,
+          total_kg_display: `${safeTotalKg} KG`,
+          order_date: so.order_date || null,
+          due_date: so.expected_shipment_date || null,
+          batch_size_display: batchSizeKg ? `${batchSizeKg} KG` : null,
+          batches_required: batchesRequired,
+          batch_count: 0,
+          batch_size_kg: batchSizeKg,
+          bom_status: bom && hasBomLines ? 'Confirmed' : 'Pending',
+          bom_confirmed_at: bom && hasBomLines ? new Date() : null,
+          approved_by: so.created_by || null,
+          raw_materials: rawMaterials,
+          packaging_materials: packagingMaterials,
+        });
+        created++;
+      }
     }
   }
   if (created > 0) {
@@ -386,10 +583,22 @@ async function updatePlanningExtracted(req, res) {
     for (const [camel, snake] of Object.entries(camelToSnake)) {
       if (body[camel] !== undefined) row.set(snake, body[camel]);
     }
+
+    const nowBomConfirmedAt = row.get ? row.get('bom_confirmed_at') : row.bom_confirmed_at;
+    if (prevBomConfirmedAt == null && nowBomConfirmedAt != null) {
+      const v = await validateWarehouseStockForReservation(row);
+      if (!v.ok) {
+        return res.status(400).json({
+          error: v.message,
+          code: v.code,
+          details: v.details,
+        });
+      }
+    }
+
     await row.save();
 
     // Reserve or release stock when BOM is confirmed or unconfirmed (central warehouse_inventory.reserved)
-    const nowBomConfirmedAt = row.get ? row.get('bom_confirmed_at') : row.bom_confirmed_at;
     if (prevBomConfirmedAt == null && nowBomConfirmedAt != null) {
       await reserveStockForPlanningExtracted(id, row);
       // If this planning row belongs to a website order, move it to in_production stage.

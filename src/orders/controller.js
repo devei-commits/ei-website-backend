@@ -5,7 +5,78 @@ const { Op } = require('sequelize');
 const Address = require('../models/Addresses');
 const { User } = require('../users/models');
 const db = require('../../db');
+const { computeCheckoutPreview } = require('./checkoutTermsFromBom');
 // const { orderSchema, updateOrderSchema } = require('./schemas');
+
+/**
+ * Validates cheque payload when payment_method is cheque (aligned with Esthetic-Insights-Website checkout).
+ * @returns {{ ok: true, normalized: object } | { ok: false, error: string }}
+ */
+function validateChequeDetailsBody(raw) {
+    if (!raw || typeof raw !== 'object') {
+        return { ok: false, error: 'Cheque details are required when paying by cheque.' };
+    }
+    const cheque_no = String(raw.cheque_no ?? '').trim();
+    const bank_name = String(raw.bank_name ?? '').trim();
+    const cheque_date = String(raw.cheque_date ?? '').trim();
+    const account_holder = String(raw.account_holder ?? '').trim();
+
+    if (!/^[A-Za-z0-9/-]{6,20}$/.test(cheque_no)) {
+        return { ok: false, error: 'Enter a valid cheque number (6–20 characters: letters, digits, / or -).' };
+    }
+    if (!/^[\p{L}\p{M}0-9\s.,'&()/-]{2,120}$/u.test(bank_name)) {
+        return { ok: false, error: 'Enter bank name (2–120 characters).' };
+    }
+    if (!/^[\p{L}\p{M}\s.'&/-]{2,120}$/u.test(account_holder)) {
+        return { ok: false, error: 'Enter account holder name (2–120 characters, letters and spaces).' };
+    }
+    if (!cheque_date) {
+        return { ok: false, error: 'Cheque date is required.' };
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(cheque_date)) {
+        return { ok: false, error: 'Cheque date must be YYYY-MM-DD.' };
+    }
+    const d = new Date(`${cheque_date}T12:00:00Z`);
+    if (Number.isNaN(d.getTime())) {
+        return { ok: false, error: 'Cheque date is not a valid calendar date.' };
+    }
+    const today = new Date();
+    const todayUtc = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+    const chequeUtc = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+    const minUtc = todayUtc - 365 * 10 * 86400000;
+    const maxUtc = todayUtc + 366 * 86400000;
+    if (chequeUtc < minUtc) {
+        return { ok: false, error: 'Cheque date is too far in the past.' };
+    }
+    if (chequeUtc > maxUtc) {
+        return { ok: false, error: 'Cheque date cannot be more than one year in the future.' };
+    }
+
+    return {
+        ok: true,
+        normalized: {
+            cheque_no,
+            bank_name,
+            cheque_date,
+            account_holder,
+        },
+    };
+}
+
+function estimateTotalKgFromRawMaterials(rawMaterials, fallbackKg = 0) {
+    if (!Array.isArray(rawMaterials) || rawMaterials.length === 0) {
+        return Math.max(0, Number(fallbackKg) || 0);
+    }
+    const estimated = rawMaterials.reduce((sum, line) => {
+        const qty = Number(line?.quantity);
+        if (Number.isFinite(qty) && qty > 0) return sum + qty;
+        const qtyPerUnit = Number(line?.qty_per_unit ?? line?.qty);
+        const sg = Number(line?.specific_gravity) || 1; // default as requested when SG is missing
+        if (Number.isFinite(qtyPerUnit) && qtyPerUnit > 0) return sum + (qtyPerUnit * sg);
+        return sum;
+    }, 0);
+    return estimated > 0 ? estimated : Math.max(0, Number(fallbackKg) || 0);
+}
 
 
 const saveOrder = async (req, res) => {
@@ -44,43 +115,22 @@ const saveOrder = async (req, res) => {
         }
 
         const orderDateStr = new Date().toISOString().slice(0, 10);
-        const defaultLeadTimeDaysNew = 90;
-        const defaultLeadTimeDaysReorder = 45;
+        /** Standard catalog / finished product lines */
+        const LEAD_TIME_DAYS_PRODUCT = 45;
+        /** Bespoke or explicit customisation lines */
+        const LEAD_TIME_DAYS_CUSTOMISATION = 90;
 
-        // "Reorder of existing product" rule:
-        // mark a product as "reorder" if the user has previously placed a non-cancelled order for it.
-        const previousOrderItems = await OrderItem.findAll({
-            attributes: ['product_id'],
-            where: { product_id: { [Op.in]: productIds } },
-            include: [
-                {
-                    model: Order,
-                    required: true,
-                    attributes: [],
-                    where: { user_id, order_status: { [Op.ne]: 'cancelled' } },
-                },
-            ],
-            transaction: t,
-        });
-        const reorderProductIds = new Set(
-            (previousOrderItems || [])
-                .map((r) => Number(r.product_id))
-                .filter((x) => Number.isFinite(x) && x > 0)
-        );
+        function isCustomizationOrderItem(item) {
+            if (!item || typeof item !== 'object') return false;
+            if (item.is_customization === true || item.is_customisation === true) return true;
+            const lt = String(item.line_type || item.order_line_type || '').toLowerCase();
+            if (lt === 'customisation' || lt === 'customization') return true;
+            return false;
+        }
 
         const subtotal = order_items.reduce((acc, item) => acc + (item.unit_price * item.quantity), 0);
         const tax_total = order_items.reduce((acc, item) => acc + (item.tax_amount || 0), 0);
         const grand_total = subtotal + tax_total + shipping_total - discount_total;
-
-        // Payment terms are always percentage based.
-        // If caller does not send them, fallback to user profile's advance percentage behavior.
-        let advancePct = 0;
-        let preShipmentPct = 0;
-        let postShipmentPct = 0;
-        let creditDays = null;
-        const user = await User.findByPk(user_id, {
-            attributes: ['userid', 'fname', 'lname', 'display_name', 'email', 'mobile', 'advance_payment', 'advance_amount'],
-        });
 
         const clampPct = (v) => {
             const n = Number(v);
@@ -88,25 +138,50 @@ const saveOrder = async (req, res) => {
             return Math.max(0, Math.min(100, n));
         };
         const round2 = (v) => Math.round(Number(v || 0) * 100) / 100;
-        if (payment_terms && typeof payment_terms === 'object') {
-            const pt = payment_terms;
-            advancePct = clampPct(pt.advance_pct ?? pt.advancePct);
-            preShipmentPct = clampPct(pt.pre_shipment_pct ?? pt.preShipmentPct);
-            postShipmentPct = clampPct(pt.post_shipment_pct ?? pt.postShipmentPct);
-            const cdRaw = pt.credit_days ?? pt.creditDays;
-            if (cdRaw != null && Number.isFinite(Number(cdRaw)) && Number(cdRaw) >= 0) {
-                creditDays = Math.floor(Number(cdRaw));
-            }
-        } else if (user && user.advance_payment && user.advance_amount != null) {
-            // Backward compatibility: historical `advance_amount` is interpreted as percentage.
-            advancePct = clampPct(user.advance_amount);
-            preShipmentPct = clampPct(100 - advancePct);
-            postShipmentPct = 0;
-        } else {
-            advancePct = 0;
-            preShipmentPct = 100;
-            postShipmentPct = 0;
+
+        const user = await User.findByPk(user_id, {
+            attributes: ['userid', 'fname', 'lname', 'display_name', 'email', 'mobile', 'advance_payment', 'advance_amount'],
+        });
+
+        /** Authoritative staged % from Items List (RM/PM/PR) + BOM aggregation; enforces MOQ. */
+        const previewItems = order_items.map((item) => ({
+            product_id: Number(item.product_id),
+            quantity: Number(item.quantity),
+            unit_price: Number(item.unit_price),
+            line_subtotal: Number(item.unit_price) * Number(item.quantity),
+            tax_amount: Number(item.tax_amount || 0),
+        }));
+        const checkoutPreview = await computeCheckoutPreview(previewItems, t);
+        if (!checkoutPreview.moq_ok) {
+            await t.rollback();
+            return res.status(400).json({
+                error: 'Order quantity is below the minimum order quantity (MOQ) for one or more products.',
+                moq_details: checkoutPreview.lines.map((l) => ({
+                    product_id: l.product_id,
+                    min_quantity: l.min_quantity,
+                    quantity: l.quantity,
+                })),
+            });
         }
+
+        const paymentMethodNorm = String(payment_method || '').toLowerCase();
+        let validatedChequeForMeta = null;
+        if (paymentMethodNorm === 'cheque') {
+            const chequeResult = validateChequeDetailsBody(cheque_details);
+            if (!chequeResult.ok) {
+                await t.rollback();
+                return res.status(400).json({ error: chequeResult.error });
+            }
+            validatedChequeForMeta = chequeResult.normalized;
+        }
+
+        let advancePct = clampPct(checkoutPreview.payment_terms.advance_pct);
+        let preShipmentPct = clampPct(checkoutPreview.payment_terms.pre_shipment_pct);
+        let postShipmentPct = clampPct(checkoutPreview.payment_terms.post_shipment_pct);
+        let creditDays = checkoutPreview.payment_terms.credit_days != null
+            ? Math.floor(Number(checkoutPreview.payment_terms.credit_days))
+            : 0;
+        if (!Number.isFinite(creditDays) || creditDays < 0) creditDays = 0;
 
         const totalPct = advancePct + preShipmentPct + postShipmentPct;
         if (totalPct > 100.0001) {
@@ -311,16 +386,17 @@ const saveOrder = async (req, res) => {
                 });
             }
 
-            const leadTimeDaysForProduct = reorderProductIds.has(productId) ? defaultLeadTimeDaysReorder : defaultLeadTimeDaysNew;
+            const leadTimeDaysForProduct = isCustomizationOrderItem(it)
+                ? LEAD_TIME_DAYS_CUSTOMISATION
+                : LEAD_TIME_DAYS_PRODUCT;
             computedOrderLeadTimeDays = Math.max(computedOrderLeadTimeDays, leadTimeDaysForProduct);
+            const totalKgEstimated = estimateTotalKgFromRawMaterials(rawMaterials, batchSizeKg * batchesRequired);
 
             const planRow = await PlanningExtracted.create({
                 sales_order_id: soRow.id,
                 product_id: productId,
                 order_qty_display: `${qtyUnits} units`,
-                // Keep website->admin payload complete for planning cards/details.
-                // KG conversion logic can be refined later; for now preserve current 1:1 display assumption.
-                total_kg_display: `${qtyUnits} KG`,
+                total_kg_display: `${Math.round(totalKgEstimated * 1000) / 1000} KG`,
                 order_date: orderDateStr,
                 due_date: null,
                 batch_size_display: `${batchSizeKg} KG`,
@@ -371,7 +447,7 @@ const saveOrder = async (req, res) => {
             await syncWarehouseReserved([...affectedRmIds], [...affectedPmIds]);
         }
 
-        const orderLeadTimeDays = computedOrderLeadTimeDays > 0 ? computedOrderLeadTimeDays : defaultLeadTimeDaysNew;
+        const orderLeadTimeDays = computedOrderLeadTimeDays > 0 ? computedOrderLeadTimeDays : LEAD_TIME_DAYS_PRODUCT;
         const addDaysToDateOnly = (dateOnlyStr, days) => {
             const d = new Date(`${dateOnlyStr}T00:00:00Z`);
             d.setUTCDate(d.getUTCDate() + Number(days || 0));
@@ -447,13 +523,13 @@ const saveOrder = async (req, res) => {
             pre_shipment_pct: preShipmentPct,
             post_shipment_pct: postShipmentPct,
             credit_days: creditDays,
-            cheque_details: payment_method === 'cheque' ? (cheque_details || null) : null,
+            cheque_details: paymentMethodNorm === 'cheque' ? validatedChequeForMeta : null,
         };
         if (advancePct > 0) {
             await Payment.create({
                 orderOrderId: order.order_id,
                 UserUserid: order.user_id,
-                gateway: (payment_method === 'cheque' ? 'cheque' : 'razorpay'),
+                gateway: (paymentMethodNorm === 'cheque' ? 'cheque' : 'razorpay'),
                 gatewayReference: JSON.stringify({
                     kind: 'stage_due',
                     stage: 'advance',
@@ -512,6 +588,7 @@ const saveOrder = async (req, res) => {
                 post_shipment_pct: postShipmentPct,
                 credit_days: creditDays,
             },
+            checkout_terms_breakdown: checkoutPreview.lines,
         });
     } catch (err) {
         await t.rollback();
@@ -543,12 +620,17 @@ function attachPaymentSchedule(orderPlain) {
         return Number.isFinite(n) ? n : fallback;
     };
     const creditDaysRaw = stageRows[0]?.meta?.credit_days;
-    const creditDays = Number.isFinite(Number(creditDaysRaw)) ? Number(creditDaysRaw) : null;
+    // UI expects a number: undefined/null from legacy rows or omitted JSON key was becoming null and showing as "Not defined".
+    let creditDays = 0;
+    if (creditDaysRaw !== undefined && creditDaysRaw !== null) {
+        const n = Number(creditDaysRaw);
+        creditDays = Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+    }
 
     const dueDateRaw = orderPlain?.due_date || orderPlain?.expected_shipment_date || null;
     let postShipmentDueDate = null;
     let postShipmentDaysLeft = null;
-    if (dueDateRaw && creditDays != null) {
+    if (dueDateRaw) {
         const d = new Date(dueDateRaw);
         if (!Number.isNaN(d.getTime())) {
             d.setDate(d.getDate() + creditDays);
@@ -766,8 +848,29 @@ const getOrdersByUserId = async (req, res) => {
 
 
 
+const previewCheckout = async (req, res) => {
+    try {
+        const { order_items } = req.body || {};
+        if (!order_items || !Array.isArray(order_items) || order_items.length === 0) {
+            return res.status(400).json({ error: 'order_items is required and must be a non-empty array' });
+        }
+        const previewItems = order_items.map((item) => ({
+            product_id: Number(item.product_id),
+            quantity: Number(item.quantity),
+            unit_price: Number(item.unit_price),
+            line_subtotal: Number(item.unit_price) * Number(item.quantity),
+        }));
+        const checkoutPreview = await computeCheckoutPreview(previewItems, null);
+        return res.json(checkoutPreview);
+    } catch (err) {
+        console.error('[orders] previewCheckout', err);
+        return res.status(500).json({ error: err.message || 'Failed to preview checkout' });
+    }
+};
+
 module.exports = {
     saveOrder,
+    previewCheckout,
     getAllOrders,
     getOrderById,
     getOrdersByUserId,

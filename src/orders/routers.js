@@ -4,6 +4,7 @@ const { requireModule } = require('../middleware/security');
 const {
     getAllOrders,
     saveOrder,
+    previewCheckout,
     getOrderById,
     getOrdersByUserId,
     updateOrder,
@@ -14,6 +15,7 @@ const {
 const requireOrderModule = requireModule('order-management', 'order-list');
 
 // Create and view own orders: any authenticated user
+router.post('/preview-checkout', previewCheckout);
 router.route('/')
     .get(getAllOrders)
     .post(saveOrder);

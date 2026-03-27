@@ -30,7 +30,6 @@ const SalesOrder = require('./src/salesOrders/models');
 const PurchaseOrder = require('./src/purchaseOrders/models');
 const PlanningExtracted = require('./src/planningExtracted/models');
 const ProcurementRequest = require('./src/procurementRequests/models');
-const ProcurementQuotation = require('./src/procurementQuotations/models');
 const PoTracking = require('./src/poTracking/models');
 const UniversalSwapHistory = require('./src/universalSwap/models');
 const ItemGroup = require('./src/itemGroups/models');
@@ -1445,6 +1444,13 @@ async function seed() {
     });
     const getIl = (code) => ilByCode.get(code);
     const validTill = '2026-03-31';
+    /** Matches Items List staged payment_terms JSON (checkout / credit_days). */
+    const seedItemListPaymentTerms = JSON.stringify({
+      advance_pct: 0,
+      pre_shipment_pct: 100,
+      post_shipment_pct: 0,
+      credit_days: 30,
+    });
     const rmRows = await RawMaterial.findAll({ attributes: ['id', 'price_per_kg'] });
     const pmRows = await PackMaterial.findAll({ attributes: ['id', 'price_per_pc'] });
     const rmIdToPrice = new Map(rmRows.map((r) => [r.id, Number(r.price_per_kg) || 0]));
@@ -1463,6 +1469,7 @@ async function seed() {
           default_moq: 1,
           currency: 'INR',
           status: 'active',
+          payment_terms: seedItemListPaymentTerms,
           created_at: now,
           updated_at: now,
         });
@@ -1481,7 +1488,17 @@ async function seed() {
       if (v2) {
         const ilUVF1 = getIl('EI-RM-UVF-001');
         if (ilUVF1) {
-          const rate2 = await ItemListVendorRate.create({ items_list_id: ilUVF1.id, vendor_id: v2, default_rate: 1180, default_moq: 25, currency: 'INR', status: 'active', created_at: now, updated_at: now });
+          const rate2 = await ItemListVendorRate.create({
+            items_list_id: ilUVF1.id,
+            vendor_id: v2,
+            default_rate: 1180,
+            default_moq: 25,
+            currency: 'INR',
+            status: 'active',
+            payment_terms: seedItemListPaymentTerms,
+            created_at: now,
+            updated_at: now,
+          });
           await ItemListTier.bulkCreate([
             { item_list_vendor_rate_id: rate2.id, moq_min: 25, moq_max: null, price_per_unit: 1180, valid_till: validTill, note: 'Alternate vendor', created_at: now, updated_at: now },
             { item_list_vendor_rate_id: rate2.id, moq_min: 50, moq_max: null, price_per_unit: 1150, valid_till: validTill, note: '', created_at: now, updated_at: now },
@@ -1491,11 +1508,31 @@ async function seed() {
       if (v4) {
         const ilTUB = getIl('EI-PM-TUB-001');
         if (ilTUB) {
-          await ItemListVendorRate.create({ items_list_id: ilTUB.id, vendor_id: v4, default_rate: 4.2, default_moq: 5000, currency: 'INR', status: 'active', created_at: now, updated_at: now });
+          await ItemListVendorRate.create({
+            items_list_id: ilTUB.id,
+            vendor_id: v4,
+            default_rate: 4.2,
+            default_moq: 5000,
+            currency: 'INR',
+            status: 'active',
+            payment_terms: seedItemListPaymentTerms,
+            created_at: now,
+            updated_at: now,
+          });
         }
         const ilBTL = getIl('EI-PM-BTL-001');
         if (ilBTL) {
-          await ItemListVendorRate.create({ items_list_id: ilBTL.id, vendor_id: v4, default_rate: 5.5, default_moq: 2500, currency: 'INR', status: 'active', created_at: now, updated_at: now });
+          await ItemListVendorRate.create({
+            items_list_id: ilBTL.id,
+            vendor_id: v4,
+            default_rate: 5.5,
+            default_moq: 2500,
+            currency: 'INR',
+            status: 'active',
+            payment_terms: seedItemListPaymentTerms,
+            created_at: now,
+            updated_at: now,
+          });
         }
       }
     }
@@ -1510,9 +1547,28 @@ async function seed() {
       { code: 'IM-PROD-001', name: 'EI Sunscreen Lotion SPF50+', type: 'product', status: 'Active', bom_ids: b1 ? [b1] : [], raw_material_ids: [], pack_material_ids: p1 ? [p1] : [], created_at: now, updated_at: now },
     ]);
 
-    // Sales Orders and Purchase Orders: not seeded (test with real data).
+    // Procurement requests reference planning_extracted — clear PRs before planning rows.
+    console.log('Seeding Sales Order + Planning (demo EI-SO-2026-001 facewash line)...');
+    await ProcurementRequest.destroy({ where: {} });
     await SalesOrder.destroy({ where: {} });
     await PurchaseOrder.destroy({ where: {} });
+
+    await SalesOrder.create({
+      order_id: 'EI-SO-2026-001',
+      customer_name: 'Luminos Skincare',
+      branch: 'Hyderabad',
+      order_date: '2026-02-10',
+      expected_shipment_date: '2026-03-20',
+      reference: 'SEED-FACEWASH-PR',
+      payment_terms: 'NET 45',
+      status: 'Open',
+      order_status: null,
+      form_data: { source: 'seed', notes: 'Demo SO for Planning + Procurement UIs' },
+      items: [{ product_code: 'EI-PR-00002', product_name: 'EI Gentle Foaming Facewash 150ml', qty_display: '50,000 Units' }],
+      created_by: 'Seed',
+      created_at: now,
+      updated_at: now,
+    });
 
     // Planning PR phase: SO data lives in sales_orders; planning_extracted references it by sales_order_id (FK).
     console.log('Seeding Planning Extracted (PR extracted tab)...');
@@ -1624,9 +1680,95 @@ async function seed() {
       ];
 
       const bomConfirmedAt = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
-      await PlanningExtracted.bulkCreate([
-        { sales_order_id: planSOs[0].id, product_id: planProds[0].product_id, order_qty_display: '50,000 Units', total_kg_display: '7,500 KG', order_date: '2026-02-10', due_date: '2026-03-20', batch_size_display: '500 KG', batches_required: 15, bom_status: 'Production Released', approved_by: 'Amit Kumar', raw_materials: facewashRm, packaging_materials: facewashPm, color: 'pink', batch_count: 15, batch_size_kg: 500, bom_confirmed_at: bomConfirmedAt, created_at: now, updated_at: now },
-      ]);
+      const [planExtractedRow] = await PlanningExtracted.bulkCreate(
+        [
+          {
+            sales_order_id: planSOs[0].id,
+            product_id: planProds[0].product_id,
+            order_qty_display: '50,000 Units',
+            total_kg_display: '7,500 KG',
+            order_date: '2026-02-10',
+            due_date: '2026-03-20',
+            batch_size_display: '500 KG',
+            batches_required: 15,
+            bom_status: 'Production Released',
+            approved_by: 'Amit Kumar',
+            raw_materials: facewashRm,
+            packaging_materials: facewashPm,
+            color: 'pink',
+            batch_count: 15,
+            batch_size_kg: 500,
+            bom_confirmed_at: bomConfirmedAt,
+            created_at: now,
+            updated_at: now,
+          },
+        ],
+        { returning: true }
+      );
+      const planningExtractedId = planExtractedRow?.id
+        ?? (await PlanningExtracted.findOne({
+          where: { sales_order_id: planSOs[0].id, product_id: planProds[0].product_id },
+          order: [['id', 'ASC']],
+        }))?.id;
+
+      if (planningExtractedId) {
+        const rmBaseId = planRmById('EI-RM-BASE-001');
+        const rmActId = planRmById('EI-RM-ACT-001');
+        const pmBtlId = planPmByCode('EI-PM-BTL-001');
+        const prItems = [];
+        if (rmBaseId) {
+          prItems.push({
+            type: 'RM',
+            raw_material_id: rmBaseId,
+            quantity_requested: 120,
+            unit: 'KG',
+            moq_min: 1,
+            line_notes: 'Planned rate ₹95/KG · Lead: 7d',
+            name: 'Purified Water (Aqua)',
+            code: 'EI-RM-BASE-001',
+          });
+        }
+        if (rmActId) {
+          prItems.push({
+            type: 'RM',
+            raw_material_id: rmActId,
+            quantity_requested: 25,
+            unit: 'KG',
+            moq_min: 1,
+            line_notes: 'Planned rate ₹420/KG · Lead: 10d',
+            name: 'Glycerin',
+            code: 'EI-RM-ACT-001',
+          });
+        }
+        if (pmBtlId) {
+          prItems.push({
+            type: 'PM',
+            pack_material_id: pmBtlId,
+            quantity_requested: 52000,
+            unit: 'PCS',
+            moq_min: 5000,
+            line_notes: 'Planned rate ₹5.5/PCS · Lead: 21d',
+            name: '150ml Clear PET Pump Bottle',
+            code: 'EI-PM-BTL-001',
+          });
+        }
+        if (prItems.length > 0) {
+          console.log('Seeding Procurement Request (linked to planning_extracted)...');
+          await ProcurementRequest.create({
+            planning_extracted_id: planningExtractedId,
+            planning_batch_id: null,
+            priority: 'High',
+            required_by_date: '2026-03-18',
+            notes: 'Seed procurement request for facewash RM/PM — demo for Requests tab and MOQ checks.',
+            items: prItems,
+            status: 'New',
+            preferred_vendor: 'Chemspec India',
+            requested_by: 'Planning Team',
+            created_at: now,
+            updated_at: now,
+          });
+        }
+      }
     }
 
     // GRN: not seeded (test with real data).

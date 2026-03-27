@@ -1384,6 +1384,42 @@ function qcSpecsEveryResultNonEmpty(qcSpecs) {
   });
 }
 
+/** Scale numeric qty fields on planning_batches BOM JSON when batch size changes from Production. */
+function scalePlanningJsonLines(lines, scale) {
+  if (!Array.isArray(lines) || !(scale > 0) || Math.abs(scale - 1) < 1e-9) return lines;
+  return lines.map((line) => {
+    if (!line || typeof line !== 'object') return line;
+    const copy = { ...line };
+    for (const k of ['qty', 'qty_kg', 'required_kg', 'required', 'amount', 'qty_per_batch']) {
+      if (typeof copy[k] === 'number' && Number.isFinite(copy[k])) {
+        copy[k] = Math.round(copy[k] * scale * 10000) / 10000;
+      }
+    }
+    return copy;
+  });
+}
+
+/**
+ * Keep linked planning_batches row aligned with production batch_size (and scaled BOM copy lines).
+ */
+async function syncPlanningBatchFromProductionBatchSize(finalPlain) {
+  const pbId = finalPlain.planning_batch_id != null ? Number(finalPlain.planning_batch_id) : null;
+  if (!pbId || Number.isNaN(pbId)) return;
+  const pb = await PlanningBatch.findByPk(pbId);
+  if (!pb) return;
+  const newSize = Number(finalPlain.batch_size);
+  if (!Number.isFinite(newSize) || newSize <= 0) return;
+  const plain = pb.get({ plain: true });
+  const oldSize = Number(plain.size_kg) || newSize;
+  const scale = oldSize > 0 ? newSize / oldSize : 1;
+  const updates = { size_kg: newSize };
+  if (Math.abs(scale - 1) > 1e-9) {
+    if (Array.isArray(plain.rm_lines)) updates.rm_lines = scalePlanningJsonLines(plain.rm_lines, scale);
+    if (Array.isArray(plain.pm_lines)) updates.pm_lines = scalePlanningJsonLines(plain.pm_lines, scale);
+  }
+  await pb.update(updates);
+}
+
 async function updateBatch(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
@@ -1608,6 +1644,9 @@ async function updateBatch(req, res) {
         await Order.update({ fulfillment_stage: stage }, { where: { so_no: soNo } });
       }
     }
+    await row.reload();
+    const finalPlain = row.get({ plain: true });
+    await syncPlanningBatchFromProductionBatchSize(finalPlain);
     res.json(formatBatch(row));
   } catch (err) {
     console.error('updateBatch error:', err);

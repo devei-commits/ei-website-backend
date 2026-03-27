@@ -117,6 +117,120 @@ async function getMastersForLineItems(rows) {
   return { rmMap, pmMap, productMap };
 }
 
+function extractMasterCodeFromText(text) {
+  if (!text) return '';
+  const s = String(text);
+  const m = s.match(/EI-[A-Z0-9-]+/i);
+  if (m && m[0]) return String(m[0]).trim().toUpperCase();
+  const m2 = s.match(/\(([A-Z0-9-]+)\)/);
+  if (m2 && m2[1]) return String(m2[1]).trim().toUpperCase();
+  return '';
+}
+
+/**
+ * Repair wrong RM/PM links in persisted line_items using itemCode/name.
+ * This specifically fixes split-PO GRNs where index-based mapping may attach
+ * the first PR line ids to all GRN lines.
+ */
+async function repairLineItemsMasterLinks(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return rows;
+  const allLines = rows.flatMap((r) => {
+    const d = r.get ? r.get({ plain: true }) : r;
+    return Array.isArray(d.line_items) ? d.line_items : [];
+  });
+  if (allLines.length === 0) return rows;
+
+  const codeSet = new Set();
+  const nameSet = new Set();
+  allLines.forEach((line) => {
+    const code = String(line.itemCode ?? line.item_code ?? '').trim().toUpperCase();
+    const extracted = extractMasterCodeFromText(line.item ?? line.item_text ?? '');
+    const name = String(line.item ?? '')
+      .split('(')[0]
+      .trim()
+      .toLowerCase();
+    if (code) codeSet.add(code);
+    if (extracted) codeSet.add(extracted);
+    if (name) nameSet.add(name);
+  });
+
+  const codes = [...codeSet];
+  const names = [...nameSet];
+  if (!codes.length && !names.length) return rows;
+
+  const rmWhere = codes.length > 0 && names.length > 0
+    ? { [Op.or]: [{ code: { [Op.in]: codes } }, { name: { [Op.in]: names } }] }
+    : (codes.length > 0 ? { code: { [Op.in]: codes } } : { name: { [Op.in]: names } });
+  const pmWhere = codes.length > 0 && names.length > 0
+    ? { [Op.or]: [{ code: { [Op.in]: codes } }, { description: { [Op.in]: names } }] }
+    : (codes.length > 0 ? { code: { [Op.in]: codes } } : { description: { [Op.in]: names } });
+
+  const [rms, pms] = await Promise.all([
+    RawMaterial.findAll({ where: rmWhere, attributes: ['id', 'code', 'name'] }),
+    PackMaterial.findAll({ where: pmWhere, attributes: ['id', 'code', 'description'] }),
+  ]);
+
+  const rmByCode = {};
+  const rmByName = {};
+  const pmByCode = {};
+  const pmByName = {};
+  rms.forEach((r) => {
+    const d = r.get ? r.get({ plain: true }) : r;
+    if (d.code) rmByCode[String(d.code).trim().toUpperCase()] = Number(d.id);
+    if (d.name) rmByName[String(d.name).trim().toLowerCase()] = Number(d.id);
+  });
+  pms.forEach((p) => {
+    const d = p.get ? p.get({ plain: true }) : p;
+    if (d.code) pmByCode[String(d.code).trim().toUpperCase()] = Number(d.id);
+    if (d.description) pmByName[String(d.description).trim().toLowerCase()] = Number(d.id);
+  });
+
+  await Promise.all(rows.map(async (row) => {
+    const d = row.get ? row.get({ plain: true }) : row;
+    const existing = Array.isArray(d.line_items) ? d.line_items : [];
+    if (!existing.length) return;
+    let changed = false;
+    const grnType = String(d.type || '').toUpperCase();
+    const next = existing.map((line) => {
+      const code = String(line.itemCode ?? line.item_code ?? '').trim().toUpperCase() || extractMasterCodeFromText(line.item ?? line.item_text ?? '');
+      const name = String(line.item ?? '')
+        .split('(')[0]
+        .trim()
+        .toLowerCase();
+      const resolvedRm = rmByCode[code] ?? (name ? rmByName[name] : undefined);
+      const resolvedPm = pmByCode[code] ?? (name ? pmByName[name] : undefined);
+      const currentRm = line.raw_material_id != null ? Number(line.raw_material_id) : null;
+      const currentPm = line.pack_material_id != null ? Number(line.pack_material_id) : null;
+      let updated = line;
+      if (grnType === 'RM' && resolvedRm != null) {
+        if (currentRm !== Number(resolvedRm) || currentPm != null) {
+          updated = { ...line, raw_material_id: Number(resolvedRm) };
+          if (updated.pack_material_id != null) delete updated.pack_material_id;
+          changed = true;
+        }
+      } else if (grnType === 'PM' && resolvedPm != null) {
+        if (currentPm !== Number(resolvedPm) || currentRm != null) {
+          updated = { ...line, pack_material_id: Number(resolvedPm) };
+          if (updated.raw_material_id != null) delete updated.raw_material_id;
+          changed = true;
+        }
+      } else if (resolvedRm != null && currentRm !== Number(resolvedRm)) {
+        updated = { ...line, raw_material_id: Number(resolvedRm) };
+        changed = true;
+      } else if (resolvedPm != null && currentPm !== Number(resolvedPm)) {
+        updated = { ...line, pack_material_id: Number(resolvedPm) };
+        changed = true;
+      }
+      return updated;
+    });
+    if (changed) {
+      await row.update({ line_items: next });
+    }
+  }));
+
+  return rows;
+}
+
 function formatRow(r, enrichedLineItems) {
   if (!r) return null;
   const d = r.get ? r.get({ plain: true }) : r;
@@ -159,6 +273,7 @@ async function list(req, res) {
     const rows = await GoodsReceivedNote.findAll({
       order: [['expected_date', 'DESC'], ['id', 'DESC']],
     });
+    await repairLineItemsMasterLinks(rows);
     const { rmMap, pmMap, productMap } = await getMastersForLineItems(rows);
     const out = rows.map((r) => {
       const d = r.get ? r.get({ plain: true }) : r;
@@ -181,6 +296,7 @@ async function getById(req, res) {
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await GoodsReceivedNote.findByPk(id);
     if (!row) return res.status(404).json({ error: 'GRN not found' });
+    await repairLineItemsMasterLinks([row]);
     const { rmMap, pmMap, productMap } = await getMastersForLineItems([row]);
     const d = row.get ? row.get({ plain: true }) : row;
     const enriched = enrichLineItems(d.line_items || [], rmMap, pmMap, productMap);
@@ -786,8 +902,13 @@ async function generateLabels(req, res) {
     const grnBatchMfg = body.grnBatchMfg ?? body.grn_batch_mfg ?? d.grn_batch_mfg ?? '';
     const expiry = body.expiry ?? d.expiry ?? '';
     const mfgBatch = body.mfgBatch ?? body.mfg_batch ?? d.mfg_batch ?? '';
-    const productName = body.productName ?? '';
-    const itemCode = body.itemCode ?? '';
+    const productName = String(body.productName ?? '').trim();
+    const itemCode = String(body.itemCode ?? '').trim();
+    if (!productName || !itemCode) {
+      return res.status(400).json({
+        error: 'Select product / line item before generating labels.',
+      });
+    }
 
     // Populate rack + zone in the QR payload for the GRN popup preview and downstream decoding.
     // `locationPrefix` is expected to be the target rack code (e.g. `A1-L2-S3`), matching `warehouse_racks.code`.

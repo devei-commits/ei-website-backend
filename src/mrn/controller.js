@@ -30,6 +30,65 @@ function lineItemsIndicatePm(lineItems) {
   });
 }
 
+function normalizeMrnStatus(status) {
+  if (status == null) return status;
+  const s = String(status).trim();
+  if (s.toLowerCase() === 'succeeded') return 'Completed';
+  return s;
+}
+
+/**
+ * Outbound MTR (Production transfer orders): allowed status moves. Returns error message or null.
+ */
+function outboundMtrStatusTransitionError(previousStatus, newStatus) {
+  const p = normalizeMrnStatus(previousStatus) || 'Pending';
+  const n = normalizeMrnStatus(newStatus) || newStatus;
+  const pStr = String(p || '').trim();
+  const nStr = String(n || '').trim();
+
+  if (pStr === nStr) return null;
+
+  if (pStr === 'Completed') {
+    return 'This transfer is already completed; the status cannot be changed.';
+  }
+
+  const allowedPairs = [
+    ['Pending', 'Picked'],
+    ['Pending', 'In Transit'],
+    ['Pending', 'In Transfer'],
+    ['Picked', 'In Transit'],
+    ['Picked', 'In Transfer'],
+    ['In Transfer', 'In Transit'],
+    ['In Transit', 'Received at MU'],
+    ['Received at MU', 'Completed'],
+  ];
+
+  const ok = allowedPairs.some(([a, b]) => a === pStr && b === nStr);
+  if (ok) return null;
+
+  const hintByStatus = {
+    Pending:
+      'First save pick in Warehouse (optional) or in Transfer orders tap Release from warehouse so status becomes In Transit.',
+    Picked:
+      'Next tap Release from warehouse in Transfer orders to set In Transit (or use Warehouse Initiate transfer, then Release to align to In Transit).',
+    'In Transfer':
+      'Tap Release from warehouse in Transfer orders to set In Transit, then when goods arrive at MU use Verify / Received at MU.',
+    'In Transit':
+      'When goods arrive at MU, tap Verify / Received at MU in Transfer orders before completing.',
+    'Received at MU':
+      'Enter MU zone and MU rack, then tap Mark Succeeded to complete.',
+  };
+
+  const hint = hintByStatus[pStr]
+    || 'Follow Production → Transfer orders: Release from warehouse → In transit → Received at MU → Mark Succeeded.';
+  return `This step cannot be done yet (cannot move from "${pStr}" to "${nStr}"). ${hint}`;
+}
+
+function isClosedOutboundMtrStatus(status) {
+  const s = String(status || '').trim().toLowerCase();
+  return s === 'completed' || s === 'succeeded';
+}
+
 /**
  * GET /api/v1/mrn/assignable-pickers — users with correct permissions for Assign Picker / Transfer Team.
  */
@@ -167,11 +226,13 @@ function formatRow(r, enrichedLineItems) {
   if (!r) return null;
   const d = r.get ? r.get({ plain: true }) : r;
   const lineItems = enrichedLineItems !== undefined ? enrichedLineItems : (d.line_items || []);
+  const isOutboundMtr = d.source === 'MTR' && !d.is_inbound_from_mu;
+  const status = isOutboundMtr && String(d.status || '').trim() === 'Completed' ? 'Succeeded' : (d.status || 'Pending');
   return {
     id: String(d.id),
     mrnNo: d.mrn_no,
     requestedBy: d.requested_by || '',
-    status: d.status || 'Pending',
+    status,
     assignedPicker: d.assigned_picker || '',
     transferTeam: d.transfer_team || '',
     lineItems,
@@ -274,7 +335,7 @@ async function create(req, res) {
     const payload = {
       mrn_no: mrnNo,
       requested_by: body.requestedBy ?? body.requested_by,
-      status: body.status || 'Pending',
+      status: normalizeMrnStatus(body.status || 'Pending'),
       assigned_picker: body.assignedPicker ?? body.assigned_picker,
       transfer_team: body.transferTeam ?? body.transfer_team,
       line_items: lineItems,
@@ -304,7 +365,7 @@ async function update(req, res) {
     const updates = {};
     if (body.requestedBy !== undefined) updates.requested_by = body.requestedBy;
     if (body.requested_by !== undefined) updates.requested_by = body.requested_by;
-    if (body.status !== undefined) updates.status = body.status;
+    if (body.status !== undefined) updates.status = normalizeMrnStatus(body.status);
     if (body.assignedPicker !== undefined) updates.assigned_picker = body.assignedPicker;
     if (body.assigned_picker !== undefined) updates.assigned_picker = body.assigned_picker;
     if (body.transferTeam !== undefined) updates.transfer_team = body.transferTeam;
@@ -338,8 +399,8 @@ async function update(req, res) {
     if (body.mu_receive_rack !== undefined) updates.mu_receive_rack = body.mu_receive_rack;
 
     const plainBefore = row.get ? row.get({ plain: true }) : row;
-    const previousStatus = plainBefore.status || '';
-    const newStatus = updates.status !== undefined ? updates.status : previousStatus;
+    const previousStatus = normalizeMrnStatus(plainBefore.status || '');
+    const newStatus = normalizeMrnStatus(updates.status !== undefined ? updates.status : previousStatus);
     const mergedZone =
       updates.mu_receive_zone !== undefined ? updates.mu_receive_zone : plainBefore.mu_receive_zone;
     const mergedRack =
@@ -347,6 +408,13 @@ async function update(req, res) {
     const isOutboundMtr =
       plainBefore.source === 'MTR' &&
       !plainBefore.is_inbound_from_mu;
+
+    if (isOutboundMtr && updates.status !== undefined) {
+      const terr = outboundMtrStatusTransitionError(previousStatus, newStatus);
+      if (terr) {
+        return res.status(400).json({ error: terr });
+      }
+    }
 
     if (newStatus === 'Completed' && previousStatus !== 'Completed' && isOutboundMtr) {
       if (previousStatus !== 'Received at MU') {
@@ -394,16 +462,65 @@ async function hasPendingMtrOfKind(bmrNo, kind) {
       bmr_no: bmrNo,
       source: 'MTR',
       [Op.or]: [{ is_inbound_from_mu: false }, { is_inbound_from_mu: null }],
-      status: { [Op.ne]: 'Completed' },
     },
-    attributes: ['line_items'],
+    attributes: ['line_items', 'status'],
   });
-  return rows.some((row) => {
+  const activeRows = rows.filter((row) => {
+    const s = row.get ? row.get('status') : row.status;
+    return !isClosedOutboundMtrStatus(s);
+  });
+  return activeRows.some((row) => {
     const lis = row.get ? row.get('line_items') : row.line_items;
     if (kind === 'rm') return lineItemsIndicateRm(lis);
     if (kind === 'pm') return lineItemsIndicatePm(lis);
     return false;
   });
+}
+
+function normalizeItemCodeKey(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function aggregateRequiredByCode(lines) {
+  const map = new Map();
+  for (const line of Array.isArray(lines) ? lines : []) {
+    const key = normalizeItemCodeKey(line?.code);
+    if (!key) continue;
+    const qty = Number(line?.required) || 0;
+    if (qty <= 0) continue;
+    map.set(key, (map.get(key) || 0) + qty);
+  }
+  return map;
+}
+
+function aggregateMovedByCodeFromMrnRows(rows, kind) {
+  const map = new Map();
+  for (const row of rows) {
+    const plain = row.get ? row.get({ plain: true }) : row;
+    const lineItems = Array.isArray(plain?.line_items) ? plain.line_items : [];
+    for (const li of lineItems) {
+      const isKind = kind === 'rm' ? lineItemsIndicateRm([li]) : lineItemsIndicatePm([li]);
+      if (!isKind) continue;
+      const key =
+        normalizeItemCodeKey(li?.itemCode) ||
+        normalizeItemCodeKey(li?.code) ||
+        normalizeItemCodeKey(li?.item);
+      if (!key) continue;
+      const qty = Number(li?.quantity) || 0;
+      if (qty <= 0) continue;
+      map.set(key, (map.get(key) || 0) + qty);
+    }
+  }
+  return map;
+}
+
+function isRequirementSatisfied(requiredMap, movedMap) {
+  if (requiredMap.size === 0) return true;
+  for (const [key, required] of requiredMap.entries()) {
+    const moved = Number(movedMap.get(key) || 0);
+    if (moved + 1e-6 < Number(required)) return false;
+  }
+  return true;
 }
 
 /**
@@ -425,9 +542,30 @@ async function applyMtrCompletionToProductionBatch(plainMrn) {
   const plain = batch.get ? batch.get({ plain: true }) : batch;
   const updates = {};
 
+  // Aggregate moved qty from all closed outbound MTRs so split dispatches do not mark
+  // RM/PM connected until cumulative moved qty meets required batch quantities.
+  const closedRows = await MaterialRequestNote.findAll({
+    where: {
+      bmr_no: plainMrn.bmr_no,
+      source: 'MTR',
+      [Op.or]: [{ is_inbound_from_mu: false }, { is_inbound_from_mu: null }],
+    },
+    attributes: ['line_items', 'status'],
+  });
+  const closedOnly = closedRows.filter((r) => {
+    const s = r.get ? r.get('status') : r.status;
+    return isClosedOutboundMtrStatus(s);
+  });
+
+  const requiredRm = aggregateRequiredByCode(Array.isArray(plain.dispensing_rm) ? plain.dispensing_rm : []);
+  const requiredPm = aggregateRequiredByCode(Array.isArray(plain.dispensing_pm) ? plain.dispensing_pm : []);
+  const movedRm = aggregateMovedByCodeFromMrnRows(closedOnly, 'rm');
+  const movedPm = aggregateMovedByCodeFromMrnRows(closedOnly, 'pm');
+
   if (hasRm) {
     const pendingRm = await hasPendingMtrOfKind(plainMrn.bmr_no, 'rm');
-    if (!pendingRm) {
+    const rmSatisfied = isRequirementSatisfied(requiredRm, movedRm);
+    if (!pendingRm && rmSatisfied) {
       updates.rm_connected = true;
       if (['rm_reserved', 'scheduled'].includes(plain.bmr_status)) {
         updates.bmr_status = 'rm_connected';
@@ -436,7 +574,8 @@ async function applyMtrCompletionToProductionBatch(plainMrn) {
   }
   if (hasPm) {
     const pendingPm = await hasPendingMtrOfKind(plainMrn.bmr_no, 'pm');
-    if (!pendingPm) {
+    const pmSatisfied = isRequirementSatisfied(requiredPm, movedPm);
+    if (!pendingPm && pmSatisfied) {
       updates.pm_connected = true;
       if (plain.bpr_status === 'pm_reserved') {
         updates.bpr_status = 'pm_connected';

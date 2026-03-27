@@ -41,7 +41,7 @@ ItemListVendorRate.init(
     default_moq: { type: DataTypes.INTEGER, allowNull: true },
     lead_time_days: { type: DataTypes.INTEGER, allowNull: true },
     currency: { type: DataTypes.STRING(10), allowNull: true, defaultValue: 'INR' },
-    payment_terms: { type: DataTypes.STRING(100), allowNull: true },
+    payment_terms: { type: DataTypes.STRING(512), allowNull: true },
     status: { type: DataTypes.STRING(50), allowNull: true, defaultValue: 'active' },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
