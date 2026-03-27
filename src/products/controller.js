@@ -4,6 +4,7 @@ const { productSchema, productUpdateSchema, categorySchema, categoryUpdateSchema
 const { Op } = require('sequelize');
 const BOM = require('../bom/models');
 const PackMaterial = require('../packMaterials/models');
+const RawMaterial = require('../rawMaterials/models');
 const SalesOrder = require('../salesOrders/models');
 const WarehouseInventory = require('../warehouseInventory/models');
 const WarehouseInventoryLocationHistory = require('../warehouseInventory/locationHistoryModel');
@@ -38,6 +39,14 @@ function countMeaningfulPmLines(lines) {
     const code = String(line?.pm_code ?? line?.pmCode ?? '').trim();
     return Boolean(desc || code);
   }).length;
+}
+
+function appendProductCodeToList(products, productCode) {
+  const code = String(productCode || '').trim();
+  if (!code) return Array.isArray(products) ? products : [];
+  const list = Array.isArray(products) ? products.map(String) : [];
+  if (list.includes(code)) return list;
+  return [...list, code];
 }
 
 const saveProduct = async (req, res) => {
@@ -224,6 +233,41 @@ const createPRRegistration = async (req, res) => {
         bom = await BOM.create(bomRow, { transaction: t });
       }
 
+      // Link selected RM/PM master items to this product code for downstream usage/pricing.
+      // We only link rows where the line carries an explicit master id (raw_material_id / pack_material_id).
+      const productCodeForLink = product_code;
+      const rawMaterialIds = Array.from(
+        new Set(
+          (Array.isArray(rm_lines) ? rm_lines : [])
+            .map((l) => l?.raw_material_id ?? l?.rawMaterialId)
+            .map((v) => (v != null ? parseInt(String(v), 10) : NaN))
+            .filter((n) => !Number.isNaN(n))
+        )
+      );
+      const packMaterialIds = Array.from(
+        new Set(
+          (Array.isArray(pm_lines) ? pm_lines : [])
+            .map((l) => l?.pack_material_id ?? l?.packMaterialId ?? l?.pm_id ?? l?.pmId)
+            .map((v) => (v != null ? parseInt(String(v), 10) : NaN))
+            .filter((n) => !Number.isNaN(n))
+        )
+      );
+
+      if (rawMaterialIds.length > 0) {
+        const rms = await RawMaterial.findAll({ where: { id: { [Op.in]: rawMaterialIds } }, transaction: t });
+        for (const rm of rms) {
+          const next = appendProductCodeToList(rm.products, productCodeForLink);
+          await rm.update({ products: next, updated_at: now }, { transaction: t });
+        }
+      }
+      if (packMaterialIds.length > 0) {
+        const pms = await PackMaterial.findAll({ where: { id: { [Op.in]: packMaterialIds } }, transaction: t });
+        for (const pm of pms) {
+          const next = appendProductCodeToList(pm.products, productCodeForLink);
+          await pm.update({ products: next, updated_at: now }, { transaction: t });
+        }
+      }
+
       await t.commit();
       res.status(201).json({
         product: product.get({ plain: true }),
@@ -403,6 +447,7 @@ const getProductDetail = async (req, res) => {
       phases[phase].push({
         inci_name: line.inci_name || line.inciName || line.name,
         rm_code: line.rm_code || line.rmCode,
+        raw_material_id: line.raw_material_id ?? line.rawMaterialId ?? null,
         pct_w_w: line.pct_w_w != null ? line.pct_w_w : (line.pctWw != null ? line.pctWw : line.pct),
         uom: line.uom || 'kg',
       });
@@ -434,6 +479,7 @@ const getProductDetail = async (req, res) => {
     const packBom = packBomSource.map((row, idx) => ({
       row_number: idx + 1,
       pm_id: row.pm_id ?? null,
+      pack_material_id: row.pack_material_id ?? row.packMaterialId ?? row.pm_id ?? null,
       pm_description: row.pm_description || row.description,
       pm_code: row.pm_code || row.code,
       pack_type: row.pack_type || row.level,

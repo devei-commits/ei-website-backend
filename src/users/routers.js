@@ -19,6 +19,8 @@ const { isAuthenticated, requireModule, token, deleteToken } = require('../middl
 
 // Authentication routes
 router.post('/', createUser);
+/** Alias for public website signup (website-client tries /users/register first). */
+router.post('/register', createUser);
 router.post('/login', userLogin);
 router.get('/token', token);
 router.get('/logout', deleteToken);

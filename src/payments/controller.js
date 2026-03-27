@@ -24,8 +24,9 @@ const createPaymentOrder = async (req, res) => {
     }
 
     // Enforce payment terms: if advance is required, amount must match
-    const gstpercent =  (Number(order.advance_amount_due.split('.')[0])*18)/100
-    const advanceDue = Number(order.advance_amount_due + gstpercent.toFixed(2));
+    const advanceBase = Number(order.advance_amount_due || 0);
+    const gstpercent = (advanceBase * 18) / 100;
+    const advanceDue = Math.round((advanceBase + gstpercent) * 100) / 100;
    
     if (advanceDue > 0) {
       const requestedAmount = Number(amount);
@@ -122,7 +123,14 @@ const verifyPayment = async (req, res) => {
       // When payment terms dictate a balance due on delivery, log it as a COD record
       const grandTotal = Number(order.grand_total);
       const balanceDue = grandTotal - Number(paidAmount);
-      if (balanceDue > 0) {
+      const existingPostShipmentDue = await Payment.findOne({
+        where: {
+          orderOrderId: order.order_id,
+          gateway: 'cod',
+          status: 'pending',
+        },
+      });
+      if (balanceDue > 0 && !existingPostShipmentDue) {
         await Payment.create({
           orderOrderId: order.order_id,
           UserUserid: order.user_id,
@@ -162,6 +170,17 @@ const approveChequePayment = async (req, res) => {
 
     const grandTotal = Number(order.grand_total);
 
+    const chequeNo = req.body?.chequeNo || req.body?.cheque_number || null;
+    const chequeBank = req.body?.chequeBank || req.body?.bank_name || null;
+    const chequeDate = req.body?.chequeDate || req.body?.cheque_date || null;
+    const chequePayload = {
+      kind: 'cheque_details',
+      cheque_no: chequeNo,
+      bank_name: chequeBank,
+      cheque_date: chequeDate,
+      remarks: req.body?.remarks || null,
+    };
+
     // Create or update cheque payment record for audit trail
     let payment = await Payment.findOne({
       where: { orderOrderId: orderId, gateway: 'cheque' },
@@ -171,14 +190,14 @@ const approveChequePayment = async (req, res) => {
         paidAmount: grandTotal,
         remainingAmount: 0,
         status: 'completed',
-        gatewayReference: payment.gatewayReference || `approved_${Date.now()}`,
+        gatewayReference: JSON.stringify(chequePayload),
       });
     } else {
       payment = await Payment.create({
         orderOrderId: order.order_id,
         UserUserid: order.user_id,
         gateway: 'cheque',
-        gatewayReference: `approved_${Date.now()}`,
+        gatewayReference: JSON.stringify(chequePayload),
         paidAmount: grandTotal,
         remainingAmount: 0,
         currency: 'INR',

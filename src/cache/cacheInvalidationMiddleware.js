@@ -19,27 +19,41 @@ function getNamespacesToInvalidate(req) {
   // Invalidate the root module itself for most writes.
   namespaces.add(root);
 
-  // Cross-domain invalidation:
-  // - Warehouse inventory affects SIH and "items-involved"/planning availability.
-  // - GRN/MRN completion applies stock changes into warehouse_inventory.
-  if (['warehouse-inventory', 'grn', 'mrn', 'purchase-orders', 'production', 'fulfillment'].includes(root)) {
-    namespaces.add('warehouse-inventory');
-    namespaces.add('planning-extracted');
+  // Cross-module cache dependencies (write root -> affected read namespaces).
+  const dependencyMap = {
+    // Website checkout write path; creates SO/Planning/Fulfillment/Production linkage.
+    orders: ['fulfillment', 'planning-extracted', 'production', 'warehouse-inventory', 'sales-orders'],
+    // SO edits can affect planning + downstream fulfillment scheduling.
+    'sales-orders': ['planning-extracted', 'fulfillment', 'production', 'warehouse-inventory'],
+    // Planning reserve/release changes warehouse availability and fulfillment readiness decisions.
+    'planning-extracted': ['warehouse-inventory', 'fulfillment', 'production'],
+    // Production status (BPR/BMR) directly changes fulfillment effective statuses.
+    production: ['fulfillment', 'planning-extracted', 'warehouse-inventory'],
+    // Fulfillment shipping/invoice actions can influence planning/inventory dashboards.
+    fulfillment: ['planning-extracted', 'warehouse-inventory', 'production'],
+    // Stock movement sources.
+    'warehouse-inventory': ['planning-extracted', 'fulfillment'],
+    grn: ['warehouse-inventory', 'planning-extracted', 'fulfillment'],
+    mrn: ['warehouse-inventory', 'planning-extracted', 'fulfillment'],
+    // Purchase and procurement impact inventory/planning availability.
+    'purchase-orders': ['warehouse-inventory', 'planning-extracted', 'fulfillment', 'procurement'],
+    procurement: ['purchase-orders'],
+    'procurement-quotations': ['purchase-orders', 'procurement'],
+    // Master data used by planning/fulfillment APIs.
+    products: ['warehouse-inventory', 'planning-extracted', 'fulfillment'],
+    'raw-materials': ['warehouse-inventory', 'planning-extracted', 'fulfillment'],
+    'pack-materials': ['warehouse-inventory', 'planning-extracted', 'fulfillment'],
+    'warehouse-locations': ['warehouse-inventory', 'planning-extracted', 'fulfillment'],
+    // Vendor master drives downstream purchasing/items list pages.
+    'vendor-client': ['items-list', 'purchase-orders', 'procurement'],
+  };
+  for (const ns of dependencyMap[root] || []) {
+    namespaces.add(ns);
   }
 
-  // - Planning writes adjust warehouse_inventory.reserved (reserve/release).
-  if (root === 'planning-extracted') {
-    namespaces.add('warehouse-inventory');
-  }
-
-  // - Warehouse location CRUD affects stored location mapping shown by warehouse screens.
-  if (root === 'warehouse-locations') {
-    namespaces.add('warehouse-inventory');
-  }
-
-  // - Products in PR flows impact warehouse-inventory "PR" rows.
-  if (root === 'products') {
-    namespaces.add('warehouse-inventory');
+  // Vendor master vendorItems sync updates items_list / item_list_vendor_rates (GET items-list/page).
+  if (root === 'vendor-client') {
+    namespaces.add('items-list');
   }
 
   return Array.from(namespaces);

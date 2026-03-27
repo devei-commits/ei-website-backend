@@ -53,6 +53,12 @@ User.init({
     allowNull: true
   },
 
+  /** Website signup selection: customer | dermatologist | distributor (RBAC may map derma/dist to doctor). */
+  portal_signup_role: {
+    type: DataTypes.STRING(64),
+    allowNull: true
+  },
+
   department: {
     type: DataTypes.STRING,
     allowNull: true

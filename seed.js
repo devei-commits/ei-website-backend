@@ -122,7 +122,7 @@ async function seed() {
     // Postgres ENUM types don't automatically update with Sequelize when values change.
     // Ensure 'pending' exists in orders.fulfillment_stage enum.
     await db.query(
-      `DO $$
+      `DO $
        BEGIN
          ALTER TYPE "enum_orders_fulfillment_stage" ADD VALUE IF NOT EXISTS 'pending';
        EXCEPTION
@@ -130,7 +130,7 @@ async function seed() {
            -- enum type may not exist yet; it will be created by db.sync
            NULL;
        END
-       $$;`,
+       $;`,
       { raw: true }
     ).catch(() => { });
 
@@ -266,6 +266,7 @@ async function seed() {
       mobile: '+919876543201',
       password: bcrypt.hashSync('SuperAdmin@123', 10),
       usertype: 'super_admin',
+        zoho_contact_id: '3529895000000116003',
       department: 'Administration',
       status: 'active',
       verify_status: 'verified',
@@ -358,6 +359,7 @@ async function seed() {
       password: bcrypt.hashSync('Doctor@123', 10),
       doctor_id_legacy: 'DOC-SAR-101',
       usertype: 'doctor',
+      zoho_contact_id: '3529895000000092022',
       department: null,
       status: 'active',
       verify_status: 'verified',
@@ -391,6 +393,23 @@ async function seed() {
       email: 'client2@example.com',
       mobile: '+919876543212',
       password: bcrypt.hashSync('Client2@123', 10),
+      usertype: 'customer',
+      status: 'active',
+      verify_status: 'verified',
+      advance_payment: false,
+      advance_amount: null,
+      created_at: now,
+      updated_at: now
+    });
+
+    /** Portal user for seeded client master EI-CLI-00001 (Luminos) — 2-way link with vendor_clients.user_id */
+    const luminosPortalUser = await User.create({
+      fname: 'Rajeev',
+      lname: 'Sharma',
+      display_name: 'Luminos Skincare',
+      email: 'bd@luminos.in',
+      mobile: '+91-9812345001',
+      password: bcrypt.hashSync('LuminosPortal@123', 10),
       usertype: 'customer',
       status: 'active',
       verify_status: 'verified',
@@ -543,7 +562,7 @@ async function seed() {
         brand_name: 'EI',
         tax_rate: 18.00,
         mrp_price: 499.00,
-        buy_price: null,
+        buy_price: 299.00,
         category: 'Sunscreen',
         lifecycle_status: 'Production Released',
         form: 'Lotion/Cream',
@@ -579,7 +598,7 @@ async function seed() {
         brand_name: 'EI',
         tax_rate: 18.00,
         mrp_price: 299.00,
-        buy_price: null,
+        buy_price: 179.00,
         category: 'Face Wash',
         lifecycle_status: 'Production Released',
         form: 'Gel',
@@ -865,7 +884,7 @@ async function seed() {
       }
       console.log(`[Seed] Zoho Books products (FG): ${nOk} linked, ${nFail} skipped/errors`);
 
-      const rms = await RawMaterial.findAll({ where: { zoho_id: null }, order: [['id', 'ASC']] });
+      const rms = await RawMaterial.findAll({ where: { zoho_id: '3529895000000114003' }, order: [['id', 'ASC']] });
       nOk = 0;
       nFail = 0;
       for (const rm of rms) {
@@ -1257,6 +1276,21 @@ async function seed() {
       { entity_code: 'EI-CLI-00001', type: 'client', zoho_id: null, name: 'Luminos Skincare', email: 'bd@luminos.in', phone: '+91-9812345001', location: 'Maharashtra', country: 'India', city: 'Mumbai', category: 'CDMO', status: 'active', payment_terms: 'NET 45', notes: '', rating: 5, moq: '—', lead_time: '—', data: { shipping_address: 'Luminos Skincare, 456 Andheri East, Mumbai, Maharashtra 400069, India' }, priority: 'high', segment: 'Skin Care', since_year: 2022, revenue_value: 4200000, avatar_color: 'orange', account_manager_id: amPriya.userid, contacts: [{ name: 'Rajeev Sharma', role: 'BD Head' }], created_at: now, updated_at: now },
     ];
     await VendorClient.bulkCreate(vendorClientSeed);
+
+    await VendorClient.update(
+      { user_id: luminosPortalUser.userid },
+      { where: { entity_code: 'EI-CLI-00001' } }
+    );
+
+    try {
+      const { ensureClientVendorMasterForUser } = require('./src/vendorClient/userLink');
+      await ensureClientVendorMasterForUser(client1);
+      await ensureClientVendorMasterForUser(client2);
+      await ensureClientVendorMasterForUser(doctor);
+      await ensureClientVendorMasterForUser(luminosPortalUser);
+    } catch (e) {
+      console.warn('[Seed] vendor_clients ↔ users link:', e && e.message ? e.message : e);
+    }
 
     if (seedZohoContact) {
       const { syncZohoContactForVendorClient } = require('./src/users/zohoContactSync');
