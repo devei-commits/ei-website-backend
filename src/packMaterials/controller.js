@@ -2,6 +2,7 @@ const PackMaterial = require('./models');
 const { syncZohoItemForNewPackMaterial } = require('../services/zohoMasterItemSync');
 const zohoEnv = require('../services/zohoEnv');
 const { Op } = require('sequelize');
+const { findConflictingMasterRow } = require('../lib/itemCodeUniqueness');
 const WarehouseInventory = require('../warehouseInventory/models');
 const WarehouseInventoryLocationHistory = require('../warehouseInventory/locationHistoryModel');
 const { ReservedBatchItem } = require('../fulfillment/models');
@@ -176,8 +177,19 @@ async function createPackMaterial(req, res) {
   try {
     const b = req.body || {};
     const fields = bodyToPackMaterial(b);
-    if (!fields.code || !String(fields.code).trim()) {
+    const codeTrim = fields.code != null ? String(fields.code).trim() : '';
+    if (!codeTrim) {
       return res.status(400).json({ error: 'code or itemCode is required' });
+    }
+    fields.code = codeTrim;
+    if (fields.sku != null && String(fields.sku).trim() !== '') {
+      fields.sku = String(fields.sku).trim();
+    } else {
+      fields.sku = null;
+    }
+    const dup = await findConflictingMasterRow(PackMaterial, fields.code, fields.sku, null);
+    if (dup) {
+      return res.status(409).json({ error: 'A pack material with this code or SKU already exists' });
     }
     const row = await PackMaterial.create(fields);
     const zoho = await syncZohoItemForNewPackMaterial(row, b);
@@ -199,6 +211,9 @@ async function createPackMaterial(req, res) {
     res.status(201).json(out);
   } catch (err) {
     console.error('createPackMaterial error', err);
+    if (err.name === 'SequelizeUniqueConstraintError') {
+      return res.status(409).json({ error: 'A pack material with this code or SKU already exists' });
+    }
     res.status(500).json({ error: err.message || 'Failed to create pack material' });
   }
 }
@@ -230,6 +245,28 @@ async function updatePackMaterial(req, res) {
     if (!row) return res.status(404).json({ error: 'Pack material not found' });
     const b = req.body || {};
     const fields = bodyToPackMaterial(b);
+    const nextCode =
+      fields.code !== undefined && String(fields.code).trim() !== ''
+        ? String(fields.code).trim()
+        : String(row.code || '').trim();
+    if (!nextCode) {
+      return res.status(400).json({ error: 'code or itemCode is required' });
+    }
+    let nextSku;
+    if (fields.sku !== undefined) {
+      nextSku =
+        fields.sku == null || String(fields.sku).trim() === ''
+          ? null
+          : String(fields.sku).trim();
+      fields.sku = nextSku;
+    } else {
+      nextSku = row.sku == null ? null : String(row.sku).trim() || null;
+    }
+    const dup = await findConflictingMasterRow(PackMaterial, nextCode, nextSku, row.id);
+    if (dup) {
+      return res.status(409).json({ error: 'A pack material with this code or SKU already exists' });
+    }
+    fields.code = nextCode;
     Object.keys(fields).forEach((key) => {
       if (fields[key] !== undefined) row.set(key, fields[key]);
     });
@@ -238,6 +275,9 @@ async function updatePackMaterial(req, res) {
     res.json(formatPackMaterialFull(row));
   } catch (err) {
     console.error('updatePackMaterial error', err);
+    if (err.name === 'SequelizeUniqueConstraintError') {
+      return res.status(409).json({ error: 'A pack material with this code or SKU already exists' });
+    }
     res.status(500).json({ error: err.message || 'Failed to update pack material' });
   }
 }
