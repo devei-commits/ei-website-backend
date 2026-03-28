@@ -97,7 +97,8 @@ function isClosedOutboundMtrStatus(status) {
   return s === 'completed' || s === 'succeeded';
 }
 
-function normalizeLineTransferMap(raw) {
+/** Raw DB `line_transfer_status` JSON → id → trimmed phase string (no per-line fill from header). */
+function coerceStoredLineTransferMap(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
   const out = {};
   Object.keys(raw).forEach((k) => {
@@ -125,7 +126,7 @@ function effectiveLinePhase(plain, lts, lineId) {
 
 function mtrAllLinesCompletedPlain(plain) {
   const items = Array.isArray(plain.line_items) ? plain.line_items : [];
-  const lts = normalizeLineTransferMap(plain.line_transfer_status);
+  const lts = coerceStoredLineTransferMap(plain.line_transfer_status);
   if (items.length === 0) return true;
   if (Object.keys(lts).length === 0) return isClosedOutboundMtrStatus(plain.status);
   return items.every((li) => linePhase(lts, li.id) === 'completed');
@@ -146,7 +147,7 @@ function deriveOutboundMtrStatusFromLines(lineItems, lts, prevStatus) {
 /** Qty that counts toward batch RM/PM "connected" — verified at MU (receive) or stock move done. */
 function lineItemsAtMuForAggregate(plain) {
   const items = Array.isArray(plain.line_items) ? plain.line_items : [];
-  const lts = normalizeLineTransferMap(plain.line_transfer_status);
+  const lts = coerceStoredLineTransferMap(plain.line_transfer_status);
   if (Object.keys(lts).length === 0) {
     if (isClosedOutboundMtrStatus(plain.status)) return items;
     return [];
@@ -329,7 +330,6 @@ function formatRow(r, enrichedLineItems) {
     mfgBatch: d.mfg_batch ?? null,
     muReceiveZone: d.mu_receive_zone ?? null,
     muReceiveRack: d.mu_receive_rack ?? null,
-    lineTransferStatus: normalizeLineTransferMap(d.line_transfer_status),
     createdAt: d.created_at || null,
   };
 }
@@ -509,7 +509,7 @@ async function update(req, res) {
     const linesToStockMove = [];
 
     let mergedLineItems = updates.line_items !== undefined ? updates.line_items : plainBefore.line_items;
-    let lts = normalizeLineTransferMap(plainBefore.line_transfer_status);
+    let lts = coerceStoredLineTransferMap(plainBefore.line_transfer_status);
 
     if (isOutboundMtr) {
       const hadInit = Array.isArray(initIds) && initIds.length > 0;
@@ -639,7 +639,7 @@ async function update(req, res) {
       await applyMtrCompletionToProductionBatch(d);
     }
 
-    const ltsAfter = normalizeLineTransferMap(d.line_transfer_status);
+    const ltsAfter = coerceStoredLineTransferMap(d.line_transfer_status);
     if (
       newStatus === 'Completed' &&
       previousStatus !== 'Completed' &&

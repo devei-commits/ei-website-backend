@@ -53,12 +53,15 @@ const port = process.env.PORT || 3000;
 const allowedOrigins = [
     'http://localhost:5173',
     'https://esthetic-insights-website.vercel.app',
+    'https://ei-admin.vercel.app',
 ];
 const corsOptions = {
     origin: (origin, callback) => {
         // Allow requests with no origin (like mobile apps or curl requests)
         if (!origin) return callback(null, true);
-        return callback(null, true); // Allow all origins for development
+        if (allowedOrigins.includes(origin)) return callback(null, true);
+        if (process.env.NODE_ENV === 'development') return callback(null, true);
+        callback(null, false);
     },
     credentials: true,
 };
