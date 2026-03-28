@@ -130,6 +130,17 @@ if (process.env.NODE_ENV !== 'test') {
           /* column already wide enough or dialect differs */
         }
       }
+      try {
+        await db.query(
+          'ALTER TABLE material_request_notes ADD COLUMN IF NOT EXISTS line_transfer_status JSONB DEFAULT \'{}\'::jsonb'
+        );
+      } catch {
+        try {
+          await db.query('ALTER TABLE material_request_notes ADD COLUMN line_transfer_status JSON NULL');
+        } catch {
+          /* column exists or dialect differs */
+        }
+      }
       app.listen(port, () => {
         console.log(`Server is running on port ${port}`);
       });

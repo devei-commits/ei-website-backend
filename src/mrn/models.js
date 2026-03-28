@@ -16,7 +16,7 @@ MaterialRequestNote.init(
     assigned_picker: { type: DataTypes.STRING(200), allowNull: true },
     transfer_team: { type: DataTypes.STRING(200), allowNull: true },
     line_items: { type: DataTypes.JSON, allowNull: true },
-    /** Outbound MTR only: { [lineItemId]: 'not_initiated' | 'in_transit' | 'received_at_mu' | 'completed' } */
+    /** Outbound MTR: map line item id -> not_initiated | in_transit | received_at_mu | completed */
     line_transfer_status: { type: DataTypes.JSON, allowNull: true },
     notes: { type: DataTypes.TEXT, allowNull: true },
     bmr_no: { type: DataTypes.STRING(50), allowNull: true },
