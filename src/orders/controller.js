@@ -174,9 +174,6 @@ const saveOrder = async (req, res) => {
             }
             validatedChequeForMeta = chequeResult.normalized;
         }
-        const advance_amount_due = round2((grand_total * advancePct) / 100);
-        const preShipmentAmountDue = round2((grand_total * preShipmentPct) / 100);
-        const postShipmentAmountDue = round2((grand_total * postShipmentPct) / 100);
 
         let advancePct = clampPct(checkoutPreview.payment_terms.advance_pct);
         let preShipmentPct = clampPct(checkoutPreview.payment_terms.pre_shipment_pct);

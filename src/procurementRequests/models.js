@@ -31,7 +31,7 @@ ProcurementRequest.init(
     items: {
       type: DataTypes.JSON,
       allowNull: true,
-      comment: 'Array of { type, raw_material_id?, pack_material_id?, product_id?, quantity_requested, unit, line_notes?, required?, sih?, shortage?, code?, name? }',
+      comment: 'Array of { type, raw_material_id?, pack_material_id?, product_id?, quantity_requested, unit, line_notes?, moq_min?, planned_unit_price?, lead_time_days?, required?, sih?, shortage?, code?, name? }',
     },
     status: { type: DataTypes.STRING(50), allowNull: true, defaultValue: 'Pending' },
     preferred_vendor: { type: DataTypes.STRING(300), allowNull: true },

@@ -7,6 +7,41 @@ const PackMaterial = require('../packMaterials/models');
 const { validateProcurementItemsMoq } = require('./moqValidation');
 
 /**
+ * Coerce item quantities to finite numbers (handles strings / comma-formatted values from clients).
+ */
+function normalizeProcurementItems(items) {
+  if (!Array.isArray(items)) return [];
+  const toNum = (v) => {
+    if (v == null || v === '') return 0;
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+    const n = parseFloat(String(v).replace(/,/g, '').replace(/\s/g, '').trim());
+    return Number.isFinite(n) ? n : 0;
+  };
+  return items.map((i) => {
+    const out = { ...i };
+    out.quantity_requested = toNum(out.quantity_requested);
+    if (out.required != null) out.required = toNum(out.required);
+    if (out.shortage != null) out.shortage = toNum(out.shortage);
+    if (out.moq_min != null && out.moq_min !== '') {
+      const m = toNum(out.moq_min);
+      if (m > 0) out.moq_min = m;
+      else delete out.moq_min;
+    }
+    if (out.planned_unit_price != null && out.planned_unit_price !== '') {
+      const p = toNum(out.planned_unit_price);
+      if (p > 0) out.planned_unit_price = p;
+      else delete out.planned_unit_price;
+    }
+    if (out.lead_time_days != null && out.lead_time_days !== '') {
+      const d = parseInt(String(out.lead_time_days).replace(/\D/g, ''), 10);
+      if (Number.isFinite(d) && d >= 0) out.lead_time_days = d;
+      else delete out.lead_time_days;
+    }
+    return out;
+  });
+}
+
+/**
  * Load RM/PM master rows for procurement line items (fill missing name/code on read).
  */
 async function loadMasterMapsForItems(itemsArray) {
@@ -178,7 +213,7 @@ async function createProcurementRequest(req, res) {
       priority: body.priority ?? null,
       required_by_date: body.requiredByDate ?? body.required_by_date ?? null,
       notes: body.notes ?? null,
-      items: body.items ?? [],
+      items: normalizeProcurementItems(body.items ?? []),
       status: body.status ?? 'Pending',
       requested_by: body.requestedBy ?? body.requested_by ?? req.user?.email ?? null,
     });
@@ -202,7 +237,7 @@ async function updateProcurementRequest(req, res) {
     if (body.requiredByDate !== undefined) updates.required_by_date = body.requiredByDate;
     if (body.required_by_date !== undefined) updates.required_by_date = body.required_by_date;
     if (body.notes !== undefined) updates.notes = body.notes;
-    if (body.items !== undefined) updates.items = body.items;
+    if (body.items !== undefined) updates.items = normalizeProcurementItems(body.items);
     if (body.status !== undefined) updates.status = body.status;
     if (body.preferredVendor !== undefined) updates.preferred_vendor = body.preferredVendor;
     if (body.preferred_vendor !== undefined) updates.preferred_vendor = body.preferred_vendor;

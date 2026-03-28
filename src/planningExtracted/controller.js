@@ -1119,7 +1119,7 @@ async function getItemsInvolved(req, res) {
         model: PlanningExtracted,
         as: 'planningExtracted',
         required: true,
-        attributes: ['id', 'order_qty_display', 'total_kg_display', 'product_id', 'sent_batch_indices'],
+        attributes: ['id', 'order_qty_display', 'total_kg_display', 'product_id', 'sent_batch_indices', 'packaging_materials'],
         include: [{ model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code'] }],
       }],
       order: [['planning_extracted_id', 'ASC'], ['sequence', 'ASC']],
@@ -1138,6 +1138,7 @@ async function getItemsInvolved(req, res) {
       const pmCodes = new Set();
       for (const b of sentBatches) {
         const plain = b.get ? b.get({ plain: true }) : b;
+        const plan = plain.planningExtracted || {};
         const rms = Array.isArray(plain.rm_lines) ? plain.rm_lines : [];
         for (const line of rms) {
           const code = line.rm_code || line.code;
@@ -1147,6 +1148,11 @@ async function getItemsInvolved(req, res) {
         for (const line of pms) {
           const code = line.pm_code || line.code;
           if (code) pmCodes.add(code);
+        }
+        if (pms.length === 0) {
+          for (const p of Array.isArray(plan.packaging_materials) ? plan.packaging_materials : []) {
+            if (p.code) pmCodes.add(p.code);
+          }
         }
       }
       const rmByCode = new Map();
@@ -1222,7 +1228,25 @@ async function getItemsInvolved(req, res) {
           if (rmAgg.has(id)) rmAgg.get(id).batchCount += 1;
         }
 
-        const pmLines = Array.isArray(plain.pm_lines) ? plain.pm_lines : [];
+        let pmLines = Array.isArray(plain.pm_lines) ? plain.pm_lines : [];
+        // Batches often store RM lines only; PI still has packaging_materials from BOM confirm.
+        if (pmLines.length === 0) {
+          const pkg = Array.isArray(plan.packaging_materials) ? plan.packaging_materials : [];
+          const oq = orderQty;
+          pmLines = pkg.map((p) => {
+            const totalPcs = Number(p.quantity) || 0;
+            const qpu = oq > 0 ? totalPcs / oq : totalPcs;
+            return {
+              pack_material_id: p.pack_material_id,
+              pm_code: p.code,
+              code: p.code,
+              description: p.name,
+              name: p.name,
+              qty_per_unit: qpu,
+              qty: qpu,
+            };
+          });
+        }
         const pmIdsInThisBatch = new Set();
         for (const line of pmLines) {
           let id = line.pack_material_id != null ? Number(line.pack_material_id) : null;
