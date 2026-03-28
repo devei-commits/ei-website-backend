@@ -1,5 +1,13 @@
 const { Op } = require('sequelize');
 const MaterialRequestNote = require('./models');
+const {
+  PHASE,
+  lineItemId,
+  getLineItemIds,
+  normalizeLineTransferMap,
+  recomputeOutboundMtrAggregateStatus,
+  assertSubset,
+} = require('./lineTransferStatus');
 const { User } = require('../users/models');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
@@ -117,7 +125,7 @@ async function assignablePickers(req, res) {
 
 function enrichMrnLineItems(lineItems, rmMap, pmMap, productMap) {
   if (!Array.isArray(lineItems)) return [];
-  return lineItems.map((line) => {
+  return lineItems.map((line, idx) => {
     let item = line.item || '';
     let itemCode = line.itemCode || '';
     if (line.raw_material_id != null && rmMap[String(line.raw_material_id)]) {
@@ -134,7 +142,7 @@ function enrichMrnLineItems(lineItems, rmMap, pmMap, productMap) {
       itemCode = m.code || itemCode;
     }
     return {
-      id: line.id,
+      id: line.id || lineItemId(line, idx),
       raw_material_id: line.raw_material_id,
       pack_material_id: line.pack_material_id,
       product_id: line.product_id,
@@ -228,6 +236,9 @@ function formatRow(r, enrichedLineItems) {
   const lineItems = enrichedLineItems !== undefined ? enrichedLineItems : (d.line_items || []);
   const isOutboundMtr = d.source === 'MTR' && !d.is_inbound_from_mu;
   const status = isOutboundMtr && String(d.status || '').trim() === 'Completed' ? 'Succeeded' : (d.status || 'Pending');
+  const lineTransferStatus = isOutboundMtr
+    ? normalizeLineTransferMap(lineItems, d.line_transfer_status, d.status)
+    : undefined;
   return {
     id: String(d.id),
     mrnNo: d.mrn_no,
@@ -236,6 +247,7 @@ function formatRow(r, enrichedLineItems) {
     assignedPicker: d.assigned_picker || '',
     transferTeam: d.transfer_team || '',
     lineItems,
+    lineTransferStatus,
     notes: d.notes || '',
     bmrNo: d.bmr_no || '',
     source: d.source || '',
@@ -344,6 +356,13 @@ async function create(req, res) {
       source: body.source ?? null,
       is_inbound_from_mu: body.isInboundFromMu ?? body.is_inbound_from_mu ?? false,
     };
+    if (sourceForMtr === 'MTR' && bmrNoForMtr && !inboundMu && lineItems.length > 0) {
+      const o = {};
+      lineItems.forEach((li, idx) => {
+        o[lineItemId(li, idx)] = PHASE.NOT_INITIATED;
+      });
+      payload.line_transfer_status = o;
+    }
     const row = await MaterialRequestNote.create(payload);
     const { rmMap, pmMap, productMap } = await getMastersForLineItems([row]);
     const d = row.get ? row.get({ plain: true }) : row;
@@ -400,23 +419,152 @@ async function update(req, res) {
 
     const plainBefore = row.get ? row.get({ plain: true }) : row;
     const previousStatus = normalizeMrnStatus(plainBefore.status || '');
+    const isOutboundMtr =
+      plainBefore.source === 'MTR' &&
+      !plainBefore.is_inbound_from_mu;
+
+    if (isOutboundMtr && updates.assigned_picker !== undefined) {
+      delete updates.assigned_picker;
+    }
+
+    const lineItemsMerged = updates.line_items !== undefined ? updates.line_items : plainBefore.line_items;
+
+    let outboundCompleteLines = null;
+
+    if (isOutboundMtr && Array.isArray(lineItemsMerged) && lineItemsMerged.length > 0) {
+      const b = req.body || {};
+      const initiateIds = Array.isArray(b.initiateTransferLineIds)
+        ? b.initiateTransferLineIds.map(String)
+        : Array.isArray(b.initiate_transfer_line_ids)
+          ? b.initiate_transfer_line_ids.map(String)
+          : null;
+      const receiveIds = Array.isArray(b.receiveAtMuLineIds)
+        ? b.receiveAtMuLineIds.map(String)
+        : Array.isArray(b.receive_at_mu_line_ids)
+          ? b.receive_at_mu_line_ids.map(String)
+          : null;
+      const completeIdsRaw = Array.isArray(b.completeTransferLineIds)
+        ? b.completeTransferLineIds.map(String)
+        : Array.isArray(b.complete_transfer_line_ids)
+          ? b.complete_transfer_line_ids.map(String)
+          : null;
+
+      let map = normalizeLineTransferMap(
+        lineItemsMerged,
+        plainBefore.line_transfer_status,
+        plainBefore.status
+      );
+      const idSet = new Set(getLineItemIds(lineItemsMerged));
+      let touched = false;
+
+      if (initiateIds && initiateIds.length > 0) {
+        const err = assertSubset(initiateIds, idSet);
+        if (err) return res.status(400).json({ error: err });
+        for (const sid of initiateIds) {
+          if (map[sid] !== PHASE.NOT_INITIATED) {
+            return res.status(400).json({
+              error: `Line ${sid} cannot initiate transfer (current: ${map[sid]}).`,
+            });
+          }
+          map[sid] = PHASE.IN_TRANSIT;
+          touched = true;
+        }
+      }
+
+      const reqStEarly = updates.status !== undefined ? normalizeMrnStatus(updates.status) : null;
+      if (!touched && reqStEarly === 'In Transit' && (!initiateIds || initiateIds.length === 0)) {
+        for (const lid of getLineItemIds(lineItemsMerged)) {
+          if (map[lid] === PHASE.NOT_INITIATED) {
+            map[lid] = PHASE.IN_TRANSIT;
+            touched = true;
+          }
+        }
+      }
+
+      if (receiveIds && receiveIds.length > 0) {
+        const err = assertSubset(receiveIds, idSet);
+        if (err) return res.status(400).json({ error: err });
+        for (const sid of receiveIds) {
+          if (map[sid] !== PHASE.IN_TRANSIT) {
+            return res.status(400).json({
+              error: `Line ${sid} cannot mark received at MU (current: ${map[sid]}).`,
+            });
+          }
+          map[sid] = PHASE.RECEIVED_AT_MU;
+          touched = true;
+        }
+      }
+
+      if (reqStEarly === 'Received at MU' && (!receiveIds || receiveIds.length === 0)) {
+        for (const lid of getLineItemIds(lineItemsMerged)) {
+          if (map[lid] === PHASE.IN_TRANSIT) {
+            map[lid] = PHASE.RECEIVED_AT_MU;
+            touched = true;
+          }
+        }
+      }
+
+      const wantsComplete = updates.status !== undefined && normalizeMrnStatus(updates.status) === 'Completed';
+
+      if (wantsComplete) {
+        const muZ =
+          updates.mu_receive_zone !== undefined ? updates.mu_receive_zone : plainBefore.mu_receive_zone;
+        const muR =
+          updates.mu_receive_rack !== undefined ? updates.mu_receive_rack : plainBefore.mu_receive_rack;
+        if (!String(muZ || '').trim() || !String(muR || '').trim()) {
+          return res.status(400).json({
+            error: 'MU zone and MU rack are required before completing this transfer.',
+          });
+        }
+
+        const mapC = { ...map };
+        const toComplete =
+          completeIdsRaw && completeIdsRaw.length > 0
+            ? completeIdsRaw
+            : getLineItemIds(lineItemsMerged).filter((lid) => mapC[lid] === PHASE.RECEIVED_AT_MU);
+
+        if (toComplete.length === 0) {
+          return res.status(400).json({
+            error:
+              'No lines are in received_at_mu state to complete. Mark lines as received at MU first.',
+          });
+        }
+        const err = assertSubset(toComplete, idSet);
+        if (err) return res.status(400).json({ error: err });
+        for (const sid of toComplete) {
+          if (mapC[sid] !== PHASE.RECEIVED_AT_MU) {
+            return res.status(400).json({
+              error: `Line ${sid} must be received at MU before complete (current: ${mapC[sid]}).`,
+            });
+          }
+          mapC[sid] = PHASE.COMPLETED;
+        }
+        updates.line_transfer_status = mapC;
+        updates.status = recomputeOutboundMtrAggregateStatus(lineItemsMerged, mapC, plainBefore.status);
+
+        outboundCompleteLines = lineItemsMerged.filter((li, idx) =>
+          toComplete.includes(lineItemId(li, idx))
+        );
+      } else if (touched) {
+        updates.line_transfer_status = map;
+        updates.status = recomputeOutboundMtrAggregateStatus(lineItemsMerged, map, plainBefore.status);
+      }
+    }
+
     const newStatus = normalizeMrnStatus(updates.status !== undefined ? updates.status : previousStatus);
     const mergedZone =
       updates.mu_receive_zone !== undefined ? updates.mu_receive_zone : plainBefore.mu_receive_zone;
     const mergedRack =
       updates.mu_receive_rack !== undefined ? updates.mu_receive_rack : plainBefore.mu_receive_rack;
-    const isOutboundMtr =
-      plainBefore.source === 'MTR' &&
-      !plainBefore.is_inbound_from_mu;
 
-    if (isOutboundMtr && updates.status !== undefined) {
+    if (isOutboundMtr && updates.status !== undefined && outboundCompleteLines == null) {
       const terr = outboundMtrStatusTransitionError(previousStatus, newStatus);
       if (terr) {
         return res.status(400).json({ error: terr });
       }
     }
 
-    if (newStatus === 'Completed' && previousStatus !== 'Completed' && isOutboundMtr) {
+    if (newStatus === 'Completed' && previousStatus !== 'Completed' && isOutboundMtr && outboundCompleteLines == null) {
       if (previousStatus !== 'Received at MU') {
         return res.status(400).json({
           error: 'Status must be Received at MU before completing this transfer.',
@@ -435,7 +583,17 @@ async function update(req, res) {
     const refreshed = await MaterialRequestNote.findByPk(id);
     const d = refreshed.get ? refreshed.get({ plain: true }) : refreshed;
 
-    if (newStatus === 'Completed' && previousStatus !== 'Completed' && d.source === 'MTR' && d.bmr_no) {
+    if (Array.isArray(outboundCompleteLines) && outboundCompleteLines.length > 0) {
+      const invPlain = {
+        ...d,
+        line_items: outboundCompleteLines,
+      };
+      await applyMrnCompletionToInventory(invPlain);
+      if (d.mu_receive_zone || d.mu_receive_rack) {
+        await logMrnReceiveAtMuLocation(invPlain);
+      }
+      await applyMtrCompletionToProductionBatch(d);
+    } else if (newStatus === 'Completed' && previousStatus !== 'Completed' && d.source === 'MTR' && d.bmr_no) {
       await applyMrnCompletionToInventory(d);
       if (d.mu_receive_zone || d.mu_receive_rack) {
         await logMrnReceiveAtMuLocation(d);
@@ -456,6 +614,20 @@ async function update(req, res) {
  * True if another outbound MTR for this BMR is still not Completed, with RM (or PM) lines.
  * RM and PM are tracked separately. Uses unit fallback when line ids were not resolved.
  */
+function mtrRowHasIncompleteLineForKind(plain, kind) {
+  const lis = plain.line_items || [];
+  if (kind === 'rm' && !lineItemsIndicateRm(lis)) return false;
+  if (kind === 'pm' && !lineItemsIndicatePm(lis)) return false;
+  const map = normalizeLineTransferMap(lis, plain.line_transfer_status, plain.status);
+  for (let i = 0; i < lis.length; i++) {
+    const li = lis[i];
+    const isKind = kind === 'rm' ? lineItemsIndicateRm([li]) : lineItemsIndicatePm([li]);
+    if (!isKind) continue;
+    if (map[lineItemId(li, i)] !== PHASE.COMPLETED) return true;
+  }
+  return false;
+}
+
 async function hasPendingMtrOfKind(bmrNo, kind) {
   const rows = await MaterialRequestNote.findAll({
     where: {
@@ -463,17 +635,11 @@ async function hasPendingMtrOfKind(bmrNo, kind) {
       source: 'MTR',
       [Op.or]: [{ is_inbound_from_mu: false }, { is_inbound_from_mu: null }],
     },
-    attributes: ['line_items', 'status'],
+    attributes: ['line_items', 'status', 'line_transfer_status'],
   });
-  const activeRows = rows.filter((row) => {
-    const s = row.get ? row.get('status') : row.status;
-    return !isClosedOutboundMtrStatus(s);
-  });
-  return activeRows.some((row) => {
-    const lis = row.get ? row.get('line_items') : row.line_items;
-    if (kind === 'rm') return lineItemsIndicateRm(lis);
-    if (kind === 'pm') return lineItemsIndicatePm(lis);
-    return false;
+  return rows.some((row) => {
+    const plain = row.get ? row.get({ plain: true }) : row;
+    return mtrRowHasIncompleteLineForKind(plain, kind);
   });
 }
 
@@ -493,22 +659,35 @@ function aggregateRequiredByCode(lines) {
   return map;
 }
 
+function aggregateMovedByCodeFromMrnPlain(plain, kind) {
+  const map = new Map();
+  const lineItems = Array.isArray(plain?.line_items) ? plain.line_items : [];
+  const lineMap = normalizeLineTransferMap(lineItems, plain.line_transfer_status, plain.status);
+  for (let i = 0; i < lineItems.length; i++) {
+    const li = lineItems[i];
+    const isKind = kind === 'rm' ? lineItemsIndicateRm([li]) : lineItemsIndicatePm([li]);
+    if (!isKind) continue;
+    const id = lineItemId(li, i);
+    if (lineMap[id] !== PHASE.COMPLETED) continue;
+    const key =
+      normalizeItemCodeKey(li?.itemCode) ||
+      normalizeItemCodeKey(li?.code) ||
+      normalizeItemCodeKey(li?.item);
+    if (!key) continue;
+    const qty = Number(li?.quantity) || 0;
+    if (qty <= 0) continue;
+    map.set(key, (map.get(key) || 0) + qty);
+  }
+  return map;
+}
+
 function aggregateMovedByCodeFromMrnRows(rows, kind) {
   const map = new Map();
   for (const row of rows) {
     const plain = row.get ? row.get({ plain: true }) : row;
-    const lineItems = Array.isArray(plain?.line_items) ? plain.line_items : [];
-    for (const li of lineItems) {
-      const isKind = kind === 'rm' ? lineItemsIndicateRm([li]) : lineItemsIndicatePm([li]);
-      if (!isKind) continue;
-      const key =
-        normalizeItemCodeKey(li?.itemCode) ||
-        normalizeItemCodeKey(li?.code) ||
-        normalizeItemCodeKey(li?.item);
-      if (!key) continue;
-      const qty = Number(li?.quantity) || 0;
-      if (qty <= 0) continue;
-      map.set(key, (map.get(key) || 0) + qty);
+    const part = aggregateMovedByCodeFromMrnPlain(plain, kind);
+    for (const [k, v] of part.entries()) {
+      map.set(k, (map.get(k) || 0) + v);
     }
   }
   return map;
@@ -544,23 +723,19 @@ async function applyMtrCompletionToProductionBatch(plainMrn) {
 
   // Aggregate moved qty from all closed outbound MTRs so split dispatches do not mark
   // RM/PM connected until cumulative moved qty meets required batch quantities.
-  const closedRows = await MaterialRequestNote.findAll({
+  const mtrRows = await MaterialRequestNote.findAll({
     where: {
       bmr_no: plainMrn.bmr_no,
       source: 'MTR',
       [Op.or]: [{ is_inbound_from_mu: false }, { is_inbound_from_mu: null }],
     },
-    attributes: ['line_items', 'status'],
-  });
-  const closedOnly = closedRows.filter((r) => {
-    const s = r.get ? r.get('status') : r.status;
-    return isClosedOutboundMtrStatus(s);
+    attributes: ['line_items', 'status', 'line_transfer_status'],
   });
 
   const requiredRm = aggregateRequiredByCode(Array.isArray(plain.dispensing_rm) ? plain.dispensing_rm : []);
   const requiredPm = aggregateRequiredByCode(Array.isArray(plain.dispensing_pm) ? plain.dispensing_pm : []);
-  const movedRm = aggregateMovedByCodeFromMrnRows(closedOnly, 'rm');
-  const movedPm = aggregateMovedByCodeFromMrnRows(closedOnly, 'pm');
+  const movedRm = aggregateMovedByCodeFromMrnRows(mtrRows, 'rm');
+  const movedPm = aggregateMovedByCodeFromMrnRows(mtrRows, 'pm');
 
   if (hasRm) {
     const pendingRm = await hasPendingMtrOfKind(plainMrn.bmr_no, 'rm');

@@ -201,6 +201,11 @@ async function seed() {
       { raw: true }
     ).catch(() => { });
 
+    await db.query(
+      `ALTER TABLE material_request_notes ADD COLUMN IF NOT EXISTS line_transfer_status JSONB`,
+      { raw: true }
+    ).catch(() => { });
+
     console.log('Seeding module definitions (if empty)...');
     await ModuleDefinition.findOrCreate({
       where: { name: 'default' },
