@@ -128,6 +128,14 @@ const saveOrder = async (req, res) => {
             return false;
         }
 
+        /** Per cart line: customisation > products.lead_time_days > default catalog days. Order-level date uses max(lines). */
+        function resolveLeadDaysForOrderLine(origLine, productRow) {
+            if (isCustomizationOrderItem(origLine)) return LEAD_TIME_DAYS_CUSTOMISATION;
+            const fromP = productRow && productRow.lead_time_days != null ? Number(productRow.lead_time_days) : null;
+            if (fromP != null && Number.isFinite(fromP) && fromP >= 0) return Math.floor(fromP);
+            return LEAD_TIME_DAYS_PRODUCT;
+        }
+
         const subtotal = order_items.reduce((acc, item) => acc + (item.unit_price * item.quantity), 0);
         const tax_total = order_items.reduce((acc, item) => acc + (item.tax_amount || 0), 0);
         const grand_total = subtotal + tax_total + shipping_total - discount_total;
@@ -287,7 +295,7 @@ const saveOrder = async (req, res) => {
 
         const products = await Product.findAll({
             where: { product_id: productIds },
-            attributes: ['product_id', 'product_name', 'product_code', 'product_sku', 'mrp_price'],
+            attributes: ['product_id', 'product_name', 'product_code', 'product_sku', 'mrp_price', 'lead_time_days', 'batch_size_kg'],
             transaction: t,
         });
         const productMap = new Map(products.map((p) => [Number(p.product_id), p.get ? p.get({ plain: true }) : p]));
@@ -335,7 +343,9 @@ const saveOrder = async (req, res) => {
         const affectedPmIds = new Set();
         let computedOrderLeadTimeDays = 0;
 
-        for (const it of orderItemsToCreate) {
+        for (let idx = 0; idx < orderItemsToCreate.length; idx++) {
+            const it = orderItemsToCreate[idx];
+            const origLine = order_items[idx] || {};
             const productId = Number(it.product_id);
             if (!productId) continue;
             const bom = await BOM.findOne({ where: { product_id: productId }, transaction: t });
@@ -386,9 +396,8 @@ const saveOrder = async (req, res) => {
                 });
             }
 
-            const leadTimeDaysForProduct = isCustomizationOrderItem(it)
-                ? LEAD_TIME_DAYS_CUSTOMISATION
-                : LEAD_TIME_DAYS_PRODUCT;
+            const pRow = productMap.get(productId);
+            const leadTimeDaysForProduct = resolveLeadDaysForOrderLine(origLine, pRow);
             computedOrderLeadTimeDays = Math.max(computedOrderLeadTimeDays, leadTimeDaysForProduct);
             const totalKgEstimated = estimateTotalKgFromRawMaterials(rawMaterials, batchSizeKg * batchesRequired);
 

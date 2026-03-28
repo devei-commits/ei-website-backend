@@ -41,6 +41,47 @@ async function getVendorTierPriceFromItemsList(vendorId, rawMaterialId, packMate
   return n != null && !Number.isNaN(n) ? n : null;
 }
 
+/** Lead time (days) from Items List vendor rate row (not tier-specific). */
+async function getVendorLeadFromItemsList(vendorId, rawMaterialId, packMaterialId) {
+  const where = rawMaterialId != null ? { raw_material_id: rawMaterialId } : { pack_material_id: packMaterialId };
+  const listRow = await ItemsList.findOne({ where });
+  if (!listRow) return null;
+  const rateRow = await ItemListVendorRate.findOne({
+    where: { items_list_id: listRow.id, vendor_id: vendorId },
+  });
+  if (!rateRow || rateRow.lead_time_days == null) return null;
+  const n = Number(rateRow.lead_time_days);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+async function enrichQuotationItemsFromItemsList(vendorId, items) {
+  const enriched = [];
+  for (const it of items) {
+    const qty = Number(it.orderQty ?? it.quantity_requested ?? 0) || 0;
+    const rawMaterialId = it.raw_material_id ?? null;
+    const packMaterialId = it.pack_material_id ?? null;
+    const price = await getVendorTierPriceFromItemsList(vendorId, rawMaterialId, packMaterialId, qty);
+    const priceNum = price != null ? price : (Number(it.pricePerUnit) || 0);
+    const listLead = await getVendorLeadFromItemsList(vendorId, rawMaterialId, packMaterialId);
+    const lineLeadRaw = it.leadTimeDays ?? it.lead_time_days;
+    const lineLead = lineLeadRaw != null && lineLeadRaw !== '' ? Number(lineLeadRaw) : null;
+    const leadTimeDays =
+      listLead != null
+        ? listLead
+        : lineLead != null && Number.isFinite(lineLead) && lineLead >= 0
+          ? lineLead
+          : null;
+    enriched.push({
+      ...it,
+      orderQty: qty,
+      pricePerUnit: priceNum,
+      totalValue: qty * priceNum,
+      leadTimeDays,
+    });
+  }
+  return enriched;
+}
+
 async function upsertItemsListRateFromQuotationLine(t, vendorId, line, paymentTerms) {
   const rmId = line.raw_material_id != null ? parseInt(String(line.raw_material_id), 10) : null;
   const pmId = line.pack_material_id != null ? parseInt(String(line.pack_material_id), 10) : null;
@@ -48,6 +89,9 @@ async function upsertItemsListRateFromQuotationLine(t, vendorId, line, paymentTe
   const qty = Number(line.orderQty ?? line.quantity_requested ?? 0) || 0;
   const price = Number(line.pricePerUnit ?? 0) || 0;
   if (qty <= 0 || price <= 0) return;
+  const leadRaw = line.leadTimeDays ?? line.lead_time_days;
+  const leadParsed = leadRaw != null && leadRaw !== '' ? parseInt(String(leadRaw), 10) : null;
+  const leadDays = leadParsed != null && Number.isFinite(leadParsed) && leadParsed >= 0 ? leadParsed : null;
 
   const type = rmId != null && !Number.isNaN(rmId) ? 'RM' : 'PM';
   const listWhere = type === 'RM' ? { type: 'RM', raw_material_id: rmId } : { type: 'PM', pack_material_id: pmId };
@@ -76,6 +120,7 @@ async function upsertItemsListRateFromQuotationLine(t, vendorId, line, paymentTe
         vendor_id: vendorId,
         default_rate: price,
         default_moq: qty,
+        lead_time_days: leadDays,
         currency: 'INR',
         payment_terms: paymentTerms || null,
         status: 'active',
@@ -87,6 +132,7 @@ async function upsertItemsListRateFromQuotationLine(t, vendorId, line, paymentTe
       {
         default_rate: price,
         default_moq: qty,
+        ...(leadDays != null ? { lead_time_days: leadDays } : {}),
         ...(paymentTerms !== undefined ? { payment_terms: paymentTerms || null } : {}),
         status: 'active',
       },
@@ -175,24 +221,14 @@ async function listProcurementQuotations(req, res) {
       rows.map(async (r) => {
         const out = formatQuotation(r);
         const items = Array.isArray(out.items) ? out.items : [];
-        // Always reflect current Items List pricing (same source as Items List UI).
-        // This makes Procurement -> Quotations and Items List show consistent vendor rates.
-        const enriched = [];
-        for (const it of items) {
-          const qty = Number(it.orderQty ?? it.quantity_requested ?? 0) || 0;
-          const rawMaterialId = it.raw_material_id ?? null;
-          const packMaterialId = it.pack_material_id ?? null;
-          const price = await getVendorTierPriceFromItemsList(out.vendorId, rawMaterialId, packMaterialId, qty);
-          const priceNum = price != null ? price : (Number(it.pricePerUnit) || 0);
-          enriched.push({
-            ...it,
-            orderQty: qty,
-            pricePerUnit: priceNum,
-            totalValue: qty * priceNum,
-          });
-        }
+        const enriched = await enrichQuotationItemsFromItemsList(out.vendorId, items);
         const totalValue = enriched.reduce((sum, x) => sum + (Number(x.totalValue) || 0), 0);
-        return { ...out, items: enriched, totalValue };
+        const lineLeads = enriched.map((x) => Number(x.leadTimeDays ?? 0)).filter((n) => Number.isFinite(n) && n > 0);
+        const maxLineLead = lineLeads.length ? Math.max(...lineLeads) : 0;
+        const headerLead = Number(out.leadTimeDays ?? 0) || 0;
+        const leadTimeDays =
+          headerLead > 0 ? headerLead : maxLineLead > 0 ? maxLineLead : out.leadTimeDays ?? null;
+        return { ...out, items: enriched, totalValue, leadTimeDays };
       })
     );
     const shouldDebug = process.env.NODE_ENV !== 'production';
@@ -289,7 +325,16 @@ async function getProcurementQuotationById(req, res) {
       ],
     });
     if (!row) return res.status(404).json({ error: 'Procurement quotation not found' });
-    res.json(formatQuotation(row));
+    const out = formatQuotation(row);
+    const items = Array.isArray(out.items) ? out.items : [];
+    const enriched = await enrichQuotationItemsFromItemsList(out.vendorId, items);
+    const totalValue = enriched.reduce((sum, x) => sum + (Number(x.totalValue) || 0), 0);
+    const lineLeads = enriched.map((x) => Number(x.leadTimeDays ?? 0)).filter((n) => Number.isFinite(n) && n > 0);
+    const maxLineLead = lineLeads.length ? Math.max(...lineLeads) : 0;
+    const headerLead = Number(out.leadTimeDays ?? 0) || 0;
+    const leadTimeDays =
+      headerLead > 0 ? headerLead : maxLineLead > 0 ? maxLineLead : out.leadTimeDays ?? null;
+    res.json({ ...out, items: enriched, totalValue, leadTimeDays });
   } catch (err) {
     console.error('getProcurementQuotationById error', err);
     res.status(500).json({ error: 'Failed to fetch procurement quotation' });
@@ -345,6 +390,15 @@ async function createProcurementQuotation(req, res) {
       }
       const priceNum = price != null && !Number.isNaN(Number(price)) ? Number(price) : 0;
       const totalValue = qty * priceNum;
+      const listLead = await getVendorLeadFromItemsList(vId, it.raw_material_id ?? null, it.pack_material_id ?? null);
+      const lineLeadRaw = it.leadTimeDays ?? it.lead_time_days;
+      const lineLead = lineLeadRaw != null && lineLeadRaw !== '' ? Number(lineLeadRaw) : null;
+      const leadTimeDays =
+        listLead != null
+          ? listLead
+          : lineLead != null && Number.isFinite(lineLead) && lineLead >= 0
+            ? lineLead
+            : null;
       items[i] = {
         ...it,
         itemId: it.itemId ?? it.code ?? '',
@@ -353,9 +407,19 @@ async function createProcurementQuotation(req, res) {
         uom: it.uom ?? 'KG',
         pricePerUnit: priceNum,
         totalValue,
+        leadTimeDays,
       };
     }
     const totalValue = items.reduce((sum, it) => sum + (Number(it.totalValue) || 0), 0);
+    const lineLeadsForHeader = items
+      .map((it) => Number(it.leadTimeDays ?? 0))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    const maxLineLeadHeader = lineLeadsForHeader.length ? Math.max(...lineLeadsForHeader) : 0;
+    let headerLeadDays = body.leadTimeDays ?? body.lead_time_days;
+    headerLeadDays = headerLeadDays != null && headerLeadDays !== '' ? parseInt(String(headerLeadDays), 10) : null;
+    if (headerLeadDays == null || Number.isNaN(headerLeadDays) || headerLeadDays <= 0) {
+      headerLeadDays = maxLineLeadHeader > 0 ? maxLineLeadHeader : null;
+    }
 
     const t = await db.transaction();
     let row;
@@ -368,7 +432,7 @@ async function createProcurementQuotation(req, res) {
       attachment_ref: body.attachmentRef ?? body.attachment_ref ?? null,
       attachment_status: body.attachmentStatus ?? body.attachment_status ?? 'pending',
       items,
-      lead_time_days: body.leadTimeDays ?? body.lead_time_days ?? null,
+      lead_time_days: headerLeadDays,
       payment_terms: body.paymentTerms ?? body.payment_terms ?? null,
       valid_till: body.validTill ?? body.valid_till ?? null,
       total_value: body.totalValue ?? body.total_value ?? totalValue,

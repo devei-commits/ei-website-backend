@@ -106,6 +106,8 @@ Product.init(
     form: { type: DataTypes.STRING(100), allowNull: true },
     fill_size: { type: DataTypes.STRING(50), allowNull: true },
     batch_size_kg: { type: DataTypes.INTEGER, allowNull: true },
+    /** Manufacturing / shipment lead (days) for this FG; multi-line orders use max(line leads) for expected delivery. */
+    lead_time_days: { type: DataTypes.INTEGER, allowNull: true },
     shelf_life_months: { type: DataTypes.INTEGER, allowNull: true },
     version: { type: DataTypes.STRING(50), allowNull: true },
     license_cml: { type: DataTypes.STRING(100), allowNull: true },

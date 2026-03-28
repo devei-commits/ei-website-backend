@@ -52,6 +52,45 @@ function toDateOnly(val) {
   return null;
 }
 
+const DEFAULT_SO_LINE_LEAD_DAYS = 45;
+
+function addDaysToDateOnlyStr(dateOnlyStr, days) {
+  const base = toDateOnly(dateOnlyStr);
+  if (!base) return null;
+  const d = new Date(`${base}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setUTCDate(d.getUTCDate() + Math.max(0, Math.floor(Number(days) || 0)));
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Expected delivery for a multi-product SO: order_date + max(product.lead_time_days), default 45 when unset.
+ */
+async function maxLeadDaysFromSoItems(items) {
+  const list = Array.isArray(items) ? items : [];
+  const ids = [
+    ...new Set(
+      list
+        .map((i) => Number(i.product_id ?? i.productId))
+        .filter((id) => Number.isFinite(id) && id > 0)
+    ),
+  ];
+  if (ids.length === 0) return DEFAULT_SO_LINE_LEAD_DAYS;
+  const { Product } = require('../products/models');
+  const prods = await Product.findAll({
+    where: { product_id: ids },
+    attributes: ['product_id', 'lead_time_days'],
+  });
+  let maxLead = 0;
+  for (const p of prods) {
+    const plain = p.get ? p.get({ plain: true }) : p;
+    const n = plain.lead_time_days != null ? Number(plain.lead_time_days) : null;
+    const d = n != null && Number.isFinite(n) && n >= 0 ? Math.floor(n) : DEFAULT_SO_LINE_LEAD_DAYS;
+    if (d > maxLead) maxLead = d;
+  }
+  return maxLead > 0 ? maxLead : DEFAULT_SO_LINE_LEAD_DAYS;
+}
+
 function bodyToPayload(body) {
   const formData = body.formData && typeof body.formData === 'object' ? body.formData : {};
   const items = Array.isArray(body.items) ? body.items : [];
@@ -97,6 +136,10 @@ async function createSalesOrder(req, res) {
     if (!payload.order_id || !String(payload.order_id).trim()) return res.status(400).json({ error: 'orderId is required' });
     if (!payload.created_by && req.user) {
       payload.created_by = req.user.fullName || req.user.email;
+    }
+    if (!payload.expected_shipment_date && payload.order_date && Array.isArray(payload.items) && payload.items.length > 0) {
+      const maxLead = await maxLeadDaysFromSoItems(payload.items);
+      payload.expected_shipment_date = addDaysToDateOnlyStr(payload.order_date, maxLead);
     }
     const row = await SalesOrder.create(payload);
 

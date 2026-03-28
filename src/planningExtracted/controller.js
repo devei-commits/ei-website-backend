@@ -37,6 +37,13 @@ function addDaysDateOnly(baseDate, days) {
   return d.toISOString().slice(0, 10);
 }
 
+/** When SO has no expected_shipment_date yet, prefer FG master lead; else SO form hints; else 45/90. */
+function inferFallbackLeadDaysForPlanningRow(prod, so) {
+  const n = prod && prod.lead_time_days != null ? Number(prod.lead_time_days) : null;
+  if (n != null && Number.isFinite(n) && n >= 0) return Math.floor(n);
+  return inferDefaultLeadTimeDays(so);
+}
+
 function inferDefaultLeadTimeDays(so) {
   const formData = so && typeof so.form_data === 'object' && so.form_data !== null ? so.form_data : {};
   const hints = [
@@ -162,7 +169,7 @@ function formatRow(row) {
   const d = row.get ? row.get({ plain: true }) : row;
   const so = d.salesOrder || {};
   const prod = d.product || {};
-  const fallbackLeadDays = inferDefaultLeadTimeDays(so);
+  const fallbackLeadDays = inferFallbackLeadDaysForPlanningRow(prod, so);
   const dueDateResolved =
     d.due_date ||
     so.expected_shipment_date ||
@@ -512,7 +519,7 @@ async function listPlanningExtracted(req, res) {
       const rows = await PlanningExtracted.findAll({
         include: [
           { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'order_date', 'expected_shipment_date', 'status', 'form_data'], required: false },
-          { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code'], required: false },
+          { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'], required: false },
         ],
         order: [['due_date', 'ASC'], ['id', 'ASC']],
         limit,
@@ -524,7 +531,7 @@ async function listPlanningExtracted(req, res) {
     const rows = await PlanningExtracted.findAll({
       include: [
         { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'order_date', 'expected_shipment_date', 'status', 'form_data'], required: false },
-        { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code'], required: false },
+        { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'], required: false },
       ],
       order: [['due_date', 'ASC'], ['id', 'ASC']],
     });
@@ -542,7 +549,7 @@ async function getPlanningExtractedById(req, res) {
     const row = await PlanningExtracted.findByPk(id, {
       include: [
         { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'order_date', 'expected_shipment_date', 'status', 'form_data'] },
-        { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code'] },
+        { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'] },
       ],
     });
     if (!row) return res.status(404).json({ error: 'Planning extracted not found' });
@@ -615,7 +622,7 @@ async function updatePlanningExtracted(req, res) {
     const updated = await PlanningExtracted.findByPk(id, {
       include: [
         { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'order_date', 'expected_shipment_date', 'status', 'form_data'] },
-        { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code'] },
+        { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'] },
       ],
     });
     res.json(formatRow(updated));
@@ -757,7 +764,7 @@ async function listAllBatches(req, res) {
         attributes: ['id', 'sales_order_id', 'product_id', 'order_qty_display', 'total_kg_display', 'due_date', 'bom_status', 'sent_batch_indices', 'custom_batches'],
         include: [
           { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name'] },
-          { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code'] },
+          { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'] },
         ],
       }],
       order: [[{ model: PlanningExtracted, as: 'planningExtracted' }, 'due_date', 'ASC'], ['sequence', 'ASC']],
@@ -1120,7 +1127,7 @@ async function getItemsInvolved(req, res) {
         as: 'planningExtracted',
         required: true,
         attributes: ['id', 'order_qty_display', 'total_kg_display', 'product_id', 'sent_batch_indices', 'packaging_materials'],
-        include: [{ model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code'] }],
+        include: [{ model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'] }],
       }],
       order: [['planning_extracted_id', 'ASC'], ['sequence', 'ASC']],
     });
@@ -1292,7 +1299,7 @@ async function getItemsInvolved(req, res) {
     if (rmAgg.size === 0 && pmAgg.size === 0) {
       const confirmed = await PlanningExtracted.findAll({
         where: { bom_confirmed_at: { [Op.ne]: null } },
-        include: [{ model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code'] }],
+        include: [{ model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'] }],
         order: [['id', 'ASC']],
       });
       const fallbackRmCodes = new Set();
@@ -1591,7 +1598,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await PlanningExtracted.findByPk(id, {
-      include: [{ model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code'] }],
+      include: [{ model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'] }],
     });
     if (!row) return res.status(404).json({ error: 'Planning extracted not found' });
 

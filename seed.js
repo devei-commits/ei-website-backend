@@ -191,6 +191,16 @@ async function seed() {
       { raw: true }
     ).catch(() => { });
 
+    await db.query(
+      `ALTER TABLE raw_materials ADD COLUMN IF NOT EXISTS lead_time_days INTEGER`,
+      { raw: true }
+    ).catch(() => { });
+
+    await db.query(
+      `ALTER TABLE products ADD COLUMN IF NOT EXISTS lead_time_days INTEGER`,
+      { raw: true }
+    ).catch(() => { });
+
     console.log('Seeding module definitions (if empty)...');
     await ModuleDefinition.findOrCreate({
       where: { name: 'default' },
@@ -567,6 +577,7 @@ async function seed() {
         form: 'Lotion/Cream',
         fill_size: '50g',
         batch_size_kg: 500,
+        lead_time_days: 50,
         shelf_life_months: 24,
         version: 'v2.0',
         license_cml: 'CML-TG-2023-0042',
@@ -603,6 +614,7 @@ async function seed() {
         form: 'Gel',
         fill_size: '150ml',
         batch_size_kg: 500,
+        lead_time_days: 40,
         shelf_life_months: 24,
         version: 'v2.0',
         license_cml: 'CML-TG-2023-0041',
@@ -831,6 +843,27 @@ async function seed() {
       { code: 'EI-RM-SILI-002', name: 'Amodimethicone', inci: 'Amodimethicone', category: 'SILICONE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 920, gst: 18, shelf: '24M', specific_gravity: 0.98, status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
       { code: 'EI-RM-ACT-011', name: 'Hydrolyzed Keratin', inci: 'Hydrolyzed Keratin', category: 'ACTIVE', rm_type: 'Liquid', uom: 'KG', price_per_kg: 1200, gst: 12, shelf: '18M', specific_gravity: 1.0, status: 'Active', products: ['PR-002'], group: null, created_at: now, updated_at: now },
     ]);
+
+    const rmLeadByCategory = [
+      ['BASE', 7],
+      ['UV FILTER', 21],
+      ['ACTIVE', 14],
+      ['BOTANICAL', 16],
+      ['EMULSIFIER', 12],
+      ['EXCIPIENT', 10],
+      ['FRAGRANCE', 18],
+      ['POLYMER', 14],
+      ['PRESERVATIVE', 14],
+      ['SURFACTANT', 14],
+      ['HUMECTANT', 12],
+      ['SOLVENT', 14],
+      ['SILICONE', 18],
+      ['CONDITIONER', 14],
+      ['OIL', 12],
+    ];
+    for (const [cat, days] of rmLeadByCategory) {
+      await RawMaterial.update({ lead_time_days: days, updated_at: now }, { where: { category: cat } });
+    }
 
     // Bulk quality specs (form_data) for BMR Bulk QC reference panel + PM master — keys match production.controller BULK_QUALITY_FORM_KEYS
     const seedRmBulkForm = [
@@ -1268,10 +1301,10 @@ async function seed() {
     console.log('Seeding Vendor / Client master (before Items List)...');
     await VendorClient.destroy({ where: {} });
     const vendorClientSeed = [
-      { entity_code: 'EI-VEN-00001', type: 'vendor', zoho_id: null, name: 'Chemspec India', email: 'orders@chemspecindia.com', phone: '+91-9876543210', location: 'Mumbai', country: 'India', city: 'Mumbai', category: 'RAW MATERIAL', status: 'active', payment_terms: 'NET 30', notes: '', rating: 4, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
-      { entity_code: 'EI-VEN-00002', type: 'vendor', zoho_id: '5012345678901002', name: 'Sigma Chemicals Pvt Ltd', email: 'sales@sigmachem.in', phone: '+91-9876543211', location: 'Pune', country: 'India', city: 'Pune', category: 'RAW MATERIAL', status: 'active', payment_terms: 'NET 45', notes: '', rating: 4, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
-      { entity_code: 'EI-VEN-00003', type: 'vendor', zoho_id: '5012345678901003', name: 'UV Filters & Actives Co', email: 'procurement@uvfilters.co.in', phone: '+91-9876543212', location: 'Hyderabad', country: 'India', city: 'Hyderabad', category: 'UV FILTER / ACTIVE', status: 'active', payment_terms: 'NET 30', notes: '', rating: 5, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
-      { entity_code: 'EI-VEN-00004', type: 'vendor', zoho_id: '5012345678901004', name: 'Packaging Solutions India', email: 'orders@packsol.in', phone: '+91-9876543213', location: 'Chennai', country: 'India', city: 'Chennai', category: 'PACKAGING', status: 'active', payment_terms: 'NET 30', notes: '', rating: 4, moq: '—', lead_time: '—', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00001', type: 'vendor', zoho_id: null, name: 'Chemspec India', email: 'orders@chemspecindia.com', phone: '+91-9876543210', location: 'Mumbai', country: 'India', city: 'Mumbai', category: 'RAW MATERIAL', status: 'active', payment_terms: 'Adv 0% · Pre 100% · Post 0% · Net 30d', notes: '', rating: 4, moq: '—', lead_time: '14 days', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00002', type: 'vendor', zoho_id: '5012345678901002', name: 'Sigma Chemicals Pvt Ltd', email: 'sales@sigmachem.in', phone: '+91-9876543211', location: 'Pune', country: 'India', city: 'Pune', category: 'RAW MATERIAL', status: 'active', payment_terms: 'Adv 0% · Pre 100% · Post 0% · Net 45d', notes: '', rating: 4, moq: '—', lead_time: '18 days', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00003', type: 'vendor', zoho_id: '5012345678901003', name: 'UV Filters & Actives Co', email: 'procurement@uvfilters.co.in', phone: '+91-9876543212', location: 'Hyderabad', country: 'India', city: 'Hyderabad', category: 'UV FILTER / ACTIVE', status: 'active', payment_terms: 'Adv 0% · Pre 100% · Post 0% · Net 30d', notes: '', rating: 5, moq: '—', lead_time: '21 days', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00004', type: 'vendor', zoho_id: '5012345678901004', name: 'Packaging Solutions India', email: 'orders@packsol.in', phone: '+91-9876543213', location: 'Chennai', country: 'India', city: 'Chennai', category: 'PACKAGING', status: 'active', payment_terms: 'Adv 30% · Pre 70% · Post 0%', notes: '', rating: 4, moq: '—', lead_time: '21–28 days', data: {}, created_at: now, updated_at: now },
       { entity_code: 'EI-CLI-00001', type: 'client', zoho_id: null, name: 'Luminos Skincare', email: 'bd@luminos.in', phone: '+91-9812345001', location: 'Maharashtra', country: 'India', city: 'Mumbai', category: 'CDMO', status: 'active', payment_terms: 'NET 45', notes: '', rating: 5, moq: '—', lead_time: '—', data: { shipping_address: 'Luminos Skincare, 456 Andheri East, Mumbai, Maharashtra 400069, India' }, priority: 'high', segment: 'Skin Care', since_year: 2022, revenue_value: 4200000, avatar_color: 'orange', account_manager_id: amPriya.userid, contacts: [{ name: 'Rajeev Sharma', role: 'BD Head' }], created_at: now, updated_at: now },
     ];
     await VendorClient.bulkCreate(vendorClientSeed);
@@ -1444,12 +1477,30 @@ async function seed() {
     });
     const getIl = (code) => ilByCode.get(code);
     const validTill = '2026-03-31';
-    /** Matches Items List staged payment_terms JSON (checkout / credit_days). */
-    const seedItemListPaymentTerms = JSON.stringify({
+    /** Items List staged payment_terms JSON (advance / pre-shipment / post-shipment / credit_days). */
+    const seedItemListTermsNet30 = JSON.stringify({
       advance_pct: 0,
       pre_shipment_pct: 100,
       post_shipment_pct: 0,
       credit_days: 30,
+    });
+    const seedItemListTermsNet45 = JSON.stringify({
+      advance_pct: 0,
+      pre_shipment_pct: 100,
+      post_shipment_pct: 0,
+      credit_days: 45,
+    });
+    const seedItemListTermsAdvBeforeDispatch = JSON.stringify({
+      advance_pct: 30,
+      pre_shipment_pct: 70,
+      post_shipment_pct: 0,
+      credit_days: 0,
+    });
+    const seedItemListTermsAdvOnDelivery = JSON.stringify({
+      advance_pct: 40,
+      pre_shipment_pct: 0,
+      post_shipment_pct: 60,
+      credit_days: 0,
     });
     const rmRows = await RawMaterial.findAll({ attributes: ['id', 'price_per_kg'] });
     const pmRows = await PackMaterial.findAll({ attributes: ['id', 'price_per_pc'] });
@@ -1467,9 +1518,10 @@ async function seed() {
           vendor_id: v1,
           default_rate: defaultRate,
           default_moq: 1,
+          lead_time_days: plain.raw_material_id ? 14 : 21,
           currency: 'INR',
           status: 'active',
-          payment_terms: seedItemListPaymentTerms,
+          payment_terms: seedItemListTermsNet30,
           created_at: now,
           updated_at: now,
         });
@@ -1493,9 +1545,10 @@ async function seed() {
             vendor_id: v2,
             default_rate: 1180,
             default_moq: 25,
+            lead_time_days: 21,
             currency: 'INR',
             status: 'active',
-            payment_terms: seedItemListPaymentTerms,
+            payment_terms: seedItemListTermsNet45,
             created_at: now,
             updated_at: now,
           });
@@ -1513,9 +1566,10 @@ async function seed() {
             vendor_id: v4,
             default_rate: 4.2,
             default_moq: 5000,
+            lead_time_days: 21,
             currency: 'INR',
             status: 'active',
-            payment_terms: seedItemListPaymentTerms,
+            payment_terms: seedItemListTermsAdvBeforeDispatch,
             created_at: now,
             updated_at: now,
           });
@@ -1527,9 +1581,10 @@ async function seed() {
             vendor_id: v4,
             default_rate: 5.5,
             default_moq: 2500,
+            lead_time_days: 21,
             currency: 'INR',
             status: 'active',
-            payment_terms: seedItemListPaymentTerms,
+            payment_terms: seedItemListTermsAdvOnDelivery,
             created_at: now,
             updated_at: now,
           });

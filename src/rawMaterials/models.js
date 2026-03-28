@@ -26,6 +26,8 @@ RawMaterial.init(
     shelf: { type: DataTypes.STRING(20), allowNull: true },
     /** Specific gravity vs water for vessel volume: volume_L = quantity_kg / specific_gravity. Default 1 if null. */
     specific_gravity: { type: DataTypes.DECIMAL(5, 3), allowNull: true },
+    /** Typical procurement lead (days) for this RM; Items List vendor rates override for quoted pricing. */
+    lead_time_days: { type: DataTypes.INTEGER, allowNull: true },
     status: { type: DataTypes.STRING(50), allowNull: true },
     products: { type: DataTypes.JSON, allowNull: true }, // array of product codes e.g. ['PR-001','PR-002']
     group: { type: DataTypes.STRING(100), allowNull: true },

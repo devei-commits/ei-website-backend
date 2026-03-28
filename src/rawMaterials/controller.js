@@ -31,6 +31,7 @@ function formatRawMaterial(row) {
     price_per_kg: d.price_per_kg != null ? Number(d.price_per_kg) : null,
     gst: d.gst != null ? Number(d.gst) : null,
     shelf: d.shelf,
+    lead_time_days: d.lead_time_days != null ? Number(d.lead_time_days) : null,
     status: d.status,
     products: Array.isArray(d.products) ? d.products : [],
     group: d.group,
@@ -184,8 +185,25 @@ function payloadToListFields(b, omitGroupIfUnset = false) {
     tax_pref: fd.rmTaxPreference ?? fd.tax_pref ?? fd.taxPref ?? b.tax_pref ?? null,
     sales_purchase_account: fd.accountingCategory ?? fd.sales_purchase_account ?? fd.salesPurchaseAccount ?? b.sales_purchase_account ?? null,
   };
+  const leadSrc = fd.leadTimeDays ?? fd.lead_time_days ?? b.lead_time_days;
+  const includeLead =
+    !omitGroupIfUnset ||
+    fd.leadTimeDays !== undefined ||
+    fd.lead_time_days !== undefined ||
+    b.lead_time_days !== undefined;
+  const leadPatch = includeLead
+    ? {
+        lead_time_days:
+          leadSrc == null || leadSrc === ''
+            ? null
+            : (() => {
+                const n = parseInt(String(leadSrc), 10);
+                return Number.isFinite(n) && n >= 0 ? n : null;
+              })(),
+      }
+    : {};
   const form_data = b.form_data !== undefined ? b.form_data : (typeof fd.rmSku !== 'undefined' || typeof fd.inciName !== 'undefined' ? fd : null);
-  return { ...listFields, form_data };
+  return { ...listFields, ...leadPatch, form_data };
 }
 
 /**
