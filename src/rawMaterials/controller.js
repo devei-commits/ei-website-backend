@@ -229,6 +229,26 @@ async function createRawMaterial(req, res) {
       return res.status(409).json({ error: 'A raw material with this code or SKU already exists' });
     }
     const row = await RawMaterial.create(fields);
+
+    // Create a zero-stock warehouse inventory row so the RM appears in the warehouse immediately.
+    await WarehouseInventory.findOrCreate({
+      where: { item_type: 'RM', raw_material_id: row.id },
+      defaults: {
+        item_type: 'RM',
+        raw_material_id: row.id,
+        wh_stock: 0,
+        wh_unit: row.uom || 'KG',
+        ml1_stock: 0,
+        ml2_stock: 0,
+        stock_in_hand: 0,
+        reserved: 0,
+        in_transit: 0,
+        reorder_pt: 0,
+        avg_mo: 0,
+        qc_status: 'Out of Stock',
+      },
+    });
+
     const zoho = await syncZohoItemForNewRawMaterial(row, b);
     if (zoho.synced && zoho.itemId) {
       await row.update({ zoho_id: zoho.itemId });

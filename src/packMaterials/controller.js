@@ -192,6 +192,26 @@ async function createPackMaterial(req, res) {
       return res.status(409).json({ error: 'A pack material with this code or SKU already exists' });
     }
     const row = await PackMaterial.create(fields);
+
+    // Create a zero-stock warehouse inventory row so the PM appears in the warehouse immediately.
+    await WarehouseInventory.findOrCreate({
+      where: { item_type: 'PM', pack_material_id: row.id },
+      defaults: {
+        item_type: 'PM',
+        pack_material_id: row.id,
+        wh_stock: 0,
+        wh_unit: row.unit || 'PCS',
+        ml1_stock: 0,
+        ml2_stock: 0,
+        stock_in_hand: 0,
+        reserved: 0,
+        in_transit: 0,
+        reorder_pt: 0,
+        avg_mo: 0,
+        qc_status: 'Out of Stock',
+      },
+    });
+
     const zoho = await syncZohoItemForNewPackMaterial(row, b);
     if (zoho.synced && zoho.itemId) {
       await row.update({ zoho_id: zoho.itemId });

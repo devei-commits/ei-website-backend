@@ -30,6 +30,7 @@ const SalesOrder = require('./src/salesOrders/models');
 const PurchaseOrder = require('./src/purchaseOrders/models');
 const PlanningExtracted = require('./src/planningExtracted/models');
 const ProcurementRequest = require('./src/procurementRequests/models');
+const ProcurementQuotation = require('./src/procurementQuotations/models');
 const PoTracking = require('./src/poTracking/models');
 const UniversalSwapHistory = require('./src/universalSwap/models');
 const ItemGroup = require('./src/itemGroups/models');
@@ -117,94 +118,6 @@ async function seed() {
     await dropEntireDatabase();
     console.log('Syncing database...');
     await db.sync({ alter: true });
-
-    // Postgres ENUM types don't automatically update with Sequelize when values change.
-    // Ensure 'pending' exists in orders.fulfillment_stage enum.
-    await db.query(
-      `DO $
-       BEGIN
-         ALTER TYPE "enum_orders_fulfillment_stage" ADD VALUE IF NOT EXISTS 'pending';
-       EXCEPTION
-         WHEN undefined_object THEN
-           -- enum type may not exist yet; it will be created by db.sync
-           NULL;
-       END
-       $;`,
-      { raw: true }
-    ).catch(() => { });
-
-    // Ensure doctor_id in appointments is string-compatible (for legacy codes like DOC-SAR-101)
-    await db.query(
-      `ALTER TABLE appointments
-       ALTER COLUMN doctor_id TYPE VARCHAR(255)
-       USING doctor_id::text`,
-      { raw: true }
-    ).catch(() => { });
-
-    // Ensure production_batches.planning_batch_id exists (some older DBs were created before this column was added)
-    await db.query(
-      `ALTER TABLE production_batches
-       ADD COLUMN IF NOT EXISTS planning_batch_id INTEGER`,
-      { raw: true }
-    ).catch(() => { });
-    await db.query(
-      `ALTER TABLE production_batches
-       ADD COLUMN IF NOT EXISTS mu_dispensing_bundle_id VARCHAR(80)`,
-      { raw: true }
-    ).catch(() => { });
-    await db.query(
-      `ALTER TABLE production_batches
-       ADD COLUMN IF NOT EXISTS mu_dispensing_bundles JSONB`,
-      { raw: true }
-    ).catch(() => { });
-    await db.query(
-      `ALTER TABLE warehouse_inventory_location_history
-       ADD COLUMN IF NOT EXISTS dispensing_bundle_id VARCHAR(80)`,
-      { raw: true }
-    ).catch(() => { });
-
-    // Ensure website orders have pipeline tracking columns
-    await db.query(
-      `ALTER TABLE orders
-       ADD COLUMN IF NOT EXISTS so_no VARCHAR(64)`,
-      { raw: true }
-    ).catch(() => { });
-    await db.query(
-      `ALTER TABLE orders
-       ADD COLUMN IF NOT EXISTS fulfillment_stage VARCHAR(40) DEFAULT 'pending'`,
-      { raw: true }
-    ).catch(() => { });
-
-    // Ensure permissions.updated_at exists (model expects it for audit)
-    await db.query(
-      `ALTER TABLE permissions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NULL`,
-      { raw: true }
-    ).catch(() => { });
-
-    // Zoho Books: PO / bill idempotency (also on PurchaseOrder model; guards older DBs without full sync)
-    await db.query(
-      `ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS zoho_purchase_order_id VARCHAR(100)`,
-      { raw: true }
-    ).catch(() => { });
-    await db.query(
-      `ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS zoho_bill_id VARCHAR(100)`,
-      { raw: true }
-    ).catch(() => { });
-
-    await db.query(
-      `ALTER TABLE raw_materials ADD COLUMN IF NOT EXISTS lead_time_days INTEGER`,
-      { raw: true }
-    ).catch(() => { });
-
-    await db.query(
-      `ALTER TABLE products ADD COLUMN IF NOT EXISTS lead_time_days INTEGER`,
-      { raw: true }
-    ).catch(() => { });
-
-    await db.query(
-      `ALTER TABLE material_request_notes ADD COLUMN IF NOT EXISTS line_transfer_status JSONB`,
-      { raw: true }
-    ).catch(() => { });
 
     console.log('Seeding module definitions (if empty)...');
     await ModuleDefinition.findOrCreate({

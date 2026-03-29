@@ -10,6 +10,7 @@ const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const BOM = require('../bom/models');
 const { ReservedBatchItem } = require('../fulfillment/models');
+const PurchaseOrder = require('../purchaseOrders/models');
 
 /** Whether `sent_batch_indices` includes this 0-based batch index (coerces string/number from JSON). */
 function isBatchIndexSent(sentRaw, batchIndex0) {
@@ -1393,11 +1394,28 @@ async function getItemsInvolved(req, res) {
     const whWhere = [];
     if (allRmIds.length) whWhere.push({ item_type: 'RM', raw_material_id: { [Op.in]: allRmIds } });
     if (allPmIds.length) whWhere.push({ item_type: 'PM', pack_material_id: { [Op.in]: allPmIds } });
-    const [whRows, rmsList, pmsList] = await Promise.all([
+    const [whRows, rmsList, pmsList, allPos] = await Promise.all([
       whWhere.length ? WarehouseInventory.findAll({ where: { [Op.or]: whWhere } }) : Promise.resolve([]),
       allRmIds.length ? RawMaterial.findAll({ where: { id: allRmIds }, attributes: ['id', 'code', 'name'] }) : Promise.resolve([]),
       allPmIds.length ? PackMaterial.findAll({ where: { id: allPmIds }, attributes: ['id', 'code', 'description'] }) : Promise.resolve([]),
+      PurchaseOrder.findAll({ attributes: ['id', 'items'] }),
     ]);
+
+    // Build po_qty map keyed by rm-{id} / pm-{id} — same logic as warehouse inventory list.
+    const poQtyMap = new Map();
+    for (const po of allPos) {
+      const items = Array.isArray(po.items) ? po.items : [];
+      for (const line of items) {
+        const qty = line.quantity ?? line.qty ?? line.poQty;
+        const n = qty != null ? Number(qty) : 0;
+        if (!(n > 0)) continue;
+        let key = null;
+        if (line.raw_material_id != null) key = `rm-${line.raw_material_id}`;
+        else if (line.pack_material_id != null) key = `pm-${line.pack_material_id}`;
+        if (!key) continue;
+        poQtyMap.set(key, (poQtyMap.get(key) || 0) + n);
+      }
+    }
     const toNum = (v) => (v != null && v !== '' ? Number(v) : 0);
     const sihByRm = new Map();
     const sihByPm = new Map();
@@ -1471,7 +1489,7 @@ async function getItemsInvolved(req, res) {
         await ReservedBatchItem.sum('quantity_reserved', {
           where: {
             raw_material_id: id,
-            production_batch_id: { [Op.ne]: null },
+            planning_extracted_id: { [Op.ne]: null },
           },
         })
       ) || 0;
@@ -1496,6 +1514,7 @@ async function getItemsInvolved(req, res) {
         expiryDate: expiryByRm.get(id) ?? null,
         reserved,
         plannedQty,
+        poQty: poQtyMap.get(`rm-${id}`) ?? 0,
         inTransit: inTransitByRm.get(id) ?? 0,
         reorderPt: reorderPtByRm.get(id) ?? 0,
         avgMo: avgMoByRm.get(id) ?? 0,
@@ -1511,7 +1530,7 @@ async function getItemsInvolved(req, res) {
         await ReservedBatchItem.sum('quantity_reserved', {
           where: {
             pack_material_id: id,
-            production_batch_id: { [Op.ne]: null },
+            planning_extracted_id: { [Op.ne]: null },
           },
         })
       ) || 0;
@@ -1536,6 +1555,7 @@ async function getItemsInvolved(req, res) {
         expiryDate: expiryByPm.get(id) ?? null,
         reserved,
         plannedQty,
+        poQty: poQtyMap.get(`pm-${id}`) ?? 0,
         inTransit: inTransitByPm.get(id) ?? 0,
         reorderPt: reorderPtByPm.get(id) ?? 0,
         avgMo: avgMoByPm.get(id) ?? 0,

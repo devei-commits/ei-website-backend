@@ -124,26 +124,7 @@ app.use((req, res) => {
 if (process.env.NODE_ENV !== 'test') {
   db.authenticate()
     .then(async () => {
-      try {
-        await db.query('ALTER TABLE item_list_vendor_rates ALTER COLUMN payment_terms TYPE VARCHAR(512)');
-      } catch {
-        try {
-          await db.query('ALTER TABLE item_list_vendor_rates MODIFY COLUMN payment_terms VARCHAR(512) NULL');
-        } catch {
-          /* column already wide enough or dialect differs */
-        }
-      }
-      try {
-        await db.query(
-          'ALTER TABLE material_request_notes ADD COLUMN IF NOT EXISTS line_transfer_status JSONB DEFAULT \'{}\'::jsonb'
-        );
-      } catch {
-        try {
-          await db.query('ALTER TABLE material_request_notes ADD COLUMN line_transfer_status JSON NULL');
-        } catch {
-          /* column exists or dialect differs */
-        }
-      }
+      await db.sync({ alter: true });
       app.listen(port, () => {
         console.log(`Server is running on port ${port}`);
       });
