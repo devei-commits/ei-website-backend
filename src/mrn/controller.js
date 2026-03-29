@@ -418,14 +418,21 @@ async function update(req, res) {
     if (body.mu_receive_rack !== undefined) updates.mu_receive_rack = body.mu_receive_rack;
 
     const plainBefore = row.get ? row.get({ plain: true }) : row;
+
+    const existingPicker = String(plainBefore.assigned_picker || '').trim();
+    if (existingPicker && updates.assigned_picker !== undefined) {
+      const incoming = String(updates.assigned_picker || '').trim();
+      if (incoming !== existingPicker) {
+        return res.status(400).json({ error: 'Picker is already assigned and cannot be changed.' });
+      }
+      delete updates.assigned_picker;
+    }
     const previousStatus = normalizeMrnStatus(plainBefore.status || '');
     const isOutboundMtr =
       plainBefore.source === 'MTR' &&
       !plainBefore.is_inbound_from_mu;
 
-    if (isOutboundMtr && updates.assigned_picker !== undefined) {
-      delete updates.assigned_picker;
-    }
+    // Keep assigned_picker / transfer_team for outbound MTR — warehouse assigns picker before split sends; must survive refresh.
 
     const lineItemsMerged = updates.line_items !== undefined ? updates.line_items : plainBefore.line_items;
 
@@ -618,6 +625,8 @@ function mtrRowHasIncompleteLineForKind(plain, kind) {
   const lis = plain.line_items || [];
   if (kind === 'rm' && !lineItemsIndicateRm(lis)) return false;
   if (kind === 'pm' && !lineItemsIndicatePm(lis)) return false;
+  // Header Completed = whole MTR done; do not let stale per-line maps block Production rm_connected.
+  if (isClosedOutboundMtrStatus(plain.status)) return false;
   const map = normalizeLineTransferMap(lis, plain.line_transfer_status, plain.status);
   for (let i = 0; i < lis.length; i++) {
     const li = lis[i];
@@ -663,12 +672,13 @@ function aggregateMovedByCodeFromMrnPlain(plain, kind) {
   const map = new Map();
   const lineItems = Array.isArray(plain?.line_items) ? plain.line_items : [];
   const lineMap = normalizeLineTransferMap(lineItems, plain.line_transfer_status, plain.status);
+  const headerCompleted = isClosedOutboundMtrStatus(plain?.status);
   for (let i = 0; i < lineItems.length; i++) {
     const li = lineItems[i];
     const isKind = kind === 'rm' ? lineItemsIndicateRm([li]) : lineItemsIndicatePm([li]);
     if (!isKind) continue;
     const id = lineItemId(li, i);
-    if (lineMap[id] !== PHASE.COMPLETED) continue;
+    if (!headerCompleted && lineMap[id] !== PHASE.COMPLETED) continue;
     const key =
       normalizeItemCodeKey(li?.itemCode) ||
       normalizeItemCodeKey(li?.code) ||

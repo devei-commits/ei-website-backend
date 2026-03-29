@@ -128,6 +128,34 @@ function extractMasterCodeFromText(text) {
   return '';
 }
 
+/** purchase_orders.items rows use itemCode/itemName; older shapes use code/name. */
+function normalizePurchaseOrderLineItem(poItem) {
+  const p = poItem && typeof poItem === 'object' ? poItem : {};
+  const code = String(p.code ?? p.itemCode ?? p.item_code ?? '').trim();
+  const name = String(p.name ?? p.itemName ?? p.item_name ?? '').trim();
+  const qty = Number(p.quantity_requested ?? p.quantity ?? p.qty ?? 0) || 0;
+  const unitPrice = Number(p.planned_unit_price ?? p.rate ?? p.price ?? 0) || 0;
+  return {
+    raw_material_id: p.raw_material_id ?? null,
+    pack_material_id: p.pack_material_id ?? null,
+    product_id: p.product_id ?? null,
+    code,
+    name,
+    qty,
+    unitPrice,
+  };
+}
+
+/**
+ * Prefer EI-code embedded in display text (e.g. "Name (EI-RM-ACT-00012)") over a stale itemCode field
+ * so split-PO / mis-keyed lines still post to the correct RM/PM bucket.
+ */
+function resolveLineItemMasterCode(line) {
+  const fromText = extractMasterCodeFromText(line?.item ?? line?.item_text ?? '');
+  const fromField = String(line?.itemCode ?? line?.item_code ?? '').trim().toUpperCase();
+  return fromText || fromField;
+}
+
 /**
  * Repair wrong RM/PM links in persisted line_items using itemCode/name.
  * This specifically fixes split-PO GRNs where index-based mapping may attach
@@ -144,14 +172,12 @@ async function repairLineItemsMasterLinks(rows) {
   const codeSet = new Set();
   const nameSet = new Set();
   allLines.forEach((line) => {
-    const code = String(line.itemCode ?? line.item_code ?? '').trim().toUpperCase();
-    const extracted = extractMasterCodeFromText(line.item ?? line.item_text ?? '');
+    const code = resolveLineItemMasterCode(line);
     const name = String(line.item ?? '')
       .split('(')[0]
       .trim()
       .toLowerCase();
     if (code) codeSet.add(code);
-    if (extracted) codeSet.add(extracted);
     if (name) nameSet.add(name);
   });
 
@@ -193,7 +219,9 @@ async function repairLineItemsMasterLinks(rows) {
     let changed = false;
     const grnType = String(d.type || '').toUpperCase();
     const next = existing.map((line) => {
-      const code = String(line.itemCode ?? line.item_code ?? '').trim().toUpperCase() || extractMasterCodeFromText(line.item ?? line.item_text ?? '');
+      const code =
+        extractMasterCodeFromText(line.item ?? line.item_text ?? '') ||
+        String(line.itemCode ?? line.item_code ?? '').trim().toUpperCase();
       const name = String(line.item ?? '')
         .split('(')[0]
         .trim()
@@ -354,21 +382,22 @@ async function create(req, res) {
           payload.type = allPm ? 'PM' : 'RM';
           const clientLines = Array.isArray(body.lineItems ?? body.line_items) ? (body.lineItems ?? body.line_items) : [];
           payload.line_items = poItems.map((poItem, idx) => {
+            const norm = normalizePurchaseOrderLineItem(poItem);
             const clientLine = clientLines.find((cl) => {
               const clCode = String(cl.itemCode ?? cl.item_code ?? '').trim();
-              const poCode = String(poItem.code ?? '').trim();
-              return clCode && poCode && clCode === poCode;
+              return clCode && norm.code && clCode === norm.code;
             }) ?? clientLines[idx] ?? {};
             return {
               id: clientLine.id ?? String(Date.now() + idx),
-              raw_material_id: poItem.raw_material_id ?? null,
-              pack_material_id: poItem.pack_material_id ?? null,
-              item: poItem.name ?? clientLine.item ?? '',
-              itemCode: poItem.code ?? clientLine.itemCode ?? '',
-              poQty: Number(poItem.quantity_requested ?? poItem.quantity ?? poItem.qty ?? 0) || 0,
+              raw_material_id: norm.raw_material_id ?? null,
+              pack_material_id: norm.pack_material_id ?? null,
+              product_id: norm.product_id ?? null,
+              item: norm.name || String(clientLine.item ?? '').trim() || '',
+              itemCode: norm.code || String(clientLine.itemCode ?? clientLine.item_code ?? '').trim(),
+              poQty: norm.qty,
               rcvdQty: Number(clientLine.rcvdQty ?? 0) || 0,
               invoiceQty: Number(clientLine.invoiceQty ?? 0) || 0,
-              unitPrice: Number(clientLine.unitPrice ?? poItem.planned_unit_price ?? 0) || 0,
+              unitPrice: Number(clientLine.unitPrice ?? norm.unitPrice ?? 0) || 0,
               diff: 0,
               qcStatus: 'Pending',
               qcBy: '',
@@ -433,10 +462,10 @@ async function applyGrnCompletionToInventory(grnRow) {
   const codes = [
     ...new Set(
       lineItems
-        .flatMap((l) => [
-          (l.itemCode || l.item_code || '').trim(),
-          extractMasterCodeFromText(l.item || l.item_text || ''),
-        ])
+        .flatMap((l) => {
+          const resolved = resolveLineItemMasterCode(l);
+          return resolved ? [resolved] : [];
+        })
         .filter(Boolean)
     ),
   ];
@@ -498,10 +527,7 @@ async function applyGrnCompletionToInventory(grnRow) {
       }
     }
     if (rcvdQty === 0) continue;
-    const codeRaw =
-      (line.itemCode || line.item_code || '').trim() ||
-      extractMasterCodeFromText(line.item || line.item_text || '');
-    const code = String(codeRaw || '').trim().toUpperCase();
+    const code = String(resolveLineItemMasterCode(line) || '').trim().toUpperCase();
 
     console.log('[grn] GRN Complete line resolved (qty -> WH)', {
       grnId: d.id,
@@ -879,12 +905,15 @@ async function update(req, res) {
       console.log('[grn] GRN Complete line_items payload', lineItems.map((li) => ({
         itemCode: li.itemCode ?? li.item_code ?? null,
         item: li.item ?? null,
+        resolvedMasterCode: resolveLineItemMasterCode(li) || null,
         poQty: li.poQty ?? 0,
         rcvdQty: li.rcvdQty ?? li.rcvd_qty ?? null,
         raw_material_id: li.raw_material_id ?? null,
         pack_material_id: li.pack_material_id ?? null,
         product_id: li.product_id ?? null,
       })));
+      await repairLineItemsMasterLinks([refreshed]);
+      await refreshed.reload();
       await applyGrnCompletionToInventory(refreshed);
     }
     try {

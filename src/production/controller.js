@@ -1432,6 +1432,45 @@ async function syncPlanningBatchFromProductionBatchSize(finalPlain) {
   await pb.update(updates);
 }
 
+/** Monotonic BMR lifecycle rank (higher = further along). Used to reject stale-client downgrades. */
+const BMR_STATUS_RANK = {
+  draft: 0,
+  batch_confirmed: 1,
+  rm_reserved: 2,
+  scheduled: 3,
+  rm_connected: 4,
+  dispensing: 5,
+  in_production: 6,
+  qc_failed: 6.5,
+  bulk_qc: 7,
+  cleared: 8,
+};
+
+function bmrStatusRank(status) {
+  if (status == null || status === '') return -1;
+  const k = String(status).trim();
+  return Object.prototype.hasOwnProperty.call(BMR_STATUS_RANK, k) ? BMR_STATUS_RANK[k] : -1;
+}
+
+/**
+ * Schedule / reschedule PATCHes often resend bmr_status from a stale UI (e.g. "scheduled" while DB is
+ * already "cleared"). Never persist an earlier lifecycle stage except QC fail / retry side paths.
+ */
+function reconcileBmrStatusPreventRewind(row, prevPlain) {
+  const prev = prevPlain.bmr_status;
+  const cur = row.get ? row.get('bmr_status') : row.bmr_status;
+  if (cur === undefined || cur === null) return;
+  const pr = bmrStatusRank(prev);
+  const nr = bmrStatusRank(cur);
+  if (pr < 0 || nr < 0) return;
+  if (nr >= pr) return;
+  const qcFailSidePath =
+    (prev === 'bulk_qc' && cur === 'qc_failed') ||
+    (prev === 'qc_failed' && (cur === 'bulk_qc' || cur === 'in_production'));
+  if (qcFailSidePath) return;
+  row.set('bmr_status', prev);
+}
+
 async function updateBatch(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
@@ -1472,6 +1511,7 @@ async function updateBatch(req, res) {
     }
     applyBatchBody(row, req.body);
     await recomputeBatchVolume(row);
+    reconcileBmrStatusPreventRewind(row, prevPlain);
     const nextPreview = row.get ? row.get({ plain: true }) : row;
 
     if (
