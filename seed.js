@@ -1076,8 +1076,8 @@ async function seed() {
         ml1_stock: 100,
         ml2_stock: 50,
         stock_in_hand: 650,
-        reserved: 200,
-        in_transit: 300,
+        reserved: 0,
+        in_transit: 0,
         reorder_pt: 400,
         avg_mo: 350,
         qc_status: 'In Stock',
@@ -1380,135 +1380,7 @@ async function seed() {
       if (pmId) itemsListSeed.push({ type: 'PM', raw_material_id: null, pack_material_id: pmId, status: 'Active', created_at: now, updated_at: now });
     }
     await ItemsList.bulkCreate(itemsListSeed);
-    const vendors = await VendorClient.findAll({ where: { type: 'vendor' }, order: [['id']], attributes: ['id'] });
-    const v1 = vendors[0]?.id;
-    const v2 = vendors[1]?.id;
-    const v3 = vendors[2]?.id;
-    const v4 = vendors[3]?.id;
-    const rmIdToCode = new Map((await RawMaterial.findAll({ attributes: ['id', 'code'] })).map(r => [r.id, r.code]));
-    const pmIdToCode = new Map((await PackMaterial.findAll({ attributes: ['id', 'code'] })).map(p => [p.id, p.code]));
-    const itemsListRows = await ItemsList.findAll({ order: [['id']] });
-    const ilByCode = new Map();
-    itemsListRows.forEach((r) => {
-      const code = r.raw_material_id ? rmIdToCode.get(r.raw_material_id) : (r.pack_material_id ? pmIdToCode.get(r.pack_material_id) : null);
-      if (code) ilByCode.set(code, r);
-    });
-    const getIl = (code) => ilByCode.get(code);
-    const validTill = '2026-03-31';
-    /** Items List staged payment_terms JSON (advance / pre-shipment / post-shipment / credit_days). */
-    const seedItemListTermsNet30 = JSON.stringify({
-      advance_pct: 0,
-      pre_shipment_pct: 100,
-      post_shipment_pct: 0,
-      credit_days: 30,
-    });
-    const seedItemListTermsNet45 = JSON.stringify({
-      advance_pct: 0,
-      pre_shipment_pct: 100,
-      post_shipment_pct: 0,
-      credit_days: 45,
-    });
-    const seedItemListTermsAdvBeforeDispatch = JSON.stringify({
-      advance_pct: 30,
-      pre_shipment_pct: 70,
-      post_shipment_pct: 0,
-      credit_days: 0,
-    });
-    const seedItemListTermsAdvOnDelivery = JSON.stringify({
-      advance_pct: 40,
-      pre_shipment_pct: 0,
-      post_shipment_pct: 60,
-      credit_days: 0,
-    });
-    const rmRows = await RawMaterial.findAll({ attributes: ['id', 'price_per_kg'] });
-    const pmRows = await PackMaterial.findAll({ attributes: ['id', 'price_per_pc'] });
-    const rmIdToPrice = new Map(rmRows.map((r) => [r.id, Number(r.price_per_kg) || 0]));
-    const pmIdToPrice = new Map(pmRows.map((p) => [p.id, Number(p.price_per_pc) || 0]));
-    if (v1) {
-      for (const row of itemsListRows) {
-        const plain = row.get ? row.get({ plain: true }) : row;
-        const defaultRate = plain.raw_material_id
-          ? (rmIdToPrice.get(plain.raw_material_id) ?? 0)
-          : (pmIdToPrice.get(plain.pack_material_id) ?? 0);
-        if (defaultRate <= 0) continue;
-        const rate = await ItemListVendorRate.create({
-          items_list_id: plain.id,
-          vendor_id: v1,
-          default_rate: defaultRate,
-          default_moq: 1,
-          lead_time_days: plain.raw_material_id ? 14 : 21,
-          currency: 'INR',
-          status: 'active',
-          payment_terms: seedItemListTermsNet30,
-          created_at: now,
-          updated_at: now,
-        });
-        await ItemListTier.create({
-          item_list_vendor_rate_id: rate.id,
-          moq_min: 1,
-          moq_max: null,
-          price_per_unit: defaultRate,
-          valid_till: validTill,
-          note: 'List price',
-          created_at: now,
-          updated_at: now,
-        });
-      }
-      // Optional: add second vendor (v2) for a few UV/active items for variety
-      if (v2) {
-        const ilUVF1 = getIl('EI-RM-UVF-001');
-        if (ilUVF1) {
-          const rate2 = await ItemListVendorRate.create({
-            items_list_id: ilUVF1.id,
-            vendor_id: v2,
-            default_rate: 1180,
-            default_moq: 25,
-            lead_time_days: 21,
-            currency: 'INR',
-            status: 'active',
-            payment_terms: seedItemListTermsNet45,
-            created_at: now,
-            updated_at: now,
-          });
-          await ItemListTier.bulkCreate([
-            { item_list_vendor_rate_id: rate2.id, moq_min: 25, moq_max: null, price_per_unit: 1180, valid_till: validTill, note: 'Alternate vendor', created_at: now, updated_at: now },
-            { item_list_vendor_rate_id: rate2.id, moq_min: 50, moq_max: null, price_per_unit: 1150, valid_till: validTill, note: '', created_at: now, updated_at: now },
-          ]);
-        }
-      }
-      if (v4) {
-        const ilTUB = getIl('EI-PM-TUB-001');
-        if (ilTUB) {
-          await ItemListVendorRate.create({
-            items_list_id: ilTUB.id,
-            vendor_id: v4,
-            default_rate: 4.2,
-            default_moq: 5000,
-            lead_time_days: 21,
-            currency: 'INR',
-            status: 'active',
-            payment_terms: seedItemListTermsAdvBeforeDispatch,
-            created_at: now,
-            updated_at: now,
-          });
-        }
-        const ilBTL = getIl('EI-PM-BTL-001');
-        if (ilBTL) {
-          await ItemListVendorRate.create({
-            items_list_id: ilBTL.id,
-            vendor_id: v4,
-            default_rate: 5.5,
-            default_moq: 2500,
-            lead_time_days: 21,
-            currency: 'INR',
-            status: 'active',
-            payment_terms: seedItemListTermsAdvOnDelivery,
-            created_at: now,
-            updated_at: now,
-          });
-        }
-      }
-    }
+    console.log('Items List: RM/PM rows seeded; vendor quotation data (item_list_vendor_rates / item_list_tiers) left empty — add via Vendor Client / Items List UI.');
 
     console.log('Seeding Items Master (linked BOMs, Raw Materials, Pack Materials as arrays)...');
     await ItemMaster.destroy({ where: {} });
@@ -1524,7 +1396,9 @@ async function seed() {
     // No demo Sales Order EI-SO-2026-001: it collides with the first real SO number many UIs generate
     // (sales_orders.order_id is not unique), producing duplicate SO numbers in Planning.
     console.log('Clearing sales_orders / planning_extracted / procurement (no demo SO seeded)...');
+    await ProcurementQuotation.destroy({ where: {} }).catch(() => { });
     await ProcurementRequest.destroy({ where: {} });
+    await PoTracking.destroy({ where: {} }).catch(() => { });
     await PlanningExtracted.destroy({ where: {} });
     await SalesOrder.destroy({ where: {} });
     await PurchaseOrder.destroy({ where: {} });

@@ -251,6 +251,12 @@ async function createPurchaseOrder(req, res) {
       await safeUpdateZohoColumn(row, 'zoho_bill_id', zohoBill.billId);
     }
     await safeReloadForZohoSync(row);
+    try {
+      const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
+      await syncWarehouseInTransitAll();
+    } catch (e) {
+      console.warn('[purchaseOrders] syncWarehouseInTransitAll after create failed:', e && e.message ? e.message : e);
+    }
     const out = formatRow(row);
     attachZohoSyncToResponse(out, zohoPo, zohoBill);
     res.status(201).json(out);
@@ -285,6 +291,12 @@ async function updatePurchaseOrder(req, res) {
       return res.json(out);
     }
     await row.update(payload);
+    try {
+      const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
+      await syncWarehouseInTransitAll();
+    } catch (e) {
+      console.warn('[purchaseOrders] syncWarehouseInTransitAll after update failed:', e && e.message ? e.message : e);
+    }
     const out = await syncZohoAndFormatRow(row, body);
     res.json(out);
   } catch (err) {
@@ -299,6 +311,12 @@ async function deletePurchaseOrder(req, res) {
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const n = await PurchaseOrder.destroy({ where: { id } });
     if (n === 0) return res.status(404).json({ error: 'Purchase order not found' });
+    try {
+      const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
+      await syncWarehouseInTransitAll();
+    } catch (e) {
+      console.warn('[purchaseOrders] syncWarehouseInTransitAll after delete failed:', e && e.message ? e.message : e);
+    }
     res.status(204).send();
   } catch (err) {
     console.error('deletePurchaseOrder error', err);

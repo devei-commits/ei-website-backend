@@ -340,6 +340,12 @@ async function create(req, res) {
       mfg_batch: body.mfgBatch ?? body.mfg_batch,
     };
     const row = await GoodsReceivedNote.create(payload);
+    try {
+      const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
+      await syncWarehouseInTransitAll();
+    } catch (e) {
+      console.warn('[grn] syncWarehouseInTransitAll after create failed:', e && e.message ? e.message : e);
+    }
     const { rmMap, pmMap, productMap } = await getMastersForLineItems([row]);
     const d = row.get ? row.get({ plain: true }) : row;
     const enriched = enrichLineItems(d.line_items || [], rmMap, pmMap, productMap);
@@ -842,6 +848,12 @@ async function update(req, res) {
       })));
       await applyGrnCompletionToInventory(refreshed);
     }
+    try {
+      const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
+      await syncWarehouseInTransitAll();
+    } catch (e) {
+      console.warn('[grn] syncWarehouseInTransitAll after update failed:', e && e.message ? e.message : e);
+    }
     const { rmMap, pmMap, productMap } = await getMastersForLineItems([refreshed]);
     const d = refreshed.get ? refreshed.get({ plain: true }) : refreshed;
     const enriched = enrichLineItems(d.line_items || [], rmMap, pmMap, productMap);
@@ -861,6 +873,12 @@ async function remove(req, res) {
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const n = await GoodsReceivedNote.destroy({ where: { id } });
     if (n === 0) return res.status(404).json({ error: 'GRN not found' });
+    try {
+      const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
+      await syncWarehouseInTransitAll();
+    } catch (e) {
+      console.warn('[grn] syncWarehouseInTransitAll after delete failed:', e && e.message ? e.message : e);
+    }
     res.status(204).send();
   } catch (err) {
     console.error('[grn] delete error:', err);

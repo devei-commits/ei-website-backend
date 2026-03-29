@@ -101,6 +101,12 @@ async function upsertByPurchaseOrderId(req, res) {
     } else {
       trackingRow = await PoTracking.create({ purchase_order_id: purchaseOrderId, ...updates });
     }
+    try {
+      const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
+      await syncWarehouseInTransitAll();
+    } catch (e) {
+      console.warn('[po-tracking] syncWarehouseInTransitAll failed:', e && e.message ? e.message : e);
+    }
     res.json(formatTracking(trackingRow));
   } catch (err) {
     console.error('upsertByPurchaseOrderId (po-tracking) error', err);

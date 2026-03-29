@@ -37,7 +37,8 @@ function getNamespacesToInvalidate(req) {
     mrn: ['warehouse-inventory', 'planning-extracted', 'fulfillment'],
     // Purchase and procurement impact inventory/planning availability.
     'purchase-orders': ['warehouse-inventory', 'planning-extracted', 'fulfillment', 'procurement'],
-    procurement: ['purchase-orders'],
+    'po-tracking': ['warehouse-inventory', 'planning-extracted', 'purchase-orders'],
+    procurement: ['purchase-orders', 'warehouse-inventory', 'planning-extracted'],
     'procurement-quotations': ['purchase-orders', 'procurement'],
     // Master data used by planning/fulfillment APIs.
     products: ['warehouse-inventory', 'planning-extracted', 'fulfillment'],

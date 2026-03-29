@@ -454,6 +454,12 @@ const saveOrder = async (req, res) => {
 
         if (affectedRmIds.size || affectedPmIds.size) {
             await syncWarehouseReserved([...affectedRmIds], [...affectedPmIds]);
+            try {
+                const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
+                await syncWarehouseInTransitAll();
+            } catch (e) {
+                console.warn('[orders] syncWarehouseInTransitAll failed:', e && e.message ? e.message : e);
+            }
         }
 
         const orderLeadTimeDays = computedOrderLeadTimeDays > 0 ? computedOrderLeadTimeDays : LEAD_TIME_DAYS_PRODUCT;

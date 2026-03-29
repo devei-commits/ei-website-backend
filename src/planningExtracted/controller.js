@@ -309,6 +309,12 @@ async function reserveStockForPlanningExtracted(planningExtractedId, planRow) {
   if (affectedRmIds.size || affectedPmIds.size) {
     await syncWarehouseReserved([...affectedRmIds], [...affectedPmIds]);
   }
+  try {
+    const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
+    await syncWarehouseInTransitAll();
+  } catch (e) {
+    console.warn('[planningExtracted] syncWarehouseInTransitAll after reserve failed:', e && e.message ? e.message : e);
+  }
 }
 
 /**
@@ -328,6 +334,12 @@ async function releaseStockForPlanningExtracted(planningExtractedId) {
   await ReservedBatchItem.destroy({ where: { planning_extracted_id: planningExtractedId } });
   if (affectedRmIds.size || affectedPmIds.size) {
     await syncWarehouseReserved([...affectedRmIds], [...affectedPmIds]);
+  }
+  try {
+    const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
+    await syncWarehouseInTransitAll();
+  } catch (e) {
+    console.warn('[planningExtracted] syncWarehouseInTransitAll after release failed:', e && e.message ? e.message : e);
   }
 }
 
@@ -1119,6 +1131,13 @@ async function updateBatch(req, res) {
  */
 async function getItemsInvolved(req, res) {
   try {
+    try {
+      const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
+      await syncWarehouseInTransitAll();
+    } catch (e) {
+      console.warn('[planningExtracted] getItemsInvolved syncWarehouseInTransitAll failed:', e && e.message ? e.message : e);
+    }
+
     const rmAgg = new Map(); // key: raw_material_id -> { totalRequired, unit, productNames, planningExtractedIds, name, code, batchCount }
     const pmAgg = new Map(); // key: pack_material_id -> { totalRequired, unit, productNames, planningExtractedIds, name, code, batchCount }
 
@@ -1617,6 +1636,14 @@ async function getItemsInvolvedByPlanningId(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+
+    try {
+      const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
+      await syncWarehouseInTransitAll();
+    } catch (e) {
+      console.warn('[planningExtracted] getItemsInvolvedByPlanningId syncWarehouseInTransitAll failed:', e && e.message ? e.message : e);
+    }
+
     const row = await PlanningExtracted.findByPk(id, {
       include: [{ model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'] }],
     });
@@ -1746,31 +1773,51 @@ async function getItemsInvolvedByPlanningId(req, res) {
     const whWhere = [];
     if (rmIds.length) whWhere.push({ item_type: 'RM', raw_material_id: { [Op.in]: rmIds } });
     if (pmIds.length) whWhere.push({ item_type: 'PM', pack_material_id: { [Op.in]: pmIds } });
-    const [whRows, rmsList, pmsList] = await Promise.all([
+    const [whRows, rmsList, pmsList, allPos] = await Promise.all([
       whWhere.length ? WarehouseInventory.findAll({ where: { [Op.or]: whWhere } }) : Promise.resolve([]),
       rmIds.length ? RawMaterial.findAll({ where: { id: rmIds }, attributes: ['id', 'code', 'name'] }) : Promise.resolve([]),
       pmIds.length ? PackMaterial.findAll({ where: { id: pmIds }, attributes: ['id', 'code', 'description'] }) : Promise.resolve([]),
+      PurchaseOrder.findAll({ attributes: ['id', 'items'] }),
     ]);
+
+    const poQtyMap = new Map();
+    for (const po of allPos) {
+      const items = Array.isArray(po.items) ? po.items : [];
+      for (const line of items) {
+        const qty = line.quantity ?? line.qty ?? line.poQty;
+        const n = qty != null ? Number(qty) : 0;
+        if (!(n > 0)) continue;
+        let key = null;
+        if (line.raw_material_id != null) key = `rm-${line.raw_material_id}`;
+        else if (line.pack_material_id != null) key = `pm-${line.pack_material_id}`;
+        if (!key) continue;
+        poQtyMap.set(key, (poQtyMap.get(key) || 0) + n);
+      }
+    }
 
     const sihByRm = new Map();
     const reservedByRm = new Map();
     const whIdByRm = new Map();
     const batchByRm = new Map();
     const expiryByRm = new Map();
+    const inTransitByRm = new Map();
     const sihByPm = new Map();
     const reservedByPm = new Map();
     const whIdByPm = new Map();
     const batchByPm = new Map();
     const expiryByPm = new Map();
+    const inTransitByPm = new Map();
     for (const w of whRows) {
       const s = Number(w.stock_in_hand) || 0;
       const resv = Number(w.reserved) || 0;
+      const inTr = Number(w.in_transit) || 0;
       if (w.item_type === 'RM' && w.raw_material_id) {
         sihByRm.set(w.raw_material_id, s);
         reservedByRm.set(w.raw_material_id, resv);
         whIdByRm.set(w.raw_material_id, w.id);
         if (w.batch_number) batchByRm.set(w.raw_material_id, w.batch_number);
         if (w.expiry_date) expiryByRm.set(w.raw_material_id, w.expiry_date);
+        inTransitByRm.set(w.raw_material_id, inTr);
       }
       if (w.item_type === 'PM' && w.pack_material_id) {
         sihByPm.set(w.pack_material_id, s);
@@ -1778,6 +1825,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
         whIdByPm.set(w.pack_material_id, w.id);
         if (w.batch_number) batchByPm.set(w.pack_material_id, w.batch_number);
         if (w.expiry_date) expiryByPm.set(w.pack_material_id, w.expiry_date);
+        inTransitByPm.set(w.pack_material_id, inTr);
       }
     }
 
@@ -1788,10 +1836,15 @@ async function getItemsInvolvedByPlanningId(req, res) {
     let idx = 0;
     for (const rid of rmIds) {
       const req = rmReq.get(rid) || {};
-      const sih = sihByRm.get(rid) ?? 0;
+      const stockInHand = sihByRm.get(rid) ?? 0;
       const reserved = reservedByRm.get(rid) ?? 0;
-      const netStock = sih - reserved;
+      const sih = Math.max(0, stockInHand - reserved);
       const totalRequired = req.quantity || 0;
+      const plannedQty = Number(
+        await ReservedBatchItem.sum('quantity_reserved', {
+          where: { raw_material_id: rid, planning_extracted_id: id },
+        })
+      ) || 0;
       const info = rmInfo.get(rid) || {};
       const name = req.name || info.name || `RM ${rid}`;
       const code = req.code || info.code || `RM-${rid}`;
@@ -1810,20 +1863,29 @@ async function getItemsInvolvedByPlanningId(req, res) {
         unit: req.unit || 'KG',
         sih,
         reserved,
-        netStock,
-        surplusShortage: netStock - totalRequired,
+        netStock: sih,
+        surplusShortage: sih - totalRequired,
         coverage: totalRequired > 0 ? Math.min(100, Math.round((sih / totalRequired) * 100)) : 100,
         warehouseInventoryId: whIdByRm.get(rid) ?? null,
         batchNumber: batchByRm.get(rid) ?? null,
         expiryDate: expiryByRm.get(rid) ?? null,
+        plannedQty,
+        poQty: poQtyMap.get(`rm-${rid}`) ?? 0,
+        inTransit: inTransitByRm.get(rid) ?? 0,
+        batchCount: 0,
       });
     }
     for (const pid of pmIds) {
       const req = pmReq.get(pid) || {};
-      const sih = sihByPm.get(pid) ?? 0;
+      const stockInHand = sihByPm.get(pid) ?? 0;
       const reserved = reservedByPm.get(pid) ?? 0;
-      const netStock = sih - reserved;
+      const sih = Math.max(0, stockInHand - reserved);
       const totalRequired = req.quantity || 0;
+      const plannedQty = Number(
+        await ReservedBatchItem.sum('quantity_reserved', {
+          where: { pack_material_id: pid, planning_extracted_id: id },
+        })
+      ) || 0;
       const info = pmInfo.get(pid) || {};
       const name = req.name || info.name || `PM ${pid}`;
       const code = req.code || info.code || `PM-${pid}`;
@@ -1842,12 +1904,16 @@ async function getItemsInvolvedByPlanningId(req, res) {
         unit: req.unit || 'PCS',
         sih,
         reserved,
-        netStock,
-        surplusShortage: netStock - totalRequired,
+        netStock: sih,
+        surplusShortage: sih - totalRequired,
         coverage: totalRequired > 0 ? Math.min(100, Math.round((sih / totalRequired) * 100)) : 100,
         warehouseInventoryId: whIdByPm.get(pid) ?? null,
         batchNumber: batchByPm.get(pid) ?? null,
         expiryDate: expiryByPm.get(pid) ?? null,
+        plannedQty,
+        poQty: poQtyMap.get(`pm-${pid}`) ?? 0,
+        inTransit: inTransitByPm.get(pid) ?? 0,
+        batchCount: 0,
       });
     }
 
@@ -1858,7 +1924,8 @@ async function getItemsInvolvedByPlanningId(req, res) {
         type: r.type,
         sih: r.sih,
         reserved: r.reserved,
-        netStock: r.netStock,
+        inTransit: r.inTransit,
+        plannedQty: r.plannedQty,
         totalRequired: r.totalRequired,
         surplusShortage: r.surplusShortage,
       })),

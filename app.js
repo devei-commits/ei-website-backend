@@ -49,17 +49,54 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Middleware
-const allowedOrigins = [
+/** Comma-separated extra origins (e.g. custom domains). Merged with defaults below. */
+function parseExtraCorsOrigins() {
+    const raw = process.env.CORS_ALLOWED_ORIGINS;
+    if (!raw || !String(raw).trim()) return [];
+    return String(raw)
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+}
+
+/** Vite defaults: public site often :5173; EI-Admin uses :5174 (see EI-Admin/vite.config.ts). */
+const defaultCorsOrigins = [
     'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'http://localhost:5174',
+    'http://127.0.0.1:5174',
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
     'https://esthetic-insights-website.vercel.app',
     'https://ei-admin.vercel.app',
 ];
+
+const allowedOrigins = [...new Set([...defaultCorsOrigins, ...parseExtraCorsOrigins()])];
+
+/**
+ * Vercel preview URLs (e.g. ei-admin-git-main-xxx.vercel.app) — production hostnames are exact matches.
+ */
+function isOurVercelOrigin(origin) {
+    try {
+        const { protocol, hostname } = new URL(origin);
+        if (protocol !== 'https:') return false;
+        if (!hostname.endsWith('.vercel.app')) return false;
+        if (hostname === 'ei-admin.vercel.app' || hostname.startsWith('ei-admin-')) return true;
+        if (hostname === 'esthetic-insights-website.vercel.app' || hostname.startsWith('esthetic-insights-website-')) {
+            return true;
+        }
+        return false;
+    } catch {
+        return false;
+    }
+}
+
 const corsOptions = {
     origin: (origin, callback) => {
         // Allow requests with no origin (like mobile apps or curl requests)
         if (!origin) return callback(null, true);
         if (allowedOrigins.includes(origin)) return callback(null, true);
+        if (isOurVercelOrigin(origin)) return callback(null, true);
         if (process.env.NODE_ENV === 'development') return callback(null, true);
         callback(null, false);
     },

@@ -866,6 +866,12 @@ async function applyRmReservedToInventory(batchRow) {
     });
   }
   await syncWarehouseReserved([...affectedRmIds], []);
+  try {
+    const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
+    await syncWarehouseInTransitAll();
+  } catch (e) {
+    console.warn('[production] syncWarehouseInTransitAll after RM reserve failed:', e && e.message ? e.message : e);
+  }
 
   const bmrNo = d.bmr_no || '';
   for (const rid of affectedRmIds) {
@@ -976,6 +982,12 @@ async function applyPmReservedToInventory(batchRow) {
     });
   }
   await syncWarehouseReserved([], [...affectedPmIds]);
+  try {
+    const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
+    await syncWarehouseInTransitAll();
+  } catch (e) {
+    console.warn('[production] syncWarehouseInTransitAll after PM reserve failed:', e && e.message ? e.message : e);
+  }
 
   const bprNo = d.bpr_no || '';
   for (const pid of affectedPmIds) {

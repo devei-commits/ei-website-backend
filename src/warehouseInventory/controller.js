@@ -488,6 +488,13 @@ async function listPayload() {
   const pagination = arguments.length > 0 && arguments[0] ? arguments[0] : null;
   const paginationOpts = pagination && typeof pagination === 'object' ? pagination : null;
 
+  try {
+    const { syncWarehouseInTransitAll } = require('./inTransitSync');
+    await syncWarehouseInTransitAll();
+  } catch (e) {
+    console.warn('[warehouse-inventory] syncWarehouseInTransitAll failed:', e && e.message ? e.message : e);
+  }
+
   const whRows = await WarehouseInventory.findAll({
     order: [
       ['item_type', 'ASC'],
@@ -532,7 +539,6 @@ async function listPayload() {
       const groupList = rmGroupMap.get(wh.raw_material_id) || [];
       const itemKey = `rm-${wh.raw_material_id}`;
       const breakdown = inTransitByItem.get(itemKey) || [];
-      const inTransitFromGrn = breakdown.reduce((sum, b) => sum + toNum(b.quantity), 0);
       rows.push({
         id: itemKey,
         warehouseInventoryId: wh.id,
@@ -551,7 +557,7 @@ async function listPayload() {
         ml2Stock,
         stockInHand,
         reserved: toNum(wh.reserved),
-        inTransit: inTransitFromGrn > 0 ? inTransitFromGrn : toNum(wh.in_transit),
+        inTransit: toNum(wh.in_transit),
         inTransitBreakdown: breakdown,
         poQuantity: poQtyByItem.get(itemKey) || 0,
         reorderPt,
@@ -564,7 +570,6 @@ async function listPayload() {
       const groupList = pmGroupMap.get(wh.pack_material_id) || [];
       const itemKey = `pm-${wh.pack_material_id}`;
       const breakdown = inTransitByItem.get(itemKey) || [];
-      const inTransitFromGrn = breakdown.reduce((sum, b) => sum + toNum(b.quantity), 0);
       rows.push({
         id: itemKey,
         warehouseInventoryId: wh.id,
@@ -583,7 +588,7 @@ async function listPayload() {
         ml2Stock,
         stockInHand,
         reserved: toNum(wh.reserved),
-        inTransit: inTransitFromGrn > 0 ? inTransitFromGrn : toNum(wh.in_transit),
+        inTransit: toNum(wh.in_transit),
         inTransitBreakdown: breakdown,
         poQuantity: poQtyByItem.get(itemKey) || 0,
         reorderPt,

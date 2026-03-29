@@ -265,6 +265,12 @@ async function updateProcurementRequest(req, res) {
     if (Object.keys(updates).length > 0) {
       await row.update(updates);
     }
+    try {
+      const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
+      await syncWarehouseInTransitAll();
+    } catch (e) {
+      console.warn('[procurementRequests] syncWarehouseInTransitAll failed:', e && e.message ? e.message : e);
+    }
     const formatted = await fetchPrFormattedById(id);
     res.json(formatted);
   } catch (err) {
