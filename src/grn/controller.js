@@ -4,6 +4,7 @@ const { User } = require('../users/models');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const { Product } = require('../products/models');
+const PurchaseOrder = require('../purchaseOrders/models');
 const WarehouseInventory = require('../warehouseInventory/models');
 const { logLocationMovement } = require('../warehouseInventory/locationHistoryHelpers');
 const { WarehouseLocation, WarehouseRack } = require('../warehouseLocations/models');
@@ -216,9 +217,11 @@ async function repairLineItemsMasterLinks(rows) {
         }
       } else if (resolvedRm != null && currentRm !== Number(resolvedRm)) {
         updated = { ...line, raw_material_id: Number(resolvedRm) };
+        if (updated.pack_material_id != null) delete updated.pack_material_id;
         changed = true;
       } else if (resolvedPm != null && currentPm !== Number(resolvedPm)) {
         updated = { ...line, pack_material_id: Number(resolvedPm) };
+        if (updated.raw_material_id != null) delete updated.raw_material_id;
         changed = true;
       }
       return updated;
@@ -339,6 +342,42 @@ async function create(req, res) {
       expiry: body.expiry,
       mfg_batch: body.mfgBatch ?? body.mfg_batch,
     };
+    // When a PO is referenced, derive line_items and type from the PO's items array.
+    // This is the authoritative source — prevents split-PO item misassignment from the frontend.
+    if (payload.purchase_order_id != null) {
+      const po = await PurchaseOrder.findByPk(payload.purchase_order_id, { attributes: ['id', 'items'] });
+      if (po) {
+        const poPlain = po.get({ plain: true });
+        const poItems = Array.isArray(poPlain.items) ? poPlain.items : [];
+        if (poItems.length > 0) {
+          const allPm = poItems.every((i) => i.pack_material_id != null);
+          payload.type = allPm ? 'PM' : 'RM';
+          const clientLines = Array.isArray(body.lineItems ?? body.line_items) ? (body.lineItems ?? body.line_items) : [];
+          payload.line_items = poItems.map((poItem, idx) => {
+            const clientLine = clientLines.find((cl) => {
+              const clCode = String(cl.itemCode ?? cl.item_code ?? '').trim();
+              const poCode = String(poItem.code ?? '').trim();
+              return clCode && poCode && clCode === poCode;
+            }) ?? clientLines[idx] ?? {};
+            return {
+              id: clientLine.id ?? String(Date.now() + idx),
+              raw_material_id: poItem.raw_material_id ?? null,
+              pack_material_id: poItem.pack_material_id ?? null,
+              item: poItem.name ?? clientLine.item ?? '',
+              itemCode: poItem.code ?? clientLine.itemCode ?? '',
+              poQty: Number(poItem.quantity_requested ?? poItem.quantity ?? poItem.qty ?? 0) || 0,
+              rcvdQty: Number(clientLine.rcvdQty ?? 0) || 0,
+              invoiceQty: Number(clientLine.invoiceQty ?? 0) || 0,
+              unitPrice: Number(clientLine.unitPrice ?? poItem.planned_unit_price ?? 0) || 0,
+              diff: 0,
+              qcStatus: 'Pending',
+              qcBy: '',
+            };
+          });
+        }
+      }
+    }
+
     const row = await GoodsReceivedNote.create(payload);
     try {
       const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
@@ -491,8 +530,8 @@ async function applyGrnCompletionToInventory(grnRow) {
       toAddByProduct.set(id, (toAddByProduct.get(id) || 0) + rcvdQty);
     } else if (code || (line.item && String(line.item).trim()) || explicitRmIdValid || explicitPmIdValid) {
       // Prefer master resolution from code/name when available, then fall back to validated explicit IDs.
-      const rmId = resolvedRmId ?? (explicitRmIdValid ? explicitRmId : null);
-      const pmId = resolvedPmId ?? (explicitPmIdValid ? explicitPmId : null);
+      const rmId = resolvedRmId != null ? resolvedRmId : (resolvedPmId == null && explicitRmIdValid ? explicitRmId : null);
+      const pmId = resolvedPmId != null ? resolvedPmId : (resolvedRmId == null && explicitPmIdValid ? explicitPmId : null);
 
       if (explicitRmIdValid && resolvedRmId != null && Number(explicitRmId) !== Number(resolvedRmId)) {
         console.warn('[grn] RM id mismatch on line, preferring code/name resolution', {
