@@ -117,7 +117,7 @@ async function seed() {
   try {
     await dropEntireDatabase();
     console.log('Syncing database...');
-    await db.sync({ alter: true });
+    await db.sync({ force: true });
 
     console.log('Seeding module definitions (if empty)...');
     await ModuleDefinition.findOrCreate({
@@ -477,6 +477,7 @@ async function seed() {
     }
 
     console.log('Seeding categories and products...');
+    await Product.destroy({ where: {} });
     const [productA, productB] = await Product.bulkCreate([
       {
         product_name: 'EI Sunscreen Lotion SPF50+ PA++++',
