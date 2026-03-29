@@ -269,6 +269,26 @@ const createPRRegistration = async (req, res) => {
       }
 
       await t.commit();
+
+      // Create a zero-stock warehouse inventory row so the PR appears in the warehouse immediately.
+      await WarehouseInventory.findOrCreate({
+        where: { item_type: 'PR', product_id: product.product_id },
+        defaults: {
+          item_type: 'PR',
+          product_id: product.product_id,
+          wh_stock: 0,
+          wh_unit: 'PCS',
+          ml1_stock: 0,
+          ml2_stock: 0,
+          stock_in_hand: 0,
+          reserved: 0,
+          in_transit: 0,
+          reorder_pt: 0,
+          avg_mo: 0,
+          qc_status: 'Out of Stock',
+        },
+      });
+
       res.status(201).json({
         product: product.get({ plain: true }),
         bom: {
