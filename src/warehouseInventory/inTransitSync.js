@@ -1,7 +1,8 @@
 /**
- * Keeps warehouse_inventory.in_transit aligned with a single definition used across
- * warehouse list, planning items-involved, and production views:
- *   GRN inbound (in-flight) + PO pipeline (issued / shipped / delivery-pending linked) + planning reservations.
+ * Keeps warehouse_inventory.in_transit aligned with inbound pipeline only (not planning reserves):
+ *   GRN inbound (in-flight) + PO pipeline (Released/In Transit/shipped before GRN / delivery-pending linked).
+ * Planning "Planned QTY" (reserved_batch_items for BOM-confirmed PIs) is kept separate in items-involved —
+ * merging it here double-counted vs the Planned column and hid true shortages.
  *
  * RM/PM masters stay in raw_materials / pack_materials; quantities are keyed by those FKs on warehouse_inventory.
  */
@@ -167,7 +168,7 @@ async function getPlannedPlanningQtyByItem() {
   return { rmMap, pmMap };
 }
 
-function mergeKeyMapsIntoRmPm(grnMap, poMap, plannedRm, plannedPm) {
+function mergeKeyMapsIntoRmPm(grnMap, poMap) {
   const rmTotals = new Map();
   const pmTotals = new Map();
   const addKeyMap = (m) => {
@@ -185,8 +186,6 @@ function mergeKeyMapsIntoRmPm(grnMap, poMap, plannedRm, plannedPm) {
   };
   addKeyMap(grnMap);
   addKeyMap(poMap);
-  for (const [id, q] of plannedRm) rmTotals.set(id, (rmTotals.get(id) || 0) + toNum(q));
-  for (const [id, q] of plannedPm) pmTotals.set(id, (pmTotals.get(id) || 0) + toNum(q));
   return { rmTotals, pmTotals };
 }
 
@@ -194,12 +193,11 @@ function mergeKeyMapsIntoRmPm(grnMap, poMap, plannedRm, plannedPm) {
  * Recompute and persist warehouse_inventory.in_transit for all RM/PM rows.
  */
 async function syncWarehouseInTransitAll() {
-  const [grnMap, poMap, planned] = await Promise.all([
+  const [grnMap, poMap] = await Promise.all([
     getGrnInTransitQtyByKey(),
     getPoPipelineInTransitQtyByKey(),
-    getPlannedPlanningQtyByItem(),
   ]);
-  const { rmTotals, pmTotals } = mergeKeyMapsIntoRmPm(grnMap, poMap, planned.rmMap, planned.pmMap);
+  const { rmTotals, pmTotals } = mergeKeyMapsIntoRmPm(grnMap, poMap);
 
   const whRows = await WarehouseInventory.findAll({
     where: { item_type: { [Op.in]: ['RM', 'PM'] } },

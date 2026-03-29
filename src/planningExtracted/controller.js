@@ -38,6 +38,18 @@ function addDaysDateOnly(baseDate, days) {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * Warehouse QC/status uses raw stock_in_hand; items-involved NET uses free SIH + in-transit (see Planning UI).
+ * When inbound PO covers the planning requirement, do not show Out of Stock / Critical for that row.
+ */
+function planningItemsInvolvedDisplayStatus(warehouseStatus, sihFree, inTransit, totalRequired) {
+  const net = Number(sihFree) + (Number(inTransit) || 0) - (Number(totalRequired) || 0);
+  if (net >= 0 && (warehouseStatus === 'Out of Stock' || warehouseStatus === 'Critical')) {
+    return 'In Stock';
+  }
+  return warehouseStatus || 'In Stock';
+}
+
 /** When SO has no expected_shipment_date yet, prefer FG master lead; else SO form hints; else 45/90. */
 function inferFallbackLeadDaysForPlanningRow(prod, so) {
   const n = prod && prod.lead_time_days != null ? Number(prod.lead_time_days) : null;
@@ -1503,16 +1515,30 @@ async function getItemsInvolved(req, res) {
       const stockInHand = sihByRm.get(id) ?? 0;
       const reserved = reservedByRm.get(id) ?? 0;
       const sih = Math.max(0, stockInHand - reserved);
-      const surplusShortage = sih - agg.totalRequired;
-      const plannedQty = Number(
-        await ReservedBatchItem.sum('quantity_reserved', {
-          where: {
-            raw_material_id: id,
-            planning_extracted_id: { [Op.ne]: null },
-          },
-        })
-      ) || 0;
+      const inTransit = inTransitByRm.get(id) ?? 0;
+      const surplusShortage = sih + inTransit - agg.totalRequired;
+      const peIdsForPlanned = agg.planningExtractedIds ?? [];
+      const plannedQty =
+        peIdsForPlanned.length === 0
+          ? 0
+          : Number(
+              await ReservedBatchItem.sum('quantity_reserved', {
+                where: {
+                  raw_material_id: id,
+                  planning_extracted_id: { [Op.in]: peIdsForPlanned },
+                },
+              })
+            ) || 0;
       const info = rmInfo.get(id) || {};
+      const coverageDenom = agg.totalRequired > 0
+        ? Math.min(100, Math.round(((sih + inTransit) / agg.totalRequired) * 100))
+        : 100;
+      const rowStatus = planningItemsInvolvedDisplayStatus(
+        statusByRm.get(id) ?? 'In Stock',
+        sih,
+        inTransit,
+        agg.totalRequired
+      );
       out.push({
         type: 'RM',
         raw_material_id: id,
@@ -1527,33 +1553,47 @@ async function getItemsInvolved(req, res) {
         batchCount: agg.batchCount ?? 0,
         sih,
         surplusShortage,
-        coverage: agg.totalRequired > 0 ? Math.min(100, Math.round((sih / agg.totalRequired) * 100)) : 100,
+        coverage: coverageDenom,
         warehouseInventoryId: whIdByRm.get(id) ?? null,
         batchNumber: batchNumberByRm.get(id) ?? null,
         expiryDate: expiryByRm.get(id) ?? null,
         reserved,
         plannedQty,
         poQty: poQtyMap.get(`rm-${id}`) ?? 0,
-        inTransit: inTransitByRm.get(id) ?? 0,
+        inTransit,
         reorderPt: reorderPtByRm.get(id) ?? 0,
         avgMo: avgMoByRm.get(id) ?? 0,
-        status: statusByRm.get(id) ?? 'In Stock',
+        status: rowStatus,
       });
     }
     for (const [id, agg] of pmAgg) {
       const stockInHand = sihByPm.get(id) ?? 0;
       const reserved = reservedByPm.get(id) ?? 0;
       const sih = Math.max(0, stockInHand - reserved);
-      const surplusShortage = sih - agg.totalRequired;
-      const plannedQty = Number(
-        await ReservedBatchItem.sum('quantity_reserved', {
-          where: {
-            pack_material_id: id,
-            planning_extracted_id: { [Op.ne]: null },
-          },
-        })
-      ) || 0;
+      const inTransit = inTransitByPm.get(id) ?? 0;
+      const surplusShortage = sih + inTransit - agg.totalRequired;
+      const peIdsForPlannedPm = agg.planningExtractedIds ?? [];
+      const plannedQty =
+        peIdsForPlannedPm.length === 0
+          ? 0
+          : Number(
+              await ReservedBatchItem.sum('quantity_reserved', {
+                where: {
+                  pack_material_id: id,
+                  planning_extracted_id: { [Op.in]: peIdsForPlannedPm },
+                },
+              })
+            ) || 0;
       const info = pmInfo.get(id) || {};
+      const coverageDenomPm = agg.totalRequired > 0
+        ? Math.min(100, Math.round(((sih + inTransit) / agg.totalRequired) * 100))
+        : 100;
+      const rowStatusPm = planningItemsInvolvedDisplayStatus(
+        statusByPm.get(id) ?? 'In Stock',
+        sih,
+        inTransit,
+        agg.totalRequired
+      );
       out.push({
         type: 'PM',
         raw_material_id: null,
@@ -1568,17 +1608,17 @@ async function getItemsInvolved(req, res) {
         batchCount: agg.batchCount ?? 0,
         sih,
         surplusShortage,
-        coverage: agg.totalRequired > 0 ? Math.min(100, Math.round((sih / agg.totalRequired) * 100)) : 100,
+        coverage: coverageDenomPm,
         warehouseInventoryId: whIdByPm.get(id) ?? null,
         batchNumber: batchNumberByPm.get(id) ?? null,
         expiryDate: expiryByPm.get(id) ?? null,
         reserved,
         plannedQty,
         poQty: poQtyMap.get(`pm-${id}`) ?? 0,
-        inTransit: inTransitByPm.get(id) ?? 0,
+        inTransit,
         reorderPt: reorderPtByPm.get(id) ?? 0,
         avgMo: avgMoByPm.get(id) ?? 0,
-        status: statusByPm.get(id) ?? 'In Stock',
+        status: rowStatusPm,
       });
     }
 
@@ -1839,6 +1879,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
       const stockInHand = sihByRm.get(rid) ?? 0;
       const reserved = reservedByRm.get(rid) ?? 0;
       const sih = Math.max(0, stockInHand - reserved);
+      const inTransit = inTransitByRm.get(rid) ?? 0;
       const totalRequired = req.quantity || 0;
       const plannedQty = Number(
         await ReservedBatchItem.sum('quantity_reserved', {
@@ -1864,14 +1905,14 @@ async function getItemsInvolvedByPlanningId(req, res) {
         sih,
         reserved,
         netStock: sih,
-        surplusShortage: sih - totalRequired,
-        coverage: totalRequired > 0 ? Math.min(100, Math.round((sih / totalRequired) * 100)) : 100,
+        surplusShortage: sih + inTransit - totalRequired,
+        coverage: totalRequired > 0 ? Math.min(100, Math.round(((sih + inTransit) / totalRequired) * 100)) : 100,
         warehouseInventoryId: whIdByRm.get(rid) ?? null,
         batchNumber: batchByRm.get(rid) ?? null,
         expiryDate: expiryByRm.get(rid) ?? null,
         plannedQty,
         poQty: poQtyMap.get(`rm-${rid}`) ?? 0,
-        inTransit: inTransitByRm.get(rid) ?? 0,
+        inTransit,
         batchCount: 0,
       });
     }
@@ -1880,6 +1921,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
       const stockInHand = sihByPm.get(pid) ?? 0;
       const reserved = reservedByPm.get(pid) ?? 0;
       const sih = Math.max(0, stockInHand - reserved);
+      const inTransit = inTransitByPm.get(pid) ?? 0;
       const totalRequired = req.quantity || 0;
       const plannedQty = Number(
         await ReservedBatchItem.sum('quantity_reserved', {
@@ -1905,14 +1947,14 @@ async function getItemsInvolvedByPlanningId(req, res) {
         sih,
         reserved,
         netStock: sih,
-        surplusShortage: sih - totalRequired,
-        coverage: totalRequired > 0 ? Math.min(100, Math.round((sih / totalRequired) * 100)) : 100,
+        surplusShortage: sih + inTransit - totalRequired,
+        coverage: totalRequired > 0 ? Math.min(100, Math.round(((sih + inTransit) / totalRequired) * 100)) : 100,
         warehouseInventoryId: whIdByPm.get(pid) ?? null,
         batchNumber: batchByPm.get(pid) ?? null,
         expiryDate: expiryByPm.get(pid) ?? null,
         plannedQty,
         poQty: poQtyMap.get(`pm-${pid}`) ?? 0,
-        inTransit: inTransitByPm.get(pid) ?? 0,
+        inTransit,
         batchCount: 0,
       });
     }
