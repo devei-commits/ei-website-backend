@@ -329,7 +329,7 @@ async function seed() {
       updated_at: now
     });
 
-    /** Portal user for seeded client master EI-CLI-00001 (Luminos) — 2-way link with vendor_clients.user_id */
+    // Portal user for seeded client master EI-CLI-00001 (Luminos) — 2-way link with vendor_clients.user_id
     const luminosPortalUser = await User.create({
       fname: 'Rajeev',
       lname: 'Sharma',
@@ -476,6 +476,7 @@ async function seed() {
       }
     }
 
+    /*
     console.log('Seeding categories and products...');
     await Product.destroy({ where: {} });
     const [productA, productB] = await Product.bulkCreate([
@@ -679,9 +680,11 @@ async function seed() {
     const vendorsSeedData = contactsSeedDataRaw.map((row) => contactRowToVendor(row));
     await Vendor.bulkCreate(vendorsSeedData);
 
+    */
     console.log('Seeding Customers (contacts)...');
     const customersSeedData = seedContactData.map((row) => customerRowToModel(row));
     await Contact.bulkCreate(customersSeedData);
+    /*
 
     console.log('Seeding Composite Items...');
     const compositeItemsData = compositeItemsSeedData.map((row) => compositeRowToModel(row));
@@ -1129,7 +1132,7 @@ async function seed() {
       if (batchNumber) await WarehouseInventory.update({ batch_number: batchNumber, expiry_date: expiryDate }, { where: { id: w.id } });
     }
 
-    /* ── Departments ── */
+    // ── Departments ──
     console.log('Seeding Departments...');
     await Department.destroy({ where: {} });
     await Department.bulkCreate([
@@ -1217,6 +1220,7 @@ async function seed() {
       }
     }
 
+    */
     console.log('Seeding Vendor / Client master (before Items List)...');
     await VendorClient.destroy({ where: {} });
     const vendorClientSeed = [
@@ -1243,6 +1247,7 @@ async function seed() {
       console.warn('[Seed] vendor_clients ↔ users link:', e && e.message ? e.message : e);
     }
 
+    /*
     if (seedZohoContact) {
       const { syncZohoContactForVendorClient } = require('./src/users/zohoContactSync');
       const luminos = await VendorClient.findOne({ where: { entity_code: 'EI-CLI-00001' } });
@@ -1449,7 +1454,7 @@ async function seed() {
       updated_at: now
     });
 
-    /* ── Production Equipment ── */
+    // ── Production Equipment ──
     console.log('Seeding Production Equipment...');
     await ProductionEquipment.destroy({ where: {} });
     await ProductionEquipment.bulkCreate([
@@ -1468,34 +1473,35 @@ async function seed() {
       { equipment_id: 'SK-01', name: 'Shrink Wrap Station', category: 'packaging', speed: 1500, type: 'shrink', supports: ['shrink'], status: 'idle', created_at: now, updated_at: now },
     ]);
 
-    /* ── Production Team Members ── */
+    // ── Production Team Members ──
     console.log('Seeding Production Team Members (empty — add via Team Management UI)...');
     await ProductionTeamMember.destroy({ where: {} });
 
-    /* ── Production Batches: not seeded (test with real data). ── */
+    // ── Production Batches: not seeded (test with real data). ──
     await ProductionBatch.destroy({ where: {} });
 
-    /* ── Transporters ── */
+    // ── Transporters ──
     console.log('Seeding Transporters...');
     await Transporter.destroy({ where: {} });
     await Transporter.bulkCreate([
       { name: 'BlueDart Express', code: 'BLUEDART', contact_phone: '+91-1860-233-1234', contact_email: 'customerservice@bluedart.com', tracking_url: 'https://www.bluedart.com/tracking', status: 'active', created_at: now, updated_at: now },
     ]);
 
-    /* ── Fulfillment Invoices ── */
+    // ── Fulfillment Invoices ──
     console.log('Seeding Fulfillment Invoices...');
     await FulfillmentInvoice.destroy({ where: {} });
 
-    /* ── Fulfillment Orders: not seeded (no SO/batch). ── */
+    // ── Fulfillment Orders: not seeded (no SO/batch). ──
     await FulfillmentBatchSplit.destroy({ where: {} });
     await FulfillmentOrderItem.destroy({ where: {} });
     await FulfillmentOrder.destroy({ where: {} });
 
-    /* ── Reserved batch items: not seeded (no batch). ── */
+    // ── Reserved batch items: not seeded (no batch). ──
     await ReservedBatchItem.destroy({ where: {} });
 
-    /* ── Warehouse inventory location history: not seeded (no batch). ── */
+    // ── Warehouse inventory location history: not seeded (no batch). ──
     await WarehouseInventoryLocationHistory.destroy({ where: {} }).catch(() => { });
+    */
 
     console.log('Seeding complete.');
     process.exit(0);
