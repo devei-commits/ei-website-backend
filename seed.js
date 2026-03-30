@@ -1131,6 +1131,7 @@ async function seed() {
       }
       if (batchNumber) await WarehouseInventory.update({ batch_number: batchNumber, expiry_date: expiryDate }, { where: { id: w.id } });
     }
+    */
 
     // ── Departments ──
     console.log('Seeding Departments...');
@@ -1220,7 +1221,6 @@ async function seed() {
       }
     }
 
-    */
     console.log('Seeding Vendor / Client master (before Items List)...');
     await VendorClient.destroy({ where: {} });
     const vendorClientSeed = [
