@@ -151,7 +151,7 @@ const saveOrder = async (req, res) => {
             attributes: ['userid', 'fname', 'lname', 'display_name', 'email', 'mobile', 'advance_payment', 'advance_amount'],
         });
 
-        /** Authoritative staged % from Items List (RM/PM/PR) + BOM aggregation; enforces MOQ. */
+        /** Payment stages for website orders: non-vendor defaults (see checkoutTermsFromBom). Vendor Items List / MOQ / rates apply to PO only. */
         const previewItems = order_items.map((item) => ({
             product_id: Number(item.product_id),
             quantity: Number(item.quantity),
@@ -160,17 +160,6 @@ const saveOrder = async (req, res) => {
             tax_amount: Number(item.tax_amount || 0),
         }));
         const checkoutPreview = await computeCheckoutPreview(previewItems, t);
-        if (!checkoutPreview.moq_ok) {
-            await t.rollback();
-            return res.status(400).json({
-                error: 'Order quantity is below the minimum order quantity (MOQ) for one or more products.',
-                moq_details: checkoutPreview.lines.map((l) => ({
-                    product_id: l.product_id,
-                    min_quantity: l.min_quantity,
-                    quantity: l.quantity,
-                })),
-            });
-        }
 
         const paymentMethodNorm = String(payment_method || '').toLowerCase();
         let validatedChequeForMeta = null;

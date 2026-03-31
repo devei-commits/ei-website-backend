@@ -1396,6 +1396,42 @@ function qcSpecsEveryResultNonEmpty(qcSpecs) {
   });
 }
 
+/** qc_specs may be legacy array (BMR only) or { bmr, fill, pack } — validate the slice for the transition. */
+function getQcSpecsArrayForScope(qcSpecs, scope) {
+  if (!qcSpecs) return [];
+  if (Array.isArray(qcSpecs)) {
+    if (scope === 'bmr') return qcSpecs;
+    return [];
+  }
+  if (typeof qcSpecs === 'object' && qcSpecs !== null) {
+    const arr = qcSpecs[scope];
+    return Array.isArray(arr) ? arr : [];
+  }
+  return [];
+}
+
+function qcTransitionSpecsValid(prevPlain, nextPreview) {
+  if (
+    prevPlain.bmr_status === 'bulk_qc' &&
+    (nextPreview.bmr_status === 'cleared' || nextPreview.bmr_status === 'qc_failed')
+  ) {
+    return qcSpecsEveryResultNonEmpty(getQcSpecsArrayForScope(nextPreview.qc_specs, 'bmr'));
+  }
+  if (
+    prevPlain.bpr_status === 'fill_qc' &&
+    (nextPreview.bpr_status === 'packaging' || nextPreview.bpr_status === 'qc_failed')
+  ) {
+    return qcSpecsEveryResultNonEmpty(getQcSpecsArrayForScope(nextPreview.qc_specs, 'fill'));
+  }
+  if (
+    prevPlain.bpr_status === 'pack_qc' &&
+    (nextPreview.bpr_status === 'fg_ready' || nextPreview.bpr_status === 'qc_failed')
+  ) {
+    return qcSpecsEveryResultNonEmpty(getQcSpecsArrayForScope(nextPreview.qc_specs, 'pack'));
+  }
+  return true;
+}
+
 /** Scale numeric qty fields on planning_batches BOM JSON when batch size changes from Production. */
 function scalePlanningJsonLines(lines, scale) {
   if (!Array.isArray(lines) || !(scale > 0) || Math.abs(scale - 1) < 1e-9) return lines;
@@ -1516,7 +1552,7 @@ async function updateBatch(req, res) {
 
     if (
       qcTransitionRequiresNonEmptyResults(prevPlain, nextPreview) &&
-      !qcSpecsEveryResultNonEmpty(nextPreview.qc_specs)
+      !qcTransitionSpecsValid(prevPlain, nextPreview)
     ) {
       return res.status(400).json({
         error:

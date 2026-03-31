@@ -9,7 +9,7 @@ function tierMinMoq(tiersPlain) {
 }
 
 /**
- * Same basis as orders/checkoutTermsFromBom termsAndMoqForItemsListRow: default_moq or smallest tier moq_min.
+ * Vendor MOQ for procurement: default_moq on the rate, else smallest tier moq_min (Items List).
  */
 function effectiveMoqForRate(ratePlain, tiersForRate) {
   const moq = Number(ratePlain.default_moq) > 0 ? Number(ratePlain.default_moq) : tierMinMoq(tiersForRate);
