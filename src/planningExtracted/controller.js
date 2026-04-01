@@ -123,6 +123,45 @@ function parseFillSizeToKgPerUnit(fillSizeRaw, sg = 1) {
   return null;
 }
 
+function normalizeMassUom(raw) {
+  const u = String(raw || '').trim().toUpperCase();
+  if (u === 'G' || u === 'GM' || u === 'GMS' || u.startsWith('GRAM')) return 'GM';
+  if (u === 'MG' || u.startsWith('MILLIGRAM')) return 'MG';
+  return 'KG';
+}
+
+function normalizePackUom(_raw) {
+  return 'PCS';
+}
+
+function normalizeRmLine(line) {
+  const l = line && typeof line === 'object' ? line : {};
+  const pct = Number(l.pct_w_w ?? l.pct ?? 0) || 0;
+  return {
+    ...l,
+    pct_w_w: pct,
+    uom: normalizeMassUom(l.uom ?? l.unit),
+  };
+}
+
+function normalizePmLine(line) {
+  const l = line && typeof line === 'object' ? line : {};
+  const qtyPerUnit = Number(l.qty_per_unit ?? l.qty ?? 1) || 1;
+  return {
+    ...l,
+    qty_per_unit: qtyPerUnit,
+    uom: normalizePackUom(l.uom ?? l.unit),
+  };
+}
+
+function normalizeRmLines(lines) {
+  return Array.isArray(lines) ? lines.map((line) => normalizeRmLine(line)) : [];
+}
+
+function normalizePmLines(lines) {
+  return Array.isArray(lines) ? lines.map((line) => normalizePmLine(line)) : [];
+}
+
 function inferBlendSpecificGravity(rmLines) {
   const lines = Array.isArray(rmLines) ? rmLines : [];
   let weighted = 0;
@@ -666,8 +705,8 @@ async function getBomOverride(req, res) {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await PlanningBomOverride.findOne({ where: { planning_extracted_id: id } });
-    const rmLines = row && Array.isArray(row.rm_lines) ? row.rm_lines : [];
-    const pmLines = row && Array.isArray(row.pm_lines) ? row.pm_lines : [];
+    const rmLines = normalizeRmLines(row && Array.isArray(row.rm_lines) ? row.rm_lines : []);
+    const pmLines = normalizePmLines(row && Array.isArray(row.pm_lines) ? row.pm_lines : []);
     res.json({ rmLines, pmLines });
   } catch (err) {
     console.error('getBomOverride error', err);
@@ -687,8 +726,8 @@ async function putBomOverride(req, res) {
     const planRow = await PlanningExtracted.findByPk(id);
     if (!planRow) return res.status(404).json({ error: 'Planning extracted not found' });
     const body = req.body || {};
-    const rmLines = Array.isArray(body.rmLines) ? body.rmLines : [];
-    const pmLines = Array.isArray(body.pmLines) ? body.pmLines : [];
+    const rmLines = normalizeRmLines(Array.isArray(body.rmLines) ? body.rmLines : []);
+    const pmLines = normalizePmLines(Array.isArray(body.pmLines) ? body.pmLines : []);
 
     const [override] = await PlanningBomOverride.findOrCreate({
       where: { planning_extracted_id: id },
@@ -709,7 +748,8 @@ async function putBomOverride(req, res) {
         raw_material_id: line.raw_material_id ?? null,
         name: line.inci_name ?? line.name ?? line.rm_code ?? '',
         quantity: Math.round(quantity * 1000) / 1000,
-        unit: line.uom || 'KG',
+        // Keep backend stock/reservation math canonical in KG.
+        unit: 'KG',
         code: line.rm_code ?? line.code ?? '',
       };
     });
@@ -747,7 +787,10 @@ async function putBomOverride(req, res) {
 async function getBomCopyForPlanning(planningExtractedId) {
   const override = await PlanningBomOverride.findOne({ where: { planning_extracted_id: planningExtractedId } });
   if (override && ((Array.isArray(override.rm_lines) && override.rm_lines.length > 0) || (Array.isArray(override.pm_lines) && override.pm_lines.length > 0))) {
-    return { rmLines: override.rm_lines || [], pmLines: override.pm_lines || [] };
+    return {
+      rmLines: normalizeRmLines(override.rm_lines || []),
+      pmLines: normalizePmLines(override.pm_lines || []),
+    };
   }
 
   // If batch-level BOM edits were saved previously (planning_batches.rm_lines/pm_lines),
@@ -762,7 +805,10 @@ async function getBomCopyForPlanning(planningExtractedId) {
   const lastRmLines = Array.isArray(lastBatchPlain?.rm_lines) ? lastBatchPlain.rm_lines : [];
   const lastPmLines = Array.isArray(lastBatchPlain?.pm_lines) ? lastBatchPlain.pm_lines : [];
   if (lastRmLines.length > 0 || lastPmLines.length > 0) {
-    return { rmLines: lastRmLines, pmLines: lastPmLines };
+    return {
+      rmLines: normalizeRmLines(lastRmLines),
+      pmLines: normalizePmLines(lastPmLines),
+    };
   }
 
   const planRow = await PlanningExtracted.findByPk(planningExtractedId, { attributes: ['product_id'] });
@@ -770,8 +816,8 @@ async function getBomCopyForPlanning(planningExtractedId) {
   const bom = await BOM.findOne({ where: { product_id: planRow.product_id }, attributes: ['rm_lines', 'pm_lines'] });
   if (!bom) return { rmLines: [], pmLines: [] };
   return {
-    rmLines: Array.isArray(bom.rm_lines) ? bom.rm_lines : [],
-    pmLines: Array.isArray(bom.pm_lines) ? bom.pm_lines : [],
+    rmLines: normalizeRmLines(Array.isArray(bom.rm_lines) ? bom.rm_lines : []),
+    pmLines: normalizePmLines(Array.isArray(bom.pm_lines) ? bom.pm_lines : []),
   };
 }
 
@@ -1125,8 +1171,8 @@ async function updateBatch(req, res) {
     });
     if (!batch) return res.status(404).json({ error: 'Batch not found' });
     const body = req.body || {};
-    if (Array.isArray(body.rmLines)) batch.rm_lines = body.rmLines;
-    if (Array.isArray(body.pmLines)) batch.pm_lines = body.pmLines;
+    if (Array.isArray(body.rmLines)) batch.rm_lines = normalizeRmLines(body.rmLines);
+    if (Array.isArray(body.pmLines)) batch.pm_lines = normalizePmLines(body.pmLines);
     if (body.sizeKg != null) batch.size_kg = Number(body.sizeKg);
     await batch.save();
     res.json(formatBatchRow(batch));

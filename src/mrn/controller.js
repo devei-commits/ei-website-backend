@@ -324,10 +324,13 @@ async function create(req, res) {
             source: 'MTR',
             [Op.or]: [{ is_inbound_from_mu: false }, { is_inbound_from_mu: null }],
           },
-          attributes: ['line_items'],
+          attributes: ['line_items', 'status'],
         });
         for (const ex of existing) {
-          const elis = ex.get ? ex.get('line_items') : ex.line_items;
+          const exPlain = ex.get ? ex.get({ plain: true }) : ex;
+          // Allow a new outbound MTR after the previous one is Succeeded/Completed (split transfers).
+          if (isClosedOutboundMtrStatus(exPlain.status)) continue;
+          const elis = exPlain.line_items;
           if (wantRm && lineItemsIndicateRm(elis)) {
             return res.status(409).json({
               error:

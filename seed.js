@@ -1339,6 +1339,7 @@ async function seed() {
         );
       }
     }
+    */
 
     // ── Client Hub sub-entities ──
     console.log('Seeding Client Hub data (queries, developments, orders, appointments)...');
@@ -1386,7 +1387,113 @@ async function seed() {
       if (pmId) itemsListSeed.push({ type: 'PM', raw_material_id: null, pack_material_id: pmId, status: 'Active', created_at: now, updated_at: now });
     }
     await ItemsList.bulkCreate(itemsListSeed);
-    console.log('Items List: RM/PM rows seeded; vendor quotation data (item_list_vendor_rates / item_list_tiers) left empty — add via Vendor Client / Items List UI.');
+    const vendors = await VendorClient.findAll({ where: { type: 'vendor' }, order: [['id']], attributes: ['id'] });
+    const v1 = vendors[0]?.id;
+    const v2 = vendors[1]?.id;
+    const v3 = vendors[2]?.id;
+    const v4 = vendors[3]?.id;
+    const rmIdToCode = new Map((await RawMaterial.findAll({ attributes: ['id', 'code'] })).map(r => [r.id, r.code]));
+    const pmIdToCode = new Map((await PackMaterial.findAll({ attributes: ['id', 'code'] })).map(p => [p.id, p.code]));
+    const itemsListRows = await ItemsList.findAll({ order: [['id']] });
+    const ilByCode = new Map();
+    itemsListRows.forEach((r) => {
+      const code = r.raw_material_id ? rmIdToCode.get(r.raw_material_id) : (r.pack_material_id ? pmIdToCode.get(r.pack_material_id) : null);
+      if (code) ilByCode.set(code, r);
+    });
+    const getIl = (code) => ilByCode.get(code);
+    const validTill = '2026-03-31';
+    // Matches Items List staged payment_terms JSON (checkout / credit_days).
+    const seedItemListPaymentTerms = JSON.stringify({
+      advance_pct: 0,
+      pre_shipment_pct: 100,
+      post_shipment_pct: 0,
+      credit_days: 30,
+    });
+    const rmRows = await RawMaterial.findAll({ attributes: ['id', 'price_per_kg'] });
+    const pmRows = await PackMaterial.findAll({ attributes: ['id', 'price_per_pc'] });
+    const rmIdToPrice = new Map(rmRows.map((r) => [r.id, Number(r.price_per_kg) || 0]));
+    const pmIdToPrice = new Map(pmRows.map((p) => [p.id, Number(p.price_per_pc) || 0]));
+    if (v1) {
+      for (const row of itemsListRows) {
+        const plain = row.get ? row.get({ plain: true }) : row;
+        const defaultRate = plain.raw_material_id
+          ? (rmIdToPrice.get(plain.raw_material_id) ?? 0)
+          : (pmIdToPrice.get(plain.pack_material_id) ?? 0);
+        if (defaultRate <= 0) continue;
+        const rate = await ItemListVendorRate.create({
+          items_list_id: plain.id,
+          vendor_id: v1,
+          default_rate: defaultRate,
+          default_moq: 1,
+          currency: 'INR',
+          status: 'active',
+          payment_terms: seedItemListPaymentTerms,
+          created_at: now,
+          updated_at: now,
+        });
+        await ItemListTier.create({
+          item_list_vendor_rate_id: rate.id,
+          moq_min: 1,
+          moq_max: null,
+          price_per_unit: defaultRate,
+          valid_till: validTill,
+          note: 'List price',
+          created_at: now,
+          updated_at: now,
+        });
+      }
+      // Optional: add second vendor (v2) for a few UV/active items for variety
+      if (v2) {
+        const ilUVF1 = getIl('EI-RM-UVF-001');
+        if (ilUVF1) {
+          const rate2 = await ItemListVendorRate.create({
+            items_list_id: ilUVF1.id,
+            vendor_id: v2,
+            default_rate: 1180,
+            default_moq: 25,
+            currency: 'INR',
+            status: 'active',
+            payment_terms: seedItemListPaymentTerms,
+            created_at: now,
+            updated_at: now,
+          });
+          await ItemListTier.bulkCreate([
+            { item_list_vendor_rate_id: rate2.id, moq_min: 25, moq_max: null, price_per_unit: 1180, valid_till: validTill, note: 'Alternate vendor', created_at: now, updated_at: now },
+            { item_list_vendor_rate_id: rate2.id, moq_min: 50, moq_max: null, price_per_unit: 1150, valid_till: validTill, note: '', created_at: now, updated_at: now },
+          ]);
+        }
+      }
+      if (v4) {
+        const ilTUB = getIl('EI-PM-TUB-001');
+        if (ilTUB) {
+          await ItemListVendorRate.create({
+            items_list_id: ilTUB.id,
+            vendor_id: v4,
+            default_rate: 4.2,
+            default_moq: 5000,
+            currency: 'INR',
+            status: 'active',
+            payment_terms: seedItemListPaymentTerms,
+            created_at: now,
+            updated_at: now,
+          });
+        }
+        const ilBTL = getIl('EI-PM-BTL-001');
+        if (ilBTL) {
+          await ItemListVendorRate.create({
+            items_list_id: ilBTL.id,
+            vendor_id: v4,
+            default_rate: 5.5,
+            default_moq: 2500,
+            currency: 'INR',
+            status: 'active',
+            payment_terms: seedItemListPaymentTerms,
+            created_at: now,
+            updated_at: now,
+          });
+        }
+      }
+    }
 
     console.log('Seeding Items Master (linked BOMs, Raw Materials, Pack Materials as arrays)...');
     await ItemMaster.destroy({ where: {} });
@@ -1431,28 +1538,36 @@ async function seed() {
     await MaterialRequestNote.bulkCreate(mrnSeed);
 
     console.log('Seeding Product Customizations...');
-    await ProductCustomization.create({
-      user_id: client1.userid,
-      product_id: productA.product_id,
-      category: 'Sun Protectant',
-      formulation: {
-        Active: 'Niacinamide 10%',
-        Cleanser: 'Oil Cleanser',
-        Moisturizer: 'Shea Butter Ultra',
-        Others: 'Argan Oil',
-        Serum: 'B5 Hydration',
-        'Sun Protectant': 'Tinted Mineral'
-      },
-      formulationSummary: 'Niacinamide 10% - Oil Cleanser - Shea Butter Ultra - Argan Oil - B5 Hydration - Tinted Mineral',
-      care: 'SKIN CARE',
-      packagingType: 'standard',
-      packaging_image: null,
-      userNotes: 'Sample product customization notes',
-      status: 'Pending',
-      life_cycle_status: 'active',
-      created_at: now,
-      updated_at: now
+    const productA = await Product.findOne({
+      where: { product_code: 'EI-PR-00001' },
+      attributes: ['product_id'],
     });
+    if (productA) {
+      await ProductCustomization.create({
+        user_id: client1.userid,
+        product_id: productA.product_id,
+        category: 'Sun Protectant',
+        formulation: {
+          Active: 'Niacinamide 10%',
+          Cleanser: 'Oil Cleanser',
+          Moisturizer: 'Shea Butter Ultra',
+          Others: 'Argan Oil',
+          Serum: 'B5 Hydration',
+          'Sun Protectant': 'Tinted Mineral'
+        },
+        formulationSummary: 'Niacinamide 10% - Oil Cleanser - Shea Butter Ultra - Argan Oil - B5 Hydration - Tinted Mineral',
+        care: 'SKIN CARE',
+        packagingType: 'standard',
+        packaging_image: null,
+        userNotes: 'Sample product customization notes',
+        status: 'Pending',
+        life_cycle_status: 'active',
+        created_at: now,
+        updated_at: now
+      });
+    } else {
+      console.warn('[Seed] Skipping ProductCustomization: product EI-PR-00001 not found');
+    }
 
     // ── Production Equipment ──
     console.log('Seeding Production Equipment...');
@@ -1501,7 +1616,6 @@ async function seed() {
 
     // ── Warehouse inventory location history: not seeded (no batch). ──
     await WarehouseInventoryLocationHistory.destroy({ where: {} }).catch(() => { });
-    */
 
     console.log('Seeding complete.');
     process.exit(0);
