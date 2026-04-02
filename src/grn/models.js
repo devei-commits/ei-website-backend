@@ -33,6 +33,8 @@ GoodsReceivedNote.init(
     /** When set, box 1..(n-1) use units_per_box; box n uses this count (partial last carton). */
     last_box_units: { type: DataTypes.INTEGER, allowNull: true },
     location_prefix: { type: DataTypes.STRING(50), allowNull: true },
+    /** Storage zone label (required with rack before GRN Complete). */
+    location_zone: { type: DataTypes.STRING(200), allowNull: true },
     grn_batch_mfg: { type: DataTypes.STRING(100), allowNull: true },
     expiry: { type: DataTypes.DATEONLY, allowNull: true },
     mfg_batch: { type: DataTypes.STRING(100), allowNull: true },

@@ -4,12 +4,20 @@ const BOM = require('../bom/models');
 const { ProductionBatch } = require('../production/models');
 const SalesOrder = require('../salesOrders/models');
 const VendorClient = require('../vendorClient/models');
+const { loadShippingBillingByUserIds, loadAddressCityStateCountryByUserIds } = require('../addresses/clientAddressHelpers');
 const { Product } = require('../products/models');
 const { Order } = require('../orders/models');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const WarehouseInventory = require('../warehouseInventory/models');
 const { syncZohoInvoiceAfterFulfillment } = require('./zohoInvoiceSync');
+const { validateStagedPaymentTermsJson } = require('./validateStagedPaymentTerms');
+const {
+  estimateOrderTotalKg,
+  estimateTotalKgFromRmLines,
+  batchesRequiredForOrderKg,
+  buildPlanningSnapshotFromBom,
+} = require('../planningExtracted/orderKgMath');
 const zohoEnv = require('../services/zohoEnv');
 
 const INCLUDE_FULL = [
@@ -334,6 +342,11 @@ async function createOrder(req, res) {
       return res.status(400).json({ error: 'soNo and customer are required' });
     }
 
+    const ptErr = validateStagedPaymentTermsJson(paymentTerms);
+    if (ptErr) {
+      return res.status(400).json({ error: ptErr });
+    }
+
     const createdByName = req.user ? (req.user.fullName || req.user.email) : null;
 
     const soValue = (items || []).reduce((sum, item) => {
@@ -366,9 +379,8 @@ async function createOrder(req, res) {
         });
         resolvedSalesOrderId = newSO.id;
 
-        // Auto-create planning_extracted rows from SO items + BOM
+        // Auto-create planning_extracted rows from SO items + BOM (FG kg = units × fill size; RM = % of that kg)
         const PlanningExtracted = require('../planningExtracted/models');
-        const BOM = require('../bom/models');
         for (const item of (items || [])) {
           let productId = null;
           if (item.sku) {
@@ -381,24 +393,53 @@ async function createOrder(req, res) {
           }
           if (!productId) continue;
 
-          let rawMaterials = [];
-          let packagingMaterials = [];
+          let rmLines = [];
+          let pmLines = [];
           const bom = await BOM.findOne({ where: { product_id: productId } });
           if (bom) {
-            rawMaterials = Array.isArray(bom.rm_lines) ? bom.rm_lines : [];
-            packagingMaterials = Array.isArray(bom.pm_lines) ? bom.pm_lines : [];
+            const b = bom.get ? bom.get({ plain: true }) : bom;
+            rmLines = Array.isArray(b.rm_lines) ? b.rm_lines : [];
+            pmLines = Array.isArray(b.pm_lines) ? b.pm_lines : [];
           }
 
           const orderQty = item.orderedQty || 0;
           const product = await Product.findByPk(productId);
-          const batchSizeKg = product?.batch_size_kg || 100;
-          const batchesRequired = batchSizeKg > 0 ? Math.ceil(orderQty / batchSizeKg) : 1;
+          const prodPlain = product && product.get ? product.get({ plain: true }) : product;
+          const batchSizeKg = Number(prodPlain?.batch_size_kg) || 100;
+
+          const estimatedTotalKg = estimateOrderTotalKg({
+            orderQty,
+            product: prodPlain,
+            rmLines,
+            batchSizeKg,
+            batchesRequired: 1,
+          });
+          let safeTotalKg = estimatedTotalKg > 0 ? estimatedTotalKg : 0;
+          if (safeTotalKg <= 0) {
+            safeTotalKg = estimateTotalKgFromRmLines({
+              rmLines,
+              orderQty,
+              batchSizeKg,
+              batchesRequired: 1,
+            });
+          }
+          if (safeTotalKg <= 0) {
+            safeTotalKg = Math.round(batchSizeKg * 1000) / 1000;
+          }
+          const batchesRequired = batchesRequiredForOrderKg(safeTotalKg, batchSizeKg);
+          const { raw_materials, packaging_materials } = buildPlanningSnapshotFromBom(
+            rmLines,
+            pmLines,
+            orderQty,
+            safeTotalKg,
+            batchSizeKg,
+          );
 
           await PlanningExtracted.create({
             sales_order_id: newSO.id,
             product_id: productId,
             order_qty_display: `${orderQty} units`,
-            total_kg_display: batchSizeKg ? `${orderQty} KG` : null,
+            total_kg_display: safeTotalKg ? `${safeTotalKg} KG` : null,
             order_date: orderDate || null,
             due_date: dueDate || null,
             batch_size_display: batchSizeKg ? `${batchSizeKg} KG` : null,
@@ -408,8 +449,8 @@ async function createOrder(req, res) {
             bom_status: bom ? 'Confirmed' : 'Pending',
             bom_confirmed_at: bom ? new Date() : null,
             approved_by: createdByName,
-            raw_materials: rawMaterials,
-            packaging_materials: packagingMaterials,
+            raw_materials,
+            packaging_materials,
           });
         }
       }
@@ -587,6 +628,12 @@ async function updateOrder(req, res) {
       'ship_address', 'payment_terms', 'notes',
       'invoice_no', 'invoice_date', 'awb_no', 'dispatch_date', 'courier',
     ];
+
+    if (req.body.payment_terms !== undefined || req.body.paymentTerms !== undefined) {
+      const ptToCheck = req.body.paymentTerms !== undefined ? req.body.paymentTerms : req.body.payment_terms;
+      const ptErr = validateStagedPaymentTermsJson(ptToCheck);
+      if (ptErr) return res.status(400).json({ error: ptErr });
+    }
 
     for (const k of ALLOWED) {
       if (req.body[k] !== undefined) row.set(k, req.body[k]);
@@ -898,6 +945,16 @@ async function listBatchSplits(req, res) {
 
 /* ── Lookup endpoints for AddSOModal ── */
 
+/** First non-empty string from JSON `data` for given keys (camelCase + common variants). */
+function pickDataStr(data, keys) {
+  if (!data || typeof data !== 'object') return '';
+  for (const k of keys) {
+    const v = data[k];
+    if (v != null && String(v).trim()) return String(v).trim();
+  }
+  return '';
+}
+
 async function getNextSoNo(_req, res) {
   try {
     const latest = await FulfillmentOrder.findOne({
@@ -924,21 +981,73 @@ async function getCustomers(_req, res) {
   try {
     const clients = await VendorClient.findAll({
       where: { type: 'client', status: 'active' },
-      attributes: ['id', 'entity_code', 'name', 'city', 'location', 'payment_terms', 'data'],
+      attributes: [
+        'id', 'entity_code', 'name', 'city', 'location', 'country',
+        'email', 'phone', 'category', 'notes', 'priority', 'segment',
+        'payment_terms', 'contacts', 'data', 'user_id',
+      ],
       order: [['name', 'ASC']],
     });
+
+    const userIds = clients.map((c) => c.user_id).filter((id) => id != null);
+    const [addrByUser, geoByUser] = await Promise.all([
+      loadShippingBillingByUserIds(userIds),
+      loadAddressCityStateCountryByUserIds(userIds),
+    ]);
 
     res.json(clients.map(c => {
       const d = c.get({ plain: true });
       const data = d.data && typeof d.data === 'object' ? d.data : {};
-      const shippingAddress = data.shipping_address || data.shippingAddress || '';
+      const fromTable = d.user_id != null ? addrByUser.get(Number(d.user_id)) : null;
+      const geo = d.user_id != null ? geoByUser.get(Number(d.user_id)) : null;
+      const shipFallback = data.shipping_address || data.shippingAddress || '';
+      const billFallback = data.billing_address || data.billingAddress || '';
+      const shippingAddress = (fromTable && fromTable.shipping) || shipFallback || '';
+      const billingAddress = (fromTable && fromTable.billing) || billFallback || '';
+      const contacts = Array.isArray(d.contacts) ? d.contacts : [];
+      const contactLine = contacts.length
+        ? contacts.map((x) => [x.name, x.role].filter(Boolean).join(' — ')).join('; ')
+        : '';
+      const city =
+        (geo && geo.city) ||
+        pickDataStr(data, ['city', 'City']) ||
+        (d.city != null && String(d.city).trim() ? String(d.city).trim() : '');
+      const state =
+        (geo && geo.state) ||
+        pickDataStr(data, ['state', 'State', 'region', 'Region']) ||
+        (d.location != null && String(d.location).trim() ? String(d.location).trim() : '');
+      const country =
+        (geo && geo.country) ||
+        pickDataStr(data, ['country', 'Country']) ||
+        (d.country != null && String(d.country).trim() ? String(d.country).trim() : '');
       return {
         id: d.id,
         code: d.entity_code,
         name: d.name,
-        city: d.city || d.location || '',
+        city,
+        state,
+        country,
+        /** State/region — same as `state` (legacy key for FE). */
+        location: state,
+        email: d.email || '',
+        phone: d.phone || '',
+        category: d.category || '',
+        notes: d.notes || '',
+        priority: d.priority || '',
+        segment: d.segment || '',
+        contacts,
+        contactLine,
         paymentTerms: d.payment_terms || '',
         shippingAddress: shippingAddress || '',
+        billingAddress: billingAddress || '',
+        creditLimit: data.creditLimit != null ? String(data.creditLimit) : '',
+        /** Keys used with ClientForm payables + receivables credit days (Fulfillment SO staging). */
+        clientData: {
+          payablesAdvancedPct: data.payablesAdvancedPct,
+          payablesBeforeDispatchPct: data.payablesBeforeDispatchPct,
+          payablesAfterDispatchPct: data.payablesAfterDispatchPct,
+          receivablesCreditDays: data.receivablesCreditDays,
+        },
       };
     }));
   } catch (err) {

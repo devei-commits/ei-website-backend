@@ -5,9 +5,16 @@ const { Product } = require('../products/models');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const { validateProcurementItemsMoq } = require('./moqValidation');
+const {
+  parseLeadFromLineNotes,
+  mergeLeadIntoLineNotes,
+  buildLeadResolutionCache,
+  enrichProcurementItemsWithResolvedLead,
+} = require('./procurementItemLead');
 
 /**
  * Coerce item quantities to finite numbers (handles strings / comma-formatted values from clients).
+ * Lead: accepts lead_time_days or leadTimeDays; syncs line_notes "Lead: Nd" when a value is known.
  */
 function normalizeProcurementItems(items) {
   if (!Array.isArray(items)) return [];
@@ -19,6 +26,10 @@ function normalizeProcurementItems(items) {
   };
   return items.map((i) => {
     const out = { ...i };
+    if (out.lead_time_days == null && out.leadTimeDays != null) {
+      out.lead_time_days = out.leadTimeDays;
+    }
+    if (out.leadTimeDays !== undefined) delete out.leadTimeDays;
     out.quantity_requested = toNum(out.quantity_requested);
     if (out.required != null) out.required = toNum(out.required);
     if (out.shortage != null) out.shortage = toNum(out.shortage);
@@ -32,13 +43,32 @@ function normalizeProcurementItems(items) {
       if (p > 0) out.planned_unit_price = p;
       else delete out.planned_unit_price;
     }
+    let leadResolved = null;
     if (out.lead_time_days != null && out.lead_time_days !== '') {
       const d = parseInt(String(out.lead_time_days).replace(/\D/g, ''), 10);
-      if (Number.isFinite(d) && d >= 0) out.lead_time_days = d;
-      else delete out.lead_time_days;
+      if (Number.isFinite(d) && d >= 0) leadResolved = d;
+    }
+    if (leadResolved === null) {
+      const fromNotes = parseLeadFromLineNotes(out.line_notes);
+      if (fromNotes !== null) leadResolved = fromNotes;
+    }
+    if (leadResolved !== null) {
+      out.lead_time_days = leadResolved;
+      out.line_notes = mergeLeadIntoLineNotes(out.line_notes, leadResolved);
+    } else {
+      delete out.lead_time_days;
     }
     return out;
   });
+}
+
+/**
+ * Normalize + fill lead from line_notes / Items List vendor rates before persisting `items` JSON.
+ */
+async function finalizeItemsForPersistence(items, preferredVendor) {
+  const n = normalizeProcurementItems(items);
+  const cache = await buildLeadResolutionCache(n);
+  return enrichProcurementItemsWithResolvedLead(n, preferredVendor, cache);
 }
 
 /**
@@ -139,7 +169,9 @@ async function fetchPrFormattedById(id) {
   const d = row.get ? row.get({ plain: true }) : row;
   const items = Array.isArray(d.items) ? d.items : [];
   const { rmMap, pmMap } = await loadMasterMapsForItems(items);
-  const enriched = enrichItemsWithMasters(items, rmMap, pmMap);
+  let enriched = enrichItemsWithMasters(items, rmMap, pmMap);
+  const cache = await buildLeadResolutionCache(items);
+  enriched = enrichProcurementItemsWithResolvedLead(enriched, d.preferred_vendor, cache);
   return formatPR(row, enriched);
 }
 
@@ -168,10 +200,12 @@ async function listProcurementRequests(req, res) {
       return Array.isArray(d.items) ? d.items : [];
     });
     const { rmMap, pmMap } = await loadMasterMapsForItems(allItems);
+    const leadCache = await buildLeadResolutionCache(allItems);
     const out = rows.map((r) => {
       const d = r.get ? r.get({ plain: true }) : r;
       const items = Array.isArray(d.items) ? d.items : [];
-      const enriched = enrichItemsWithMasters(items, rmMap, pmMap);
+      let enriched = enrichItemsWithMasters(items, rmMap, pmMap);
+      enriched = enrichProcurementItemsWithResolvedLead(enriched, d.preferred_vendor, leadCache);
       return formatPR(r, enriched);
     });
     res.json(out);
@@ -207,15 +241,17 @@ async function createProcurementRequest(req, res) {
     if (!planRow) return res.status(404).json({ error: 'Planning extracted record not found' });
     const planningBatchId = body.planningBatchId ?? body.planning_batch_id;
     const batchId = planningBatchId != null ? parseInt(planningBatchId, 10) : null;
+    const preferredVendor = body.preferredVendor ?? body.preferred_vendor ?? null;
     const row = await ProcurementRequest.create({
       planning_extracted_id: id,
       planning_batch_id: batchId != null && !Number.isNaN(batchId) ? batchId : null,
       priority: body.priority ?? null,
       required_by_date: body.requiredByDate ?? body.required_by_date ?? null,
       notes: body.notes ?? null,
-      items: normalizeProcurementItems(body.items ?? []),
+      items: await finalizeItemsForPersistence(body.items ?? [], preferredVendor),
       status: body.status ?? 'Pending',
       requested_by: body.requestedBy ?? body.requested_by ?? req.user?.email ?? null,
+      preferred_vendor: preferredVendor,
     });
     const formatted = await fetchPrFormattedById(row.id);
     res.status(201).json(formatted);
@@ -237,7 +273,11 @@ async function updateProcurementRequest(req, res) {
     if (body.requiredByDate !== undefined) updates.required_by_date = body.requiredByDate;
     if (body.required_by_date !== undefined) updates.required_by_date = body.required_by_date;
     if (body.notes !== undefined) updates.notes = body.notes;
-    if (body.items !== undefined) updates.items = normalizeProcurementItems(body.items);
+    if (body.items !== undefined) {
+      const pv =
+        body.preferredVendor ?? body.preferred_vendor ?? row.preferred_vendor ?? null;
+      updates.items = await finalizeItemsForPersistence(body.items, pv);
+    }
     if (body.status !== undefined) updates.status = body.status;
     if (body.preferredVendor !== undefined) updates.preferred_vendor = body.preferredVendor;
     if (body.preferred_vendor !== undefined) updates.preferred_vendor = body.preferred_vendor;

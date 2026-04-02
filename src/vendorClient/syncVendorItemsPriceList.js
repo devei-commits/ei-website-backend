@@ -92,9 +92,9 @@ async function removeVendorRateForItem(vendorId, itemsListId, transaction) {
  * Upsert one vendor line: rate + single MOQ tier (vendor form is one row per price band).
  */
 async function upsertVendorRateAndTier(vendorId, itemsListId, item, transaction) {
-  const price = toNum(item.unitPrice);
+  const price = toNum(item.unitPrice != null && item.unitPrice !== '' ? item.unitPrice : item.price);
   if (price == null) {
-    throw new Error(`unitPrice required for item code ${normCode(item.itemCode)}`);
+    throw new Error(`unit price required for item code ${normCode(item.itemCode)}`);
   }
   let moq = parseInt(String(item.moq ?? '').trim(), 10);
   if (Number.isNaN(moq) || moq < 1) moq = 1;
@@ -220,7 +220,7 @@ async function syncVendorMasterItemsToPriceList({
       continue;
     }
 
-    const price = toNum(item.unitPrice);
+    const price = toNum(item.unitPrice != null && item.unitPrice !== '' ? item.unitPrice : item.price);
     if (price == null) {
       skipped.push({ code, type: t, reason: 'Unit price is required' });
       continue;

@@ -5,6 +5,7 @@ const {
   listVendorClients,
   getVendorClientById,
   getNextCode,
+  syncZohoVendorDraft,
   createVendorClient,
   updateVendorClient,
   deleteVendorClient,
@@ -14,6 +15,7 @@ const requireVendorClient = [isAuthenticated, requireModule('vendor-client')];
 
 router.get('/', requireVendorClient, listVendorClients);
 router.get('/next-code', requireVendorClient, getNextCode);
+router.post('/sync-zoho', requireVendorClient, syncZohoVendorDraft);
 router.get('/:id', requireVendorClient, getVendorClientById);
 router.post('/', requireVendorClient, createVendorClient);
 router.put('/:id', requireVendorClient, updateVendorClient);

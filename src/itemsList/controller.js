@@ -12,6 +12,37 @@ function toNum(x) {
 }
 
 /**
+ * Duplicate items_list rows for the same RM/PM/PR FK can exist historically.
+ * Map-building used only the last row per FK, so rates on another row were invisible.
+ * Prefer the row with the most vendor rates; tie-break lower id.
+ */
+async function pickCanonicalItemsListRow(rows) {
+  if (!rows || rows.length === 0) return null;
+  if (rows.length === 1) return rows[0];
+  let best = rows[0];
+  let bestCount = -1;
+  for (const row of rows) {
+    const n = await ItemListVendorRate.count({ where: { items_list_id: row.id } });
+    if (n > bestCount || (n === bestCount && row.id < best.id)) {
+      best = row;
+      bestCount = n;
+    }
+  }
+  return best;
+}
+
+function groupItemsListRowsByFk(listRows, fkField) {
+  const groups = new Map();
+  for (const r of listRows) {
+    const fk = r[fkField];
+    if (fk == null) continue;
+    if (!groups.has(fk)) groups.set(fk, []);
+    groups.get(fk).push(r);
+  }
+  return groups;
+}
+
+/**
  * Resolve item row to display shape from RM or PM master (async, single row).
  */
 async function resolveItemMaster(row) {
@@ -107,7 +138,12 @@ async function pageItemsList(req, res) {
     if (type === 'RM') {
       const rms = await RawMaterial.findAll({ order: [['code', 'ASC']] });
       const listRows = await ItemsList.findAll({ where: { type: 'RM' }, order: [['id']] });
-      const byRmId = new Map(listRows.map((r) => [r.raw_material_id, r]));
+      const rmGroups = groupItemsListRowsByFk(listRows, 'raw_material_id');
+      const byRmId = new Map();
+      for (const [rmId, group] of rmGroups) {
+        const canonical = group.length === 1 ? group[0] : await pickCanonicalItemsListRow(group);
+        byRmId.set(rmId, canonical);
+      }
       const vendorIds = [...new Set((await ItemListVendorRate.findAll({ attributes: ['vendor_id'] })).map((r) => r.vendor_id))];
       const vendors = vendorIds.length ? await VendorClient.findAll({ where: { id: vendorIds } }) : [];
       const vendorById = new Map(vendors.map((v) => [v.id, v.get ? v.get({ plain: true }) : v]));
@@ -157,7 +193,12 @@ async function pageItemsList(req, res) {
     } else if (type === 'PM') {
       const pms = await PackMaterial.findAll({ order: [['code', 'ASC']] });
       const listRows = await ItemsList.findAll({ where: { type: 'PM' }, order: [['id']] });
-      const byPmId = new Map(listRows.map((r) => [r.pack_material_id, r]));
+      const pmGroups = groupItemsListRowsByFk(listRows, 'pack_material_id');
+      const byPmId = new Map();
+      for (const [pmId, group] of pmGroups) {
+        const canonical = group.length === 1 ? group[0] : await pickCanonicalItemsListRow(group);
+        byPmId.set(pmId, canonical);
+      }
       const vendorIds = [...new Set((await ItemListVendorRate.findAll({ attributes: ['vendor_id'] })).map((r) => r.vendor_id))];
       const vendors = vendorIds.length ? await VendorClient.findAll({ where: { id: vendorIds } }) : [];
       const vendorById = new Map(vendors.map((v) => [v.id, v.get ? v.get({ plain: true }) : v]));
@@ -208,7 +249,12 @@ async function pageItemsList(req, res) {
     } else {
       const prods = await Product.findAll({ order: [['product_code', 'ASC']] });
       const listRows = await ItemsList.findAll({ where: { type: 'PR' }, order: [['id']] });
-      const byProductId = new Map(listRows.map((r) => [r.product_id, r]));
+      const prGroups = groupItemsListRowsByFk(listRows, 'product_id');
+      const byProductId = new Map();
+      for (const [pid, group] of prGroups) {
+        const canonical = group.length === 1 ? group[0] : await pickCanonicalItemsListRow(group);
+        byProductId.set(pid, canonical);
+      }
       const vendorIds = [...new Set((await ItemListVendorRate.findAll({ attributes: ['vendor_id'] })).map((r) => r.vendor_id))];
       const vendors = vendorIds.length ? await VendorClient.findAll({ where: { id: vendorIds } }) : [];
       const vendorById = new Map(vendors.map((v) => [v.id, v.get ? v.get({ plain: true }) : v]));

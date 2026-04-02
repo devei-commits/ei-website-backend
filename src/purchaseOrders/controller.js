@@ -1,6 +1,25 @@
 const PurchaseOrder = require('./models');
+const ProcurementRequest = require('../procurementRequests/models');
 const { syncZohoPurchaseOrderForPo, syncZohoBillForPo } = require('../services/zohoPurchaseOrderSync');
 const zohoEnv = require('../services/zohoEnv');
+
+/**
+ * When a draft PO is released (status → Released), keep procurement_requests.status in sync
+ * so GET /procurement lists don't keep showing the request as "PO Draft".
+ */
+async function syncProcurementRequestStatusFromPoFormData(formData, status) {
+  if (!formData || typeof formData !== 'object') return;
+  const raw = formData.requestId ?? formData.request_id;
+  if (raw == null || raw === '') return;
+  const digits = String(raw).replace(/\D/g, '');
+  const id = parseInt(digits || '0', 10);
+  if (!Number.isFinite(id) || id <= 0) return;
+  try {
+    await ProcurementRequest.update({ status }, { where: { id } });
+  } catch (e) {
+    console.warn('[purchaseOrders] syncProcurementRequestStatusFromPoFormData failed:', e && e.message ? e.message : e);
+  }
+}
 
 // Some environments may not have Zoho columns migrated yet.
 // Keep read queries restricted to columns that always exist, so the PO APIs don't 500.
@@ -291,6 +310,13 @@ async function updatePurchaseOrder(req, res) {
       return res.json(out);
     }
     await row.update(payload);
+    const nextStatus = String(row.get('status') || '').trim().toLowerCase();
+    if (nextStatus === 'released') {
+      const fd = row.get('form_data');
+      const merged =
+        fd && typeof fd === 'object' && !Array.isArray(fd) ? fd : {};
+      await syncProcurementRequestStatusFromPoFormData(merged, 'PO Released');
+    }
     try {
       const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
       await syncWarehouseInTransitAll();

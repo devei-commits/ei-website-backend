@@ -1,11 +1,52 @@
 const { Op } = require('sequelize');
+const db = require('../../db');
 const GoodsReceivedNote = require('./models');
+
+let grnLocationZoneColumnEnsured = false;
+async function ensureGrnLocationZoneColumn() {
+  if (grnLocationZoneColumnEnsured) return;
+  grnLocationZoneColumnEnsured = true;
+  try {
+    const dialect = db.getDialect && db.getDialect();
+    if (dialect === 'postgres') {
+      await db.query(
+        'ALTER TABLE goods_received_notes ADD COLUMN IF NOT EXISTS location_zone VARCHAR(200)'
+      );
+    }
+  } catch (e) {
+    console.warn('[grn] ensure location_zone column skipped:', e && e.message ? e.message : e);
+  }
+}
+
+let warehouseInventoryZoneRackTextEnsured = false;
+/** Allow multiple rack/zone labels on one inventory row (merged list, not a single slot). */
+async function ensureWarehouseInventoryZoneRackTextColumns() {
+  if (warehouseInventoryZoneRackTextEnsured) return;
+  warehouseInventoryZoneRackTextEnsured = true;
+  try {
+    const dialect = db.getDialect && db.getDialect();
+    if (dialect === 'postgres') {
+      await db.query(`
+        ALTER TABLE warehouse_inventory
+          ALTER COLUMN zone TYPE TEXT,
+          ALTER COLUMN rack TYPE TEXT
+      `);
+    }
+  } catch (e) {
+    console.warn(
+      '[grn] ensure warehouse_inventory zone/rack TEXT columns skipped:',
+      e && e.message ? e.message : e
+    );
+  }
+}
+
 const { User } = require('../users/models');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const { Product } = require('../products/models');
 const PurchaseOrder = require('../purchaseOrders/models');
 const WarehouseInventory = require('../warehouseInventory/models');
+const { mergeLocationTokens } = require('../warehouseInventory/locationTokensMerge');
 const { logLocationMovement } = require('../warehouseInventory/locationHistoryHelpers');
 const { WarehouseLocation, WarehouseRack } = require('../warehouseLocations/models');
 
@@ -289,6 +330,7 @@ function formatRow(r, enrichedLineItems) {
     unitsPerBox: d.units_per_box != null ? Number(d.units_per_box) : null,
     lastBoxUnits: d.last_box_units != null ? Number(d.last_box_units) : null,
     locationPrefix: d.location_prefix || null,
+    locationZone: d.location_zone || null,
     grnBatchMfg: d.grn_batch_mfg || null,
     expiry: d.expiry || null,
     mfgBatch: d.mfg_batch || null,
@@ -301,6 +343,7 @@ function formatRow(r, enrichedLineItems) {
  */
 async function list(req, res) {
   try {
+    await ensureGrnLocationZoneColumn();
     const rows = await GoodsReceivedNote.findAll({
       order: [['expected_date', 'DESC'], ['id', 'DESC']],
     });
@@ -323,6 +366,7 @@ async function list(req, res) {
  */
 async function getById(req, res) {
   try {
+    await ensureGrnLocationZoneColumn();
     const id = parseInt(String(req.params.id), 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await GoodsReceivedNote.findByPk(id);
@@ -366,6 +410,7 @@ async function create(req, res) {
       no_of_boxes: body.noOfBoxes ?? body.no_of_boxes,
       units_per_box: body.unitsPerBox ?? body.units_per_box,
       location_prefix: body.locationPrefix ?? body.location_prefix,
+      location_zone: body.locationZone ?? body.location_zone,
       grn_batch_mfg: body.grnBatchMfg ?? body.grn_batch_mfg,
       expiry: body.expiry,
       mfg_batch: body.mfgBatch ?? body.mfg_batch,
@@ -829,6 +874,7 @@ async function applyGrnCompletionToInventory(grnRow) {
  */
 async function update(req, res) {
   try {
+    await ensureGrnLocationZoneColumn();
     const id = parseInt(String(req.params.id), 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await GoodsReceivedNote.findByPk(id);
@@ -862,6 +908,8 @@ async function update(req, res) {
     if (body.last_box_units !== undefined) updates.last_box_units = body.last_box_units;
     if (body.locationPrefix !== undefined) updates.location_prefix = body.locationPrefix;
     if (body.location_prefix !== undefined) updates.location_prefix = body.location_prefix;
+    if (body.locationZone !== undefined) updates.location_zone = body.locationZone;
+    if (body.location_zone !== undefined) updates.location_zone = body.location_zone;
     if (body.grnBatchMfg !== undefined) updates.grn_batch_mfg = body.grnBatchMfg;
     if (body.grn_batch_mfg !== undefined) updates.grn_batch_mfg = body.grn_batch_mfg;
     if (body.expiry !== undefined) updates.expiry = body.expiry;
@@ -882,6 +930,12 @@ async function update(req, res) {
       const hasLabelGenerationStep = Array.isArray(nextWorkflowSteps) && nextWorkflowSteps.includes('Label Generation');
       const hasGeneratedLabels = Array.isArray(nextGeneratedLabels) && nextGeneratedLabels.length > 0;
       if (!hasLabelGenerationStep && !hasGeneratedLabels) blockers.push('QR labels must be generated');
+      const nextLocPrefix =
+        updates.location_prefix !== undefined ? updates.location_prefix : rowPlain.location_prefix;
+      const nextLocZone =
+        updates.location_zone !== undefined ? updates.location_zone : rowPlain.location_zone;
+      if (!String(nextLocPrefix || '').trim()) blockers.push('Location prefix (rack code) is required');
+      if (!String(nextLocZone || '').trim()) blockers.push('Storage zone is required');
       if (blockers.length > 0) {
         return res.status(400).json({ error: `Cannot mark GRN Complete: ${blockers.join('; ')}.` });
       }
@@ -955,6 +1009,144 @@ async function remove(req, res) {
 }
 
 /**
+ * Persist resolved rack/zone from label generation onto warehouse_inventory for the selected line item
+ * so Warehouse → Inventory shows the same location as the GRN QR payload.
+ * Creates a zero-qty inventory stub if none exists yet (before GRN Complete).
+ */
+async function applyLabelGenerationToWarehouseInventory(grnPlain, selectedItemCode, toRack, toZone, locationPrefixRaw) {
+  await ensureWarehouseInventoryZoneRackTextColumns();
+
+  const codeU = String(selectedItemCode || '').trim().toUpperCase();
+  const rackStr = String(toRack || '').trim() || String(locationPrefixRaw || '').trim() || null;
+  const zoneStr = String(toZone || '').trim() || null;
+  if (!rackStr && !zoneStr) return;
+
+  const lineItems = Array.isArray(grnPlain.line_items) ? grnPlain.line_items : [];
+  const grnType = (grnPlain.type || 'RM').toUpperCase();
+
+  let line = lineItems.find((l) => {
+    const ic = String(l.itemCode ?? l.item_code ?? '').trim().toUpperCase();
+    const resolved = resolveLineItemMasterCode(l);
+    return ic === codeU || resolved === codeU;
+  });
+  if (!line && lineItems.length === 1) line = lineItems[0];
+
+  let rmId = line && line.raw_material_id != null ? Number(line.raw_material_id) : null;
+  let pmId = line && line.pack_material_id != null ? Number(line.pack_material_id) : null;
+  let productId = line && line.product_id != null ? Number(line.product_id) : null;
+
+  if (
+    (rmId == null || Number.isNaN(rmId)) &&
+    (pmId == null || Number.isNaN(pmId)) &&
+    (productId == null || Number.isNaN(productId))
+  ) {
+    if (grnType === 'PM') {
+      const pm = await PackMaterial.findOne({ where: { code: codeU } });
+      if (pm) {
+        const x = pm.get ? pm.get({ plain: true }) : pm;
+        pmId = Number(x.id);
+      }
+    } else if (grnType === 'PR') {
+      const prod = await Product.findOne({ where: { product_code: codeU } });
+      if (prod) {
+        const x = prod.get ? prod.get({ plain: true }) : prod;
+        productId = Number(x.product_id);
+      }
+    } else {
+      const rm = await RawMaterial.findOne({ where: { code: codeU } });
+      if (rm) {
+        const x = rm.get ? rm.get({ plain: true }) : rm;
+        rmId = Number(x.id);
+      }
+    }
+  }
+
+  let where = null;
+  if (productId != null && !Number.isNaN(productId)) {
+    where = { item_type: 'PR', product_id: productId };
+  } else if (pmId != null && !Number.isNaN(pmId)) {
+    where = { item_type: 'PM', pack_material_id: pmId };
+  } else if (rmId != null && !Number.isNaN(rmId)) {
+    where = { item_type: 'RM', raw_material_id: rmId };
+  }
+
+  if (!where) {
+    console.warn('[grn] generateLabels: could not resolve warehouse_inventory master for item', codeU);
+    return;
+  }
+
+  let inv = await WarehouseInventory.findOne({ where });
+  if (!inv) {
+    const base = {
+      zone: zoneStr || null,
+      rack: rackStr || null,
+      wh_stock: 0,
+      ml1_stock: 0,
+      ml2_stock: 0,
+      stock_in_hand: 0,
+      reserved: 0,
+      in_transit: 0,
+      reorder_pt: 0,
+      avg_mo: 0,
+      qc_status: 'In Stock',
+    };
+    if (where.item_type === 'RM') {
+      inv = await WarehouseInventory.create({
+        ...base,
+        item_type: 'RM',
+        raw_material_id: where.raw_material_id,
+        pack_material_id: null,
+        product_id: null,
+        wh_unit: 'KG',
+      });
+    } else if (where.item_type === 'PM') {
+      inv = await WarehouseInventory.create({
+        ...base,
+        item_type: 'PM',
+        raw_material_id: null,
+        pack_material_id: where.pack_material_id,
+        product_id: null,
+        wh_unit: 'PCS',
+      });
+    } else {
+      inv = await WarehouseInventory.create({
+        ...base,
+        item_type: 'PR',
+        raw_material_id: null,
+        pack_material_id: null,
+        product_id: where.product_id,
+        wh_unit: 'PCS',
+      });
+    }
+    console.log('[grn] generateLabels: created warehouse_inventory stub for zone/rack', {
+      warehouseInventoryId: inv.id,
+      itemCode: codeU,
+      rack: rackStr,
+      zone: zoneStr,
+    });
+  } else {
+    const plain = inv.get ? inv.get({ plain: true }) : inv;
+    const patch = {};
+    if (rackStr) {
+      const mergedRack = mergeLocationTokens(plain.rack, rackStr);
+      if (String(mergedRack || '') !== String(plain.rack || '')) patch.rack = mergedRack;
+    }
+    if (zoneStr) {
+      const mergedZone = mergeLocationTokens(plain.zone, zoneStr);
+      if (String(mergedZone || '') !== String(plain.zone || '')) patch.zone = mergedZone;
+    }
+    if (Object.keys(patch).length) {
+      await inv.update(patch);
+      console.log('[grn] generateLabels: merged warehouse_inventory zone/rack', {
+        warehouseInventoryId: inv.id,
+        itemCode: codeU,
+        ...patch,
+      });
+    }
+  }
+}
+
+/**
  * POST /api/v1/grn/:id/generate-labels
  * Body (optional): noOfBoxes, unitsPerBox, lastBoxUnits (partial last box — box n only),
  *                  locationPrefix, grnBatchMfg, expiry, mfgBatch, productName, itemCode.
@@ -964,6 +1156,7 @@ async function remove(req, res) {
  */
 async function generateLabels(req, res) {
   try {
+    await ensureGrnLocationZoneColumn();
     const id = parseInt(String(req.params.id), 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await GoodsReceivedNote.findByPk(id);
@@ -1046,11 +1239,20 @@ async function generateLabels(req, res) {
       }
     }
 
+    const explicitZone = String(
+      body.locationZone ?? body.location_zone ?? d.location_zone ?? ''
+    ).trim();
+    if (explicitZone) {
+      toZone = explicitZone;
+    }
+
     const updates = {};
     if (body.noOfBoxes !== undefined) updates.no_of_boxes = body.noOfBoxes;
     if (body.unitsPerBox !== undefined) updates.units_per_box = body.unitsPerBox;
     if (body.lastBoxUnits !== undefined) updates.last_box_units = body.lastBoxUnits;
     if (body.locationPrefix !== undefined) updates.location_prefix = body.locationPrefix;
+    if (body.locationZone !== undefined) updates.location_zone = body.locationZone;
+    if (body.location_zone !== undefined) updates.location_zone = body.location_zone;
     if (body.grnBatchMfg !== undefined) updates.grn_batch_mfg = body.grnBatchMfg;
     if (body.expiry !== undefined) updates.expiry = body.expiry;
     if (body.mfgBatch !== undefined) updates.mfg_batch = body.mfgBatch;
@@ -1102,6 +1304,16 @@ async function generateLabels(req, res) {
     const updatedSteps = [...new Set([...existingSteps, ...ORDERED_STEPS])];
 
     await row.update({ generated_labels: labels, workflow_steps: updatedSteps });
+
+    try {
+      await applyLabelGenerationToWarehouseInventory(d, itemCode, toRack, toZone, locationPrefix);
+    } catch (syncErr) {
+      console.warn(
+        '[grn] generateLabels: warehouse_inventory zone/rack sync failed:',
+        syncErr && syncErr.message ? syncErr.message : syncErr
+      );
+    }
+
     res.json({ labels, workflowSteps: updatedSteps });
   } catch (err) {
     console.error('[grn] generateLabels error:', err);

@@ -5,6 +5,7 @@ const {
   listPackMaterials,
   getNextCode,
   getPackMaterialById,
+  syncPmZoho,
   createPackMaterial,
   updatePackMaterial,
   deletePackMaterial,
@@ -18,6 +19,7 @@ const cachePackMaterialsList = createCacheReadMiddleware({ namespace: 'pack-mate
 const cachePackMaterialsOne = createCacheReadMiddleware({ namespace: 'pack-materials', ttlSeconds: 300 });
 
 router.get('/next-code', requirePackMaterials, getNextCode);
+router.post('/zoho-sync', requirePackMaterials, syncPmZoho);
 router.post('/', requirePackMaterials, createPackMaterial);
 router.get('/:id/reserved-stock', requirePackMaterials, getReservedStock);
 router.get('/:id', requirePackMaterials, cachePackMaterialsOne, getPackMaterialById);

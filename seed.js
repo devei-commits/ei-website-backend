@@ -408,10 +408,20 @@ async function seed() {
       { obj: accountsTeam, city: 'Hyderabad', state: 'Telangana', zip: '500001' },
       { obj: doctor, city: 'Mumbai', state: 'Maharashtra', zip: '400050' },
       { obj: client1, city: 'Mumbai', state: 'Maharashtra', zip: '400001' },
-      { obj: client2, city: 'Kochi', state: 'Kerala', zip: '682001' }
+      { obj: client2, city: 'Kochi', state: 'Kerala', zip: '682001' },
+      {
+        obj: luminosPortalUser,
+        city: 'Mumbai',
+        state: 'Maharashtra',
+        zip: '400069',
+        billLine1: 'Luminos Skincare, Accounts Dept., 456 Andheri East',
+        shipLine1: 'Luminos Skincare, 456 Andheri East',
+      },
     ];
 
     for (const u of users) {
+      const billLine1 = u.billLine1 || `${u.obj.fname} Billing St, ${u.city}`;
+      const shipLine1 = u.shipLine1 || `${u.obj.fname} Shipping St, ${u.city}`;
       // Billing Address
       await Address.create({
         user_id: u.obj.userid,
@@ -419,7 +429,7 @@ async function seed() {
         is_default_billing: true,
         first_name: u.obj.fname,
         last_name: u.obj.lname,
-        address_line1: `${u.obj.fname} Billing St, ${u.city}`,
+        address_line1: billLine1,
         city_text: u.city,
         state_text: u.state,
         country_text: 'India',
@@ -436,7 +446,7 @@ async function seed() {
         is_default_shipping: true,
         first_name: u.obj.fname,
         last_name: u.obj.lname,
-        address_line1: `${u.obj.fname} Shipping St, ${u.city}`,
+        address_line1: shipLine1,
         city_text: u.city,
         state_text: u.state,
         country_text: 'India',
@@ -1224,11 +1234,46 @@ async function seed() {
     console.log('Seeding Vendor / Client master (before Items List)...');
     await VendorClient.destroy({ where: {} });
     const vendorClientSeed = [
-      { entity_code: 'EI-VEN-00001', type: 'vendor', zoho_id: null, name: 'Chemspec India', email: 'orders@chemspecindia.com', phone: '+91-9876543210', location: 'Mumbai', country: 'India', city: 'Mumbai', category: 'RAW MATERIAL', status: 'active', payment_terms: 'Adv 0% · Pre 100% · Post 0% · Net 30d', notes: '', rating: 4, moq: '—', lead_time: '14 days', data: {}, created_at: now, updated_at: now },
-      { entity_code: 'EI-VEN-00002', type: 'vendor', zoho_id: '5012345678901002', name: 'Sigma Chemicals Pvt Ltd', email: 'sales@sigmachem.in', phone: '+91-9876543211', location: 'Pune', country: 'India', city: 'Pune', category: 'RAW MATERIAL', status: 'active', payment_terms: 'Adv 0% · Pre 100% · Post 0% · Net 45d', notes: '', rating: 4, moq: '—', lead_time: '18 days', data: {}, created_at: now, updated_at: now },
-      { entity_code: 'EI-VEN-00003', type: 'vendor', zoho_id: '5012345678901003', name: 'UV Filters & Actives Co', email: 'procurement@uvfilters.co.in', phone: '+91-9876543212', location: 'Hyderabad', country: 'India', city: 'Hyderabad', category: 'UV FILTER / ACTIVE', status: 'active', payment_terms: 'Adv 0% · Pre 100% · Post 0% · Net 30d', notes: '', rating: 5, moq: '—', lead_time: '21 days', data: {}, created_at: now, updated_at: now },
-      { entity_code: 'EI-VEN-00004', type: 'vendor', zoho_id: '5012345678901004', name: 'Packaging Solutions India', email: 'orders@packsol.in', phone: '+91-9876543213', location: 'Chennai', country: 'India', city: 'Chennai', category: 'PACKAGING', status: 'active', payment_terms: 'Adv 30% · Pre 70% · Post 0%', notes: '', rating: 4, moq: '—', lead_time: '21–28 days', data: {}, created_at: now, updated_at: now },
-      { entity_code: 'EI-CLI-00001', type: 'client', zoho_id: null, name: 'Luminos Skincare', email: 'bd@luminos.in', phone: '+91-9812345001', location: 'Maharashtra', country: 'India', city: 'Mumbai', category: 'CDMO', status: 'active', payment_terms: 'NET 45', notes: '', rating: 5, moq: '—', lead_time: '—', data: { shipping_address: 'Luminos Skincare, 456 Andheri East, Mumbai, Maharashtra 400069, India' }, priority: 'high', segment: 'Skin Care', since_year: 2022, revenue_value: 4200000, avatar_color: 'orange', account_manager_id: amPriya.userid, contacts: [{ name: 'Rajeev Sharma', role: 'BD Head' }], created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00001', type: 'vendor', zoho_id: null, name: 'Chemspec India', email: 'orders@chemspecindia.com', phone: '+91-9876543210', location: 'Mumbai', country: 'India', city: 'Mumbai', category: 'RAW MATERIAL', status: 'active', payment_terms: '{"advance_pct":0,"pre_shipment_pct":100,"post_shipment_pct":0,"credit_days":30}', notes: '', rating: 4, moq: '—', lead_time: '14 days', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00002', type: 'vendor', zoho_id: '5012345678901002', name: 'Sigma Chemicals Pvt Ltd', email: 'sales@sigmachem.in', phone: '+91-9876543211', location: 'Pune', country: 'India', city: 'Pune', category: 'RAW MATERIAL', status: 'active', payment_terms: '{"advance_pct":0,"pre_shipment_pct":100,"post_shipment_pct":0,"credit_days":45}', notes: '', rating: 4, moq: '—', lead_time: '18 days', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00003', type: 'vendor', zoho_id: '5012345678901003', name: 'UV Filters & Actives Co', email: 'procurement@uvfilters.co.in', phone: '+91-9876543212', location: 'Hyderabad', country: 'India', city: 'Hyderabad', category: 'UV FILTER / ACTIVE', status: 'active', payment_terms: '{"advance_pct":0,"pre_shipment_pct":100,"post_shipment_pct":0,"credit_days":30}', notes: '', rating: 5, moq: '—', lead_time: '21 days', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00004', type: 'vendor', zoho_id: '5012345678901004', name: 'Packaging Solutions India', email: 'orders@packsol.in', phone: '+91-9876543213', location: 'Chennai', country: 'India', city: 'Chennai', category: 'PACKAGING', status: 'active', payment_terms: '{"advance_pct":30,"pre_shipment_pct":70,"post_shipment_pct":0,"credit_days":0}', notes: '', rating: 4, moq: '—', lead_time: '21–28 days', data: {}, created_at: now, updated_at: now },
+      {
+        entity_code: 'EI-CLI-00001',
+        type: 'client',
+        zoho_id: null,
+        name: 'Luminos Skincare',
+        email: 'bd@luminos.in',
+        phone: '+91-9812345001',
+        location: 'Maharashtra',
+        country: 'India',
+        city: 'Mumbai',
+        category: 'CDMO',
+        status: 'active',
+        /** Items List–style staged JSON (advance / pre-shipment / post-shipment / credit days). */
+        payment_terms: '{"advance_pct":0,"pre_shipment_pct":100,"post_shipment_pct":0,"credit_days":45}',
+        notes: 'Seeded CDMO partner — demo fulfillment.',
+        rating: 5,
+        moq: '—',
+        lead_time: '—',
+        data: {
+          /** Shipping/billing lines live in `addresses` (linked user_id); keep commercial fields here. */
+          payablesAdvancedPct: '0',
+          payablesBeforeDispatchPct: '100',
+          payablesAfterDispatchPct: '0',
+          receivablesCreditDays: '45',
+          creditLimit: '5000000',
+        },
+        priority: 'high',
+        segment: 'Skin Care',
+        since_year: 2022,
+        revenue_value: 4200000,
+        avatar_color: 'orange',
+        account_manager_id: amPriya.userid,
+        contacts: [{ name: 'Rajeev Sharma', role: 'BD Head' }],
+        created_at: now,
+        updated_at: now,
+      },
     ];
     await VendorClient.bulkCreate(vendorClientSeed);
 

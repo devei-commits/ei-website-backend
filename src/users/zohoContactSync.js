@@ -277,10 +277,85 @@ async function syncZohoContactForVendorClient(vc) {
   }
 }
 
+/**
+ * Map Zoho Books GET/POST contact object fields into VendorForm `data` keys (camelCase).
+ * @param {Record<string, unknown>|null|undefined} contact
+ * @returns {Record<string, string>}
+ */
+function mapZohoBooksContactToVendorFormFields(contact) {
+  if (!contact || typeof contact !== 'object') return {};
+  const c = /** @type {Record<string, unknown>} */ (contact);
+  const out = {};
+
+  const contactName = c.contact_name != null ? String(c.contact_name).trim() : '';
+  const companyName = c.company_name != null ? String(c.company_name).trim() : '';
+  const legalName = c.legal_name != null ? String(c.legal_name).trim() : '';
+
+  if (contactName || companyName || legalName) {
+    const display = contactName || companyName || legalName;
+    out.tradeName = display;
+    out.legalName = legalName || companyName || display;
+  }
+
+  if (c.email != null && String(c.email).trim()) out.primaryEmail = String(c.email).trim();
+  const phone = c.phone != null ? String(c.phone).trim() : '';
+  const mobile = c.mobile != null ? String(c.mobile).trim() : '';
+  if (phone) out.primaryPhone = phone;
+  else if (mobile) out.primaryPhone = mobile;
+
+  if (c.website != null && String(c.website).trim()) {
+    let w = String(c.website).trim();
+    if (w && !/^https?:\/\//i.test(w)) w = `https://${w}`;
+    out.website = w;
+  }
+
+  const gst =
+    c.gst_no != null
+      ? String(c.gst_no).trim()
+      : c.gstin != null
+        ? String(c.gstin).trim()
+        : '';
+  if (gst) out.gstin = gst;
+
+  if (c.pan_no != null && String(c.pan_no).trim()) out.pan = String(c.pan_no).trim().toUpperCase();
+
+  const pickAddr = (addr) => {
+    if (!addr || typeof addr !== 'object') return null;
+    const a = /** @type {Record<string, unknown>} */ (addr);
+    const street = [a.street, a.address, a.street2].filter((x) => x && String(x).trim()).join(', ');
+    return {
+      lines: street ? String(street).trim() : '',
+      city: a.city != null ? String(a.city).trim() : '',
+      state: a.state != null ? String(a.state).trim() : '',
+      country: a.country != null ? String(a.country).trim() : '',
+      zip: a.zip != null ? String(a.zip).trim() : '',
+    };
+  };
+
+  const bill = pickAddr(c.billing_address);
+  if (bill && (bill.lines || bill.state || bill.country)) {
+    const parts = [bill.lines, bill.city, bill.state, bill.zip, bill.country].filter(Boolean);
+    if (parts.length) out.billingAddress = parts.join(', ').slice(0, 500);
+    if (bill.state) out.state = bill.state;
+    if (bill.country) out.country = bill.country;
+  }
+
+  const ship = pickAddr(c.shipping_address);
+  if (ship && (ship.lines || ship.state || ship.country)) {
+    const parts = [ship.lines, ship.city, ship.state, ship.zip, ship.country].filter(Boolean);
+    if (parts.length) out.shippingAddress = parts.join(', ').slice(0, 500);
+    if (!out.state && ship.state) out.state = ship.state;
+    if (!out.country && ship.country) out.country = ship.country;
+  }
+
+  return out;
+}
+
 module.exports = {
   shouldSyncZohoForUsertype,
   buildZohoContactPayload,
   buildZohoContactPayloadFromVendorClient,
   syncZohoContactForNewUser,
   syncZohoContactForVendorClient,
+  mapZohoBooksContactToVendorFormFields,
 };

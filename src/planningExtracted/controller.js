@@ -11,6 +11,14 @@ const PackMaterial = require('../packMaterials/models');
 const BOM = require('../bom/models');
 const { ReservedBatchItem } = require('../fulfillment/models');
 const PurchaseOrder = require('../purchaseOrders/models');
+const {
+  parseOrderQtyNum,
+  parseFillSizeToKgPerUnit,
+  inferBlendSpecificGravity,
+  estimateTotalKgFromRmLines,
+  estimateOrderTotalKg,
+  batchesRequiredForOrderKg,
+} = require('./orderKgMath');
 
 /** Whether `sent_batch_indices` includes this 0-based batch index (coerces string/number from JSON). */
 function isBatchIndexSent(sentRaw, batchIndex0) {
@@ -90,39 +98,6 @@ function inferDefaultLeadTimeDays(so) {
   return 45;
 }
 
-function parseOrderQtyNum(raw) {
-  if (raw == null) return 0;
-  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : 0;
-  const n = parseInt(String(raw).replace(/[^\d]/g, ''), 10);
-  return Number.isNaN(n) ? 0 : n;
-}
-
-/**
- * Parse product fill size to KG per unit.
- * Supports formats like: 100g, 0.1 kg, 100 ml, 0.1 L.
- * For volume units, convert using SG (kg = liters * specific gravity).
- */
-function parseFillSizeToKgPerUnit(fillSizeRaw, sg = 1) {
-  const text = String(fillSizeRaw || '').trim().toLowerCase();
-  if (!text) return null;
-  const m = text.match(/([\d.]+)\s*([a-z]+)/i);
-  if (!m) return null;
-  const value = Number(m[1]);
-  const unit = String(m[2] || '').toLowerCase();
-  if (!(Number.isFinite(value) && value > 0)) return null;
-  const specificGravity = Number(sg) > 0 ? Number(sg) : 1;
-
-  if (unit.startsWith('kg')) return value;
-  if (unit === 'g' || unit === 'gm' || unit === 'gms' || unit.startsWith('gram')) return value / 1000;
-  if (unit === 'ml' || unit === 'millilitre' || unit === 'milliliter' || unit === 'milliliters' || unit === 'millilitres') {
-    return (value / 1000) * specificGravity;
-  }
-  if (unit === 'l' || unit === 'lt' || unit === 'ltr' || unit === 'litre' || unit === 'liter' || unit === 'liters' || unit === 'litres') {
-    return value * specificGravity;
-  }
-  return null;
-}
-
 function normalizeMassUom(raw) {
   const u = String(raw || '').trim().toUpperCase();
   if (u === 'G' || u === 'GM' || u === 'GMS' || u.startsWith('GRAM')) return 'GM';
@@ -160,60 +135,6 @@ function normalizeRmLines(lines) {
 
 function normalizePmLines(lines) {
   return Array.isArray(lines) ? lines.map((line) => normalizePmLine(line)) : [];
-}
-
-function inferBlendSpecificGravity(rmLines) {
-  const lines = Array.isArray(rmLines) ? rmLines : [];
-  let weighted = 0;
-  let pctSum = 0;
-  for (const line of lines) {
-    const pct = Number(line?.pct_w_w ?? line?.pct ?? 0);
-    const sg = Number(line?.specific_gravity);
-    if (!(Number.isFinite(pct) && pct > 0 && Number.isFinite(sg) && sg > 0)) continue;
-    weighted += pct * sg;
-    pctSum += pct;
-  }
-  if (pctSum <= 0) return 1;
-  return weighted / pctSum;
-}
-
-function estimateTotalKgFromRmLines({ rmLines, orderQty, batchSizeKg, batchesRequired }) {
-  const lines = Array.isArray(rmLines) ? rmLines : [];
-  if (lines.length === 0) return 0;
-
-  let totalKg = 0;
-  for (const line of lines) {
-    const quantity = Number(line?.quantity);
-    if (Number.isFinite(quantity) && quantity > 0) {
-      totalKg += quantity;
-      continue;
-    }
-
-    const pct = Number(line?.pct_w_w ?? line?.pct ?? 0);
-    if (Number.isFinite(pct) && pct > 0 && Number(batchSizeKg) > 0 && Number(batchesRequired) > 0) {
-      totalKg += (Number(batchSizeKg) * pct / 100) * Number(batchesRequired);
-      continue;
-    }
-
-    const qtyPerUnit = Number(line?.qty_per_unit ?? line?.qty);
-    if (Number.isFinite(qtyPerUnit) && qtyPerUnit > 0 && Number(orderQty) > 0) {
-      const sg = Number(line?.specific_gravity) || 1; // default SG fallback requested
-      totalKg += Number(orderQty) * qtyPerUnit * sg;
-    }
-  }
-
-  return Math.round(totalKg * 1000) / 1000;
-}
-
-function estimateOrderTotalKg({ orderQty, product, rmLines, batchSizeKg, batchesRequired }) {
-  const qty = Number(orderQty) || 0;
-  if (qty <= 0) return 0;
-  const blendSg = inferBlendSpecificGravity(rmLines);
-  const kgPerUnit = parseFillSizeToKgPerUnit(product?.fill_size, blendSg);
-  if (kgPerUnit != null && kgPerUnit > 0) {
-    return Math.round(qty * kgPerUnit * 1000) / 1000;
-  }
-  return estimateTotalKgFromRmLines({ rmLines, orderQty: qty, batchSizeKg, batchesRequired });
 }
 
 function formatRow(row) {
@@ -513,11 +434,26 @@ async function syncPlanningExtractedFromSalesOrders() {
       const prodPlain = product.get ? product.get({ plain: true }) : product;
       const orderQty = parseOrderQtyNum(item.quantity || item.orderedQty || 0);
       const batchSizeKg = Number(prodPlain.batch_size_kg) || 100;
-      const batchesRequired = batchSizeKg > 0 ? Math.ceil(orderQty / batchSizeKg) : 1;
-      const estimatedTotalKg = estimateOrderTotalKg({ orderQty, product: prodPlain, rmLines: rawMaterials, batchSizeKg, batchesRequired });
-      const safeTotalKg = estimatedTotalKg > 0
-        ? estimatedTotalKg
-        : (Math.round(batchSizeKg * batchesRequired * 1000) / 1000);
+      const estimatedTotalKg = estimateOrderTotalKg({
+        orderQty,
+        product: prodPlain,
+        rmLines: rawMaterials,
+        batchSizeKg,
+        batchesRequired: 1,
+      });
+      let safeTotalKg = estimatedTotalKg > 0 ? estimatedTotalKg : 0;
+      if (safeTotalKg <= 0) {
+        safeTotalKg = estimateTotalKgFromRmLines({
+          rmLines: rawMaterials,
+          orderQty,
+          batchSizeKg,
+          batchesRequired: 1,
+        });
+      }
+      if (safeTotalKg <= 0) {
+        safeTotalKg = Math.round(batchSizeKg * 1000) / 1000;
+      }
+      const batchesRequired = batchesRequiredForOrderKg(safeTotalKg, batchSizeKg);
 
       if (existing) {
         await existing.update({
@@ -743,7 +679,7 @@ async function putBomOverride(req, res) {
     const totalKg = parseFloat(String(planRow.total_kg_display || '0').replace(/[^\d.]/g, '')) || 0;
     const rawMaterials = rmLines.map((line) => {
       const pct = line.pct_w_w ?? line.pct ?? 0;
-      const quantity = (batchSizeKg * pct) / 100;
+      const quantity = totalKg > 0 ? (totalKg * pct) / 100 : (batchSizeKg * pct) / 100;
       return {
         raw_material_id: line.raw_material_id ?? null,
         name: line.inci_name ?? line.name ?? line.rm_code ?? '',
@@ -753,11 +689,9 @@ async function putBomOverride(req, res) {
         code: line.rm_code ?? line.code ?? '',
       };
     });
-    const unitsFraction = totalKg > 0 ? batchSizeKg / totalKg : 0;
-    const unitsForBatch = Math.ceil(orderQtyNum * unitsFraction) || 0;
     const packagingMaterials = pmLines.map((line) => {
       const qtyPerUnit = line.qty_per_unit ?? line.qty ?? 1;
-      const required = unitsForBatch * qtyPerUnit;
+      const required = orderQtyNum * qtyPerUnit;
       return {
         pack_material_id: line.pack_material_id ?? null,
         name: line.description ?? line.name ?? line.pm_code ?? '',
@@ -1173,7 +1107,13 @@ async function updateBatch(req, res) {
     const body = req.body || {};
     if (Array.isArray(body.rmLines)) batch.rm_lines = normalizeRmLines(body.rmLines);
     if (Array.isArray(body.pmLines)) batch.pm_lines = normalizePmLines(body.pmLines);
-    if (body.sizeKg != null) batch.size_kg = Number(body.sizeKg);
+    if (body.sizeKg !== undefined) {
+      const n = Number(body.sizeKg);
+      batch.size_kg = Number.isFinite(n) && n >= 0 ? n : null;
+    }
+    if (body.batchCode != null && String(body.batchCode).trim()) {
+      batch.batch_code = String(body.batchCode).trim().slice(0, 64);
+    }
     await batch.save();
     res.json(formatBatchRow(batch));
   } catch (err) {
@@ -1752,6 +1692,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
         const bomPlain = bom.get ? bom.get({ plain: true }) : bom;
         if (rms.length === 0 && Array.isArray(bomPlain.rm_lines) && bomPlain.rm_lines.length > 0) {
           const batchSizeKg = Number(plain.batch_size_kg) || 500;
+          const totalKgNum = parseFloat(String(plain.total_kg_display || '0').replace(/[^\d.]/g, '')) || 0;
           for (const line of bomPlain.rm_lines) {
             let rid = line.raw_material_id != null ? Number(line.raw_material_id) : null;
             if (rid == null && line.rm_code) {
@@ -1760,7 +1701,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
             }
             if (rid == null || Number.isNaN(rid)) continue;
             const pct = line.pct_w_w ?? line.pct ?? 0;
-            const quantity = (batchSizeKg * pct) / 100;
+            const quantity = totalKgNum > 0 ? (totalKgNum * pct) / 100 : (batchSizeKg * pct) / 100;
             rms.push({
               raw_material_id: rid,
               name: line.inci_name ?? line.name ?? line.rm_code ?? '',
@@ -1772,10 +1713,6 @@ async function getItemsInvolvedByPlanningId(req, res) {
         }
         if (pms.length === 0 && Array.isArray(bomPlain.pm_lines) && bomPlain.pm_lines.length > 0) {
           const orderQtyNum = parseInt(String(plain.order_qty_display || '0').replace(/\D/g, ''), 10) || 0;
-          const totalKg = parseFloat(String(plain.total_kg_display || '0').replace(/[^\d.]/g, '')) || 0;
-          const batchSizeKg = Number(plain.batch_size_kg) || 500;
-          const unitsFraction = totalKg > 0 ? batchSizeKg / totalKg : 0;
-          const unitsForBatch = Math.ceil(orderQtyNum * unitsFraction) || 0;
           for (const line of bomPlain.pm_lines) {
             let pid = line.pack_material_id != null ? Number(line.pack_material_id) : null;
             if (pid == null && line.pm_code) {
@@ -1784,7 +1721,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
             }
             if (pid == null || Number.isNaN(pid)) continue;
             const qtyPerUnit = line.qty_per_unit ?? line.qty ?? 1;
-            const required = unitsForBatch * qtyPerUnit;
+            const required = orderQtyNum * qtyPerUnit;
             pms.push({
               pack_material_id: pid,
               name: line.description ?? line.name ?? line.pm_code ?? '',

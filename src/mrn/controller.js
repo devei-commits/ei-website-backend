@@ -589,6 +589,21 @@ async function update(req, res) {
       }
     }
 
+    if (
+      newStatus === 'Completed' &&
+      previousStatus !== 'Completed' &&
+      plainBefore.source === 'MTR' &&
+      !(plainBefore.is_inbound_from_mu === true || plainBefore.is_inbound_from_mu === 1)
+    ) {
+      const z = String(mergedZone || '').trim();
+      const r = String(mergedRack || '').trim();
+      if (!z || !r) {
+        return res.status(400).json({
+          error: 'MU zone and MU rack are required before completing this transfer.',
+        });
+      }
+    }
+
     await row.update(updates);
     const refreshed = await MaterialRequestNote.findByPk(id);
     const d = refreshed.get ? refreshed.get({ plain: true }) : refreshed;

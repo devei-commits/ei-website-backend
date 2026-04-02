@@ -1,8 +1,13 @@
 const db = require('../../db');
 const VendorClient = require('./models');
 const { Op } = require('sequelize');
-const { syncZohoContactForVendorClient } = require('../users/zohoContactSync');
+const {
+  syncZohoContactForVendorClient,
+  buildZohoContactPayloadFromVendorClient,
+  mapZohoBooksContactToVendorFormFields,
+} = require('../users/zohoContactSync');
 const zohoEnv = require('../services/zohoEnv');
+const { createContact } = require('../services/zohoBooks');
 const {
   assertUserAvailableForVendorClientLink,
   syncLinkedVendorClientFromUser,
@@ -13,6 +18,7 @@ const {
   syncVendorMasterItemsToPriceList,
   deleteAllVendorPriceListRates,
 } = require('./syncVendorItemsPriceList');
+const { syncClientAddressesFromVendorData } = require('../addresses/clientAddressHelpers');
 
 /**
  * vendor-client `data` JSONB is expected to be an object, but in practice
@@ -33,6 +39,25 @@ function coerceDataObject(maybeJson) {
     }
   }
   return {};
+}
+
+/** If shipping is blank but billing is set, persist shipping same as billing (camel + snake keys). */
+function normalizeDataShippingFromBilling(data) {
+  if (!data || typeof data !== 'object') return data;
+  const out = { ...data };
+  const bill =
+    (out.billingAddress != null && String(out.billingAddress).trim()) ||
+    (out.billing_address != null && String(out.billing_address).trim()) ||
+    '';
+  const ship =
+    (out.shippingAddress != null && String(out.shippingAddress).trim()) ||
+    (out.shipping_address != null && String(out.shipping_address).trim()) ||
+    '';
+  if (bill && !ship) {
+    out.shippingAddress = bill;
+    out.shipping_address = bill;
+  }
+  return out;
 }
 
 function attachZohoVendorClientSync(out, zohoResult) {
@@ -152,6 +177,85 @@ async function getVendorClientById(req, res) {
 }
 
 /** GET /vendor-client/next-code?type=vendor|client → { nextCode: 'EI-VEN-00001' } */
+/**
+ * POST /vendor-client/sync-zoho — create Zoho Books vendor contact from draft form (no DB row).
+ * Returns zohoId + mappedFields to hydrate the UI. Idempotent when zohoId is already present.
+ */
+async function syncZohoVendorDraft(req, res) {
+  try {
+    if (!zohoEnv.booksEnabled) {
+      return res.status(503).json({ error: 'Zoho Books integration is disabled' });
+    }
+    if (!zohoEnv.syncVendorContacts) {
+      return res.status(503).json({ error: 'Vendor Zoho contact sync is disabled' });
+    }
+
+    const body = req.body || {};
+    const dataObj = coerceDataObject(body.data);
+    const zohoIdExisting = body.zohoId ?? body.zoho_id ?? dataObj.zohoId ?? dataObj.zoho_id;
+    if (zohoIdExisting != null && String(zohoIdExisting).trim() !== '') {
+      return res.json({
+        zohoId: String(zohoIdExisting).trim(),
+        mappedFields: {},
+        alreadySynced: true,
+      });
+    }
+
+    const payload = bodyToPayload(body, 'vendor');
+    if (!payload.entity_code || !String(payload.entity_code).trim()) {
+      return res.status(400).json({ error: 'entityCode is required' });
+    }
+    if (!payload.email || !String(payload.email).trim()) {
+      return res.status(400).json({ error: 'email is required' });
+    }
+    if (!payload.phone || !String(payload.phone).trim()) {
+      return res.status(400).json({ error: 'phone is required' });
+    }
+    if (!payload.name || !String(payload.name).trim()) {
+      return res.status(400).json({ error: 'name (trade or legal) is required' });
+    }
+
+    const data = coerceDataObject(payload.data);
+    if (data.shippingAddress && !data.shipping_address) data.shipping_address = data.shippingAddress;
+    if (data.billingAddress && !data.billing_address) data.billing_address = data.billingAddress;
+    payload.data = data;
+
+    const synthetic = {
+      id: 0,
+      type: 'vendor',
+      entity_code: String(payload.entity_code).trim(),
+      name: String(payload.name).trim(),
+      email: String(payload.email).trim(),
+      phone: String(payload.phone).trim(),
+      location: payload.location != null ? String(payload.location).trim() : '',
+      country: payload.country != null ? String(payload.country).trim() : '',
+      city: payload.city != null ? String(payload.city).trim() : '',
+      payment_terms: payload.payment_terms,
+      data,
+      contacts: [],
+    };
+
+    const zohoJson = buildZohoContactPayloadFromVendorClient(synthetic);
+    const { contactId, raw } = await createContact(zohoJson);
+    if (!contactId) {
+      return res.status(502).json({ error: 'Zoho did not return a contact id' });
+    }
+    const zohoContact = raw && raw.contact ? raw.contact : {};
+    const mappedFields = mapZohoBooksContactToVendorFormFields(zohoContact);
+
+    return res.json({
+      zohoId: contactId,
+      mappedFields,
+      zoho_sync: { synced: true, contact_id: contactId },
+    });
+  } catch (err) {
+    console.error('syncZohoVendorDraft error', err);
+    const msg = err && err.message ? String(err.message) : 'Zoho sync failed';
+    const code = err.statusCode && Number.isFinite(err.statusCode) ? err.statusCode : 502;
+    res.status(code >= 400 ? code : 502).json({ error: msg });
+  }
+}
+
 async function getNextCode(req, res) {
   try {
     const type = (req.query.type || '').toLowerCase();
@@ -179,7 +283,7 @@ async function getNextCode(req, res) {
 }
 
 function bodyToPayload(body, type) {
-  const data = coerceDataObject(body.data);
+  const data = normalizeDataShippingFromBilling(coerceDataObject(body.data));
   let user_id = undefined;
   if (Object.prototype.hasOwnProperty.call(body, 'userId') || Object.prototype.hasOwnProperty.call(body, 'user_id')) {
     const raw = body.userId !== undefined ? body.userId : body.user_id;
@@ -297,6 +401,12 @@ async function createVendorClient(req, res) {
       await linkOrCreateUserForClientVendorRow(row);
       await row.reload();
     }
+    if (row.type === 'client' && row.user_id) {
+      const d = coerceDataObject(row.data);
+      if (d.shipping_address || d.shippingAddress || d.billing_address || d.billingAddress) {
+        await syncClientAddressesFromVendorData(row.user_id, d);
+      }
+    }
     const out = formatRow(row);
     attachZohoVendorClientSync(out, zohoResult);
     attachPriceListSync(out, priceSync);
@@ -382,6 +492,12 @@ async function updateVendorClient(req, res) {
       await linkOrCreateUserForClientVendorRow(row);
       await row.reload();
     }
+    if (row.type === 'client' && row.user_id) {
+      const d = coerceDataObject(row.data);
+      if (d.shipping_address || d.shippingAddress || d.billing_address || d.billingAddress) {
+        await syncClientAddressesFromVendorData(row.user_id, d);
+      }
+    }
     let zohoResult = null;
     if (!row.zoho_id) {
       await row.reload();
@@ -430,6 +546,7 @@ module.exports = {
   listVendorClients,
   getVendorClientById,
   getNextCode,
+  syncZohoVendorDraft,
   createVendorClient,
   updateVendorClient,
   deleteVendorClient,

@@ -94,6 +94,12 @@ async function validateProcurementItemsMoq(items) {
       continue;
     }
 
+    if (line.partial_release_remainder === true || line.partialReleaseRemainder === true) {
+      // Remainder after partial PO release may sit below vendor MOQ until the next order.
+      // eslint-disable-next-line no-continue
+      continue;
+    }
+
     const explicitMoqRaw = line.moq_min != null ? line.moq_min : line.moqMin;
     const explicitMoq = explicitMoqRaw != null ? Number(explicitMoqRaw) : null;
 

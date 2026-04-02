@@ -95,8 +95,110 @@ const saveProduct = async (req, res) => {
 };
 
 /**
+ * POST /products/pr-zoho-sync — Create or update a draft `products` row and sync a Zoho Books item (PR wizard step 0).
+ * Does not create BOM; final POST /products/pr-registration completes the wizard.
+ */
+const syncPrProductZoho = async (req, res) => {
+  try {
+    const b = req.body || {};
+    const product_name = String(b.product_name ?? b.name ?? '').trim();
+    const product_code = String(b.product_code ?? b.bomCode ?? '').trim();
+    if (!product_name) return res.status(400).json({ error: 'product_name is required' });
+    if (!product_code) return res.status(400).json({ error: 'product_code is required' });
+
+    const mrpRaw = b.mrp_price ?? b.mrp;
+    let mrp_price = null;
+    if (mrpRaw != null && mrpRaw !== '') {
+      const n = parseFloat(String(mrpRaw).replace(/[^\d.]/g, ''));
+      if (!Number.isNaN(n)) mrp_price = n;
+    }
+    const bomSku = String(b.product_sku ?? b.bomSku ?? product_code).trim();
+    const now = new Date();
+
+    const productRow = {
+      product_name,
+      product_code,
+      product_sku: bomSku,
+      generic_name: b.generic_name ?? b.category ?? null,
+      brand_name: b.brand_name ?? b.client ?? null,
+      category: b.category ?? null,
+      status: b.status ?? 'Draft',
+      lifecycle_status: b.lifecycle_status ?? b.status ?? 'Draft',
+      form: b.form ?? b.type ?? null,
+      fill_size: b.fill_size ?? b.packSize ?? null,
+      product_description: b.product_description ?? b.description ?? null,
+      storage_conditions: b.storage_conditions ?? null,
+      mrp_price,
+      updated_at: now,
+    };
+
+    let product = await Product.findOne({ where: { product_code } });
+    if (product) {
+      const nameTaken = await Product.findOne({ where: { product_name } });
+      if (nameTaken && nameTaken.product_id !== product.product_id) {
+        return res.status(409).json({
+          error: `Product name "${product_name}" is already in use.`,
+          code: 'PRODUCT_NAME_EXISTS',
+        });
+      }
+      await product.update(productRow);
+    } else {
+      const nameTaken = await Product.findOne({ where: { product_name } });
+      if (nameTaken) {
+        return res.status(409).json({
+          error: `Product name "${product_name}" is already in use.`,
+          code: 'PRODUCT_NAME_EXISTS',
+        });
+      }
+      product = await Product.create({
+        ...productRow,
+        created_at: now,
+      });
+    }
+
+    let zoho = await syncZohoItemForNewProduct(product, b);
+    if (zoho.error === 'already_has_zoho_item_id') {
+      await product.reload();
+      zoho = { synced: true, itemId: product.zoho_item_id };
+    }
+    if (zoho.synced && zoho.itemId) {
+      await product.update({ zoho_item_id: zoho.itemId, updated_at: now });
+      await product.reload();
+    }
+
+    const plain = product.get({ plain: true });
+    const zohoErr = zoho.error;
+    let zoho_sync;
+    if (zoho.synced && zoho.itemId) {
+      zoho_sync = { synced: true };
+    } else if (zohoErr === 'zoho_disabled' || zohoErr === 'item_sync_disabled') {
+      zoho_sync = { synced: false, skipped: true, resolvedWithoutZoho: true, reason: zohoErr };
+    } else if (
+      zohoEnv.booksEnabled &&
+      zohoEnv.syncItems &&
+      zohoErr &&
+      zohoErr !== 'already_has_zoho_item_id'
+    ) {
+      zoho_sync = { synced: false, error: zohoErr };
+    } else {
+      zoho_sync = { synced: false, skipped: true, resolvedWithoutZoho: true, reason: zohoErr || 'unknown' };
+    }
+
+    return res.status(200).json({
+      product_id: product.product_id,
+      zoho_item_id: plain.zoho_item_id || null,
+      zoho_sync,
+    });
+  } catch (err) {
+    console.error('syncPrProductZoho error', err);
+    return res.status(500).json({ error: err.message || 'Failed to sync with Zoho' });
+  }
+};
+
+/**
  * POST /products/pr-registration — PR Master wizard: create `products` row + linked `boms` row.
  * Expects product_name, product_code (or name, bomCode); optional rm_lines, pm_lines, process_steps.
+ * Optional `product_id` when the draft row was created via POST /products/pr-zoho-sync.
  */
 const createPRRegistration = async (req, res) => {
   try {
@@ -106,15 +208,38 @@ const createPRRegistration = async (req, res) => {
     if (!product_name) return res.status(400).json({ error: 'product_name is required' });
     if (!product_code) return res.status(400).json({ error: 'product_code is required' });
 
-    const existsCode = await Product.findOne({ where: { product_code } });
-    if (existsCode) {
-      return res.status(409).json({
-        error: `Product code "${product_code}" is already registered. Regenerate the PR code or edit that product.`,
-        code: 'PRODUCT_CODE_EXISTS',
-      });
+    const preProductIdRaw = b.product_id ?? b.draft_product_id;
+    const preProductId =
+      preProductIdRaw != null && preProductIdRaw !== ''
+        ? parseInt(String(preProductIdRaw), 10)
+        : NaN;
+    const hasPreProduct = !Number.isNaN(preProductId);
+
+    let preProduct = null;
+    if (hasPreProduct) {
+      preProduct = await Product.findByPk(preProductId);
+      if (!preProduct) {
+        return res.status(404).json({ error: 'Draft product not found', code: 'PRODUCT_NOT_FOUND' });
+      }
+      if (String(preProduct.product_code).trim() !== product_code) {
+        return res.status(400).json({
+          error:
+            'product_code must match the draft product from Zoho sync. Do not change the PR code after sync.',
+          code: 'PRODUCT_CODE_MISMATCH',
+        });
+      }
+    } else {
+      const existsCode = await Product.findOne({ where: { product_code } });
+      if (existsCode) {
+        return res.status(409).json({
+          error: `Product code "${product_code}" is already registered. Regenerate the PR code or edit that product.`,
+          code: 'PRODUCT_CODE_EXISTS',
+        });
+      }
     }
+
     const existsName = await Product.findOne({ where: { product_name } });
-    if (existsName) {
+    if (existsName && (!preProduct || existsName.product_id !== preProduct.product_id)) {
       return res.status(409).json({
         error: `Product name "${product_name}" is already in use. Use a different name or edit the existing PR.`,
         code: 'PRODUCT_NAME_EXISTS',
@@ -149,6 +274,10 @@ const createPRRegistration = async (req, res) => {
       if (!Number.isNaN(n)) mrp_price = n;
     }
 
+    const zohoFromForm = (b.zoho_id ?? b.zohoId) != null && String(b.zoho_id ?? b.zohoId).trim() !== ''
+      ? String(b.zoho_id ?? b.zohoId).trim()
+      : null;
+
     const productRow = {
       product_name,
       product_code,
@@ -170,7 +299,7 @@ const createPRRegistration = async (req, res) => {
       fill_weight_spec: b.fill_weight_spec ?? null,
       stability_summary: b.stability_summary ?? null,
       approved_claims: b.approved_claims ?? null,
-      created_at: now,
+      zoho_item_id: zohoFromForm || (preProduct && preProduct.zoho_item_id) || null,
       updated_at: now,
     };
 
@@ -181,11 +310,20 @@ const createPRRegistration = async (req, res) => {
 
     const t = await db.transaction();
     try {
-      const product = await Product.create(productRow, { transaction: t });
+      let product;
+      if (preProduct) {
+        await preProduct.update({ ...productRow }, { transaction: t });
+        product = preProduct;
+      } else {
+        product = await Product.create(
+          { ...productRow, created_at: now },
+          { transaction: t }
+        );
+      }
       const bomRow = {
         bom_code: product_code,
         bom_sku: bomSku,
-        zoho_id: b.zoho_id ?? b.zohoId ?? null,
+        zoho_id: b.zoho_id ?? b.zohoId ?? product.zoho_item_id ?? null,
         bom_tax_preference: b.bom_tax_preference ?? b.bomTaxPreference ?? null,
         bom_returnable: b.bom_returnable ?? b.bomReturnable ?? false,
         bom_associate_items: b.bom_associate_items ?? b.bomAssociateItems ?? null,
@@ -777,6 +915,7 @@ const deleteCategory = async (req, res) => {
 
 module.exports = {
     saveProduct,
+    syncPrProductZoho,
     createPRRegistration,
     getAllProducts,
     getProductById,

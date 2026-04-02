@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { requireModule } = require('../middleware/security');
-const { getAllProducts, saveProduct, createPRRegistration, getProductById, getProductDetail, updateProduct, deleteProduct, getCategory, saveCategory, getCategoryById, updateCategory, deleteCategory } = require('./controller');
+const { getAllProducts, saveProduct, syncPrProductZoho, createPRRegistration, getProductById, getProductDetail, updateProduct, deleteProduct, getCategory, saveCategory, getCategoryById, updateCategory, deleteCategory } = require('./controller');
 const { createCacheReadMiddleware } = require('../cache/cacheReadMiddleware');
 
 const requireCatalogueModule = requireModule('catalogue-management', 'packaging-management', 'active-ingredients');
@@ -17,6 +17,7 @@ router.get('/:id/detail', cacheProductsOne, getProductDetail);
 router.get('/:id', cacheProductsOne, getProductById);
 
 // Write: require catalogue/packaging/active-ingredients module
+router.post('/pr-zoho-sync', requireCatalogueModule, syncPrProductZoho);
 router.post('/pr-registration', requireCatalogueModule, createPRRegistration);
 router.post('/', requireCatalogueModule, saveProduct);
 router.put('/:id', requireCatalogueModule, updateProduct);

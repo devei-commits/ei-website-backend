@@ -30,7 +30,8 @@ FulfillmentOrder.init(
     },
     so_value: { type: DataTypes.DECIMAL(14, 2), allowNull: true, defaultValue: 0 },
     ship_address: { type: DataTypes.TEXT, allowNull: true },
-    payment_terms: { type: DataTypes.STRING(50), allowNull: true },
+    /** Staged JSON (Items List shape) or legacy short text; VARCHAR widened for compact JSON. */
+    payment_terms: { type: DataTypes.STRING(255), allowNull: true },
     notes: { type: DataTypes.TEXT, allowNull: true },
     /** Set when invoice is created via PATCH /invoice (no fulfillment_invoices row) */
     zoho_invoice_id: { type: DataTypes.STRING(64), allowNull: true },

@@ -171,11 +171,144 @@ function bodyToPackMaterial(b) {
 }
 
 /**
+ * POST /api/v1/pack-materials/zoho-sync — Draft PM row + Zoho Books item (wizard step before full form submit).
+ */
+async function syncPmZoho(req, res) {
+  try {
+    const b = req.body || {};
+    const fields = bodyToPackMaterial(b);
+    const codeTrim = fields.code != null ? String(fields.code).trim() : '';
+    if (!codeTrim) {
+      return res.status(400).json({ error: 'code or itemCode is required' });
+    }
+    fields.code = codeTrim;
+    if (fields.sku != null && String(fields.sku).trim() !== '') {
+      fields.sku = String(fields.sku).trim();
+    } else {
+      fields.sku = null;
+    }
+
+    let row = await PackMaterial.findOne({ where: { code: codeTrim } });
+    if (row) {
+      const dupSku = await findConflictingMasterRow(PackMaterial, fields.code, fields.sku, row.id);
+      if (dupSku) {
+        return res.status(409).json({ error: 'A pack material with this code or SKU already exists' });
+      }
+      Object.keys(fields).forEach((key) => {
+        if (fields[key] !== undefined) row.set(key, fields[key]);
+      });
+      if (b.form_data !== undefined) row.set('form_data', b.form_data);
+      await row.save();
+    } else {
+      const dup = await findConflictingMasterRow(PackMaterial, fields.code, fields.sku, null);
+      if (dup) {
+        return res.status(409).json({ error: 'A pack material with this code or SKU already exists' });
+      }
+      row = await PackMaterial.create(fields);
+      await WarehouseInventory.findOrCreate({
+        where: { item_type: 'PM', pack_material_id: row.id },
+        defaults: {
+          item_type: 'PM',
+          pack_material_id: row.id,
+          wh_stock: 0,
+          wh_unit: row.unit || 'PCS',
+          ml1_stock: 0,
+          ml2_stock: 0,
+          stock_in_hand: 0,
+          reserved: 0,
+          in_transit: 0,
+          reorder_pt: 0,
+          avg_mo: 0,
+          qc_status: 'Out of Stock',
+        },
+      });
+    }
+
+    let zoho = await syncZohoItemForNewPackMaterial(row, b);
+    if (zoho.error === 'already_has_zoho_id') {
+      await row.reload();
+      zoho = { synced: true, itemId: row.zoho_id };
+    }
+    if (zoho.synced && zoho.itemId) {
+      await row.update({ zoho_id: zoho.itemId });
+      await row.reload();
+    }
+
+    const plain = row.get({ plain: true });
+    const zohoErr = zoho.error;
+    let zoho_sync;
+    if (zoho.synced && zoho.itemId) {
+      zoho_sync = { synced: true };
+    } else if (zohoErr === 'zoho_disabled' || zohoErr === 'item_sync_disabled') {
+      zoho_sync = { synced: false, skipped: true, resolvedWithoutZoho: true, reason: zohoErr };
+    } else if (
+      zohoEnv.booksEnabled &&
+      zohoEnv.syncItems &&
+      zohoErr &&
+      zohoErr !== 'already_has_zoho_id'
+    ) {
+      zoho_sync = { synced: false, error: zohoErr };
+    } else {
+      zoho_sync = { synced: false, skipped: true, resolvedWithoutZoho: true, reason: zohoErr || 'unknown' };
+    }
+
+    return res.status(200).json({
+      pack_material_id: row.id,
+      zoho_id: plain.zoho_id || null,
+      zoho_sync,
+    });
+  } catch (err) {
+    console.error('syncPmZoho error', err);
+    return res.status(500).json({ error: err.message || 'Failed to sync pack material with Zoho' });
+  }
+}
+
+/**
  * POST /api/v1/pack-materials — create pack material. Body: code/itemCode, description/name, type, level, etc.
+ * Optional `pack_material_id` when the draft was created via POST /pack-materials/zoho-sync.
  */
 async function createPackMaterial(req, res) {
   try {
     const b = req.body || {};
+    const preIdRaw = b.pack_material_id ?? b.draft_pack_material_id;
+    const preId = preIdRaw != null && preIdRaw !== '' ? parseInt(String(preIdRaw), 10) : NaN;
+
+    if (!Number.isNaN(preId)) {
+      const row = await PackMaterial.findByPk(preId);
+      if (!row) {
+        return res.status(404).json({ error: 'Draft pack material not found', code: 'PM_NOT_FOUND' });
+      }
+      const fields = bodyToPackMaterial(b);
+      const codeTrim = fields.code != null ? String(fields.code).trim() : '';
+      if (!codeTrim) {
+        return res.status(400).json({ error: 'code or itemCode is required' });
+      }
+      if (String(row.code).trim() !== codeTrim) {
+        return res.status(400).json({
+          error: 'code must match the draft pack material from Zoho sync. Do not change the PM code after sync.',
+          code: 'PM_CODE_MISMATCH',
+        });
+      }
+      fields.code = codeTrim;
+      if (fields.sku != null && String(fields.sku).trim() !== '') {
+        fields.sku = String(fields.sku).trim();
+      } else {
+        fields.sku = null;
+      }
+      const nextSku = fields.sku !== undefined ? fields.sku : row.sku;
+      const dup = await findConflictingMasterRow(PackMaterial, fields.code, nextSku, row.id);
+      if (dup) {
+        return res.status(409).json({ error: 'A pack material with this code or SKU already exists' });
+      }
+      Object.keys(fields).forEach((key) => {
+        if (fields[key] !== undefined) row.set(key, fields[key]);
+      });
+      if (b.form_data !== undefined) row.set('form_data', b.form_data);
+      await row.save();
+      await row.reload();
+      return res.status(200).json(formatPackMaterialFull(row));
+    }
+
     const fields = bodyToPackMaterial(b);
     const codeTrim = fields.code != null ? String(fields.code).trim() : '';
     if (!codeTrim) {
@@ -371,6 +504,7 @@ module.exports = {
   listPackMaterials,
   getNextCode,
   getPackMaterialById,
+  syncPmZoho,
   createPackMaterial,
   updatePackMaterial,
   deletePackMaterial,

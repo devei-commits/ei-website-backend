@@ -22,8 +22,9 @@ WarehouseInventory.init(
     raw_material_id: { type: DataTypes.INTEGER, allowNull: true, unique: true, references: { model: 'raw_materials', key: 'id' } },
     pack_material_id: { type: DataTypes.INTEGER, allowNull: true, unique: true, references: { model: 'pack_materials', key: 'id' } },
     product_id: { type: DataTypes.INTEGER, allowNull: true, unique: true, references: { model: 'products', key: 'product_id' } },
-    zone: { type: DataTypes.STRING(100), allowNull: true },
-    rack: { type: DataTypes.STRING(100), allowNull: true },
+    /** Comma/` · `-separated list when stock sits in multiple zones/racks (GRN labels merge, do not replace). */
+    zone: { type: DataTypes.TEXT, allowNull: true },
+    rack: { type: DataTypes.TEXT, allowNull: true },
     wh_stock: { type: DataTypes.DECIMAL(14, 2), allowNull: true, defaultValue: 0 },
     wh_unit: { type: DataTypes.STRING(20), allowNull: true, defaultValue: 'KG' },
     ml1_stock: { type: DataTypes.DECIMAL(14, 2), allowNull: true, defaultValue: 0 },

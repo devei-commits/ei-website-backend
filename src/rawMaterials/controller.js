@@ -208,11 +208,136 @@ function payloadToListFields(b, omitGroupIfUnset = false) {
 }
 
 /**
+ * POST /api/v1/raw-materials/zoho-sync — Draft RM row + Zoho Books item (wizard step before full form submit).
+ */
+async function syncRmZoho(req, res) {
+  try {
+    const b = req.body || {};
+    const fields = payloadToListFields(b);
+    const codeTrim = fields.code != null ? String(fields.code).trim() : '';
+    if (!codeTrim) {
+      return res.status(400).json({ error: 'code or rmSku is required' });
+    }
+    fields.code = codeTrim;
+    if (fields.sku != null && String(fields.sku).trim() !== '') {
+      fields.sku = String(fields.sku).trim();
+    } else {
+      fields.sku = null;
+    }
+
+    let row = await RawMaterial.findOne({ where: { code: codeTrim } });
+    if (row) {
+      const dupSku = await findConflictingMasterRow(RawMaterial, fields.code, fields.sku, row.id);
+      if (dupSku) {
+        return res.status(409).json({ error: 'A raw material with this code or SKU already exists' });
+      }
+      await row.update(fields);
+    } else {
+      const dup = await findConflictingMasterRow(RawMaterial, fields.code, fields.sku, null);
+      if (dup) {
+        return res.status(409).json({ error: 'A raw material with this code or SKU already exists' });
+      }
+      row = await RawMaterial.create(fields);
+      await WarehouseInventory.findOrCreate({
+        where: { item_type: 'RM', raw_material_id: row.id },
+        defaults: {
+          item_type: 'RM',
+          raw_material_id: row.id,
+          wh_stock: 0,
+          wh_unit: row.uom || 'KG',
+          ml1_stock: 0,
+          ml2_stock: 0,
+          stock_in_hand: 0,
+          reserved: 0,
+          in_transit: 0,
+          reorder_pt: 0,
+          avg_mo: 0,
+          qc_status: 'Out of Stock',
+        },
+      });
+    }
+
+    let zoho = await syncZohoItemForNewRawMaterial(row, b);
+    if (zoho.error === 'already_has_zoho_id') {
+      await row.reload();
+      zoho = { synced: true, itemId: row.zoho_id };
+    }
+    if (zoho.synced && zoho.itemId) {
+      await row.update({ zoho_id: zoho.itemId });
+      await row.reload();
+    }
+
+    const plain = row.get({ plain: true });
+    const zohoErr = zoho.error;
+    let zoho_sync;
+    if (zoho.synced && zoho.itemId) {
+      zoho_sync = { synced: true };
+    } else if (zohoErr === 'zoho_disabled' || zohoErr === 'item_sync_disabled') {
+      zoho_sync = { synced: false, skipped: true, resolvedWithoutZoho: true, reason: zohoErr };
+    } else if (
+      zohoEnv.booksEnabled &&
+      zohoEnv.syncItems &&
+      zohoErr &&
+      zohoErr !== 'already_has_zoho_id'
+    ) {
+      zoho_sync = { synced: false, error: zohoErr };
+    } else {
+      zoho_sync = { synced: false, skipped: true, resolvedWithoutZoho: true, reason: zohoErr || 'unknown' };
+    }
+
+    return res.status(200).json({
+      raw_material_id: row.id,
+      zoho_id: plain.zoho_id || null,
+      zoho_sync,
+    });
+  } catch (err) {
+    console.error('syncRmZoho error', err);
+    return res.status(500).json({ error: err.message || 'Failed to sync raw material with Zoho' });
+  }
+}
+
+/**
  * POST /api/v1/raw-materials — create. Body: full form payload (formData shape) or { form_data: {...} }.
+ * Optional `raw_material_id` when the draft was created via POST /raw-materials/zoho-sync.
  */
 async function createRawMaterial(req, res) {
   try {
     const b = req.body || {};
+    const preIdRaw = b.raw_material_id ?? b.draft_raw_material_id;
+    const preId = preIdRaw != null && preIdRaw !== '' ? parseInt(String(preIdRaw), 10) : NaN;
+
+    if (!Number.isNaN(preId)) {
+      const row = await RawMaterial.findByPk(preId);
+      if (!row) {
+        return res.status(404).json({ error: 'Draft raw material not found', code: 'RM_NOT_FOUND' });
+      }
+      const fields = payloadToListFields(b);
+      const codeTrim = fields.code != null ? String(fields.code).trim() : '';
+      if (!codeTrim) {
+        return res.status(400).json({ error: 'code or rmSku is required' });
+      }
+      if (String(row.code).trim() !== codeTrim) {
+        return res.status(400).json({
+          error: 'code must match the draft raw material from Zoho sync. Do not change the RM code after sync.',
+          code: 'RM_CODE_MISMATCH',
+        });
+      }
+      fields.code = codeTrim;
+      if (fields.sku != null && String(fields.sku).trim() !== '') {
+        fields.sku = String(fields.sku).trim();
+      } else {
+        fields.sku = null;
+      }
+      const nextSku = fields.sku !== undefined ? fields.sku : row.sku;
+      const dup = await findConflictingMasterRow(RawMaterial, fields.code, nextSku, row.id);
+      if (dup) {
+        return res.status(409).json({ error: 'A raw material with this code or SKU already exists' });
+      }
+      await row.update(fields);
+      await row.reload();
+      return res.status(200).json(formatRawMaterialFull(row));
+    }
+
     const fields = payloadToListFields(b);
     const codeTrim = fields.code != null ? String(fields.code).trim() : '';
     if (!codeTrim) {
@@ -383,6 +508,7 @@ module.exports = {
   listRawMaterials,
   getRawMaterialById,
   getNextCode,
+  syncRmZoho,
   createRawMaterial,
   updateRawMaterial,
   deleteRawMaterial,
