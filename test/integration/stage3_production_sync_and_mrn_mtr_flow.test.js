@@ -196,7 +196,7 @@ describe('Stage 3: sync-from-planning + MTR MRN completion (labels + history)', 
     expect(created).toBeTruthy();
   });
 
-  test('MTR MRN Completed moves WH -> MU, writes history, marks rm_connected/pm_connected, and can generate labels', async () => {
+  test('MTR MRN Completed moves WH -> MU, writes history, advances to dispensing, and can generate labels', async () => {
     if (!dbAvailable) return;
 
     // Create outbound MTR MRN (initial status must be Received at MU)
@@ -246,8 +246,8 @@ describe('Stage 3: sync-from-planning + MTR MRN completion (labels + history)', 
     const refreshedBatch = await ProductionBatch.findByPk(mtrProductionBatch.id);
     expect(refreshedBatch.rm_connected).toBe(true);
     expect(refreshedBatch.pm_connected).toBe(true);
-    expect(refreshedBatch.bmr_status).toBe('rm_connected');
-    expect(refreshedBatch.bpr_status).toBe('pm_connected');
+    expect(refreshedBatch.bmr_status).toBe('dispensing');
+    expect(refreshedBatch.bpr_status).toBe('pm_dispensing');
 
     // Verify location history entries (MRN_IN_MU)
     const historyRows = await WarehouseInventoryLocationHistory.findAll({

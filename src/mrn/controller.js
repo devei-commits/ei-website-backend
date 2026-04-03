@@ -731,8 +731,9 @@ function isRequirementSatisfied(requiredMap, movedMap) {
 }
 
 /**
- * After MTR MRN is Completed and WH→MU stock is applied, allow Production to enter dispense:
- * set rm_connected / pm_connected and advance status only when no other pending MTR of that kind remains.
+ * After outbound MTR MRN is marked Completed and WH→MU stock is applied, allow Production to enter RM/PM dispensing:
+ * set rm_connected / pm_connected and advance BMR/BPR status to `dispensing` / `pm_dispensing`
+ * only when no other pending MTR of that kind remains.
  */
 async function applyMtrCompletionToProductionBatch(plainMrn) {
   if (plainMrn.source !== 'MTR' || !plainMrn.bmr_no || plainMrn.is_inbound_from_mu) return;
@@ -770,8 +771,21 @@ async function applyMtrCompletionToProductionBatch(plainMrn) {
     const rmSatisfied = isRequirementSatisfied(requiredRm, movedRm);
     if (!pendingRm && rmSatisfied) {
       updates.rm_connected = true;
-      if (['rm_reserved', 'scheduled'].includes(plain.bmr_status)) {
-        updates.bmr_status = 'rm_connected';
+      /**
+       * CRITICAL PRODUCTION STATE TRANSITION
+       * Do not change this mapping (or move it elsewhere) without explicit programmer consent.
+       *
+       * Contract:
+       * - Outbound MTR (WH -> MU) completes for the RM lines of this production batch.
+       * - When there are NO other pending RM MTRs for this BMR AND required RM qty is satisfied
+       *   (based on cumulative moved qty vs dispensing_rm requirements),
+       *   we must advance BMR into the dispensing stage.
+       *
+       * UI + downstream workflow assume:
+       *   rm_connected -> dispensing (this is the "unlock" moment)
+       */
+      if (['rm_reserved', 'scheduled', 'rm_connected'].includes(plain.bmr_status)) {
+        updates.bmr_status = 'dispensing';
       }
     }
   }
@@ -780,8 +794,18 @@ async function applyMtrCompletionToProductionBatch(plainMrn) {
     const pmSatisfied = isRequirementSatisfied(requiredPm, movedPm);
     if (!pendingPm && pmSatisfied) {
       updates.pm_connected = true;
-      if (plain.bpr_status === 'pm_reserved') {
-        updates.bpr_status = 'pm_connected';
+      /**
+       * CRITICAL PRODUCTION STATE TRANSITION
+       * Do not change this mapping (or move it elsewhere) without explicit programmer consent.
+       *
+       * Contract:
+       * - Outbound MTR (WH -> MU) completes for the PM lines of this production batch.
+       * - When there are NO other pending PM MTRs for this BMR AND required PM qty is satisfied
+       *   (based on cumulative moved qty vs dispensing_pm requirements),
+       *   we must advance BPR into the PM dispensing stage.
+       */
+      if (['pm_reserved', 'pm_connected'].includes(plain.bpr_status)) {
+        updates.bpr_status = 'pm_dispensing';
       }
     }
   }

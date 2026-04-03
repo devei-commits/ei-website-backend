@@ -276,7 +276,7 @@ describe('SO→Planning→Inventory→Production→Fulfillment pipeline (integra
     expect(reservedItems.length).toBe(1);
   });
 
-  test('MTR MRN Complete moves WH→MU and marks production rm_connected/pm_connected', async () => {
+  test('MTR MRN Complete moves WH→MU and advances to dispensing', async () => {
     if (!dbAvailable) return;
     // BPR reserve too (PM needed for hasPm + moved inventory)
     await updateBatch({ params: { id: String(productionBatch.id) }, body: { bpr_status: 'pm_reserved' } }, resMock());
@@ -320,6 +320,8 @@ describe('SO→Planning→Inventory→Production→Fulfillment pipeline (integra
     const batch = await ProductionBatch.findByPk(productionBatch.id);
     expect(batch.rm_connected).toBe(true);
     expect(batch.pm_connected).toBe(true);
+    expect(batch.bmr_status).toBe('dispensing');
+    expect(batch.bpr_status).toBe('pm_dispensing');
   });
 
   test('Dispensing consumes MU stock; BPR fg_ready adds FG inventory and sets fulfillment fg_qty', async () => {
