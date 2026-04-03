@@ -12,6 +12,8 @@ const PlanningExtracted = require('../planningExtracted/models');
 const redisCache = require('../cache/redis');
 const { syncZohoItemForNewProduct } = require('./zohoItemSync');
 const zohoEnv = require('../services/zohoEnv');
+const { deleteItem } = require('../services/zohoBooks');
+const { zohoSyncIsMandatoryFailure } = require('../services/zohoSyncHelpers');
 
 /** At least one non-empty formula line (INCI / RM code / positive %). */
 function countMeaningfulRmLines(lines) {
@@ -75,8 +77,23 @@ const saveProduct = async (req, res) => {
     const zoho = await syncZohoItemForNewProduct(product, req.body);
     const payload = product.get ? product.get({ plain: true }) : { ...product };
     if (zoho.synced && zoho.itemId) {
-      await product.update({ zoho_item_id: zoho.itemId });
-      payload.zoho_item_id = zoho.itemId;
+      try {
+        await product.update({ zoho_item_id: zoho.itemId });
+        payload.zoho_item_id = zoho.itemId;
+      } catch (dbErr) {
+        console.error('saveProduct: zoho ok but DB update failed, deleting Zoho item', dbErr);
+        await deleteItem(zoho.itemId).catch(() => {});
+        await product.destroy();
+        return res.status(500).json({ error: 'Failed to persist Zoho item id', code: 'ZOHO_ID_SAVE_FAILED' });
+      }
+    } else if (zohoSyncIsMandatoryFailure(zoho)) {
+      await product.destroy();
+      const status = zoho.duplicate ? 409 : 502;
+      return res.status(status).json({
+        error: zoho.error || 'Zoho sync failed',
+        code: zoho.duplicate ? 'ZOHO_ITEM_DUPLICATE' : 'ZOHO_SYNC_FAILED',
+        zoho_sync: { synced: false, error: zoho.error, duplicate: !!zoho.duplicate },
+      });
     } else if (
       zohoEnv.booksEnabled &&
       zohoEnv.syncItems &&
@@ -132,6 +149,7 @@ const syncPrProductZoho = async (req, res) => {
       updated_at: now,
     };
 
+    let createdNewProduct = false;
     let product = await Product.findOne({ where: { product_code } });
     if (product) {
       const nameTaken = await Product.findOne({ where: { product_name } });
@@ -154,6 +172,7 @@ const syncPrProductZoho = async (req, res) => {
         ...productRow,
         created_at: now,
       });
+      createdNewProduct = true;
     }
 
     let zoho = await syncZohoItemForNewProduct(product, b);
@@ -162,8 +181,32 @@ const syncPrProductZoho = async (req, res) => {
       zoho = { synced: true, itemId: product.zoho_item_id };
     }
     if (zoho.synced && zoho.itemId) {
-      await product.update({ zoho_item_id: zoho.itemId, updated_at: now });
-      await product.reload();
+      try {
+        await product.update({ zoho_item_id: zoho.itemId, updated_at: now });
+        await product.reload();
+      } catch (dbErr) {
+        console.error('syncPrProductZoho: failed to save zoho_item_id, rolling back Zoho item', dbErr);
+        await deleteItem(zoho.itemId).catch(() => {});
+        if (createdNewProduct) await product.destroy();
+        return res.status(500).json({ error: 'Failed to persist Zoho item id', code: 'ZOHO_ID_SAVE_FAILED' });
+      }
+    }
+
+    if (zohoSyncIsMandatoryFailure(zoho)) {
+      const status = zoho.duplicate ? 409 : 502;
+      const errMsg = zoho.error || 'Zoho sync failed';
+      const code = zoho.duplicate ? 'ZOHO_ITEM_DUPLICATE' : 'ZOHO_SYNC_FAILED';
+      const zoho_sync = { synced: false, error: errMsg, duplicate: !!zoho.duplicate };
+      if (createdNewProduct) {
+        await product.destroy();
+        return res.status(status).json({ error: errMsg, code, zoho_sync });
+      }
+      return res.status(status).json({
+        error: errMsg,
+        code,
+        product_id: product.product_id,
+        zoho_sync,
+      });
     }
 
     const plain = product.get({ plain: true });

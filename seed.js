@@ -1234,10 +1234,10 @@ async function seed() {
     console.log('Seeding Vendor / Client master (before Items List)...');
     await VendorClient.destroy({ where: {} });
     const vendorClientSeed = [
-      { entity_code: 'EI-VEN-00001', type: 'vendor', zoho_id: null, name: 'Chemspec India', email: 'orders@chemspecindia.com', phone: '+91-9876543210', location: 'Mumbai', country: 'India', city: 'Mumbai', category: 'RAW MATERIAL', status: 'active', payment_terms: '{"advance_pct":0,"pre_shipment_pct":100,"post_shipment_pct":0,"credit_days":30}', notes: '', rating: 4, moq: '—', lead_time: '14 days', data: {}, created_at: now, updated_at: now },
-      { entity_code: 'EI-VEN-00002', type: 'vendor', zoho_id: '5012345678901002', name: 'Sigma Chemicals Pvt Ltd', email: 'sales@sigmachem.in', phone: '+91-9876543211', location: 'Pune', country: 'India', city: 'Pune', category: 'RAW MATERIAL', status: 'active', payment_terms: '{"advance_pct":0,"pre_shipment_pct":100,"post_shipment_pct":0,"credit_days":45}', notes: '', rating: 4, moq: '—', lead_time: '18 days', data: {}, created_at: now, updated_at: now },
-      { entity_code: 'EI-VEN-00003', type: 'vendor', zoho_id: '5012345678901003', name: 'UV Filters & Actives Co', email: 'procurement@uvfilters.co.in', phone: '+91-9876543212', location: 'Hyderabad', country: 'India', city: 'Hyderabad', category: 'UV FILTER / ACTIVE', status: 'active', payment_terms: '{"advance_pct":0,"pre_shipment_pct":100,"post_shipment_pct":0,"credit_days":30}', notes: '', rating: 5, moq: '—', lead_time: '21 days', data: {}, created_at: now, updated_at: now },
-      { entity_code: 'EI-VEN-00004', type: 'vendor', zoho_id: '5012345678901004', name: 'Packaging Solutions India', email: 'orders@packsol.in', phone: '+91-9876543213', location: 'Chennai', country: 'India', city: 'Chennai', category: 'PACKAGING', status: 'active', payment_terms: '{"advance_pct":30,"pre_shipment_pct":70,"post_shipment_pct":0,"credit_days":0}', notes: '', rating: 4, moq: '—', lead_time: '21–28 days', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00006', type: 'vendor', zoho_id: '3529895000000182004', name: 'Mock Vendor', email: 'orders@chemspecindia.com', phone: '+91-9876543210', location: 'Mumbai', country: 'India', city: 'Mumbai', category: 'RAW MATERIAL', status: 'active', payment_terms: '{"advance_pct":50,"pre_shipment_pct":40,"post_shipment_pct":10,"credit_days":30}', notes: '', rating: 4, moq: '566', lead_time: '14 days', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00002', type: 'vendor', zoho_id: '5012345678901002', name: 'Sigma Chemicals Pvt Ltd', email: 'sales@sigmachem.in', phone: '+91-9876543211', location: 'Pune', country: 'India', city: 'Pune', category: 'RAW MATERIAL', status: 'active', payment_terms: '{"advance_pct":0,"pre_shipment_pct":100,"post_shipment_pct":0,"credit_days":45}', notes: '', rating: 4, moq: '7855', lead_time: '18 days', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00003', type: 'vendor', zoho_id: '5012345678901003', name: 'UV Filters & Actives Co', email: 'procurement@uvfilters.co.in', phone: '+91-9876543212', location: 'Hyderabad', country: 'India', city: 'Hyderabad', category: 'UV FILTER / ACTIVE', status: 'active', payment_terms: '{"advance_pct":0,"pre_shipment_pct":100,"post_shipment_pct":0,"credit_days":30}', notes: '', rating: 5, moq: '455', lead_time: '21 days', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00004', type: 'vendor', zoho_id: '5012345678901004', name: 'Packaging Solutions India', email: 'orders@packsol.in', phone: '+91-9876543213', location: 'Chennai', country: 'India', city: 'Chennai', category: 'PACKAGING', status: 'active', payment_terms: '{"advance_pct":30,"pre_shipment_pct":70,"post_shipment_pct":0,"credit_days":0}', notes: '', rating: 4, moq: '8444', lead_time: '28 days', data: {}, created_at: now, updated_at: now },
       {
         entity_code: 'EI-CLI-00001',
         type: 'client',
@@ -1254,8 +1254,8 @@ async function seed() {
         payment_terms: '{"advance_pct":0,"pre_shipment_pct":100,"post_shipment_pct":0,"credit_days":45}',
         notes: 'Seeded CDMO partner — demo fulfillment.',
         rating: 5,
-        moq: '—',
-        lead_time: '—',
+        moq: '10',
+        lead_time: '56 days',
         data: {
           /** Shipping/billing lines live in `addresses` (linked user_id); keep commercial fields here. */
           payablesAdvancedPct: '0',

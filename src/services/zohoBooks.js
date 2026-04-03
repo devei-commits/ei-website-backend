@@ -274,6 +274,46 @@ async function createItem(itemJson) {
 }
 
 /**
+ * Delete an item in Zoho Books (DELETE /items/{item_id}). Used to compensate after DB failure.
+ * @param {string} itemId
+ * @returns {Promise<{ raw: unknown }>}
+ */
+async function deleteItem(itemId) {
+  const id = normalizeZohoId(itemId);
+  if (!id) {
+    const err = new Error('delete_item_missing_id');
+    err.code = 'MISSING_ID';
+    throw err;
+  }
+  const orgId = getOrgId();
+  const token = await getAccessToken();
+  const url = `${getBooksBaseUrl()}/items/${encodeURIComponent(id)}?organization_id=${encodeURIComponent(orgId)}`;
+
+  logZohoRequest('deleteItem', 'DELETE', url, null);
+
+  const res = await fetch(url, {
+    method: 'DELETE',
+    headers: { Authorization: `Zoho-oauthtoken ${token}` },
+  });
+
+  const raw = await readBooksJsonResponse(res);
+  logZohoResponse('deleteItem', res.status, raw);
+
+  const code = raw && typeof raw.code === 'number' ? raw.code : undefined;
+  const codeOk = code === undefined || code === 0;
+  if (!res.ok || !codeOk) {
+    logZohoError('deleteItem', 'DELETE', url, res.status, raw);
+    const msg = raw.message || raw.error || res.statusText || 'delete_item_failed';
+    const err = new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    err.zohoRaw = raw;
+    err.statusCode = res.status;
+    throw err;
+  }
+
+  return { raw };
+}
+
+/**
  * Create an invoice in Zoho Books (POST /invoices).
  * @param {Record<string, unknown>} invoiceJson
  * @returns {Promise<{ raw: unknown, invoiceId: string | null }>}
@@ -445,6 +485,7 @@ module.exports = {
   getAccessToken,
   createContact,
   createItem,
+  deleteItem,
   createInvoice,
   createPurchaseOrderInBooks,
   createBillInBooks,

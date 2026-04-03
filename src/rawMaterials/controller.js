@@ -1,6 +1,8 @@
 const RawMaterial = require('./models');
 const { syncZohoItemForNewRawMaterial } = require('../services/zohoMasterItemSync');
 const zohoEnv = require('../services/zohoEnv');
+const { deleteItem } = require('../services/zohoBooks');
+const { zohoSyncIsMandatoryFailure } = require('../services/zohoSyncHelpers');
 const { Op } = require('sequelize');
 const { findConflictingMasterRow } = require('../lib/itemCodeUniqueness');
 const WarehouseInventory = require('../warehouseInventory/models');
@@ -207,6 +209,12 @@ function payloadToListFields(b, omitGroupIfUnset = false) {
   return { ...listFields, ...leadPatch, form_data };
 }
 
+async function destroyRawMaterialDraft(row) {
+  if (!row) return;
+  await WarehouseInventory.destroy({ where: { item_type: 'RM', raw_material_id: row.id } });
+  await row.destroy();
+}
+
 /**
  * POST /api/v1/raw-materials/zoho-sync — Draft RM row + Zoho Books item (wizard step before full form submit).
  */
@@ -225,6 +233,7 @@ async function syncRmZoho(req, res) {
       fields.sku = null;
     }
 
+    let createdNewRow = false;
     let row = await RawMaterial.findOne({ where: { code: codeTrim } });
     if (row) {
       const dupSku = await findConflictingMasterRow(RawMaterial, fields.code, fields.sku, row.id);
@@ -238,6 +247,7 @@ async function syncRmZoho(req, res) {
         return res.status(409).json({ error: 'A raw material with this code or SKU already exists' });
       }
       row = await RawMaterial.create(fields);
+      createdNewRow = true;
       await WarehouseInventory.findOrCreate({
         where: { item_type: 'RM', raw_material_id: row.id },
         defaults: {
@@ -263,8 +273,32 @@ async function syncRmZoho(req, res) {
       zoho = { synced: true, itemId: row.zoho_id };
     }
     if (zoho.synced && zoho.itemId) {
-      await row.update({ zoho_id: zoho.itemId });
-      await row.reload();
+      try {
+        await row.update({ zoho_id: zoho.itemId });
+        await row.reload();
+      } catch (dbErr) {
+        console.error('syncRmZoho: failed to save zoho_id, rolling back Zoho item', dbErr);
+        await deleteItem(zoho.itemId).catch(() => {});
+        if (createdNewRow) await destroyRawMaterialDraft(row);
+        return res.status(500).json({ error: 'Failed to persist Zoho item id', code: 'ZOHO_ID_SAVE_FAILED' });
+      }
+    }
+
+    if (zohoSyncIsMandatoryFailure(zoho)) {
+      const status = zoho.duplicate ? 409 : 502;
+      const errMsg = zoho.error || 'Zoho sync failed';
+      const code = zoho.duplicate ? 'ZOHO_ITEM_DUPLICATE' : 'ZOHO_SYNC_FAILED';
+      const zoho_sync = { synced: false, error: errMsg, duplicate: !!zoho.duplicate };
+      if (createdNewRow) {
+        await destroyRawMaterialDraft(row);
+        return res.status(status).json({ error: errMsg, code, zoho_sync });
+      }
+      return res.status(status).json({
+        error: errMsg,
+        code,
+        raw_material_id: row.id,
+        zoho_sync,
+      });
     }
 
     const plain = row.get({ plain: true });
@@ -376,7 +410,22 @@ async function createRawMaterial(req, res) {
 
     const zoho = await syncZohoItemForNewRawMaterial(row, b);
     if (zoho.synced && zoho.itemId) {
-      await row.update({ zoho_id: zoho.itemId });
+      try {
+        await row.update({ zoho_id: zoho.itemId });
+      } catch (dbErr) {
+        console.error('createRawMaterial: zoho ok but DB update failed, deleting Zoho item', dbErr);
+        await deleteItem(zoho.itemId).catch(() => {});
+        await destroyRawMaterialDraft(row);
+        return res.status(500).json({ error: 'Failed to persist Zoho item id', code: 'ZOHO_ID_SAVE_FAILED' });
+      }
+    } else if (zohoSyncIsMandatoryFailure(zoho)) {
+      const status = zoho.duplicate ? 409 : 502;
+      await destroyRawMaterialDraft(row);
+      return res.status(status).json({
+        error: zoho.error || 'Zoho sync failed',
+        code: zoho.duplicate ? 'ZOHO_ITEM_DUPLICATE' : 'ZOHO_SYNC_FAILED',
+        zoho_sync: { synced: false, error: zoho.error, duplicate: !!zoho.duplicate },
+      });
     }
     await row.reload();
     const out = formatRawMaterialFull(row);

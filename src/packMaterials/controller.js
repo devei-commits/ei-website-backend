@@ -1,6 +1,8 @@
 const PackMaterial = require('./models');
 const { syncZohoItemForNewPackMaterial } = require('../services/zohoMasterItemSync');
 const zohoEnv = require('../services/zohoEnv');
+const { deleteItem } = require('../services/zohoBooks');
+const { zohoSyncIsMandatoryFailure } = require('../services/zohoSyncHelpers');
 const { Op } = require('sequelize');
 const { findConflictingMasterRow } = require('../lib/itemCodeUniqueness');
 const WarehouseInventory = require('../warehouseInventory/models');
@@ -170,6 +172,12 @@ function bodyToPackMaterial(b) {
   };
 }
 
+async function destroyPackMaterialDraft(row) {
+  if (!row) return;
+  await WarehouseInventory.destroy({ where: { item_type: 'PM', pack_material_id: row.id } });
+  await row.destroy();
+}
+
 /**
  * POST /api/v1/pack-materials/zoho-sync — Draft PM row + Zoho Books item (wizard step before full form submit).
  */
@@ -188,6 +196,7 @@ async function syncPmZoho(req, res) {
       fields.sku = null;
     }
 
+    let createdNewRow = false;
     let row = await PackMaterial.findOne({ where: { code: codeTrim } });
     if (row) {
       const dupSku = await findConflictingMasterRow(PackMaterial, fields.code, fields.sku, row.id);
@@ -205,6 +214,7 @@ async function syncPmZoho(req, res) {
         return res.status(409).json({ error: 'A pack material with this code or SKU already exists' });
       }
       row = await PackMaterial.create(fields);
+      createdNewRow = true;
       await WarehouseInventory.findOrCreate({
         where: { item_type: 'PM', pack_material_id: row.id },
         defaults: {
@@ -230,8 +240,32 @@ async function syncPmZoho(req, res) {
       zoho = { synced: true, itemId: row.zoho_id };
     }
     if (zoho.synced && zoho.itemId) {
-      await row.update({ zoho_id: zoho.itemId });
-      await row.reload();
+      try {
+        await row.update({ zoho_id: zoho.itemId });
+        await row.reload();
+      } catch (dbErr) {
+        console.error('syncPmZoho: failed to save zoho_id, rolling back Zoho item', dbErr);
+        await deleteItem(zoho.itemId).catch(() => {});
+        if (createdNewRow) await destroyPackMaterialDraft(row);
+        return res.status(500).json({ error: 'Failed to persist Zoho item id', code: 'ZOHO_ID_SAVE_FAILED' });
+      }
+    }
+
+    if (zohoSyncIsMandatoryFailure(zoho)) {
+      const status = zoho.duplicate ? 409 : 502;
+      const errMsg = zoho.error || 'Zoho sync failed';
+      const code = zoho.duplicate ? 'ZOHO_ITEM_DUPLICATE' : 'ZOHO_SYNC_FAILED';
+      const zoho_sync = { synced: false, error: errMsg, duplicate: !!zoho.duplicate };
+      if (createdNewRow) {
+        await destroyPackMaterialDraft(row);
+        return res.status(status).json({ error: errMsg, code, zoho_sync });
+      }
+      return res.status(status).json({
+        error: errMsg,
+        code,
+        pack_material_id: row.id,
+        zoho_sync,
+      });
     }
 
     const plain = row.get({ plain: true });
@@ -347,19 +381,36 @@ async function createPackMaterial(req, res) {
 
     const zoho = await syncZohoItemForNewPackMaterial(row, b);
     if (zoho.synced && zoho.itemId) {
-      await row.update({ zoho_id: zoho.itemId });
+      try {
+        await row.update({ zoho_id: zoho.itemId });
+      } catch (dbErr) {
+        console.error('createPackMaterial: zoho ok but DB update failed, deleting Zoho item', dbErr);
+        await deleteItem(zoho.itemId).catch(() => {});
+        await destroyPackMaterialDraft(row);
+        return res.status(500).json({ error: 'Failed to persist Zoho item id', code: 'ZOHO_ID_SAVE_FAILED' });
+      }
+    } else if (zohoSyncIsMandatoryFailure(zoho)) {
+      const status = zoho.duplicate ? 409 : 502;
+      await destroyPackMaterialDraft(row);
+      return res.status(status).json({
+        error: zoho.error || 'Zoho sync failed',
+        code: zoho.duplicate ? 'ZOHO_ITEM_DUPLICATE' : 'ZOHO_SYNC_FAILED',
+        zoho_sync: { synced: false, error: zoho.error, duplicate: !!zoho.duplicate },
+      });
     }
     await row.reload();
     const out = formatPackMaterialFull(row);
-    if (
-      zohoEnv.booksEnabled &&
-      zohoEnv.syncItems &&
-      zoho.error &&
-      zoho.error !== 'zoho_disabled' &&
-      zoho.error !== 'item_sync_disabled' &&
-      zoho.error !== 'already_has_zoho_id'
-    ) {
-      out.zoho_sync = { synced: false, error: zoho.error };
+    if (zohoEnv.booksEnabled && zohoEnv.syncItems) {
+      if (zoho.synced && zoho.itemId) {
+        out.zoho_sync = { synced: true, item_id: zoho.itemId };
+      } else if (
+        zoho.error &&
+        zoho.error !== 'zoho_disabled' &&
+        zoho.error !== 'item_sync_disabled' &&
+        zoho.error !== 'already_has_zoho_id'
+      ) {
+        out.zoho_sync = { synced: false, error: zoho.error };
+      }
     }
     res.status(201).json(out);
   } catch (err) {

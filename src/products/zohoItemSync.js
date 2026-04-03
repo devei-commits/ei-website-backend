@@ -1,5 +1,6 @@
 const { createItem } = require('../services/zohoBooks');
 const zohoEnv = require('../services/zohoEnv');
+const { isZohoDuplicateItemError } = require('../services/zohoSyncHelpers');
 
 function numOrZero(v) {
   if (v === undefined || v === null || v === '') return 0;
@@ -93,13 +94,14 @@ async function syncZohoItemForNewProduct(product, createBody = {}) {
     const payload = buildZohoItemPayload(product, createBody);
     const { itemId, raw } = await createItem(payload);
     if (!itemId) {
-      return { synced: false, error: 'zoho_missing_item_id', zohoMessage: raw && raw.message };
+      return { synced: false, error: 'zoho_missing_item_id', zohoMessage: raw && raw.message, duplicate: false };
     }
     return { synced: true, itemId };
   } catch (e) {
     const msg = e && e.message ? String(e.message) : 'zoho_item_sync_failed';
+    const duplicate = isZohoDuplicateItemError(e);
     console.error('[Zoho] create item failed:', msg, e.zohoRaw || '');
-    return { synced: false, error: msg };
+    return { synced: false, error: msg, duplicate };
   }
 }
 
