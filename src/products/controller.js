@@ -1,7 +1,7 @@
 const db = require('../../db');
 const { Product } = require('./models');
 const { productSchema, productUpdateSchema, categorySchema, categoryUpdateSchema } = require('./schemas');
-const { Op } = require('sequelize');
+const { Op, fn, col, where: sqlWhere } = require('sequelize');
 const BOM = require('../bom/models');
 const PackMaterial = require('../packMaterials/models');
 const RawMaterial = require('../rawMaterials/models');
@@ -9,6 +9,7 @@ const SalesOrder = require('../salesOrders/models');
 const WarehouseInventory = require('../warehouseInventory/models');
 const WarehouseInventoryLocationHistory = require('../warehouseInventory/locationHistoryModel');
 const PlanningExtracted = require('../planningExtracted/models');
+const VendorClient = require('../vendorClient/models');
 const redisCache = require('../cache/redis');
 const { syncZohoItemForNewProduct } = require('./zohoItemSync');
 const zohoEnv = require('../services/zohoEnv');
@@ -522,6 +523,51 @@ const getAllProducts = async (req, res) => {
     let limit = null;
     let offset = null;
 
+    let productWhere = null;
+    const vcIdRaw = req.query.vendor_client_id;
+    if (vcIdRaw != null && String(vcIdRaw).trim() !== '') {
+      const vcId = normalizeInt(vcIdRaw);
+      if (vcId == null || vcId <= 0) {
+        return res.status(400).json({ error: 'Invalid vendor_client_id' });
+      }
+      const vcRow = await VendorClient.findByPk(vcId);
+      if (!vcRow) {
+        return res.status(404).json({ error: 'Vendor/client not found' });
+      }
+      const vcPlain = vcRow.get ? vcRow.get({ plain: true }) : vcRow;
+      if (String(vcPlain.type || '').toLowerCase() !== 'client') {
+        return res.status(400).json({ error: 'vendor_client_id must refer to a client (Masters → Clients)' });
+      }
+      const clientName = String(vcPlain.name || '').trim();
+      if (!clientName) {
+        if (wantsPagination) {
+          const lim = limitQ != null ? normalizeInt(limitQ) : 20;
+          const off = offsetQ != null ? normalizeInt(offsetQ) : 0;
+          if (lim == null || off == null || lim <= 0 || off < 0) {
+            return res.status(400).json({ error: 'Invalid pagination params (limit must be > 0, offset must be >= 0)' });
+          }
+          return res.json({ rows: [], total: 0, limit: lim, offset: off });
+        }
+        return res.json([]);
+      }
+      const lower = clientName.toLowerCase();
+      const brandMatch = sqlWhere(fn('LOWER', fn('TRIM', col('brand_name'))), lower);
+      const boms = await BOM.findAll({
+        attributes: ['product_id'],
+        where: {
+          product_id: { [Op.ne]: null },
+          [Op.and]: [sqlWhere(fn('LOWER', fn('TRIM', col('client'))), lower)],
+        },
+      });
+      const fromBom = [...new Set((boms || []).map((b) => b.product_id).filter(Boolean))];
+      productWhere = {
+        [Op.or]: fromBom.length
+          ? [brandMatch, { product_id: { [Op.in]: fromBom } }]
+          : [brandMatch],
+      };
+    }
+
+
     if (wantsPagination) {
       limit = limitQ != null ? normalizeInt(limitQ) : 20;
       offset = offsetQ != null ? normalizeInt(offsetQ) : 0;
@@ -530,6 +576,7 @@ const getAllProducts = async (req, res) => {
       }
 
       const result = await Product.findAndCountAll({
+        where: productWhere || undefined,
         order: [['product_code', 'ASC']],
         limit,
         offset,
@@ -537,7 +584,10 @@ const getAllProducts = async (req, res) => {
       products = result.rows;
       total = result.count;
     } else {
-      products = await Product.findAll({ order: [['product_code', 'ASC']] });
+      products = await Product.findAll({
+        where: productWhere || undefined,
+        order: [['product_code', 'ASC']],
+      });
     }
 
     const productCodes = products.map((p) => p.product_code).filter(Boolean);

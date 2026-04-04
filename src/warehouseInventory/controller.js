@@ -71,8 +71,9 @@ async function getInTransitBreakdown() {
 /** PO quantity = sum of quantities from all purchase_orders.items by raw_material_id / pack_material_id. Returns Map<itemKey, number>. */
 async function getPoQuantityByItem() {
   const map = new Map();
+  const poQtyDebug = process.env.EI_DEBUG_WAREHOUSE_PO_QTY === '1';
   try {
-    const pos = await PurchaseOrder.findAll({ attributes: ['id', 'items'] });
+    const pos = await PurchaseOrder.findAll({ attributes: ['id', 'status', 'items'] });
     for (const po of pos) {
       const d = po.get ? po.get({ plain: true }) : po;
       const items = Array.isArray(d.items) ? d.items : [];
@@ -85,6 +86,33 @@ async function getPoQuantityByItem() {
         if (!key) continue;
         map.set(key, (map.get(key) || 0) + qty);
       }
+    }
+    if (poQtyDebug) {
+      const perPo = [];
+      for (const po of pos) {
+        const d = po.get ? po.get({ plain: true }) : po;
+        const items = Array.isArray(d.items) ? d.items : [];
+        let skippedNoFk = 0;
+        let skippedZeroQty = 0;
+        for (const line of items) {
+          const qty = toNum(line.quantity ?? line.qty ?? line.poQty);
+          if (qty <= 0) {
+            skippedZeroQty += 1;
+            continue;
+          }
+          if (line.raw_material_id == null && line.pack_material_id == null) skippedNoFk += 1;
+        }
+        perPo.push({
+          poId: d.id,
+          status: d.status,
+          lineCount: items.length,
+          skippedZeroQty,
+          skippedNoFkPositiveQty: skippedNoFk,
+        });
+      }
+      const nonZero = [...map.entries()].filter(([, v]) => v > 0);
+      console.log('[warehouse-po-qty DEBUG] per PO (set EI_DEBUG_WAREHOUSE_PO_QTY=0 to disable):', JSON.stringify(perPo));
+      console.log('[warehouse-po-qty DEBUG] aggregated rm-/pm- keys (non-zero qty):', nonZero.slice(0, 40));
     }
   } catch (err) {
     console.warn('[warehouse-inventory] getPoQuantityByItem error:', err.message);

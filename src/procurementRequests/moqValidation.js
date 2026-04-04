@@ -1,4 +1,5 @@
 const { ItemsList, ItemListVendorRate, ItemListTier } = require('../itemsList/models');
+const { partyWhereForItemsListRowType } = require('../itemsList/partyTypeWhere');
 
 const EPS_KG = 1e-4;
 
@@ -20,8 +21,12 @@ function effectiveMoqForRate(ratePlain, tiersForRate) {
  * Minimum MOQ across active vendor rates for an items_list row (buyer can use the most permissive vendor).
  */
 async function getMinMoqForItemsListId(itemsListId) {
+  const itemRow = await ItemsList.findByPk(itemsListId);
+  if (!itemRow) return null;
+  const itemPlain = itemRow.get ? itemRow.get({ plain: true }) : itemRow;
+  const partyWhere = partyWhereForItemsListRowType(itemPlain.type);
   const rates = await ItemListVendorRate.findAll({
-    where: { items_list_id: itemsListId },
+    where: { items_list_id: itemsListId, ...partyWhere },
     order: [['id', 'ASC']],
   });
   const active = rates.filter((r) => String(r.status || '').toLowerCase() !== 'inactive');

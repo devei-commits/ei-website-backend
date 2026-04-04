@@ -1468,6 +1468,7 @@ async function seed() {
         const rate = await ItemListVendorRate.create({
           items_list_id: plain.id,
           vendor_id: v1,
+          party_type: 'vendor',
           default_rate: defaultRate,
           default_moq: 1,
           currency: 'INR',
@@ -1494,6 +1495,7 @@ async function seed() {
           const rate2 = await ItemListVendorRate.create({
             items_list_id: ilUVF1.id,
             vendor_id: v2,
+            party_type: 'vendor',
             default_rate: 1180,
             default_moq: 25,
             currency: 'INR',
@@ -1514,6 +1516,7 @@ async function seed() {
           await ItemListVendorRate.create({
             items_list_id: ilTUB.id,
             vendor_id: v4,
+            party_type: 'vendor',
             default_rate: 4.2,
             default_moq: 5000,
             currency: 'INR',
@@ -1528,6 +1531,7 @@ async function seed() {
           await ItemListVendorRate.create({
             items_list_id: ilBTL.id,
             vendor_id: v4,
+            party_type: 'vendor',
             default_rate: 5.5,
             default_moq: 2500,
             currency: 'INR',

@@ -1,7 +1,7 @@
 /**
  * Items List: vendor-specific pricing view over Raw Materials and Pack Materials.
  * - items_list: one row per "item" in the list (FK to raw_materials or pack_materials).
- * - item_list_vendor_rates: vendor rate per item (default_rate, default_moq).
+ * - item_list_vendor_rates: rate per item; party_type vendor (RM/PM) or client (PR product pricing).
  * - item_list_tiers: MOQ breakpoints (moq_min, moq_max, price_per_unit) per vendor rate.
  */
 const { DataTypes, Model } = require('sequelize');
@@ -37,6 +37,8 @@ ItemListVendorRate.init(
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     items_list_id: { type: DataTypes.INTEGER, allowNull: false },
     vendor_id: { type: DataTypes.INTEGER, allowNull: false },
+    /** 'vendor' = procurement/vendor pricing (RM/PM); 'client' = customer pricing (finished products / PR). */
+    party_type: { type: DataTypes.STRING(20), allowNull: false, defaultValue: 'vendor' },
     default_rate: { type: DataTypes.DECIMAL(14, 2), allowNull: true },
     default_moq: { type: DataTypes.INTEGER, allowNull: true },
     lead_time_days: { type: DataTypes.INTEGER, allowNull: true },

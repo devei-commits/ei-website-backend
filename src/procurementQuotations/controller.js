@@ -2,6 +2,7 @@ const ProcurementQuotation = require('./models');
 const ProcurementRequest = require('../procurementRequests/models');
 const VendorClient = require('../vendorClient/models');
 const { ItemsList, ItemListVendorRate, ItemListTier } = require('../itemsList/models');
+const { vendorRatesPartyWhere } = require('../itemsList/partyTypeWhere');
 const db = require('../../db');
 
 /**
@@ -16,7 +17,7 @@ async function getVendorPriceFromItemsList(vendorId, rawMaterialId, packMaterial
   const listRow = await ItemsList.findOne({ where });
   if (!listRow) return null;
   const rateRow = await ItemListVendorRate.findOne({
-    where: { items_list_id: listRow.id, vendor_id: vendorId },
+    where: { items_list_id: listRow.id, vendor_id: vendorId, ...vendorRatesPartyWhere() },
   });
   if (!rateRow) return null;
   const tier = await ItemListTier.findOne({ where: { item_list_vendor_rate_id: rateRow.id }, order: [['moq_min', 'ASC']] });
@@ -29,7 +30,9 @@ async function getVendorTierPriceFromItemsList(vendorId, rawMaterialId, packMate
   const where = rawMaterialId != null ? { raw_material_id: rawMaterialId } : { pack_material_id: packMaterialId };
   const listRow = await ItemsList.findOne({ where });
   if (!listRow) return null;
-  const rateRow = await ItemListVendorRate.findOne({ where: { items_list_id: listRow.id, vendor_id: vendorId } });
+  const rateRow = await ItemListVendorRate.findOne({
+    where: { items_list_id: listRow.id, vendor_id: vendorId, ...vendorRatesPartyWhere() },
+  });
   if (!rateRow) return null;
   const tiers = await ItemListTier.findAll({ where: { item_list_vendor_rate_id: rateRow.id }, order: [['moq_min', 'ASC']] });
   if (!tiers || tiers.length === 0) return null;
@@ -47,7 +50,7 @@ async function getVendorLeadFromItemsList(vendorId, rawMaterialId, packMaterialI
   const listRow = await ItemsList.findOne({ where });
   if (!listRow) return null;
   const rateRow = await ItemListVendorRate.findOne({
-    where: { items_list_id: listRow.id, vendor_id: vendorId },
+    where: { items_list_id: listRow.id, vendor_id: vendorId, ...vendorRatesPartyWhere() },
   });
   if (!rateRow || rateRow.lead_time_days == null) return null;
   const n = Number(rateRow.lead_time_days);
@@ -110,7 +113,7 @@ async function upsertItemsListRateFromQuotationLine(t, vendorId, line, paymentTe
   }
 
   let rateRow = await ItemListVendorRate.findOne({
-    where: { items_list_id: listRow.id, vendor_id: vendorId },
+    where: { items_list_id: listRow.id, vendor_id: vendorId, ...vendorRatesPartyWhere() },
     transaction: t,
   });
   if (!rateRow) {
@@ -118,6 +121,7 @@ async function upsertItemsListRateFromQuotationLine(t, vendorId, line, paymentTe
       {
         items_list_id: listRow.id,
         vendor_id: vendorId,
+        party_type: 'vendor',
         default_rate: price,
         default_moq: qty,
         lead_time_days: leadDays,

@@ -6,6 +6,7 @@ const { Op } = require('sequelize');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const { ItemsList, ItemListVendorRate, ItemListTier } = require('../itemsList/models');
+const { vendorRatesPartyWhere } = require('../itemsList/partyTypeWhere');
 
 function normType(t) {
   const s = String(t || '')
@@ -79,7 +80,7 @@ async function findOrCreateItemsListRow(kind, masterId, transaction) {
 
 async function removeVendorRateForItem(vendorId, itemsListId, transaction) {
   const rates = await ItemListVendorRate.findAll({
-    where: { vendor_id: vendorId, items_list_id: itemsListId },
+    where: { vendor_id: vendorId, items_list_id: itemsListId, ...vendorRatesPartyWhere() },
     transaction,
   });
   for (const r of rates) {
@@ -100,7 +101,7 @@ async function upsertVendorRateAndTier(vendorId, itemsListId, item, transaction)
   if (Number.isNaN(moq) || moq < 1) moq = 1;
 
   let rate = await ItemListVendorRate.findOne({
-    where: { items_list_id: itemsListId, vendor_id: vendorId },
+    where: { items_list_id: itemsListId, vendor_id: vendorId, ...vendorRatesPartyWhere() },
     transaction,
   });
 
@@ -114,6 +115,7 @@ async function upsertVendorRateAndTier(vendorId, itemsListId, item, transaction)
       {
         items_list_id: itemsListId,
         vendor_id: vendorId,
+        party_type: 'vendor',
         default_rate: price,
         default_moq: moq,
         currency: 'INR',
@@ -249,7 +251,7 @@ async function syncVendorMasterItemsToPriceList({
  */
 async function deleteAllVendorPriceListRates(vendorId, transaction) {
   const rates = await ItemListVendorRate.findAll({
-    where: { vendor_id: vendorId },
+    where: { vendor_id: vendorId, ...vendorRatesPartyWhere() },
     transaction,
   });
   for (const r of rates) {

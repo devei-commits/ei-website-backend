@@ -80,6 +80,7 @@ async function buildLeadResolutionCache(allItems) {
     listIdByKey: new Map(),
     ratesByListId: new Map(),
     vendorNameById: new Map(),
+    listTypeById: new Map(),
   };
   if (keys.size === 0) return empty;
 
@@ -96,8 +97,10 @@ async function buildLeadResolutionCache(allItems) {
 
   const rows = await ItemsList.findAll({ where: { [Op.or]: or }, order: [['id', 'ASC']] });
   const listIdByKey = new Map();
+  const listTypeById = new Map();
   for (const row of rows) {
     const plain = row.get ? row.get({ plain: true }) : row;
+    listTypeById.set(plain.id, plain.type);
     let k = null;
     if (plain.type === 'RM' && plain.raw_material_id) k = `RM:${plain.raw_material_id}`;
     else if (plain.type === 'PM' && plain.pack_material_id) k = `PM:${plain.pack_material_id}`;
@@ -106,7 +109,7 @@ async function buildLeadResolutionCache(allItems) {
   }
   const listIds = [...new Set([...listIdByKey.values()])];
   if (!listIds.length) {
-    return { listIdByKey, ratesByListId: new Map(), vendorNameById: new Map() };
+    return { listIdByKey, ratesByListId: new Map(), vendorNameById: new Map(), listTypeById };
   }
 
   const rates = await ItemListVendorRate.findAll({
@@ -137,10 +140,17 @@ async function buildLeadResolutionCache(allItems) {
   for (const r of rates) {
     const rr = r.get ? r.get({ plain: true }) : r;
     const lid = rr.items_list_id;
+    const listType = listTypeById.get(lid);
+    const pt = String(rr.party_type || 'vendor').toLowerCase();
+    if (listType === 'PR') {
+      if (pt !== 'client') continue;
+    } else if (pt === 'client') {
+      continue;
+    }
     if (!ratesByListId.has(lid)) ratesByListId.set(lid, []);
     ratesByListId.get(lid).push(rr);
   }
-  return { listIdByKey, ratesByListId, vendorNameById };
+  return { listIdByKey, ratesByListId, vendorNameById, listTypeById };
 }
 
 function enrichProcurementItemsWithResolvedLead(items, preferredVendor, cache) {
