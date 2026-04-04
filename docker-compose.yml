@@ -5,16 +5,12 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-ei_pg_a8f3c1d9e72b4056}
-      POSTGRES_USER: ${POSTGRES_USER:-ei_u_4d8e1c9f72a3065b}
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}"
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ei_u_4d8e1c9f72a3065b} -d postgres"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -48,7 +44,6 @@ services:
       - .env
     environment:
       NODE_ENV: development
-      DATABASE_URL: "postgresql://${POSTGRES_USER:-ei_u_4d8e1c9f72a3065b}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}@db:5432/${POSTGRES_DB:-ei_pg_a8f3c1d9e72b4056}"
       REDIS_URL: redis://redis:6379
     volumes:
       - ./:/usr/src/app
