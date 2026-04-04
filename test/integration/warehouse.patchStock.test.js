@@ -1,11 +1,11 @@
 /**
  * Integration: PATCH warehouse-inventory :id with wh_stock, ml1_stock, ml2_stock recomputes stock_in_hand.
  */
-if (!process.env.ACCESS_TOKEN_SECRET) process.env.ACCESS_TOKEN_SECRET = 'test-access-token-secret';
 const request = require('supertest');
 const jwt = require('jsonwebtoken');
 const db = require('../../db');
 const app = require('../../app');
+const { useStaticJwtSecretsForTests } = require('../helpers/jwtTestEnv');
 const RawMaterial = require('../../src/rawMaterials/models');
 const WarehouseInventory = require('../../src/warehouseInventory/models');
 const { User } = require('../../src/users/models');
@@ -19,6 +19,9 @@ describe('warehouse PATCH stock_in_hand', () => {
   beforeAll(async () => {
     dbAvailable = await isDbAvailable(db);
     if (!dbAvailable) return;
+
+    useStaticJwtSecretsForTests();
+
     await db.sync({ force: true });
     const rm = await RawMaterial.create({ code: 'RM-PATCH-001', name: 'Test RM', status: 'Active' });
     const inv = await WarehouseInventory.create({
@@ -41,7 +44,12 @@ describe('warehouse PATCH stock_in_hand', () => {
       usertype: 'admin',
     });
     token = jwt.sign(
-      { email: user.email, role: user.usertype || 'admin' },
+      {
+        email: user.email,
+        role: user.usertype || 'admin',
+        sub: user.userid,
+        id: user.userid,
+      },
       process.env.ACCESS_TOKEN_SECRET,
       { expiresIn: '7d' }
     );

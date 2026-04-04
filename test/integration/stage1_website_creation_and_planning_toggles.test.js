@@ -9,12 +9,11 @@
  *   (only included sent batches contribute to `totalRequired`).
  */
 
-if (!process.env.ACCESS_TOKEN_SECRET) process.env.ACCESS_TOKEN_SECRET = 'test-access-token-secret';
-
 const request = require('supertest');
 const jwt = require('jsonwebtoken');
 const db = require('../../db');
 const app = require('../../app');
+const { useStaticJwtSecretsForTests } = require('../helpers/jwtTestEnv');
 
 const RawMaterial = require('../../src/rawMaterials/models');
 const PackMaterial = require('../../src/packMaterials/models');
@@ -52,6 +51,8 @@ describe('Stage 1: website order -> planning placeholders + toggles (integration
     dbAvailable = await isDbAvailable(db);
     if (!dbAvailable) return;
 
+    useStaticJwtSecretsForTests();
+
     await db.sync({ force: true });
 
     // Auth user (admin so `requireModule('order-management')` passes for planning endpoints)
@@ -63,7 +64,12 @@ describe('Stage 1: website order -> planning placeholders + toggles (integration
       usertype: 'admin',
     });
     token = jwt.sign(
-      { email: user.email, role: user.usertype || 'admin' },
+      {
+        email: user.email,
+        role: user.usertype || 'admin',
+        sub: user.userid,
+        id: user.userid,
+      },
       process.env.ACCESS_TOKEN_SECRET,
       { expiresIn: '7d' }
     );

@@ -10,8 +10,6 @@
  *   - cross-domain invalidation example: GRN Complete invalidates warehouse-inventory reads
  */
 
-if (!process.env.ACCESS_TOKEN_SECRET) process.env.ACCESS_TOKEN_SECRET = 'test-access-token-secret';
-
 const request = require('supertest');
 const jwt = require('jsonwebtoken');
 const net = require('net');
@@ -21,6 +19,7 @@ const { Op } = require('sequelize');
 const db = require('../../db');
 const app = require('../../app');
 const { isDbAvailable } = require('../helpers/dbAvailability');
+const { useStaticJwtSecretsForTests } = require('../helpers/jwtTestEnv');
 
 const { User } = require('../../src/users/models');
 const RawMaterial = require('../../src/rawMaterials/models');
@@ -47,6 +46,8 @@ describe('Performance pagination + Redis cache-aside', () => {
   beforeAll(async () => {
     dbAvailable = await isDbAvailable(db);
     if (!dbAvailable) return;
+
+    useStaticJwtSecretsForTests();
 
     // Determine if Redis is reachable before we start toggling REDIS_URL.
     redisAvailable = Boolean(originalRedisUrl);
@@ -87,7 +88,12 @@ describe('Performance pagination + Redis cache-aside', () => {
     });
 
     token = jwt.sign(
-      { email: user.email, role: user.usertype || 'admin' },
+      {
+        email: user.email,
+        role: user.usertype || 'admin',
+        sub: user.userid,
+        id: user.userid,
+      },
       process.env.ACCESS_TOKEN_SECRET,
       { expiresIn: '7d' }
     );

@@ -1,6 +1,7 @@
 require('dotenv').config()
 const jwt = require('jsonwebtoken');
 const bycrypt = require('bcrypt');
+const { accessSigningSecret, refreshSigningSecret, useCompositeAccess, useCompositeRefresh } = require('../lib/jwtSecrets');
 const { RefreshToken, User } = require('../users/models');
 const { StaffProfile, Role, Permission, RolePermission } = require('../models/index');
 
@@ -34,22 +35,49 @@ function requireModule(...moduleIds) {
 }
 
 function generateToken(user) {
-    // Include role in the token payload for authorization checks
+    const userId = user.userid ?? user.user_id;
+    if (userId == null) {
+        throw new Error('generateToken requires user.userid');
+    }
+    const email = user.email != null ? String(user.email).trim().toLowerCase() : undefined;
     return jwt.sign(
-        { email: user.email, role: user.usertype || 'customer' },
-        process.env.ACCESS_TOKEN_SECRET,
+        {
+            email,
+            role: user.usertype || 'customer',
+            sub: userId,
+            id: userId,
+        },
+        accessSigningSecret(userId),
         { expiresIn: '7d' }
     );
 }
 
 async function generateRefreshToken(user) {
-    const refreshToken = jwt.sign({ email: user.email }, process.env.REFRESH_TOKEN_SECRET, { expiresIn: '5m' });
-    const tokenRecord = await RefreshToken.findOne({ where: { email: user.email } });
+    let u = user;
+    if (u.userid == null && u.email) {
+        u = await User.findOne({
+            where: { email: String(u.email).trim().toLowerCase() },
+            attributes: ['userid', 'email'],
+        });
+        if (!u) throw new Error('User not found for refresh token');
+    } else if (u.userid != null && (u.email == null || String(u.email).trim() === '')) {
+        u = await User.findByPk(u.userid, { attributes: ['userid', 'email'] });
+        if (!u) throw new Error('User not found for refresh token');
+    }
+    const userId = u.userid;
+    const email = u.email != null ? String(u.email).trim().toLowerCase() : undefined;
+    if (!email) throw new Error('generateRefreshToken requires user email');
+    const refreshToken = jwt.sign(
+        { email, sub: userId },
+        refreshSigningSecret(userId),
+        { expiresIn: '5m' }
+    );
+    const tokenRecord = await RefreshToken.findOne({ where: { email } });
     const encryptedRefreshToken = bycrypt.hashSync(refreshToken, 10);
     if (tokenRecord) {
-        await RefreshToken.update({ refeshToken: encryptedRefreshToken }, { where: { email: user.email } });
+        await RefreshToken.update({ refeshToken: encryptedRefreshToken }, { where: { email } });
     } else {
-        await RefreshToken.create({ email: user.email, refreshToken: encryptedRefreshToken });
+        await RefreshToken.create({ email, refreshToken: encryptedRefreshToken });
     }
     return refreshToken;
 }
@@ -61,11 +89,33 @@ const isAuthenticated = async (req, res, next) => {
             return res.sendStatus(401);
         }
         const token = auth.split(' ')[1];
-        const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
+        const unverified = jwt.decode(token, { complete: false });
+        if (!unverified || typeof unverified !== 'object') {
+            return res.sendStatus(401);
+        }
+        const tokenUserId = unverified.sub != null ? unverified.sub : unverified.id;
+        let decoded;
+        try {
+            if (useCompositeAccess()) {
+                if (tokenUserId == null) return res.sendStatus(403);
+                decoded = jwt.verify(token, accessSigningSecret(tokenUserId));
+            } else {
+                decoded = jwt.verify(token, accessSigningSecret());
+            }
+        } catch {
+            return res.sendStatus(403);
+        }
 
         // Attach user info to request for downstream authorization
         // Refresh role from DB to avoid relying solely on token
-        const user = await User.findOne({ where: { email: decoded.email } });
+        let user = null;
+        if (decoded.sub != null || decoded.id != null) {
+            const uid = decoded.sub != null ? decoded.sub : decoded.id;
+            user = await User.findByPk(uid);
+        }
+        if (!user && decoded.email) {
+            user = await User.findOne({ where: { email: String(decoded.email).trim().toLowerCase() } });
+        }
         if (!user) {
             return res.sendStatus(401);
         }
@@ -133,7 +183,14 @@ const requirePermission = (resource, action) => {
 // Verify refresh token
 function verifyRefreshToken(token) {
     try {
-        return jwt.verify(token, process.env.REFRESH_TOKEN_SECRET);
+        const payload = jwt.decode(token, { complete: false });
+        if (!payload || typeof payload !== 'object') return null;
+        const uid = payload.sub != null ? payload.sub : payload.id;
+        if (useCompositeRefresh()) {
+            if (uid == null) return null;
+            return jwt.verify(token, refreshSigningSecret(uid));
+        }
+        return jwt.verify(token, refreshSigningSecret());
     } catch (error) {
         return null;
     }
@@ -151,7 +208,11 @@ const token = async (req, res) => {
     if (!refeshTokenObject || !bycrypt.compare(req.cookies.refreshToken, refeshTokenObject.refreshToken)) {
         return res.sendStatus(403);
     }
-    const user = { email: refeshTokenObject.email };
+    const user = await User.findOne({
+        where: { email: String(decodedToken.email).trim().toLowerCase() },
+        attributes: ['userid', 'email', 'usertype'],
+    });
+    if (!user) return res.sendStatus(403);
     const refreshToken = await generateRefreshToken(user);
     res.cookie('refreshToken', refreshToken, { httpOnly: true });
     res.status(200).json({ token: generateToken(user) });

@@ -143,7 +143,17 @@ async function syncZohoContactForNewUser(user, createBody = {}) {
  */
 function parsePaymentTermsDays(s) {
   if (s == null || String(s).trim() === '') return 15;
-  const m = String(s).match(/NET\s*(\d+)/i);
+  const str = String(s).trim();
+  try {
+    const j = JSON.parse(str);
+    if (j && typeof j === 'object' && j.credit_days != null) {
+      const n = Number(j.credit_days);
+      if (Number.isFinite(n) && n >= 0) return n;
+    }
+  } catch {
+    /* not JSON */
+  }
+  const m = str.match(/NET\s*(\d+)/i);
   if (m) return parseInt(m[1], 10) || 15;
   return 15;
 }

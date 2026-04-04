@@ -14,14 +14,13 @@
  *   * verify `warehouse_inventory.wh_stock` and `stock_in_hand` are updated.
  */
 
-if (!process.env.ACCESS_TOKEN_SECRET) process.env.ACCESS_TOKEN_SECRET = 'test-access-token-secret';
-
 const request = require('supertest');
 const jwt = require('jsonwebtoken');
 const db = require('../../db');
 const app = require('../../app');
 
 const { isDbAvailable } = require('../helpers/dbAvailability');
+const { useStaticJwtSecretsForTests } = require('../helpers/jwtTestEnv');
 
 const RawMaterial = require('../../src/rawMaterials/models');
 const PackMaterial = require('../../src/packMaterials/models');
@@ -58,6 +57,9 @@ describe('Stage 2: shortfall -> PR; PO -> GRN -> inventory (integration)', () =>
   beforeAll(async () => {
     dbAvailable = await isDbAvailable(db);
     if (!dbAvailable) return;
+
+    useStaticJwtSecretsForTests();
+
     await db.sync({ force: true });
 
     // Auth user (admin: order-management + sales-purchase)
@@ -69,7 +71,12 @@ describe('Stage 2: shortfall -> PR; PO -> GRN -> inventory (integration)', () =>
       usertype: 'admin',
     });
     token = jwt.sign(
-      { email: user.email, role: user.usertype || 'admin' },
+      {
+        email: user.email,
+        role: user.usertype || 'admin',
+        sub: user.userid,
+        id: user.userid,
+      },
       process.env.ACCESS_TOKEN_SECRET,
       { expiresIn: '7d' }
     );

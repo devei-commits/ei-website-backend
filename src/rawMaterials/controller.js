@@ -1,8 +1,10 @@
+const db = require('../../db');
 const RawMaterial = require('./models');
 const { syncZohoItemForNewRawMaterial } = require('../services/zohoMasterItemSync');
 const zohoEnv = require('../services/zohoEnv');
 const { deleteItem } = require('../services/zohoBooks');
 const { zohoSyncIsMandatoryFailure } = require('../services/zohoSyncHelpers');
+const { compensateZohoItemIfAny } = require('../lib/zohoDbTransaction');
 const { Op } = require('sequelize');
 const { findConflictingMasterRow } = require('../lib/itemCodeUniqueness');
 const WarehouseInventory = require('../warehouseInventory/models');
@@ -341,8 +343,8 @@ async function createRawMaterial(req, res) {
     const preId = preIdRaw != null && preIdRaw !== '' ? parseInt(String(preIdRaw), 10) : NaN;
 
     if (!Number.isNaN(preId)) {
-      const row = await RawMaterial.findByPk(preId);
-      if (!row) {
+      const existingRow = await RawMaterial.findByPk(preId);
+      if (!existingRow) {
         return res.status(404).json({ error: 'Draft raw material not found', code: 'RM_NOT_FOUND' });
       }
       const fields = payloadToListFields(b);
@@ -350,9 +352,9 @@ async function createRawMaterial(req, res) {
       if (!codeTrim) {
         return res.status(400).json({ error: 'code or rmSku is required' });
       }
-      if (String(row.code).trim() !== codeTrim) {
+      if (String(existingRow.code).trim() !== codeTrim) {
         return res.status(400).json({
-          error: 'code must match the draft raw material from Zoho sync. Do not change the RM code after sync.',
+          error: 'code must match the existing raw material row when raw_material_id is sent.',
           code: 'RM_CODE_MISMATCH',
         });
       }
@@ -362,14 +364,57 @@ async function createRawMaterial(req, res) {
       } else {
         fields.sku = null;
       }
-      const nextSku = fields.sku !== undefined ? fields.sku : row.sku;
-      const dup = await findConflictingMasterRow(RawMaterial, fields.code, nextSku, row.id);
+      const nextSku = fields.sku !== undefined ? fields.sku : existingRow.sku;
+      const dup = await findConflictingMasterRow(RawMaterial, fields.code, nextSku, existingRow.id);
       if (dup) {
         return res.status(409).json({ error: 'A raw material with this code or SKU already exists' });
       }
-      await row.update(fields);
-      await row.reload();
-      return res.status(200).json(formatRawMaterialFull(row));
+
+      let zohoBooksItemToDelete = null;
+      const t = await db.transaction();
+      try {
+        await existingRow.update(fields, { transaction: t });
+        await existingRow.reload({ transaction: t });
+        let zoho = await syncZohoItemForNewRawMaterial(existingRow, b);
+        if (zoho.error === 'already_has_zoho_id') {
+          await existingRow.reload({ transaction: t });
+          zoho = { synced: true, itemId: existingRow.zoho_id };
+        }
+        if (zoho.synced && zoho.itemId) {
+          await existingRow.update({ zoho_id: zoho.itemId }, { transaction: t });
+          await existingRow.reload({ transaction: t });
+          zohoBooksItemToDelete = zoho.itemId;
+        } else if (zohoSyncIsMandatoryFailure(zoho)) {
+          await t.rollback();
+          await compensateZohoItemIfAny(null, zoho.itemId, deleteItem);
+          const status = zoho.duplicate ? 409 : 502;
+          return res.status(status).json({
+            error: zoho.error || 'Zoho sync failed',
+            code: zoho.duplicate ? 'ZOHO_ITEM_DUPLICATE' : 'ZOHO_SYNC_FAILED',
+            zoho_sync: { synced: false, error: zoho.error, duplicate: !!zoho.duplicate },
+          });
+        }
+        await t.commit();
+        zohoBooksItemToDelete = null;
+        const out = formatRawMaterialFull(existingRow);
+        if (zohoEnv.booksEnabled && zohoEnv.syncItems) {
+          if (zoho.synced && zoho.itemId) {
+            out.zoho_sync = { synced: true, item_id: zoho.itemId };
+          } else if (
+            zoho.error &&
+            zoho.error !== 'zoho_disabled' &&
+            zoho.error !== 'item_sync_disabled' &&
+            zoho.error !== 'already_has_zoho_id'
+          ) {
+            out.zoho_sync = { synced: false, error: zoho.error };
+          }
+        }
+        return res.status(200).json(out);
+      } catch (inner) {
+        await t.rollback();
+        await compensateZohoItemIfAny(null, zohoBooksItemToDelete, deleteItem);
+        throw inner;
+      }
     }
 
     const fields = payloadToListFields(b);
@@ -383,65 +428,80 @@ async function createRawMaterial(req, res) {
     } else {
       fields.sku = null;
     }
-    const dup = await findConflictingMasterRow(RawMaterial, fields.code, fields.sku, null);
-    if (dup) {
+    const dupCheck = await findConflictingMasterRow(RawMaterial, fields.code, fields.sku, null);
+    if (dupCheck) {
       return res.status(409).json({ error: 'A raw material with this code or SKU already exists' });
     }
-    const row = await RawMaterial.create(fields);
 
-    // Create a zero-stock warehouse inventory row so the RM appears in the warehouse immediately.
-    await WarehouseInventory.findOrCreate({
-      where: { item_type: 'RM', raw_material_id: row.id },
-      defaults: {
-        item_type: 'RM',
-        raw_material_id: row.id,
-        wh_stock: 0,
-        wh_unit: row.uom || 'KG',
-        ml1_stock: 0,
-        ml2_stock: 0,
-        stock_in_hand: 0,
-        reserved: 0,
-        in_transit: 0,
-        reorder_pt: 0,
-        avg_mo: 0,
-        qc_status: 'Out of Stock',
-      },
-    });
-
-    const zoho = await syncZohoItemForNewRawMaterial(row, b);
-    if (zoho.synced && zoho.itemId) {
-      try {
-        await row.update({ zoho_id: zoho.itemId });
-      } catch (dbErr) {
-        console.error('createRawMaterial: zoho ok but DB update failed, deleting Zoho item', dbErr);
-        await deleteItem(zoho.itemId).catch(() => {});
-        await destroyRawMaterialDraft(row);
-        return res.status(500).json({ error: 'Failed to persist Zoho item id', code: 'ZOHO_ID_SAVE_FAILED' });
-      }
-    } else if (zohoSyncIsMandatoryFailure(zoho)) {
-      const status = zoho.duplicate ? 409 : 502;
-      await destroyRawMaterialDraft(row);
-      return res.status(status).json({
-        error: zoho.error || 'Zoho sync failed',
-        code: zoho.duplicate ? 'ZOHO_ITEM_DUPLICATE' : 'ZOHO_SYNC_FAILED',
-        zoho_sync: { synced: false, error: zoho.error, duplicate: !!zoho.duplicate },
+    let zohoBooksItemToDelete = null;
+    const t = await db.transaction();
+    try {
+      const row = await RawMaterial.create(fields, { transaction: t });
+      await WarehouseInventory.findOrCreate({
+        where: { item_type: 'RM', raw_material_id: row.id },
+        defaults: {
+          item_type: 'RM',
+          raw_material_id: row.id,
+          wh_stock: 0,
+          wh_unit: row.uom || 'KG',
+          ml1_stock: 0,
+          ml2_stock: 0,
+          stock_in_hand: 0,
+          reserved: 0,
+          in_transit: 0,
+          reorder_pt: 0,
+          avg_mo: 0,
+          qc_status: 'Out of Stock',
+        },
+        transaction: t,
       });
-    }
-    await row.reload();
-    const out = formatRawMaterialFull(row);
-    if (zohoEnv.booksEnabled && zohoEnv.syncItems) {
-      if (zoho.synced && zoho.itemId) {
-        out.zoho_sync = { synced: true, item_id: zoho.itemId };
-      } else if (
-        zoho.error &&
-        zoho.error !== 'zoho_disabled' &&
-        zoho.error !== 'item_sync_disabled' &&
-        zoho.error !== 'already_has_zoho_id'
-      ) {
-        out.zoho_sync = { synced: false, error: zoho.error };
+
+      let zoho = await syncZohoItemForNewRawMaterial(row, b);
+      if (zoho.error === 'already_has_zoho_id') {
+        await row.reload({ transaction: t });
+        zoho = { synced: true, itemId: row.zoho_id };
       }
+      if (zoho.synced && zoho.itemId) {
+        await row.update({ zoho_id: zoho.itemId }, { transaction: t });
+        await row.reload({ transaction: t });
+        zohoBooksItemToDelete = zoho.itemId;
+      } else if (zohoSyncIsMandatoryFailure(zoho)) {
+        await t.rollback();
+        await compensateZohoItemIfAny(null, zoho.itemId, deleteItem);
+        const status = zoho.duplicate ? 409 : 502;
+        return res.status(status).json({
+          error: zoho.error || 'Zoho sync failed',
+          code: zoho.duplicate ? 'ZOHO_ITEM_DUPLICATE' : 'ZOHO_SYNC_FAILED',
+          zoho_sync: { synced: false, error: zoho.error, duplicate: !!zoho.duplicate },
+        });
+      }
+
+      await t.commit();
+      zohoBooksItemToDelete = null;
+
+      const out = formatRawMaterialFull(row);
+      if (zohoEnv.booksEnabled && zohoEnv.syncItems) {
+        if (zoho.synced && zoho.itemId) {
+          out.zoho_sync = { synced: true, item_id: zoho.itemId };
+        } else if (
+          zoho.error &&
+          zoho.error !== 'zoho_disabled' &&
+          zoho.error !== 'item_sync_disabled' &&
+          zoho.error !== 'already_has_zoho_id'
+        ) {
+          out.zoho_sync = { synced: false, error: zoho.error };
+        }
+      }
+      return res.status(201).json(out);
+    } catch (inner) {
+      await t.rollback();
+      await compensateZohoItemIfAny(null, zohoBooksItemToDelete, deleteItem);
+      if (inner.name === 'SequelizeUniqueConstraintError') {
+        return res.status(409).json({ error: 'A raw material with this code or SKU already exists' });
+      }
+      console.error('createRawMaterial transaction error', inner);
+      return res.status(500).json({ error: inner.message || 'Failed to create raw material' });
     }
-    res.status(201).json(out);
   } catch (err) {
     console.error('createRawMaterial error', err);
     if (err.name === 'SequelizeUniqueConstraintError') {

@@ -2,12 +2,22 @@ const { DataTypes, Model } = require('sequelize');
 const jwt = require('jsonwebtoken');
 const db = require('../../db');
 const Address = require('../models/Addresses');
+const { accessSigningSecret } = require('../lib/jwtSecrets');
 
 class User extends Model {
   generateToken() {
-    return jwt.sign({ id: this.userid, role: this.usertype }, process.env.JWT_SECRET, {
-      expiresIn: '1h',
-    });
+    const uid = this.userid;
+    const email = this.email != null ? String(this.email).trim().toLowerCase() : undefined;
+    return jwt.sign(
+      {
+        id: uid,
+        sub: uid,
+        role: this.usertype,
+        email,
+      },
+      accessSigningSecret(uid),
+      { expiresIn: '1h' }
+    );
   }
 }
 User.init({

@@ -8,14 +8,13 @@
  *   * verify location history entries + MRN labels generation
  */
 
-if (!process.env.ACCESS_TOKEN_SECRET) process.env.ACCESS_TOKEN_SECRET = 'test-access-token-secret';
-
 const request = require('supertest');
 const jwt = require('jsonwebtoken');
 const db = require('../../db');
 const app = require('../../app');
 
 const { isDbAvailable } = require('../helpers/dbAvailability');
+const { useStaticJwtSecretsForTests } = require('../helpers/jwtTestEnv');
 
 const RawMaterial = require('../../src/rawMaterials/models');
 const PackMaterial = require('../../src/packMaterials/models');
@@ -53,6 +52,9 @@ describe('Stage 3: sync-from-planning + MTR MRN completion (labels + history)', 
   beforeAll(async () => {
     dbAvailable = await isDbAvailable(db);
     if (!dbAvailable) return;
+
+    useStaticJwtSecretsForTests();
+
     await db.sync({ force: true });
 
     const user = await User.create({
@@ -63,7 +65,12 @@ describe('Stage 3: sync-from-planning + MTR MRN completion (labels + history)', 
       usertype: 'admin',
     });
     token = jwt.sign(
-      { email: user.email, role: user.usertype || 'admin' },
+      {
+        email: user.email,
+        role: user.usertype || 'admin',
+        sub: user.userid,
+        id: user.userid,
+      },
       process.env.ACCESS_TOKEN_SECRET,
       { expiresIn: '7d' }
     );

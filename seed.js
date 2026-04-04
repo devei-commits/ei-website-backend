@@ -53,6 +53,31 @@ const defaultModuleDef = require('./src/roles/defaultModuleDefinition');
 const zohoEnv = require('./src/services/zohoEnv');
 const bcrypt = require('bcrypt');
 
+/** Zoho Books contact_id for seeded vendor_clients (by entity_code). */
+const ZOHO_SEED_VENDOR_CLIENT_CONTACT_IDS = {
+  'EI-VEN-00006': '3529895000000184022',
+  'EI-VEN-00002': '3529895000000163024',
+  'EI-VEN-00003': '3529895000000189003',
+  'EI-VEN-00004': '3529895000000190005',
+  'EI-CLI-00001': '3529895000000175022',
+};
+
+/** Zoho Books contact_id for seeded users (by email, lowercase). */
+const ZOHO_SEED_USER_CONTACT_IDS = {
+  'superadmin@example.com': '3529895000000172023',
+  'admin@example.com': '3529895000000188023',
+  'admin2@example.com': '3529895000000178042',
+  'bdmanager@example.com': '3529895000000187022',
+  'accounts@example.com': '3529895000000191003',
+  'dr.sarah@example.com': '3529895000000170004',
+  'client1@example.com': '3529895000000167023',
+  'client2@example.com': '3529895000000165312',
+  'bd@luminos.in': '3529895000000182043',
+  'priya.mehta@example.com': '3529895000000184042',
+  'suresh.kumar@example.com': '3529895000000168043',
+  'ananya.krishnan@example.com': '3529895000000185023',
+};
+
 const ROLES_TO_SEED = [
   { role_code: 'super_admin', role_name: 'Super Admin', level: 'admin' },
   { role_code: 'admin', role_name: 'Admin', level: 'admin' },
@@ -161,8 +186,17 @@ async function seed() {
     const zohoBooksOn = zohoEnv.booksEnabled;
     const zohoSeedFull = zohoEnv.seedFullSync;
     const seedZohoItems = zohoEnv.seedSyncItems;
-    const seedZohoContact = zohoEnv.seedSyncContacts;
     const seedZohoInvoice = zohoEnv.seedSyncInvoices;
+
+    const zu = (email) => {
+      const e = email != null ? String(email).trim().toLowerCase() : '';
+      const z = e ? ZOHO_SEED_USER_CONTACT_IDS[e] : null;
+      return z ? { zoho_contact_id: z } : {};
+    };
+    const zv = (entityCode) => {
+      const c = entityCode != null ? String(entityCode).trim() : '';
+      return (c && ZOHO_SEED_VENDOR_CLIENT_CONTACT_IDS[c]) || null;
+    };
 
     if (zohoSeedFull && zohoBooksOn) {
       console.log(
@@ -181,8 +215,8 @@ async function seed() {
     //   client1@example.com     / Client1@123     (Customer)
     //   client2@example.com     / Client2@123     (Customer)
     // Zoho seed: ZOHO_BOOKS_ENABLED=true + OAuth/org/currency. Recommended single switch:
-    //   ZOHO_SEED_FULL_SYNC=true → items (FG/RM/PM) + contacts (client1, Luminos, Chemspec) + demo invoice, all IDs written to DB then invoice reads from DB.
-    // Granular (optional): ZOHO_SEED_SYNC_ITEMS, ZOHO_SEED_SYNC_CONTACT, ZOHO_SEED_SYNC_INVOICE — invoice alone will not call Zoho unless items+client zoho ids already exist in DB.
+    //   ZOHO_SEED_FULL_SYNC=true → items (FG/RM/PM) + demo invoice in DB. Contact IDs are inlined in seed.js (ZOHO_SEED_*_CONTACT_IDS).
+    // Granular (optional): ZOHO_SEED_SYNC_ITEMS, ZOHO_SEED_SYNC_INVOICE — invoice alone will not call Zoho unless items+client Zoho ids exist in DB (vendor_clients.zoho_id / products.zoho_item_id; user zoho_contact_id is set from ZOHO_SEED_*_CONTACT_IDS in this file).
 
     // 1. Super Admin
     const superAdmin = await User.create({
@@ -193,7 +227,7 @@ async function seed() {
       mobile: '+919876543201',
       password: bcrypt.hashSync('SuperAdmin@123', 10),
       usertype: 'super_admin',
-        zoho_contact_id: '3529895000000116003',
+      ...zu('superadmin@example.com'),
       department: 'Administration',
       status: 'active',
       verify_status: 'verified',
@@ -213,6 +247,7 @@ async function seed() {
       password: bcrypt.hashSync('Admin@123', 10),
       doctor_id_legacy: 'DOC-ADM-001',
       usertype: 'admin',
+      ...zu('admin@example.com'),
       department: 'Administration',
       status: 'active',
       verify_status: 'verified',
@@ -231,6 +266,7 @@ async function seed() {
       mobile: '+919876543203',
       password: bcrypt.hashSync('BDManager@123', 10),
       usertype: 'bd_manager',
+      ...zu('bdmanager@example.com'),
       department: 'Business Development',
       status: 'active',
       verify_status: 'verified',
@@ -249,6 +285,7 @@ async function seed() {
       mobile: '+919876543204',
       password: bcrypt.hashSync('Admin2@123', 10),
       usertype: 'admin',
+      ...zu('admin2@example.com'),
       department: 'Administration',
       status: 'active',
       verify_status: 'verified',
@@ -267,6 +304,7 @@ async function seed() {
       mobile: '+919876543205',
       password: bcrypt.hashSync('Accounts@123', 10),
       usertype: 'accounts_team',
+      ...zu('accounts@example.com'),
       department: 'Accounts',
       status: 'active',
       verify_status: 'verified',
@@ -286,7 +324,7 @@ async function seed() {
       password: bcrypt.hashSync('Doctor@123', 10),
       doctor_id_legacy: 'DOC-SAR-101',
       usertype: 'doctor',
-      zoho_contact_id: '3529895000000092022',
+      ...zu('dr.sarah@example.com'),
       department: null,
       status: 'active',
       verify_status: 'verified',
@@ -305,6 +343,7 @@ async function seed() {
       mobile: '+919876543211',
       password: bcrypt.hashSync('Client1@123', 10),
       usertype: 'customer',
+      ...zu('client1@example.com'),
       status: 'active',
       verify_status: 'verified',
       advance_payment: true,
@@ -321,6 +360,7 @@ async function seed() {
       mobile: '+919876543212',
       password: bcrypt.hashSync('Client2@123', 10),
       usertype: 'customer',
+      ...zu('client2@example.com'),
       status: 'active',
       verify_status: 'verified',
       advance_payment: false,
@@ -338,6 +378,7 @@ async function seed() {
       mobile: '+91-9812345001',
       password: bcrypt.hashSync('LuminosPortal@123', 10),
       usertype: 'customer',
+      ...zu('bd@luminos.in'),
       status: 'active',
       verify_status: 'verified',
       advance_payment: false,
@@ -351,7 +392,9 @@ async function seed() {
       fname: 'Priya', lname: 'Mehta', display_name: 'Priya Mehta',
       email: 'priya.mehta@example.com', mobile: '+919876543220',
       password: bcrypt.hashSync('PriyaAM@123', 10),
-      usertype: 'bd_manager', department: 'Business Development',
+      usertype: 'bd_manager',
+      ...zu('priya.mehta@example.com'),
+      department: 'Business Development',
       status: 'active', verify_status: 'verified',
       advance_payment: false, advance_amount: null, created_at: now, updated_at: now
     });
@@ -359,7 +402,9 @@ async function seed() {
       fname: 'Suresh', lname: 'Kumar', display_name: 'Suresh Kumar',
       email: 'suresh.kumar@example.com', mobile: '+919876543221',
       password: bcrypt.hashSync('SureshAM@123', 10),
-      usertype: 'bd_manager', department: 'Business Development',
+      usertype: 'bd_manager',
+      ...zu('suresh.kumar@example.com'),
+      department: 'Business Development',
       status: 'active', verify_status: 'verified',
       advance_payment: false, advance_amount: null, created_at: now, updated_at: now
     });
@@ -367,7 +412,9 @@ async function seed() {
       fname: 'Ananya', lname: 'Krishnan', display_name: 'Ananya Krishnan',
       email: 'ananya.krishnan@example.com', mobile: '+919876543222',
       password: bcrypt.hashSync('AnanyaAM@123', 10),
-      usertype: 'bd_manager', department: 'Business Development',
+      usertype: 'bd_manager',
+      ...zu('ananya.krishnan@example.com'),
+      department: 'Business Development',
       status: 'active', verify_status: 'verified',
       advance_payment: false, advance_amount: null, created_at: now, updated_at: now
     });
@@ -460,31 +507,6 @@ async function seed() {
     // Capture specific address IDs for order seeding
     const client1Billing = await Address.findOne({ where: { user_id: client1.userid, address_type: 'billing' } });
     const client1Shipping = await Address.findOne({ where: { user_id: client1.userid, address_type: 'shipping' } });
-
-    if (seedZohoContact) {
-      const { syncZohoContactForNewUser } = require('./src/users/zohoContactSync');
-      const zohoUser = await User.findByPk(client1.userid);
-      if (zohoUser && !zohoUser.zoho_contact_id) {
-        const seedBody = {};
-        if (client1Billing) {
-          const br = client1Billing.get ? client1Billing.get({ plain: true }) : client1Billing;
-          seedBody.billing_address = {
-            address: [br.address_line1, br.address_line2].filter(Boolean).join(', '),
-            city: br.city_text,
-            state: br.state_text,
-            zip: br.pincode,
-            country: br.country_text || 'India',
-          };
-        }
-        const zoho = await syncZohoContactForNewUser(zohoUser, seedBody);
-        if (zoho.synced && zoho.contactId) {
-          await zohoUser.update({ zoho_contact_id: zoho.contactId });
-          console.log(`[Seed] Zoho Books contact linked: ${zohoUser.email} → zoho_contact_id=${zoho.contactId}`);
-        } else if (zoho.error && zoho.error !== 'zoho_disabled') {
-          console.warn('[Seed] Zoho contact sync (client1@example.com) skipped:', zoho.error);
-        }
-      }
-    }
 
     /*
     console.log('Seeding categories and products...');
@@ -1234,14 +1256,14 @@ async function seed() {
     console.log('Seeding Vendor / Client master (before Items List)...');
     await VendorClient.destroy({ where: {} });
     const vendorClientSeed = [
-      { entity_code: 'EI-VEN-00006', type: 'vendor', zoho_id: '3529895000000182004', name: 'Mock Vendor', email: 'orders@chemspecindia.com', phone: '+91-9876543210', location: 'Mumbai', country: 'India', city: 'Mumbai', category: 'RAW MATERIAL', status: 'active', payment_terms: '{"advance_pct":50,"pre_shipment_pct":40,"post_shipment_pct":10,"credit_days":30}', notes: '', rating: 4, moq: '566', lead_time: '14 days', data: {}, created_at: now, updated_at: now },
-      { entity_code: 'EI-VEN-00002', type: 'vendor', zoho_id: '5012345678901002', name: 'Sigma Chemicals Pvt Ltd', email: 'sales@sigmachem.in', phone: '+91-9876543211', location: 'Pune', country: 'India', city: 'Pune', category: 'RAW MATERIAL', status: 'active', payment_terms: '{"advance_pct":0,"pre_shipment_pct":100,"post_shipment_pct":0,"credit_days":45}', notes: '', rating: 4, moq: '7855', lead_time: '18 days', data: {}, created_at: now, updated_at: now },
-      { entity_code: 'EI-VEN-00003', type: 'vendor', zoho_id: '5012345678901003', name: 'UV Filters & Actives Co', email: 'procurement@uvfilters.co.in', phone: '+91-9876543212', location: 'Hyderabad', country: 'India', city: 'Hyderabad', category: 'UV FILTER / ACTIVE', status: 'active', payment_terms: '{"advance_pct":0,"pre_shipment_pct":100,"post_shipment_pct":0,"credit_days":30}', notes: '', rating: 5, moq: '455', lead_time: '21 days', data: {}, created_at: now, updated_at: now },
-      { entity_code: 'EI-VEN-00004', type: 'vendor', zoho_id: '5012345678901004', name: 'Packaging Solutions India', email: 'orders@packsol.in', phone: '+91-9876543213', location: 'Chennai', country: 'India', city: 'Chennai', category: 'PACKAGING', status: 'active', payment_terms: '{"advance_pct":30,"pre_shipment_pct":70,"post_shipment_pct":0,"credit_days":0}', notes: '', rating: 4, moq: '8444', lead_time: '28 days', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00006', type: 'vendor', zoho_id: zv('EI-VEN-00006'), name: 'Mock Vendor', email: 'orders@chemspecindia.com', phone: '+91-9876543210', location: 'Mumbai', country: 'India', city: 'Mumbai', category: 'RAW MATERIAL', status: 'active', payment_terms: '{"advance_pct":50,"pre_shipment_pct":40,"post_shipment_pct":10,"credit_days":30}', notes: '', rating: 4, moq: '566', lead_time: '14 days', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00002', type: 'vendor', zoho_id: zv('EI-VEN-00002'), name: 'Sigma Chemicals Pvt Ltd', email: 'sales@sigmachem.in', phone: '+91-9876543211', location: 'Pune', country: 'India', city: 'Pune', category: 'RAW MATERIAL', status: 'active', payment_terms: '{"advance_pct":0,"pre_shipment_pct":100,"post_shipment_pct":0,"credit_days":45}', notes: '', rating: 4, moq: '7855', lead_time: '18 days', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00003', type: 'vendor', zoho_id: zv('EI-VEN-00003'), name: 'UV Filters & Actives Co', email: 'procurement@uvfilters.co.in', phone: '+91-9876543212', location: 'Hyderabad', country: 'India', city: 'Hyderabad', category: 'UV FILTER / ACTIVE', status: 'active', payment_terms: '{"advance_pct":0,"pre_shipment_pct":100,"post_shipment_pct":0,"credit_days":30}', notes: '', rating: 5, moq: '455', lead_time: '21 days', data: {}, created_at: now, updated_at: now },
+      { entity_code: 'EI-VEN-00004', type: 'vendor', zoho_id: zv('EI-VEN-00004'), name: 'Packaging Solutions India', email: 'orders@packsol.in', phone: '+91-9876543213', location: 'Chennai', country: 'India', city: 'Chennai', category: 'PACKAGING', status: 'active', payment_terms: '{"advance_pct":30,"pre_shipment_pct":70,"post_shipment_pct":0,"credit_days":0}', notes: '', rating: 4, moq: '8444', lead_time: '28 days', data: {}, created_at: now, updated_at: now },
       {
         entity_code: 'EI-CLI-00001',
         type: 'client',
-        zoho_id: null,
+        zoho_id: zv('EI-CLI-00001'),
         name: 'Luminos Skincare',
         email: 'bd@luminos.in',
         phone: '+91-9812345001',
@@ -1290,31 +1312,6 @@ async function seed() {
       await ensureClientVendorMasterForUser(luminosPortalUser);
     } catch (e) {
       console.warn('[Seed] vendor_clients ↔ users link:', e && e.message ? e.message : e);
-    }
-
-    /*
-    if (seedZohoContact) {
-      const { syncZohoContactForVendorClient } = require('./src/users/zohoContactSync');
-      const luminos = await VendorClient.findOne({ where: { entity_code: 'EI-CLI-00001' } });
-      if (luminos && !luminos.zoho_id) {
-        const zohoVc = await syncZohoContactForVendorClient(luminos);
-        if (zohoVc.synced && zohoVc.contactId) {
-          await luminos.update({ zoho_id: zohoVc.contactId });
-          console.log(`[Seed] Zoho Books contact linked: Luminos Skincare (EI-CLI-00001) → zoho_id=${zohoVc.contactId}`);
-        } else if (zohoVc.error && zohoVc.error !== 'zoho_disabled') {
-          console.warn('[Seed] Zoho contact sync (Luminos Skincare) skipped:', zohoVc.error);
-        }
-      }
-      const chemspec = await VendorClient.findOne({ where: { entity_code: 'EI-VEN-00001' } });
-      if (chemspec && !chemspec.zoho_id) {
-        const zohoVen = await syncZohoContactForVendorClient(chemspec);
-        if (zohoVen.synced && zohoVen.contactId) {
-          await chemspec.update({ zoho_id: zohoVen.contactId });
-          console.log(`[Seed] Zoho Books vendor linked: Chemspec India (EI-VEN-00001) → zoho_id=${zohoVen.contactId}`);
-        } else if (zohoVen.error && zohoVen.error !== 'zoho_disabled') {
-          console.warn('[Seed] Zoho vendor sync (Chemspec India) skipped:', zohoVen.error);
-        }
-      }
     }
 
     // Demo invoice: customer_id from vendor_clients.zoho_id (Luminos), line item_id from products.zoho_item_id (EI-PR-00001). Always loaded fresh from DB after item+contact sync above.
@@ -1384,7 +1381,6 @@ async function seed() {
         );
       }
     }
-    */
 
     // ── Client Hub sub-entities ──
     console.log('Seeding Client Hub data (queries, developments, orders, appointments)...');

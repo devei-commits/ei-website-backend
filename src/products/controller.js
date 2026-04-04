@@ -15,6 +15,7 @@ const { syncZohoItemForNewProduct } = require('./zohoItemSync');
 const zohoEnv = require('../services/zohoEnv');
 const { deleteItem } = require('../services/zohoBooks');
 const { zohoSyncIsMandatoryFailure } = require('../services/zohoSyncHelpers');
+const { compensateZohoItemIfAny } = require('../lib/zohoDbTransaction');
 
 /** At least one non-empty formula line (INCI / RM code / positive %). */
 function countMeaningfulRmLines(lines) {
@@ -69,44 +70,60 @@ const saveProduct = async (req, res) => {
       return res.status(409).json({ error: "Product already exists!" });
     }
 
-    // create product
-    const product = await Product.create({
-      ...req.body,
-      created_at: new Date(),
-    });
+    let zohoBooksItemToDelete = null;
+    const t = await db.transaction();
+    try {
+      const product = await Product.create(
+        {
+          ...req.body,
+          created_at: new Date(),
+        },
+        { transaction: t }
+      );
 
-    const zoho = await syncZohoItemForNewProduct(product, req.body);
-    const payload = product.get ? product.get({ plain: true }) : { ...product };
-    if (zoho.synced && zoho.itemId) {
-      try {
-        await product.update({ zoho_item_id: zoho.itemId });
-        payload.zoho_item_id = zoho.itemId;
-      } catch (dbErr) {
-        console.error('saveProduct: zoho ok but DB update failed, deleting Zoho item', dbErr);
-        await deleteItem(zoho.itemId).catch(() => {});
-        await product.destroy();
-        return res.status(500).json({ error: 'Failed to persist Zoho item id', code: 'ZOHO_ID_SAVE_FAILED' });
+      let zoho = await syncZohoItemForNewProduct(product, req.body);
+      if (zoho.error === 'already_has_zoho_item_id') {
+        await product.reload({ transaction: t });
+        zoho = { synced: true, itemId: product.zoho_item_id };
       }
-    } else if (zohoSyncIsMandatoryFailure(zoho)) {
-      await product.destroy();
-      const status = zoho.duplicate ? 409 : 502;
-      return res.status(status).json({
-        error: zoho.error || 'Zoho sync failed',
-        code: zoho.duplicate ? 'ZOHO_ITEM_DUPLICATE' : 'ZOHO_SYNC_FAILED',
-        zoho_sync: { synced: false, error: zoho.error, duplicate: !!zoho.duplicate },
-      });
-    } else if (
-      zohoEnv.booksEnabled &&
-      zohoEnv.syncItems &&
-      zoho.error &&
-      zoho.error !== 'zoho_disabled' &&
-      zoho.error !== 'item_sync_disabled' &&
-      zoho.error !== 'already_has_zoho_item_id'
-    ) {
-      payload.zoho_sync = { synced: false, error: zoho.error };
-    }
+      const payload = product.get ? product.get({ plain: true }) : { ...product };
+      if (zoho.synced && zoho.itemId) {
+        await product.update({ zoho_item_id: zoho.itemId }, { transaction: t });
+        await product.reload({ transaction: t });
+        zohoBooksItemToDelete = zoho.itemId;
+        payload.zoho_item_id = zoho.itemId;
+      } else if (zohoSyncIsMandatoryFailure(zoho)) {
+        await t.rollback();
+        await compensateZohoItemIfAny(null, zoho.itemId, deleteItem);
+        const status = zoho.duplicate ? 409 : 502;
+        return res.status(status).json({
+          error: zoho.error || 'Zoho sync failed',
+          code: zoho.duplicate ? 'ZOHO_ITEM_DUPLICATE' : 'ZOHO_SYNC_FAILED',
+          zoho_sync: { synced: false, error: zoho.error, duplicate: !!zoho.duplicate },
+        });
+      } else if (
+        zohoEnv.booksEnabled &&
+        zohoEnv.syncItems &&
+        zoho.error &&
+        zoho.error !== 'zoho_disabled' &&
+        zoho.error !== 'item_sync_disabled' &&
+        zoho.error !== 'already_has_zoho_item_id'
+      ) {
+        payload.zoho_sync = { synced: false, error: zoho.error };
+      }
 
-    return res.status(201).json(payload);
+      await t.commit();
+      zohoBooksItemToDelete = null;
+      return res.status(201).json(payload);
+    } catch (inner) {
+      await t.rollback();
+      await compensateZohoItemIfAny(null, zohoBooksItemToDelete, deleteItem);
+      if (inner && inner.name === 'SequelizeUniqueConstraintError') {
+        return res.status(409).json({ error: inner.message });
+      }
+      console.error('saveProduct transaction error', inner);
+      return res.status(500).json({ error: inner.message || 'Failed to create product' });
+    }
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -352,6 +369,7 @@ const createPRRegistration = async (req, res) => {
     if (b.pr_sub_category) notesParts.push(`PR Sub-category: ${b.pr_sub_category}`);
     const bomNotes = notesParts.length ? notesParts.join(' | ') : null;
 
+    let zohoBooksItemToDelete = null;
     const t = await db.transaction();
     try {
       let product;
@@ -364,10 +382,36 @@ const createPRRegistration = async (req, res) => {
           { transaction: t }
         );
       }
+
+      await product.reload({ transaction: t });
+      let zoho = await syncZohoItemForNewProduct(product, b);
+      if (zoho.error === 'already_has_zoho_item_id') {
+        await product.reload({ transaction: t });
+        zoho = { synced: true, itemId: product.zoho_item_id };
+      }
+      if (zoho.synced && zoho.itemId) {
+        await product.update({ zoho_item_id: zoho.itemId, updated_at: now }, { transaction: t });
+        await product.reload({ transaction: t });
+        zohoBooksItemToDelete = zoho.itemId;
+      } else if (zohoSyncIsMandatoryFailure(zoho)) {
+        await t.rollback();
+        await compensateZohoItemIfAny(null, zoho.itemId, deleteItem);
+        const status = zoho.duplicate ? 409 : 502;
+        return res.status(status).json({
+          error: zoho.error || 'Zoho sync failed',
+          code: zoho.duplicate ? 'ZOHO_ITEM_DUPLICATE' : 'ZOHO_SYNC_FAILED',
+          zoho_sync: { synced: false, error: zoho.error, duplicate: !!zoho.duplicate },
+        });
+      }
+
+      const productZohoId =
+        product.zoho_item_id != null && String(product.zoho_item_id).trim() !== ''
+          ? String(product.zoho_item_id).trim()
+          : null;
       const bomRow = {
         bom_code: product_code,
         bom_sku: bomSku,
-        zoho_id: b.zoho_id ?? b.zohoId ?? product.zoho_item_id ?? null,
+        zoho_id: b.zoho_id ?? b.zohoId ?? productZohoId ?? null,
         bom_tax_preference: b.bom_tax_preference ?? b.bomTaxPreference ?? null,
         bom_returnable: b.bom_returnable ?? b.bomReturnable ?? false,
         bom_associate_items: b.bom_associate_items ?? b.bomAssociateItems ?? null,
@@ -400,6 +444,7 @@ const createPRRegistration = async (req, res) => {
       if (existingBom) {
         if (existingBom.product_id != null) {
           await t.rollback();
+          await compensateZohoItemIfAny(null, zohoBooksItemToDelete, deleteItem);
           return res.status(409).json({
             error: `BOM code "${product_code}" is already linked to another product. Regenerate the PR code.`,
             code: 'BOM_CODE_LINKED',
@@ -450,9 +495,6 @@ const createPRRegistration = async (req, res) => {
         }
       }
 
-      await t.commit();
-
-      // Create a zero-stock warehouse inventory row so the PR appears in the warehouse immediately.
       await WarehouseInventory.findOrCreate({
         where: { item_type: 'PR', product_id: product.product_id },
         defaults: {
@@ -469,7 +511,11 @@ const createPRRegistration = async (req, res) => {
           avg_mo: 0,
           qc_status: 'Out of Stock',
         },
+        transaction: t,
       });
+
+      await t.commit();
+      zohoBooksItemToDelete = null;
 
       res.status(201).json({
         product: product.get({ plain: true }),
@@ -481,6 +527,7 @@ const createPRRegistration = async (req, res) => {
       });
     } catch (inner) {
       await t.rollback();
+      await compensateZohoItemIfAny(null, zohoBooksItemToDelete, deleteItem);
       throw inner;
     }
   } catch (err) {
