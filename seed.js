@@ -702,7 +702,7 @@ async function seed() {
 
     console.log('Seeding Customizations...');
     const customizationsSeedData = require('./src/customizations/seedData');
-    await Customization.bulkCreate(customizationsSeedData.slice(0, 1));
+    await Customization.bulkCreate(customizationsSeedData);
 
     console.log('Seeding Items...');
     const itemsSeedData = itemsSeedDataRaw.map((row) => excelRowToItem(row));

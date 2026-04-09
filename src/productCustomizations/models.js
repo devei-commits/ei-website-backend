@@ -70,6 +70,26 @@ ProductCustomization.init({
     type: DataTypes.STRING,
     defaultValue: 'Pending'
   },
+  assigned_bd_user_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
+  assigned_bd_name: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
+  assigned_bd_email: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
+  assigned_at: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
+  internal_notes: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+  },
   life_cycle_status: {
     type: DataTypes.STRING,
     defaultValue: 'active'
