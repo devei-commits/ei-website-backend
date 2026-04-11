@@ -21,6 +21,8 @@ const Authentication = require('./src/otp/models');
 const { CompositeItem, compositeRowToModel } = require('./src/compositeItems/models');
 const compositeItemsSeedData = require('./src/compositeItems/compositeItemsSeedData');
 const Packaging = require('./src/packaging/models');
+const CustomizationPackagingOption = require('./src/customizationPackaging/models');
+const CUSTOMIZATION_PACKAGING_SEED_ROWS = require('./src/customizationPackaging/presetsSeedRows');
 const PackMaterial = require('./src/packMaterials/models');
 const RawMaterial = require('./src/rawMaterials/models');
 const BOM = require('./src/bom/models');
@@ -36,6 +38,7 @@ const UniversalSwapHistory = require('./src/universalSwap/models');
 const ItemGroup = require('./src/itemGroups/models');
 const WarehouseInventory = require('./src/warehouseInventory/models');
 const WarehouseInventoryLocationHistory = require('./src/warehouseInventory/locationHistoryModel');
+
 const warehouseSeedData = require('./src/warehouseInventory/warehouseSeedData');
 const { WarehouseLocation, WarehouseRack, WarehouseRackItem } = require('./src/warehouseLocations/models');
 const GoodsReceivedNote = require('./src/grn/models');
@@ -1581,6 +1584,16 @@ async function seed() {
       },
     ];
     await MaterialRequestNote.bulkCreate(mrnSeed);
+
+    console.log('Seeding customization packaging catalog (website /customize)...');
+    await CustomizationPackagingOption.destroy({ where: {} });
+    await CustomizationPackagingOption.bulkCreate(
+      CUSTOMIZATION_PACKAGING_SEED_ROWS.map((row) => ({
+        ...row,
+        created_at: now,
+        updated_at: now,
+      }))
+    );
 
     console.log('Seeding Product Customizations...');
     const productA = await Product.findOne({

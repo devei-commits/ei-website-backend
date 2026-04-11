@@ -45,6 +45,10 @@ const dotenv = require('dotenv');
 const cors = require('cors');
 dotenv.config();
 
+require('./src/customizationPackaging/models');
+const customizationPackagingAdminRouter = require('./src/customizationPackaging/routers');
+const { listPublicCustomizationPackaging } = require('./src/customizationPackaging/controller');
+const { ensureCustomizationPackagingPresets } = require('./src/customizationPackaging/ensureCustomizationPackagingPresets');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -115,6 +119,9 @@ app.get(`${apiPrefix}/health`, (req, res) => {
     res.json({ status: 'ok' });
 });
 
+/** Website customize flow — no auth (register before any `/customization-packaging-options` router that could capture `/public`). */
+app.get(`${apiPrefix}/customization-packaging-options/public`, listPublicCustomizationPackaging);
+
 app.use(`${apiPrefix}/users`, userRouters);
 app.use(`${apiPrefix}/roles`, rolesRouters);
 app.use(`${apiPrefix}/otp`, otpRouters);
@@ -127,6 +134,7 @@ app.use(`${apiPrefix}/customizations`, isAuthenticated, customizationRouters);
 app.use(`${apiPrefix}/productCustomizations`, isAuthenticated, productCustomizationRouters);
 app.use(`${apiPrefix}/enquiries`, isAuthenticated, enquiryRouters);
 app.use(`${apiPrefix}/packaging`, isAuthenticated, packagingRouters);
+app.use(`${apiPrefix}/admin/customization-packaging-options`, customizationPackagingAdminRouter);
 app.use(`${apiPrefix}/pack-materials`, isAuthenticated, packMaterialsRouters);
 app.use(`${apiPrefix}/raw-materials`, isAuthenticated, rawMaterialsRouters);
 app.use(`${apiPrefix}/bom`, isAuthenticated, bomRouters);
@@ -162,6 +170,7 @@ if (process.env.NODE_ENV !== 'test') {
   db.authenticate()
     .then(async () => {
       await db.sync({ alter: true });
+      await ensureCustomizationPackagingPresets();
       app.listen(port, () => {
         console.log(`Server is running on port ${port}`);
       });
