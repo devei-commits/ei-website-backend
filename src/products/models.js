@@ -92,6 +92,12 @@ Product.init(
       allowNull: true,
     },
 
+    /** Customer-facing / storefront label; website customize flow shows this instead of product_name. */
+    commercial_name: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+
     category: {
       type: DataTypes.STRING,
       allowNull: true,

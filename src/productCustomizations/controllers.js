@@ -128,6 +128,10 @@ const updateCustomizationAdmin = async (req, res, next) => {
     const updates = {};
 
     if (body.status !== undefined) updates.status = body.status || 'Pending';
+    if (body.life_cycle_status !== undefined || body.lifeCycleStatus !== undefined) {
+      const v = body.life_cycle_status ?? body.lifeCycleStatus;
+      updates.life_cycle_status = v == null || v === '' ? null : String(v);
+    }
     if (body.internal_notes !== undefined || body.internalNotes !== undefined) {
       updates.internal_notes = body.internal_notes ?? body.internalNotes ?? null;
     }
