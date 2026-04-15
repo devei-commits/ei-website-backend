@@ -242,8 +242,6 @@ const saveOrder = async (req, res) => {
         const BOM = require('../bom/models');
         const RawMaterial = require('../rawMaterials/models');
         const PackMaterial = require('../packMaterials/models');
-        const { ReservedBatchItem } = require('../fulfillment/models');
-        const { syncWarehouseReserved } = require('../planningExtracted/controller');
         const shipAddr = shipping_address_id ? await Address.findByPk(shipping_address_id, { transaction: t }) : null;
         const shipAddressText = shipAddr
             ? [
@@ -328,8 +326,6 @@ const saveOrder = async (req, res) => {
         }, { transaction: t });
 
         // If BOM exists for a product, create PlanningExtracted line with computed RM/PM quantities and reserve stock.
-        const affectedRmIds = new Set();
-        const affectedPmIds = new Set();
         let computedOrderLeadTimeDays = 0;
 
         for (let idx = 0; idx < orderItemsToCreate.length; idx++) {
@@ -410,45 +406,8 @@ const saveOrder = async (req, res) => {
                 updated_at: new Date(),
             }, { transaction: t });
 
-            // Reserve stock at planning-level when BOM is confirmed (creates reserved_batch_items and syncs warehouse reserved).
-            if (bom) {
-                for (const rm of rawMaterials) {
-                    const rmId = rm.raw_material_id != null ? Number(rm.raw_material_id) : null;
-                    if (!rmId) continue;
-                    await ReservedBatchItem.create({
-                        planning_extracted_id: planRow.id,
-                        raw_material_id: rmId,
-                        pack_material_id: null,
-                        quantity_reserved: Number(rm.quantity) || 0,
-                        unit: rm.unit || 'KG',
-                        so_no: soNo,
-                    }, { transaction: t });
-                    affectedRmIds.add(rmId);
-                }
-                for (const pm of packagingMaterials) {
-                    const pmId = pm.pack_material_id != null ? Number(pm.pack_material_id) : null;
-                    if (!pmId) continue;
-                    await ReservedBatchItem.create({
-                        planning_extracted_id: planRow.id,
-                        raw_material_id: null,
-                        pack_material_id: pmId,
-                        quantity_reserved: Number(pm.quantity) || 0,
-                        unit: 'PCS',
-                        so_no: soNo,
-                    }, { transaction: t });
-                    affectedPmIds.add(pmId);
-                }
-            }
-        }
-
-        if (affectedRmIds.size || affectedPmIds.size) {
-            await syncWarehouseReserved([...affectedRmIds], [...affectedPmIds]);
-            try {
-                const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
-                await syncWarehouseInTransitAll();
-            } catch (e) {
-                console.warn('[orders] syncWarehouseInTransitAll failed:', e && e.message ? e.message : e);
-            }
+            // Do not reserve stock on order/planning creation.
+            // Reserved updates are owned by explicit BMR/BPR reserve transitions.
         }
 
         const orderLeadTimeDays = computedOrderLeadTimeDays > 0 ? computedOrderLeadTimeDays : LEAD_TIME_DAYS_PRODUCT;

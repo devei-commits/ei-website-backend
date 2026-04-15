@@ -121,6 +121,11 @@ function enrichItemsWithMasters(items, rmMap, pmMap) {
   });
 }
 
+function isStockCheckPendingStatus(status) {
+  const s = String(status || '').trim().toLowerCase();
+  return s === 'pending' || s === 'requested' || s === 'in progress';
+}
+
 function formatPR(row, enrichedItems) {
   if (!row) return null;
   const d = row.get ? row.get({ plain: true }) : row;
@@ -291,6 +296,17 @@ async function updateProcurementRequest(req, res) {
     if (body.stock_check_notes !== undefined) updates.stock_check_notes = body.stock_check_notes;
     if (body.planningBatchId !== undefined) updates.planning_batch_id = body.planningBatchId;
     if (body.planning_batch_id !== undefined) updates.planning_batch_id = body.planning_batch_id;
+
+    const nextStatus = updates.status !== undefined ? updates.status : row.status;
+    const nextStockCheckStatus =
+      updates.stock_check_status !== undefined ? updates.stock_check_status : row.stock_check_status;
+    if (nextStatus === 'PO Released' && isStockCheckPendingStatus(nextStockCheckStatus)) {
+      return res.status(409).json({
+        error:
+          'Stock check is still pending. Warehouse must complete stock check before PO can be released.',
+        code: 'STOCK_CHECK_PENDING',
+      });
+    }
     if (updates.items !== undefined) {
       const moqCheck = await validateProcurementItemsMoq(updates.items);
       if (!moqCheck.ok) {

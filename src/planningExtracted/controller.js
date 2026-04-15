@@ -196,7 +196,12 @@ const RESERVE_EPS_PCS = 1e-6;
  */
 async function syncWarehouseReserved(affectedRmIds, affectedPmIds) {
   for (const rid of affectedRmIds) {
-    const sum = await ReservedBatchItem.sum('quantity_reserved', { where: { raw_material_id: rid } });
+    const sum = await ReservedBatchItem.sum('quantity_reserved', {
+      where: {
+        raw_material_id: rid,
+        production_batch_id: { [Op.ne]: null },
+      },
+    });
     const val = sum != null ? Number(sum) : 0;
     const [updated] = await WarehouseInventory.update(
       { reserved: val },
@@ -214,7 +219,12 @@ async function syncWarehouseReserved(affectedRmIds, affectedPmIds) {
     if (RESERVE_DEBUG) console.log('[RESERVE-DEBUG] syncWarehouseReserved RM', { raw_material_id: rid, sum_from_reserved_batch_items: val, 'warehouse_inventory.reserved': val });
   }
   for (const pid of affectedPmIds) {
-    const sum = await ReservedBatchItem.sum('quantity_reserved', { where: { pack_material_id: pid } });
+    const sum = await ReservedBatchItem.sum('quantity_reserved', {
+      where: {
+        pack_material_id: pid,
+        production_batch_id: { [Op.ne]: null },
+      },
+    });
     const val = sum != null ? Number(sum) : 0;
     const [updated] = await WarehouseInventory.update(
       { reserved: val },
@@ -619,11 +629,8 @@ async function syncPlanningExtractedFromSalesOrders() {
         created++;
       }
 
-      // Keep warehouse planned/reserved aligned when row is released to planning with confirmed BOM.
-      const plainTarget = targetPlanRow && targetPlanRow.get ? targetPlanRow.get({ plain: true }) : targetPlanRow;
-      if (plainTarget && plainTarget.bom_confirmed_at) {
-        await refreshReservationsFromPlanningBatches(Number(plainTarget.id), targetPlanRow);
-      }
+      // Do not auto-reserve warehouse stock at planning sync time.
+      // Reserved is owned by explicit BMR/BPR reserve transitions only.
     }
   }
   if (created > 0) {
@@ -728,28 +735,17 @@ async function updatePlanningExtracted(req, res) {
     }
 
     const nowBomConfirmedAt = row.get ? row.get('bom_confirmed_at') : row.bom_confirmed_at;
-    if (prevBomConfirmedAt == null && nowBomConfirmedAt != null) {
-      const v = await validateWarehouseStockForReservation(row);
-      if (!v.ok) {
-        return res.status(400).json({
-          error: v.message,
-          code: v.code,
-          details: v.details,
-        });
-      }
-    }
 
     await row.save();
 
-    // Reserve or release stock when BOM is confirmed or unconfirmed (central warehouse_inventory.reserved)
+    // Reserved stock is intentionally NOT changed by BOM confirm/unconfirm.
+    // It is changed only by explicit BMR/BPR reserve actions.
     if (prevBomConfirmedAt == null && nowBomConfirmedAt != null) {
-      await reserveStockForPlanningExtracted(id, row);
       // If this planning row belongs to a website order, move it to in_production stage.
       const so = await SalesOrder.findByPk(row.sales_order_id, { attributes: ['order_id'] });
       const soNo = so && (so.get ? so.get('order_id') : so.order_id);
       if (soNo) await Order.update({ fulfillment_stage: 'in_production' }, { where: { so_no: soNo } });
     } else if (prevBomConfirmedAt != null && nowBomConfirmedAt == null) {
-      await releaseStockForPlanningExtracted(id);
       const so = await SalesOrder.findByPk(row.sales_order_id, { attributes: ['order_id'] });
       const soNo = so && (so.get ? so.get('order_id') : so.order_id);
       if (soNo) await Order.update({ fulfillment_stage: 'in_development' }, { where: { so_no: soNo } });
@@ -1043,7 +1039,8 @@ async function createOrUpdateBatches(req, res) {
     }
     const updated = await PlanningBatch.findAll({ where: { planning_extracted_id: id }, order: [['sequence', 'ASC']] });
     await planRow.update({ batch_count: updated.length });
-    await refreshReservationsFromPlanningBatches(id, planRow);
+    // Planned batches are saved, but reserved stock is not auto-updated here.
+    // Reserved updates only on explicit BMR/BPR reserve transitions.
     res.json(updated.map((r) => formatBatchRow(r)));
   } catch (err) {
     console.error('createOrUpdateBatches error', err);
@@ -1151,7 +1148,8 @@ async function addOneBatchFromMaster(req, res) {
     });
     const cnt = await PlanningBatch.count({ where: { planning_extracted_id: id } });
     await PlanningExtracted.update({ batch_count: cnt }, { where: { id } });
-    await refreshReservationsFromPlanningBatches(id, planRow);
+    // Planned batches are saved, but reserved stock is not auto-updated here.
+    // Reserved updates only on explicit BMR/BPR reserve transitions.
     res.status(201).json(formatBatchRow(batch));
   } catch (err) {
     console.error('addOneBatchFromMaster error', err);
@@ -1266,7 +1264,8 @@ async function updateBatch(req, res) {
       batch.batch_code = String(body.batchCode).trim().slice(0, 64);
     }
     await batch.save();
-    await refreshReservationsFromPlanningBatches(planningId);
+    // Planned batches are saved, but reserved stock is not auto-updated here.
+    // Reserved updates only on explicit BMR/BPR reserve transitions.
     res.json(formatBatchRow(batch));
   } catch (err) {
     console.error('updateBatch error', err);
@@ -1413,6 +1412,9 @@ function countPlanningBatchesTouchingPm(planBatchesPlain, pmId, pmByCode, pmByNa
  */
 async function getItemsInvolved(req, res) {
   try {
+    const includeZeroRequired =
+      String(req.query.includeZeroRequired ?? '').toLowerCase() === '1' ||
+      String(req.query.includeZeroRequired ?? '').toLowerCase() === 'true';
     try {
       const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
       await syncWarehouseInTransitAll();
@@ -1420,8 +1422,8 @@ async function getItemsInvolved(req, res) {
       console.warn('[planningExtracted] getItemsInvolved syncWarehouseInTransitAll failed:', e && e.message ? e.message : e);
     }
 
-    const rmAgg = new Map(); // key: raw_material_id -> { totalRequired, unit, productNames, planningExtractedIds, name, code, batchCount }
-    const pmAgg = new Map(); // key: pack_material_id -> { totalRequired, unit, productNames, planningExtractedIds, name, code, batchCount }
+    const rmAgg = new Map(); // key: raw_material_id -> { totalRequired, plannedQty, unit, productNames, planningExtractedIds, name, code, batchCount }
+    const pmAgg = new Map(); // key: pack_material_id -> { totalRequired, plannedQty, unit, productNames, planningExtractedIds, name, code, batchCount }
 
     const confirmed = await PlanningExtracted.findAll({
       where: { bom_confirmed_at: { [Op.ne]: null } },
@@ -1566,15 +1568,16 @@ async function getItemsInvolved(req, res) {
       const allRmIdsForPlan = new Set([...fullRm.keys(), ...plannedRm.keys()]);
       for (const id of allRmIdsForPlan) {
         const rem = Math.max(0, (fullRm.get(id) || 0) - (plannedRm.get(id) || 0));
-        if (!(rem > 0)) continue;
+        if (!(rem > 0) && !includeZeroRequired) continue;
         const unit = rmUnitById.get(id) || 'KG';
         const name = rmNameById.get(id) || '';
         const code = rmCodeById.get(id) || '';
         if (!rmAgg.has(id)) {
-          rmAgg.set(id, { totalRequired: 0, unit, productNames: [], planningExtractedIds: [], name, code, batchCount: 0 });
+          rmAgg.set(id, { totalRequired: 0, plannedQty: 0, unit, productNames: [], planningExtractedIds: [], name, code, batchCount: 0 });
         }
         const agg = rmAgg.get(id);
         agg.totalRequired += rem;
+        agg.plannedQty += (plannedRm.get(id) || 0);
         if (productName && !agg.productNames.includes(productName)) agg.productNames.push(productName);
         if (planId && !agg.planningExtractedIds.includes(planId)) agg.planningExtractedIds.push(planId);
         if (name) agg.name = name;
@@ -1585,15 +1588,16 @@ async function getItemsInvolved(req, res) {
       const allPmIdsForPlan = new Set([...fullPm.keys(), ...plannedPm.keys()]);
       for (const id of allPmIdsForPlan) {
         const rem = Math.max(0, (fullPm.get(id) || 0) - (plannedPm.get(id) || 0));
-        if (!(rem > 0)) continue;
+        if (!(rem > 0) && !includeZeroRequired) continue;
         const unit = pmUnitById.get(id) || 'PCS';
         const name = pmNameById.get(id) || '';
         const code = pmCodeById.get(id) || '';
         if (!pmAgg.has(id)) {
-          pmAgg.set(id, { totalRequired: 0, unit, productNames: [], planningExtractedIds: [], name, code, batchCount: 0 });
+          pmAgg.set(id, { totalRequired: 0, plannedQty: 0, unit, productNames: [], planningExtractedIds: [], name, code, batchCount: 0 });
         }
         const agg = pmAgg.get(id);
         agg.totalRequired += rem;
+        agg.plannedQty += (plannedPm.get(id) || 0);
         if (productName && !agg.productNames.includes(productName)) agg.productNames.push(productName);
         if (planId && !agg.planningExtractedIds.includes(planId)) agg.planningExtractedIds.push(planId);
         if (name) agg.name = name;
@@ -1699,18 +1703,7 @@ async function getItemsInvolved(req, res) {
       const sih = Math.max(0, stockInHand - reserved);
       const inTransit = inTransitByRm.get(id) ?? 0;
       const surplusShortage = sih + inTransit - agg.totalRequired;
-      const peIdsForPlanned = agg.planningExtractedIds ?? [];
-      const plannedQty =
-        peIdsForPlanned.length === 0
-          ? 0
-          : Number(
-              await ReservedBatchItem.sum('quantity_reserved', {
-                where: {
-                  raw_material_id: id,
-                  planning_extracted_id: { [Op.in]: peIdsForPlanned },
-                },
-              })
-            ) || 0;
+      const plannedQty = Number(agg.plannedQty) || 0;
       const info = rmInfo.get(id) || {};
       const coverageDenom = agg.totalRequired > 0
         ? Math.min(100, Math.round(((sih + inTransit) / agg.totalRequired) * 100))
@@ -1754,18 +1747,7 @@ async function getItemsInvolved(req, res) {
       const sih = Math.max(0, stockInHand - reserved);
       const inTransit = inTransitByPm.get(id) ?? 0;
       const surplusShortage = sih + inTransit - agg.totalRequired;
-      const peIdsForPlannedPm = agg.planningExtractedIds ?? [];
-      const plannedQty =
-        peIdsForPlannedPm.length === 0
-          ? 0
-          : Number(
-              await ReservedBatchItem.sum('quantity_reserved', {
-                where: {
-                  pack_material_id: id,
-                  planning_extracted_id: { [Op.in]: peIdsForPlannedPm },
-                },
-              })
-            ) || 0;
+      const plannedQty = Number(agg.plannedQty) || 0;
       const info = pmInfo.get(id) || {};
       const coverageDenomPm = agg.totalRequired > 0
         ? Math.min(100, Math.round(((sih + inTransit) / agg.totalRequired) * 100))
@@ -2114,11 +2096,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
       const fullOrderQty = req.quantity || 0;
       const plannedInBatches = plannedRmFromBatches.get(rid) || 0;
       const totalRequired = Math.max(0, fullOrderQty - plannedInBatches);
-      const plannedQty = Number(
-        await ReservedBatchItem.sum('quantity_reserved', {
-          where: { raw_material_id: rid, planning_extracted_id: id },
-        })
-      ) || 0;
+      const plannedQty = plannedInBatches;
       const info = rmInfo.get(rid) || {};
       const name = req.name || info.name || `RM ${rid}`;
       const code = req.code || info.code || `RM-${rid}`;
@@ -2158,11 +2136,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
       const fullOrderQtyPm = req.quantity || 0;
       const plannedInBatchesPm = plannedPmFromBatches.get(pid) || 0;
       const totalRequired = Math.max(0, fullOrderQtyPm - plannedInBatchesPm);
-      const plannedQty = Number(
-        await ReservedBatchItem.sum('quantity_reserved', {
-          where: { pack_material_id: pid, planning_extracted_id: id },
-        })
-      ) || 0;
+      const plannedQty = plannedInBatchesPm;
       const info = pmInfo.get(pid) || {};
       const name = req.name || info.name || `PM ${pid}`;
       const code = req.code || info.code || `PM-${pid}`;

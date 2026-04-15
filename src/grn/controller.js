@@ -666,18 +666,22 @@ async function applyGrnCompletionToInventory(grnRow) {
     if (whRow) {
       const wh = whRow.get ? whRow.get({ plain: true }) : whRow;
       const whStockBefore = Number(wh.wh_stock) || 0;
+      const inTransitBefore = Number(wh.in_transit) || 0;
       const ml1Before = Number(wh.ml1_stock) || 0;
       const ml2Before = Number(wh.ml2_stock) || 0;
       const whStock = (Number(wh.wh_stock) || 0) + qty;
+      const inTransit = Math.max(0, inTransitBefore - qty);
       const ml1 = Number(wh.ml1_stock) || 0;
       const ml2 = Number(wh.ml2_stock) || 0;
-      await whRow.update({ wh_stock: whStock, stock_in_hand: whStock + ml1 + ml2 });
+      await whRow.update({ wh_stock: whStock, in_transit: inTransit, stock_in_hand: whStock + ml1 + ml2 });
       console.log('[grn] WH inventory RM wh_stock update', {
         rawMaterialId,
         qtyToAdd: qty,
         whInventoryId: wh.id ?? null,
         whStockBefore,
         whStockAfter: whStock,
+        inTransitBefore,
+        inTransitAfter: inTransit,
         stockInHandAfter: whStock + ml1 + ml2,
         ml1Before,
         ml1After: ml1,
@@ -733,18 +737,22 @@ async function applyGrnCompletionToInventory(grnRow) {
     if (whRow) {
       const wh = whRow.get ? whRow.get({ plain: true }) : whRow;
       const whStockBefore = Number(wh.wh_stock) || 0;
+      const inTransitBefore = Number(wh.in_transit) || 0;
       const ml1Before = Number(wh.ml1_stock) || 0;
       const ml2Before = Number(wh.ml2_stock) || 0;
       const whStock = (Number(wh.wh_stock) || 0) + qty;
+      const inTransit = Math.max(0, inTransitBefore - qty);
       const ml1 = Number(wh.ml1_stock) || 0;
       const ml2 = Number(wh.ml2_stock) || 0;
-      await whRow.update({ wh_stock: whStock, stock_in_hand: whStock + ml1 + ml2 });
+      await whRow.update({ wh_stock: whStock, in_transit: inTransit, stock_in_hand: whStock + ml1 + ml2 });
       console.log('[grn] WH inventory PM wh_stock update', {
         packMaterialId,
         qtyToAdd: qty,
         whInventoryId: wh.id ?? null,
         whStockBefore,
         whStockAfter: whStock,
+        inTransitBefore,
+        inTransitAfter: inTransit,
         stockInHandAfter: whStock + ml1 + ml2,
         ml1Before,
         ml1After: ml1,
@@ -799,18 +807,22 @@ async function applyGrnCompletionToInventory(grnRow) {
     if (whRow) {
       const wh = whRow.get ? whRow.get({ plain: true }) : whRow;
       const whStockBefore = Number(wh.wh_stock) || 0;
+      const inTransitBefore = Number(wh.in_transit) || 0;
       const ml1Before = Number(wh.ml1_stock) || 0;
       const ml2Before = Number(wh.ml2_stock) || 0;
       const whStock = (Number(wh.wh_stock) || 0) + qty;
+      const inTransit = Math.max(0, inTransitBefore - qty);
       const ml1 = Number(wh.ml1_stock) || 0;
       const ml2 = Number(wh.ml2_stock) || 0;
-      await whRow.update({ wh_stock: whStock, stock_in_hand: whStock + ml1 + ml2 });
+      await whRow.update({ wh_stock: whStock, in_transit: inTransit, stock_in_hand: whStock + ml1 + ml2 });
       console.log('[grn] WH inventory PR wh_stock update', {
         productId,
         qtyToAdd: qty,
         whInventoryId: wh.id ?? null,
         whStockBefore,
         whStockAfter: whStock,
+        inTransitBefore,
+        inTransitAfter: inTransit,
         stockInHandAfter: whStock + ml1 + ml2,
         ml1Before,
         ml1After: ml1,
