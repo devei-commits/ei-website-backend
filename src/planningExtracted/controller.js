@@ -137,6 +137,46 @@ function normalizePmLines(lines) {
   return Array.isArray(lines) ? lines.map((line) => normalizePmLine(line)) : [];
 }
 
+/**
+ * Sync PI-level material snapshot from BOM lines so Items Involved required math
+ * stays aligned with the latest BOM editor save.
+ */
+async function syncPlanningRowMaterialsFromBomLines(planRow, rmLines, pmLines) {
+  if (!planRow) return;
+  const batchSizeKg = Number(planRow.batch_size_kg) || 500;
+  const orderQtyNum = parseInt(String(planRow.order_qty_display || '0').replace(/\D/g, ''), 10) || 0;
+  const totalKg = parseFloat(String(planRow.total_kg_display || '0').replace(/[^\d.]/g, '')) || 0;
+
+  const rawMaterials = rmLines.map((line) => {
+    const pct = line.pct_w_w ?? line.pct ?? 0;
+    const quantity = totalKg > 0 ? (totalKg * pct) / 100 : (batchSizeKg * pct) / 100;
+    return {
+      raw_material_id: line.raw_material_id ?? null,
+      name: line.inci_name ?? line.name ?? line.rm_code ?? '',
+      quantity: Math.round(quantity * 1000) / 1000,
+      // Keep backend stock/reservation math canonical in KG.
+      unit: 'KG',
+      code: line.rm_code ?? line.code ?? '',
+    };
+  });
+
+  const packagingMaterials = pmLines.map((line) => {
+    const qtyPerUnit = line.qty_per_unit ?? line.qty ?? 1;
+    const required = orderQtyNum * qtyPerUnit;
+    return {
+      pack_material_id: line.pack_material_id ?? null,
+      name: line.description ?? line.name ?? line.pm_code ?? '',
+      quantity: Math.ceil(required),
+      unit: 'PCS',
+      code: line.pm_code ?? line.code ?? '',
+    };
+  });
+
+  planRow.raw_materials = rawMaterials;
+  planRow.packaging_materials = packagingMaterials;
+  await planRow.save();
+}
+
 function formatRow(row) {
   if (!row) return null;
   const d = row.get ? row.get({ plain: true }) : row;
@@ -806,35 +846,7 @@ async function putBomOverride(req, res) {
     override.pm_lines = pmLines;
     await override.save();
 
-    const batchSizeKg = Number(planRow.batch_size_kg) || 500;
-    const orderQtyNum = parseInt(String(planRow.order_qty_display || '0').replace(/\D/g, ''), 10) || 0;
-    const totalKg = parseFloat(String(planRow.total_kg_display || '0').replace(/[^\d.]/g, '')) || 0;
-    const rawMaterials = rmLines.map((line) => {
-      const pct = line.pct_w_w ?? line.pct ?? 0;
-      const quantity = totalKg > 0 ? (totalKg * pct) / 100 : (batchSizeKg * pct) / 100;
-      return {
-        raw_material_id: line.raw_material_id ?? null,
-        name: line.inci_name ?? line.name ?? line.rm_code ?? '',
-        quantity: Math.round(quantity * 1000) / 1000,
-        // Keep backend stock/reservation math canonical in KG.
-        unit: 'KG',
-        code: line.rm_code ?? line.code ?? '',
-      };
-    });
-    const packagingMaterials = pmLines.map((line) => {
-      const qtyPerUnit = line.qty_per_unit ?? line.qty ?? 1;
-      const required = orderQtyNum * qtyPerUnit;
-      return {
-        pack_material_id: line.pack_material_id ?? null,
-        name: line.description ?? line.name ?? line.pm_code ?? '',
-        quantity: Math.ceil(required),
-        unit: 'PCS',
-        code: line.pm_code ?? line.code ?? '',
-      };
-    });
-    planRow.raw_materials = rawMaterials;
-    planRow.packaging_materials = packagingMaterials;
-    await planRow.save();
+    await syncPlanningRowMaterialsFromBomLines(planRow, rmLines, pmLines);
 
     res.json({
       rmLines: override.rm_lines || [],
@@ -1264,6 +1276,29 @@ async function updateBatch(req, res) {
       batch.batch_code = String(body.batchCode).trim().slice(0, 64);
     }
     await batch.save();
+
+    // Keep PI-level required snapshot in sync when batch BOM lines are edited in the modal.
+    const editedRmLines = Array.isArray(body.rmLines) ? batch.rm_lines : null;
+    const editedPmLines = Array.isArray(body.pmLines) ? batch.pm_lines : null;
+    if (editedRmLines || editedPmLines) {
+      const planRow = await PlanningExtracted.findByPk(planningId);
+      if (planRow) {
+        const rmForSync = Array.isArray(editedRmLines) ? normalizeRmLines(editedRmLines) : normalizeRmLines(planRow.raw_materials || []);
+        const pmForSync = Array.isArray(editedPmLines) ? normalizePmLines(editedPmLines) : normalizePmLines(planRow.packaging_materials || []);
+
+        const [override] = await PlanningBomOverride.findOrCreate({
+          where: { planning_extracted_id: planningId },
+          defaults: { rm_lines: rmForSync, pm_lines: pmForSync },
+        });
+        if (override) {
+          override.rm_lines = rmForSync;
+          override.pm_lines = pmForSync;
+          await override.save();
+        }
+        await syncPlanningRowMaterialsFromBomLines(planRow, rmForSync, pmForSync);
+      }
+    }
+
     // Planned batches are saved, but reserved stock is not auto-updated here.
     // Reserved updates only on explicit BMR/BPR reserve transitions.
     res.json(formatBatchRow(batch));
