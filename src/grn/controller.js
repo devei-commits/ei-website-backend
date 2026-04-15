@@ -1148,7 +1148,7 @@ async function applyLabelGenerationToWarehouseInventory(grnPlain, selectedItemCo
 
 /**
  * POST /api/v1/grn/:id/generate-labels
- * Body (optional): noOfBoxes, unitsPerBox, lastBoxUnits (partial last box — box n only),
+ * Body (optional): noOfBoxes, unitsPerBox, unitsPerBoxList,
  *                  locationPrefix, grnBatchMfg, expiry, mfgBatch, productName, itemCode.
  * Uses GRN-stored values if not in body. Generates noOfBoxes QR codes per box.
  * Also advances workflow_steps to include 'Label Generation'.
@@ -1172,11 +1172,11 @@ async function generateLabels(req, res) {
     }
     const noOfBoxes = body.noOfBoxes ?? body.no_of_boxes ?? d.no_of_boxes ?? 1;
     const unitsPerBox = body.unitsPerBox ?? body.units_per_box ?? d.units_per_box ?? 0;
-    const lastExplicit =
-      Object.prototype.hasOwnProperty.call(body, 'lastBoxUnits') ||
-      Object.prototype.hasOwnProperty.call(body, 'last_box_units');
-    let lastBoxUnits = lastExplicit ? body.lastBoxUnits ?? body.last_box_units : d.last_box_units;
-    if (lastBoxUnits === '' || lastBoxUnits === undefined) lastBoxUnits = null;
+    const unitsPerBoxListRaw = Array.isArray(body.unitsPerBoxList)
+      ? body.unitsPerBoxList
+      : Array.isArray(body.units_per_box_list)
+        ? body.units_per_box_list
+        : null;
     const locationPrefix = body.locationPrefix ?? body.location_prefix ?? d.location_prefix ?? '';
     const grnBatchMfg = body.grnBatchMfg ?? body.grn_batch_mfg ?? d.grn_batch_mfg ?? '';
     const expiry = body.expiry ?? d.expiry ?? '';
@@ -1249,7 +1249,7 @@ async function generateLabels(req, res) {
     const updates = {};
     if (body.noOfBoxes !== undefined) updates.no_of_boxes = body.noOfBoxes;
     if (body.unitsPerBox !== undefined) updates.units_per_box = body.unitsPerBox;
-    if (body.lastBoxUnits !== undefined) updates.last_box_units = body.lastBoxUnits;
+    updates.last_box_units = null;
     if (body.locationPrefix !== undefined) updates.location_prefix = body.locationPrefix;
     if (body.locationZone !== undefined) updates.location_zone = body.locationZone;
     if (body.location_zone !== undefined) updates.location_zone = body.location_zone;
@@ -1261,20 +1261,28 @@ async function generateLabels(req, res) {
     const QRCode = require('qrcode');
     const n = Math.max(1, parseInt(noOfBoxes, 10) || 1);
     const U = Math.max(0, parseInt(unitsPerBox, 10) || 0);
-    const lastParsed = lastBoxUnits != null ? parseInt(lastBoxUnits, 10) : NaN;
-    const useRemainder = Number.isFinite(lastParsed) && lastParsed >= 1;
-    if (useRemainder && U < 1) {
-      return res.status(400).json({ error: 'Set units per full box before using remainder in last box.' });
-    }
-    if (useRemainder && lastParsed > U) {
-      return res.status(400).json({
-        error: `Last box units (${lastParsed}) cannot exceed units per full box (${U}).`,
+    let unitsPerBoxList = [];
+    if (unitsPerBoxListRaw && unitsPerBoxListRaw.length) {
+      unitsPerBoxList = unitsPerBoxListRaw.map((v) => Math.max(0, parseInt(v, 10) || 0));
+      if (unitsPerBoxList.length !== n) {
+        return res.status(400).json({ error: `unitsPerBoxList must have exactly ${n} values (one per box).` });
+      }
+    } else if (Array.isArray(d.generated_labels) && d.generated_labels.length === n) {
+      unitsPerBoxList = d.generated_labels.map((label) => {
+        try {
+          const p = JSON.parse(label.qrPayload || '{}');
+          return Math.max(0, parseInt(p.units_per_box, 10) || 0);
+        } catch {
+          return U;
+        }
       });
+    } else {
+      unitsPerBoxList = Array.from({ length: n }, () => U);
     }
 
     const labels = [];
     for (let boxIndex = 1; boxIndex <= n; boxIndex++) {
-      const unitsThisBox = useRemainder ? (boxIndex < n ? U : lastParsed) : U;
+      const unitsThisBox = unitsPerBoxList[boxIndex - 1] ?? 0;
       const payload = {
         grn_id: id,
         grn_no: d.grn_no,
@@ -1292,8 +1300,6 @@ async function generateLabels(req, res) {
         mfg_batch: mfgBatch,
         box_index: boxIndex,
       };
-      if (useRemainder && U > 0) payload.full_carton_units = U;
-      if (useRemainder && boxIndex === n && lastParsed < U) payload.partial_last_box = true;
       const qrPayload = JSON.stringify(payload);
       const qrImageDataUrl = await QRCode.toDataURL(qrPayload, { type: 'image/png', margin: 2 });
       labels.push({ boxIndex, qrPayload, qrImageDataUrl });

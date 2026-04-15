@@ -113,7 +113,7 @@ describe('Stage 2: shortfall -> PR; PO -> GRN -> inventory (integration)', () =>
       planning_extracted_id: plan.id,
       sequence: 1,
       batch_code: `PE-${plan.id}-B1`,
-      size_kg: 50,
+      size_kg: 25,
       rm_lines: [{ rm_code: rm.code, pct_w_w: 10, uom: 'KG', specific_gravity: 1 }],
       pm_lines: [{ pm_code: pm.code, qty_per_unit: 1, uom: 'PCS' }],
     });
@@ -175,8 +175,9 @@ describe('Stage 2: shortfall -> PR; PO -> GRN -> inventory (integration)', () =>
 
     rmItemTotalRequired = Number(rmItem.totalRequired);
     rmItemSurplusShortage = Number(rmItem.surplusShortage);
-    expect(rmItemTotalRequired).toBe(5); // 50kg * 10% / 100
-    expect(rmItemSurplusShortage).toBe(-3); // sih(2) - totalRequired(5)
+    // Full order 5 kg RM; one batch 25 kg @ 10% => 2.5 kg planned => 2.5 kg remaining
+    expect(rmItemTotalRequired).toBeCloseTo(2.5, 5);
+    expect(rmItemSurplusShortage).toBeCloseTo(-0.5, 5); // sih(2) - totalRequired(2.5)
 
     const shortageQty = Math.max(0, -rmItemSurplusShortage);
 
@@ -205,7 +206,7 @@ describe('Stage 2: shortfall -> PR; PO -> GRN -> inventory (integration)', () =>
     const created = await ProcurementRequest.findByPk(prResp.body.id);
     expect(created).toBeTruthy();
     expect(Array.isArray(created.items)).toBe(true);
-    expect(created.items[0].quantity_requested).toBe(shortageQty);
+    expect(Number(created.items[0].quantity_requested)).toBeCloseTo(shortageQty, 5);
   });
 
   test('Draft PO can be created from quotation items; GRN completion updates inventory', async () => {

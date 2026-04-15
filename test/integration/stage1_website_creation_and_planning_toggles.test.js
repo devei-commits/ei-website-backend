@@ -5,8 +5,8 @@
  *   plus initial production/fulfillment placeholders.
  * - Verify planning reservation toggles when `bom_confirmed_at` transitions
  *   (null <-> non-null) updates `warehouse_inventory.reserved`.
- * - Verify `sent_batch_indices` impacts global `GET /api/v1/planning-extracted/items-involved`
- *   (only included sent batches contribute to `totalRequired`).
+ * - Verify global `GET /api/v1/planning-extracted/items-involved` uses remaining requirement:
+ *   full SO BOM minus quantities already covered by all saved planning_batches.
  */
 
 const request = require('supertest');
@@ -273,42 +273,74 @@ describe('Stage 1: website order -> planning placeholders + toggles (integration
     expect(reservedRows.length).toBeGreaterThan(0);
   });
 
-  test('sent_batch_indices filters `items-involved.totalRequired` by sent PlanningBatch sequence', async () => {
+  test('items-involved totalRequired is remaining after all planning_batches (not sent_batch_indices)', async () => {
     if (!dbAvailable) return;
 
-    // Only sequence 1 sent -> totalRequired should reflect only batch #1
-    const p0Resp = await request(app)
-      .patch(`/api/v1/planning-extracted/${plan.id}`)
-      .set('Authorization', authHeaders().Authorization)
-      .send({ sentBatchIndices: [0] });
-    expect(p0Resp.status).toBe(200);
+    await plan.update({
+      order_qty_display: '10 units',
+      total_kg_display: '10 KG',
+      raw_materials: [
+        {
+          raw_material_id: rm.id,
+          code: rm.code,
+          name: rm.name,
+          quantity: 1,
+          unit: 'KG',
+        },
+      ],
+      packaging_materials: [
+        {
+          pack_material_id: pm.id,
+          code: pm.code,
+          name: pm.description,
+          quantity: 10,
+          unit: 'PCS',
+        },
+      ],
+    });
 
-    const items0 = await request(app)
+    const batchPayload = {
+      size_kg: 5,
+      rm_lines: [{ rm_code: rm.code, pct_w_w: 10, uom: 'KG', specific_gravity: 1 }],
+      pm_lines: [{ pm_code: pm.code, qty_per_unit: 1, uom: 'PCS' }],
+    };
+    await PlanningBatch.update(batchPayload, { where: { planning_extracted_id: plan.id, sequence: 1 } });
+    await PlanningBatch.update(batchPayload, { where: { planning_extracted_id: plan.id, sequence: 2 } });
+
+    const itemsFullyPlanned = await request(app)
       .get('/api/v1/planning-extracted/items-involved')
       .set('Authorization', authHeaders().Authorization);
-    expect(items0.status).toBe(200);
+    expect(itemsFullyPlanned.status).toBe(200);
+    const rmWhenBoth = itemsFullyPlanned.body.find((x) => x.type === 'RM' && x.code === rm.code);
+    const pmWhenBoth = itemsFullyPlanned.body.find((x) => x.type === 'PM' && x.code === pm.code);
+    expect(rmWhenBoth).toBeFalsy();
+    expect(pmWhenBoth).toBeFalsy();
 
-    const rmItem0 = items0.body.find((x) => x.type === 'RM' && x.code === rm.code);
-    expect(rmItem0).toBeTruthy();
+    await PlanningBatch.destroy({ where: { planning_extracted_id: plan.id, sequence: 2 } });
 
-    // RM qty per sent batch = size_kg * pct / 100 = 50 * 10 / 100 = 5
-    expect(Number(rmItem0.totalRequired)).toBe(5);
-
-    // sequence 1 + 2 sent -> totalRequired should double
-    const p01Resp = await request(app)
-      .patch(`/api/v1/planning-extracted/${plan.id}`)
-      .set('Authorization', authHeaders().Authorization)
-      .send({ sentBatchIndices: [0, 1] });
-    expect(p01Resp.status).toBe(200);
-
-    const items01 = await request(app)
+    const itemsHalf = await request(app)
       .get('/api/v1/planning-extracted/items-involved')
       .set('Authorization', authHeaders().Authorization);
-    expect(items01.status).toBe(200);
+    expect(itemsHalf.status).toBe(200);
 
-    const rmItem01 = items01.body.find((x) => x.type === 'RM' && x.code === rm.code);
-    expect(rmItem01).toBeTruthy();
-    expect(Number(rmItem01.totalRequired)).toBe(10);
+    const rmItem = itemsHalf.body.find((x) => x.type === 'RM' && x.code === rm.code);
+    const pmItem = itemsHalf.body.find((x) => x.type === 'PM' && x.code === pm.code);
+    expect(rmItem).toBeTruthy();
+    expect(pmItem).toBeTruthy();
+
+    // One batch: size 5 kg, 10% RM -> 0.5 kg planned; full order RM 1 kg -> 0.5 kg remaining
+    expect(Number(rmItem.totalRequired)).toBeCloseTo(0.5, 5);
+    // PM:5 units in batch * 1 pc/unit = 5 planned; full 10 pcs -> 5 remaining
+    expect(Number(pmItem.totalRequired)).toBe(5);
+
+    await PlanningBatch.create({
+      planning_extracted_id: plan.id,
+      sequence: 2,
+      batch_code: `PE-${plan.id}-B2-restored`,
+      size_kg: 5,
+      rm_lines: [{ rm_code: rm.code, pct_w_w: 10, uom: 'KG', specific_gravity: 1 }],
+      pm_lines: [{ pm_code: pm.code, qty_per_unit: 1, uom: 'PCS' }],
+    });
   });
 });
 

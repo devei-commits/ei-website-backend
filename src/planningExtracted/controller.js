@@ -198,21 +198,150 @@ async function syncWarehouseReserved(affectedRmIds, affectedPmIds) {
   for (const rid of affectedRmIds) {
     const sum = await ReservedBatchItem.sum('quantity_reserved', { where: { raw_material_id: rid } });
     const val = sum != null ? Number(sum) : 0;
-    await WarehouseInventory.update(
+    const [updated] = await WarehouseInventory.update(
       { reserved: val },
       { where: { item_type: 'RM', raw_material_id: rid } }
     );
+    if (!updated) {
+      await WarehouseInventory.create({
+        item_type: 'RM',
+        raw_material_id: rid,
+        wh_unit: 'KG',
+        stock_in_hand: 0,
+        reserved: val,
+      });
+    }
     if (RESERVE_DEBUG) console.log('[RESERVE-DEBUG] syncWarehouseReserved RM', { raw_material_id: rid, sum_from_reserved_batch_items: val, 'warehouse_inventory.reserved': val });
   }
   for (const pid of affectedPmIds) {
     const sum = await ReservedBatchItem.sum('quantity_reserved', { where: { pack_material_id: pid } });
     const val = sum != null ? Number(sum) : 0;
-    await WarehouseInventory.update(
+    const [updated] = await WarehouseInventory.update(
       { reserved: val },
       { where: { item_type: 'PM', pack_material_id: pid } }
     );
+    if (!updated) {
+      await WarehouseInventory.create({
+        item_type: 'PM',
+        pack_material_id: pid,
+        wh_unit: 'PCS',
+        stock_in_hand: 0,
+        reserved: val,
+      });
+    }
     if (RESERVE_DEBUG) console.log('[RESERVE-DEBUG] syncWarehouseReserved PM', { pack_material_id: pid, sum_from_reserved_batch_items: val, 'warehouse_inventory.reserved': val });
   }
+}
+
+/**
+ * Rebuild reserved_batch_items for this planning row from current planning_batches BOM/size.
+ * This keeps warehouse reserved quantities in sync with "planned qty" after batch generation/edits.
+ */
+async function refreshReservationsFromPlanningBatches(planningExtractedId, planRowInput = null) {
+  const planRow = planRowInput || await PlanningExtracted.findByPk(planningExtractedId);
+  if (!planRow) return;
+  const planPlain = planRow.get ? planRow.get({ plain: true }) : planRow;
+  const batches = await PlanningBatch.findAll({
+    where: { planning_extracted_id: planningExtractedId },
+    order: [['sequence', 'ASC']],
+  });
+  const batchPlain = batches.map((b) => (b.get ? b.get({ plain: true }) : b));
+
+  const oldRows = await ReservedBatchItem.findAll({
+    where: { planning_extracted_id: planningExtractedId, production_batch_id: null, fulfillment_order_item_id: null },
+    attributes: ['raw_material_id', 'pack_material_id'],
+  });
+  const affectedRmIds = new Set();
+  const affectedPmIds = new Set();
+  for (const r of oldRows) {
+    if (r.raw_material_id != null) affectedRmIds.add(Number(r.raw_material_id));
+    if (r.pack_material_id != null) affectedPmIds.add(Number(r.pack_material_id));
+  }
+
+  await ReservedBatchItem.destroy({
+    where: { planning_extracted_id: planningExtractedId, production_batch_id: null, fulfillment_order_item_id: null },
+  });
+
+  const rms = await RawMaterial.findAll({ attributes: ['id', 'code', 'name'] });
+  const pms = await PackMaterial.findAll({ attributes: ['id', 'code', 'description'] });
+  const rmByCode = new Map();
+  const rmByName = new Map();
+  for (const rm of rms) {
+    if (rm.code) rmByCode.set(String(rm.code), rm);
+    if (rm.name) rmByName.set(String(rm.name).trim().toLowerCase(), rm);
+  }
+  const pmByCode = new Map();
+  const pmByName = new Map();
+  for (const pm of pms) {
+    if (pm.code) pmByCode.set(String(pm.code), pm);
+    if (pm.description) pmByName.set(String(pm.description).trim().toLowerCase(), pm);
+  }
+
+  const plannedRm = new Map();
+  const plannedPm = new Map();
+  if (batchPlain.length > 0) {
+    for (const bp of batchPlain) {
+      accumulatePlannedBatchIntoQtyMaps(bp, planPlain, rmByCode, rmByName, pmByCode, pmByName, plannedRm, plannedPm);
+    }
+  } else {
+    // Fresh release-to-planning: before any batch split exists, use PI-level material snapshot.
+    const rawMaterials = Array.isArray(planPlain.raw_materials) ? planPlain.raw_materials : [];
+    const packagingMaterials = Array.isArray(planPlain.packaging_materials) ? planPlain.packaging_materials : [];
+
+    for (const line of rawMaterials) {
+      let rmId = line.raw_material_id != null ? Number(line.raw_material_id) : null;
+      if (rmId == null && (line.code || line.rm_code)) {
+        const rm = rmByCode.get(String(line.code || line.rm_code));
+        if (rm) rmId = Number(rm.id);
+      }
+      if (rmId == null && line.name) {
+        const rm = rmByName.get(String(line.name).trim().toLowerCase());
+        if (rm) rmId = Number(rm.id);
+      }
+      if (rmId == null || Number.isNaN(rmId)) continue;
+      const qty = Number(line.quantity) || 0;
+      if (qty > 0) plannedRm.set(rmId, (plannedRm.get(rmId) || 0) + qty);
+    }
+
+    for (const line of packagingMaterials) {
+      let pmId = line.pack_material_id != null ? Number(line.pack_material_id) : null;
+      if (pmId == null && (line.code || line.pm_code)) {
+        const pm = pmByCode.get(String(line.code || line.pm_code));
+        if (pm) pmId = Number(pm.id);
+      }
+      if (pmId == null && line.name) {
+        const pm = pmByName.get(String(line.name).trim().toLowerCase());
+        if (pm) pmId = Number(pm.id);
+      }
+      if (pmId == null || Number.isNaN(pmId)) continue;
+      const qty = Number(line.quantity) || 0;
+      if (qty > 0) plannedPm.set(pmId, (plannedPm.get(pmId) || 0) + qty);
+    }
+  }
+
+  for (const [rmId, qty] of plannedRm.entries()) {
+    if (!(Number(qty) > RESERVE_EPS_KG)) continue;
+    await ReservedBatchItem.create({
+      planning_extracted_id: planningExtractedId,
+      raw_material_id: rmId,
+      pack_material_id: null,
+      quantity_reserved: qty,
+      unit: 'KG',
+    });
+    affectedRmIds.add(Number(rmId));
+  }
+  for (const [pmId, qty] of plannedPm.entries()) {
+    if (!(Number(qty) > RESERVE_EPS_PCS)) continue;
+    await ReservedBatchItem.create({
+      planning_extracted_id: planningExtractedId,
+      raw_material_id: null,
+      pack_material_id: pmId,
+      quantity_reserved: qty,
+      unit: 'PCS',
+    });
+    affectedPmIds.add(Number(pmId));
+  }
+  await syncWarehouseReserved([...affectedRmIds], [...affectedPmIds]);
 }
 
 /**
@@ -455,6 +584,7 @@ async function syncPlanningExtractedFromSalesOrders() {
       }
       const batchesRequired = batchesRequiredForOrderKg(safeTotalKg, batchSizeKg);
 
+      let targetPlanRow = existing;
       if (existing) {
         await existing.update({
           order_qty_display: `${orderQty} units`,
@@ -469,7 +599,7 @@ async function syncPlanningExtractedFromSalesOrders() {
           approved_by: so.created_by || null,
         });
       } else {
-        await PlanningExtracted.create({
+        targetPlanRow = await PlanningExtracted.create({
           sales_order_id: so.id,
           product_id: productId,
           order_qty_display: `${orderQty} units`,
@@ -487,6 +617,12 @@ async function syncPlanningExtractedFromSalesOrders() {
           packaging_materials: packagingMaterials,
         });
         created++;
+      }
+
+      // Keep warehouse planned/reserved aligned when row is released to planning with confirmed BOM.
+      const plainTarget = targetPlanRow && targetPlanRow.get ? targetPlanRow.get({ plain: true }) : targetPlanRow;
+      if (plainTarget && plainTarget.bom_confirmed_at) {
+        await refreshReservationsFromPlanningBatches(Number(plainTarget.id), targetPlanRow);
       }
     }
   }
@@ -907,6 +1043,7 @@ async function createOrUpdateBatches(req, res) {
     }
     const updated = await PlanningBatch.findAll({ where: { planning_extracted_id: id }, order: [['sequence', 'ASC']] });
     await planRow.update({ batch_count: updated.length });
+    await refreshReservationsFromPlanningBatches(id, planRow);
     res.json(updated.map((r) => formatBatchRow(r)));
   } catch (err) {
     console.error('createOrUpdateBatches error', err);
@@ -949,14 +1086,15 @@ async function getBatchById(req, res) {
 
 /**
  * POST /:id/batches/add-one — add one new batch with BOM copied from product master (not override).
- * New batch gets sequence = max+1, batch_code = PE-{id}-B{seq}, size_kg = 500 default.
+ * New batch gets sequence = max(sequence)+1, batch_code = PE-{id}-B{seq}.
+ * size_kg defaults to min(remaining order kg, product batch_size_kg) when order total is known, else batch_size_kg.
  */
 async function addOneBatchFromMaster(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const planRow = await PlanningExtracted.findByPk(id, {
-      attributes: ['id', 'product_id', 'batch_size_kg', 'sent_batch_indices'],
+      attributes: ['id', 'product_id', 'batch_size_kg', 'sent_batch_indices', 'total_kg_display'],
     });
     if (!planRow) return res.status(404).json({ error: 'Planning extracted not found' });
     const productId = planRow.product_id;
@@ -964,7 +1102,7 @@ async function addOneBatchFromMaster(req, res) {
 
     const existing = await PlanningBatch.findAll({
       where: { planning_extracted_id: id },
-      attributes: ['sequence'],
+      attributes: ['sequence', 'size_kg'],
       order: [['sequence', 'DESC']],
     });
     if (existing.length > 0) {
@@ -978,8 +1116,20 @@ async function addOneBatchFromMaster(req, res) {
         });
       }
     }
-    const nextSeq = existing.length === 0 ? 1 : (existing[0].sequence || 0) + 1;
+    const nextSeq = existing.length === 0 ? 1 : (Number(existing[0].sequence) || 0) + 1;
     const batchCode = `PE-${id}-B${nextSeq}`;
+
+    const plainPlan = planRow.get ? planRow.get({ plain: true }) : planRow;
+    const totalKgPlan = parseFloat(String(plainPlan.total_kg_display || '0').replace(/[^\d.]/g, '')) || 0;
+    const sumAllocatedKg = existing.reduce((s, b) => {
+      const sk = b.get ? b.get('size_kg') : b.size_kg;
+      return s + (Number(sk) || 0);
+    }, 0);
+    const remainingKg = Math.max(0, totalKgPlan - sumAllocatedKg);
+    let newSizeKg = defaultSizeKg;
+    if (totalKgPlan > 0 && remainingKg > 0) {
+      newSizeKg = Math.min(remainingKg, defaultSizeKg);
+    }
 
     let rmLines = [];
     let pmLines = [];
@@ -995,12 +1145,13 @@ async function addOneBatchFromMaster(req, res) {
       planning_extracted_id: id,
       sequence: nextSeq,
       batch_code: batchCode,
-      size_kg: defaultSizeKg,
+      size_kg: newSizeKg,
       rm_lines: rmLines,
       pm_lines: pmLines,
     });
     const cnt = await PlanningBatch.count({ where: { planning_extracted_id: id } });
     await PlanningExtracted.update({ batch_count: cnt }, { where: { id } });
+    await refreshReservationsFromPlanningBatches(id, planRow);
     res.status(201).json(formatBatchRow(batch));
   } catch (err) {
     console.error('addOneBatchFromMaster error', err);
@@ -1115,6 +1266,7 @@ async function updateBatch(req, res) {
       batch.batch_code = String(body.batchCode).trim().slice(0, 64);
     }
     await batch.save();
+    await refreshReservationsFromPlanningBatches(planningId);
     res.json(formatBatchRow(batch));
   } catch (err) {
     console.error('updateBatch error', err);
@@ -1122,10 +1274,142 @@ async function updateBatch(req, res) {
   }
 }
 
+/** Sum RM (kg) and PM (pcs) from one planning_batches row; uses PI packaging when batch has no pm_lines. */
+function accumulatePlannedBatchIntoQtyMaps(batchPlain, planPlain, rmByCode, rmByName, pmByCode, pmByName, plannedRm, plannedPm) {
+  const sizeKg = Number(batchPlain.size_kg) || 0;
+  const orderQty = parseInt(String(planPlain.order_qty_display || '0').replace(/\D/g, ''), 10) || 0;
+  const totalKg = parseFloat(String(planPlain.total_kg_display || '0').replace(/[^\d.]/g, '')) || 0;
+  const kgPerUnit = orderQty > 0 && totalKg > 0 ? totalKg / orderQty : 1;
+  const unitsForBatch = kgPerUnit > 0 ? sizeKg / kgPerUnit : 0;
+
+  const rmLines = Array.isArray(batchPlain.rm_lines) ? batchPlain.rm_lines : [];
+  for (const line of rmLines) {
+    let id = line.raw_material_id != null ? Number(line.raw_material_id) : null;
+    if (id == null && (line.rm_code || line.code)) {
+      const rm = rmByCode.get(line.rm_code || line.code);
+      if (rm) id = rm.id;
+    }
+    if (id == null && (line.inci_name || line.name)) {
+      const nameKey = String(line.inci_name || line.name || '').trim().toLowerCase();
+      const rm = nameKey ? rmByName.get(nameKey) : null;
+      if (rm) id = rm.id;
+    }
+    if (id == null || Number.isNaN(id)) continue;
+    const pct = line.pct_w_w ?? line.pct ?? 0;
+    const qty = (sizeKg * pct) / 100;
+    plannedRm.set(id, (plannedRm.get(id) || 0) + qty);
+  }
+
+  let pmLines = Array.isArray(batchPlain.pm_lines) ? batchPlain.pm_lines : [];
+  if (pmLines.length === 0) {
+    const pkg = Array.isArray(planPlain.packaging_materials) ? planPlain.packaging_materials : [];
+    const oq = orderQty;
+    pmLines = pkg.map((p) => {
+      const totalPcs = Number(p.quantity) || 0;
+      const qpu = oq > 0 ? totalPcs / oq : totalPcs;
+      return {
+        pack_material_id: p.pack_material_id,
+        pm_code: p.code,
+        code: p.code,
+        description: p.name,
+        name: p.name,
+        qty_per_unit: qpu,
+        qty: qpu,
+      };
+    });
+  }
+  for (const line of pmLines) {
+    let id = line.pack_material_id != null ? Number(line.pack_material_id) : null;
+    if (id == null && (line.pm_code || line.code)) {
+      const pm = pmByCode.get(line.pm_code || line.code);
+      if (pm) id = pm.id;
+    }
+    if (id == null && (line.description || line.name)) {
+      const nameKey = String(line.description || line.name || '').trim().toLowerCase();
+      const pm = nameKey ? pmByName.get(nameKey) : null;
+      if (pm) id = pm.id;
+    }
+    if (id == null || Number.isNaN(id)) continue;
+    const qtyPerUnit = line.qty_per_unit ?? line.qty ?? 1;
+    const qty = unitsForBatch * qtyPerUnit;
+    plannedPm.set(id, (plannedPm.get(id) || 0) + qty);
+  }
+}
+
+function countPlanningBatchesTouchingRm(planBatchesPlain, rmId, rmByCode, rmByName) {
+  let n = 0;
+  for (const bp of planBatchesPlain) {
+    const lines = Array.isArray(bp.rm_lines) ? bp.rm_lines : [];
+    let touches = false;
+    for (const line of lines) {
+      let id = line.raw_material_id != null ? Number(line.raw_material_id) : null;
+      if (id == null && (line.rm_code || line.code)) {
+        const rm = rmByCode.get(line.rm_code || line.code);
+        if (rm) id = rm.id;
+      }
+      if (id == null && (line.inci_name || line.name)) {
+        const nameKey = String(line.inci_name || line.name || '').trim().toLowerCase();
+        const rm = nameKey ? rmByName.get(nameKey) : null;
+        if (rm) id = rm.id;
+      }
+      if (id === rmId) {
+        touches = true;
+        break;
+      }
+    }
+    if (touches) n += 1;
+  }
+  return n;
+}
+
+function countPlanningBatchesTouchingPm(planBatchesPlain, pmId, pmByCode, pmByName, planPlain) {
+  let n = 0;
+  const orderQty = parseInt(String(planPlain.order_qty_display || '0').replace(/\D/g, ''), 10) || 0;
+  for (const bp of planBatchesPlain) {
+    let pmLines = Array.isArray(bp.pm_lines) ? bp.pm_lines : [];
+    if (pmLines.length === 0) {
+      const pkg = Array.isArray(planPlain.packaging_materials) ? planPlain.packaging_materials : [];
+      const oq = orderQty;
+      pmLines = pkg.map((p) => {
+        const totalPcs = Number(p.quantity) || 0;
+        const qpu = oq > 0 ? totalPcs / oq : totalPcs;
+        return {
+          pack_material_id: p.pack_material_id,
+          pm_code: p.code,
+          code: p.code,
+          description: p.name,
+          name: p.name,
+          qty_per_unit: qpu,
+          qty: qpu,
+        };
+      });
+    }
+    let touches = false;
+    for (const line of pmLines) {
+      let id = line.pack_material_id != null ? Number(line.pack_material_id) : null;
+      if (id == null && (line.pm_code || line.code)) {
+        const pm = pmByCode.get(line.pm_code || line.code);
+        if (pm) id = pm.id;
+      }
+      if (id == null && (line.description || line.name)) {
+        const nameKey = String(line.description || line.name || '').trim().toLowerCase();
+        const pm = nameKey ? pmByName.get(nameKey) : null;
+        if (pm) id = pm.id;
+      }
+      if (id === pmId) {
+        touches = true;
+        break;
+      }
+    }
+    if (touches) n += 1;
+  }
+  return n;
+}
+
 /**
- * GET /items-involved — aggregated RM/PM from planning batches released to production (sent), consolidated by item.
- * Only batches whose sequence is in the PI's sent_batch_indices are included (production phase).
- * When no batches are sent, falls back to confirmed planning_extracted. Used by Planning Items Involved tab.
+ * GET /items-involved — aggregated RM/PM still required for open (unplanned) order quantity, consolidated by item.
+ * Per confirmed PI: totalRequired on the row is max(0, full SO BOM qty − sum(all saved planning_batches for that PI)).
+ * `sent_batch_indices` does not change this math (batches are included whenever they exist in planning_batches).
  */
 async function getItemsInvolved(req, res) {
   try {
@@ -1139,270 +1423,182 @@ async function getItemsInvolved(req, res) {
     const rmAgg = new Map(); // key: raw_material_id -> { totalRequired, unit, productNames, planningExtractedIds, name, code, batchCount }
     const pmAgg = new Map(); // key: pack_material_id -> { totalRequired, unit, productNames, planningExtractedIds, name, code, batchCount }
 
+    const confirmed = await PlanningExtracted.findAll({
+      where: { bom_confirmed_at: { [Op.ne]: null } },
+      include: [{ model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'] }],
+      order: [['id', 'ASC']],
+    });
+
     const batches = await PlanningBatch.findAll({
       include: [{
         model: PlanningExtracted,
         as: 'planningExtracted',
         required: true,
-        attributes: ['id', 'order_qty_display', 'total_kg_display', 'product_id', 'sent_batch_indices', 'packaging_materials'],
+        attributes: ['id', 'order_qty_display', 'total_kg_display', 'product_id', 'packaging_materials', 'raw_materials'],
         include: [{ model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'] }],
       }],
       order: [['planning_extracted_id', 'ASC'], ['sequence', 'ASC']],
     });
 
-    // Only include batches that have been released to production (sent)
-    const sentBatches = batches.filter((b) => {
+    const batchesByPlanId = new Map();
+    const rmCodes = new Set();
+    const pmCodes = new Set();
+    for (const row of confirmed) {
+      const plain = row.get ? row.get({ plain: true }) : row;
+      for (const r of Array.isArray(plain.raw_materials) ? plain.raw_materials : []) {
+        if (r.code) rmCodes.add(r.code);
+      }
+      for (const p of Array.isArray(plain.packaging_materials) ? plain.packaging_materials : []) {
+        if (p.code) pmCodes.add(p.code);
+      }
+    }
+    for (const b of batches) {
       const plain = b.get ? b.get({ plain: true }) : b;
+      const pid = plain.planning_extracted_id;
+      if (!batchesByPlanId.has(pid)) batchesByPlanId.set(pid, []);
+      batchesByPlanId.get(pid).push(b);
+      const rms = Array.isArray(plain.rm_lines) ? plain.rm_lines : [];
+      for (const line of rms) {
+        const code = line.rm_code || line.code;
+        if (code) rmCodes.add(code);
+      }
+      const pms = Array.isArray(plain.pm_lines) ? plain.pm_lines : [];
+      for (const line of pms) {
+        const code = line.pm_code || line.code;
+        if (code) pmCodes.add(code);
+      }
       const plan = plain.planningExtracted || {};
-      const sentIndices = Array.isArray(plan.sent_batch_indices) ? plan.sent_batch_indices : [];
-      return sentIndices.includes((plain.sequence || 1) - 1);
-    });
-
-    if (sentBatches.length > 0) {
-      const rmCodes = new Set();
-      const pmCodes = new Set();
-      for (const b of sentBatches) {
-        const plain = b.get ? b.get({ plain: true }) : b;
-        const plan = plain.planningExtracted || {};
-        const rms = Array.isArray(plain.rm_lines) ? plain.rm_lines : [];
-        for (const line of rms) {
-          const code = line.rm_code || line.code;
-          if (code) rmCodes.add(code);
-        }
-        const pms = Array.isArray(plain.pm_lines) ? plain.pm_lines : [];
-        for (const line of pms) {
-          const code = line.pm_code || line.code;
-          if (code) pmCodes.add(code);
-        }
-        if (pms.length === 0) {
-          for (const p of Array.isArray(plan.packaging_materials) ? plan.packaging_materials : []) {
-            if (p.code) pmCodes.add(p.code);
-          }
-        }
-      }
-      const rmByCode = new Map();
-      const rmByName = new Map();
-      if (rmCodes.size > 0) {
-        const rmsList = await RawMaterial.findAll({ where: { code: { [Op.in]: [...rmCodes] } }, attributes: ['id', 'code', 'name'] });
-        for (const r of rmsList) {
-          rmByCode.set(r.code, r);
-          const key = String(r.name || '').trim().toLowerCase();
-          if (key) rmByName.set(key, r);
-        }
-      }
-      const pmByCode = new Map();
-      const pmByName = new Map();
-      if (pmCodes.size > 0) {
-        const pmsList = await PackMaterial.findAll({ where: { code: { [Op.in]: [...pmCodes] } }, attributes: ['id', 'code', 'description'] });
-        for (const p of pmsList) {
-          pmByCode.set(p.code, p);
-          const key = String(p.description || '').trim().toLowerCase();
-          if (key) pmByName.set(key, p);
-        }
-      }
-
-      for (const batch of sentBatches) {
-        const plain = batch.get ? batch.get({ plain: true }) : batch;
-        const plan = plain.planningExtracted || {};
-        const productName = plan.product?.product_name || '';
-        const planId = plan.id;
-        const sizeKg = Number(plain.size_kg) || 0;
-        const orderQty = parseInt(String(plan.order_qty_display || '0').replace(/\D/g, ''), 10) || 0;
-        const totalKg = parseFloat(String(plan.total_kg_display || '0').replace(/[^\d.]/g, '')) || 0;
-        const kgPerUnit = orderQty > 0 && totalKg > 0 ? totalKg / orderQty : 1;
-        const unitsForBatch = kgPerUnit > 0 ? sizeKg / kgPerUnit : 0;
-
-        const rmLines = Array.isArray(plain.rm_lines) ? plain.rm_lines : [];
-        const rmIdsInThisBatch = new Set();
-        for (const line of rmLines) {
-          let id = line.raw_material_id != null ? Number(line.raw_material_id) : null;
-          let resolvedRm = null;
-          if (id == null && (line.rm_code || line.code)) {
-            const rm = rmByCode.get(line.rm_code || line.code);
-            if (rm) {
-              id = rm.id;
-              resolvedRm = rm;
-            }
-          }
-          if (id == null && (line.inci_name || line.name)) {
-            const nameKey = String(line.inci_name || line.name || '').trim().toLowerCase();
-            const rm = nameKey ? rmByName.get(nameKey) : null;
-            if (rm) {
-              id = rm.id;
-              resolvedRm = rm;
-            }
-          }
-          if (id == null || Number.isNaN(id)) continue;
-          rmIdsInThisBatch.add(id);
-          const pct = line.pct_w_w ?? line.pct ?? 0;
-          const qty = (sizeKg * pct) / 100;
-          const unit = line.uom || 'KG';
-          const name = resolvedRm?.name || line.inci_name || line.name || line.rm_code || '';
-          const code = resolvedRm?.code || line.rm_code || line.code || '';
-          if (!rmAgg.has(id)) {
-            rmAgg.set(id, { totalRequired: 0, unit, productNames: [], planningExtractedIds: [], name, code, batchCount: 0 });
-          }
-          const agg = rmAgg.get(id);
-          agg.totalRequired += qty;
-          if (productName && !agg.productNames.includes(productName)) agg.productNames.push(productName);
-          if (planId && !agg.planningExtractedIds.includes(planId)) agg.planningExtractedIds.push(planId);
-          if (name) agg.name = name;
-          if (code) agg.code = code;
-        }
-        for (const id of rmIdsInThisBatch) {
-          if (rmAgg.has(id)) rmAgg.get(id).batchCount += 1;
-        }
-
-        let pmLines = Array.isArray(plain.pm_lines) ? plain.pm_lines : [];
-        // Batches often store RM lines only; PI still has packaging_materials from BOM confirm.
-        if (pmLines.length === 0) {
-          const pkg = Array.isArray(plan.packaging_materials) ? plan.packaging_materials : [];
-          const oq = orderQty;
-          pmLines = pkg.map((p) => {
-            const totalPcs = Number(p.quantity) || 0;
-            const qpu = oq > 0 ? totalPcs / oq : totalPcs;
-            return {
-              pack_material_id: p.pack_material_id,
-              pm_code: p.code,
-              code: p.code,
-              description: p.name,
-              name: p.name,
-              qty_per_unit: qpu,
-              qty: qpu,
-            };
-          });
-        }
-        const pmIdsInThisBatch = new Set();
-        for (const line of pmLines) {
-          let id = line.pack_material_id != null ? Number(line.pack_material_id) : null;
-          let resolvedPm = null;
-          if (id == null && (line.pm_code || line.code)) {
-            const pm = pmByCode.get(line.pm_code || line.code);
-            if (pm) {
-              id = pm.id;
-              resolvedPm = pm;
-            }
-          }
-          if (id == null && (line.description || line.name)) {
-            const nameKey = String(line.description || line.name || '').trim().toLowerCase();
-            const pm = nameKey ? pmByName.get(nameKey) : null;
-            if (pm) {
-              id = pm.id;
-              resolvedPm = pm;
-            }
-          }
-          if (id == null || Number.isNaN(id)) continue;
-          pmIdsInThisBatch.add(id);
-          const qtyPerUnit = line.qty_per_unit ?? line.qty ?? 1;
-          const qty = unitsForBatch * qtyPerUnit;
-          const unit = 'PCS';
-          const name = resolvedPm?.description || line.description || line.name || line.pm_code || '';
-          const code = resolvedPm?.code || line.pm_code || line.code || '';
-          if (!pmAgg.has(id)) {
-            pmAgg.set(id, { totalRequired: 0, unit, productNames: [], planningExtractedIds: [], name, code, batchCount: 0 });
-          }
-          const agg = pmAgg.get(id);
-          agg.totalRequired += qty;
-          if (productName && !agg.productNames.includes(productName)) agg.productNames.push(productName);
-          if (planId && !agg.planningExtractedIds.includes(planId)) agg.planningExtractedIds.push(planId);
-          if (name) agg.name = name;
-          if (code) agg.code = code;
-        }
-        for (const id of pmIdsInThisBatch) {
-          if (pmAgg.has(id)) pmAgg.get(id).batchCount += 1;
+      if (pms.length === 0) {
+        for (const p of Array.isArray(plan.packaging_materials) ? plan.packaging_materials : []) {
+          if (p.code) pmCodes.add(p.code);
         }
       }
     }
 
-    if (rmAgg.size === 0 && pmAgg.size === 0) {
-      const confirmed = await PlanningExtracted.findAll({
-        where: { bom_confirmed_at: { [Op.ne]: null } },
-        include: [{ model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'] }],
-        order: [['id', 'ASC']],
-      });
-      const fallbackRmCodes = new Set();
-      const fallbackPmCodes = new Set();
-      for (const row of confirmed) {
-        const plain = row.get ? row.get({ plain: true }) : row;
-        for (const r of Array.isArray(plain.raw_materials) ? plain.raw_materials : []) {
-          if (r.code) fallbackRmCodes.add(r.code);
-        }
-        for (const p of Array.isArray(plain.packaging_materials) ? plain.packaging_materials : []) {
-          if (p.code) fallbackPmCodes.add(p.code);
-        }
+    const rmByCode = new Map();
+    const rmByName = new Map();
+    if (rmCodes.size > 0) {
+      const rmsList = await RawMaterial.findAll({ where: { code: { [Op.in]: [...rmCodes] } }, attributes: ['id', 'code', 'name'] });
+      for (const r of rmsList) {
+        rmByCode.set(r.code, r);
+        const key = String(r.name || '').trim().toLowerCase();
+        if (key) rmByName.set(key, r);
       }
-      const fallbackRmByCode = new Map();
-      const fallbackRmByName = new Map();
-      const fallbackPmByCode = new Map();
-      const fallbackPmByName = new Map();
-      if (fallbackRmCodes.size > 0) {
-        const rmsList = await RawMaterial.findAll({ where: { code: { [Op.in]: [...fallbackRmCodes] } }, attributes: ['id', 'code', 'name'] });
-        for (const r of rmsList) {
-          fallbackRmByCode.set(r.code, r);
-          const key = String(r.name || '').trim().toLowerCase();
-          if (key) fallbackRmByName.set(key, r);
-        }
+    }
+    const pmByCode = new Map();
+    const pmByName = new Map();
+    if (pmCodes.size > 0) {
+      const pmsList = await PackMaterial.findAll({ where: { code: { [Op.in]: [...pmCodes] } }, attributes: ['id', 'code', 'description'] });
+      for (const p of pmsList) {
+        pmByCode.set(p.code, p);
+        const key = String(p.description || '').trim().toLowerCase();
+        if (key) pmByName.set(key, p);
       }
-      if (fallbackPmCodes.size > 0) {
-        const pmsList = await PackMaterial.findAll({ where: { code: { [Op.in]: [...fallbackPmCodes] } }, attributes: ['id', 'code', 'description'] });
-        for (const p of pmsList) {
-          fallbackPmByCode.set(p.code, p);
-          const key = String(p.description || '').trim().toLowerCase();
-          if (key) fallbackPmByName.set(key, p);
+    }
+
+    const fallbackRmByCode = rmByCode;
+    const fallbackRmByName = rmByName;
+    const fallbackPmByCode = pmByCode;
+    const fallbackPmByName = pmByName;
+
+    for (const row of confirmed) {
+      const plain = row.get ? row.get({ plain: true }) : row;
+      const planId = plain.id;
+      const productName = plain.product?.product_name || '';
+
+      const fullRm = new Map();
+      const fullPm = new Map();
+      const rmUnitById = new Map();
+      const pmUnitById = new Map();
+      const rmNameById = new Map();
+      const rmCodeById = new Map();
+      const pmNameById = new Map();
+      const pmCodeById = new Map();
+
+      const rms = Array.isArray(plain.raw_materials) ? plain.raw_materials : [];
+      for (const r of rms) {
+        let id = r.raw_material_id != null ? Number(r.raw_material_id) : null;
+        if (id == null && r.code) {
+          const rm = fallbackRmByCode.get(r.code);
+          if (rm) id = rm.id;
         }
+        if (id == null && r.name) {
+          const rm = fallbackRmByName.get(String(r.name).trim().toLowerCase());
+          if (rm) id = rm.id;
+        }
+        if (id == null || Number.isNaN(id)) continue;
+        const qty = Number(r.quantity) || 0;
+        const unit = r.unit || 'KG';
+        fullRm.set(id, (fullRm.get(id) || 0) + qty);
+        if (!rmUnitById.has(id)) rmUnitById.set(id, unit);
+        if (r.name) rmNameById.set(id, r.name);
+        if (r.code) rmCodeById.set(id, r.code);
       }
-      for (const row of confirmed) {
-        const plain = row.get ? row.get({ plain: true }) : row;
-        const productName = plain.product?.product_name || '';
-        const planId = plain.id;
-        const rms = Array.isArray(plain.raw_materials) ? plain.raw_materials : [];
-        for (const r of rms) {
-          let id = r.raw_material_id != null ? Number(r.raw_material_id) : null;
-          if (id == null && r.code) {
-            const rm = fallbackRmByCode.get(r.code);
-            if (rm) id = rm.id;
-          }
-          if (id == null && r.name) {
-            const rm = fallbackRmByName.get(String(r.name).trim().toLowerCase());
-            if (rm) id = rm.id;
-          }
-          if (id == null || Number.isNaN(id)) continue;
-          const qty = Number(r.quantity) || 0;
-          const unit = r.unit || 'KG';
-          if (!rmAgg.has(id)) {
-            rmAgg.set(id, { totalRequired: 0, unit, productNames: [], planningExtractedIds: [], name: r.name || '', code: r.code || '', batchCount: 0 });
-          }
-          const agg = rmAgg.get(id);
-          agg.totalRequired += qty;
-          if (productName && !agg.productNames.includes(productName)) agg.productNames.push(productName);
-          if (planId && !agg.planningExtractedIds.includes(planId)) agg.planningExtractedIds.push(planId);
-          if (r.name) agg.name = r.name;
-          if (r.code) agg.code = r.code;
+      const pms = Array.isArray(plain.packaging_materials) ? plain.packaging_materials : [];
+      for (const p of pms) {
+        let id = p.pack_material_id != null ? Number(p.pack_material_id) : null;
+        if (id == null && p.code) {
+          const pm = fallbackPmByCode.get(p.code);
+          if (pm) id = pm.id;
         }
-        const pms = Array.isArray(plain.packaging_materials) ? plain.packaging_materials : [];
-        for (const p of pms) {
-          let id = p.pack_material_id != null ? Number(p.pack_material_id) : null;
-          if (id == null && p.code) {
-            const pm = fallbackPmByCode.get(p.code);
-            if (pm) id = pm.id;
-          }
-          if (id == null && p.name) {
-            const pm = fallbackPmByName.get(String(p.name).trim().toLowerCase());
-            if (pm) id = pm.id;
-          }
-          if (id == null || Number.isNaN(id)) continue;
-          const qty = Number(p.quantity) || 0;
-          const unit = p.unit || 'PCS';
-          if (!pmAgg.has(id)) {
-            pmAgg.set(id, { totalRequired: 0, unit, productNames: [], planningExtractedIds: [], name: p.name || '', code: p.code || '', batchCount: 0 });
-          }
-          const agg = pmAgg.get(id);
-          agg.totalRequired += qty;
-          if (productName && !agg.productNames.includes(productName)) agg.productNames.push(productName);
-          if (planId && !agg.planningExtractedIds.includes(planId)) agg.planningExtractedIds.push(planId);
-          if (p.name) agg.name = p.name;
-          if (p.code) agg.code = p.code;
+        if (id == null && p.name) {
+          const pm = fallbackPmByName.get(String(p.name).trim().toLowerCase());
+          if (pm) id = pm.id;
         }
+        if (id == null || Number.isNaN(id)) continue;
+        const qty = Number(p.quantity) || 0;
+        const unit = p.unit || 'PCS';
+        fullPm.set(id, (fullPm.get(id) || 0) + qty);
+        if (!pmUnitById.has(id)) pmUnitById.set(id, unit);
+        if (p.name) pmNameById.set(id, p.name);
+        if (p.code) pmCodeById.set(id, p.code);
+      }
+
+      const planBatchesRaw = batchesByPlanId.get(planId) || [];
+      const planBatchesPlain = planBatchesRaw.map((batchRow) => (batchRow.get ? batchRow.get({ plain: true }) : batchRow));
+
+      const plannedRm = new Map();
+      const plannedPm = new Map();
+      for (const bp of planBatchesPlain) {
+        accumulatePlannedBatchIntoQtyMaps(bp, plain, rmByCode, rmByName, pmByCode, pmByName, plannedRm, plannedPm);
+      }
+
+      const allRmIdsForPlan = new Set([...fullRm.keys(), ...plannedRm.keys()]);
+      for (const id of allRmIdsForPlan) {
+        const rem = Math.max(0, (fullRm.get(id) || 0) - (plannedRm.get(id) || 0));
+        if (!(rem > 0)) continue;
+        const unit = rmUnitById.get(id) || 'KG';
+        const name = rmNameById.get(id) || '';
+        const code = rmCodeById.get(id) || '';
+        if (!rmAgg.has(id)) {
+          rmAgg.set(id, { totalRequired: 0, unit, productNames: [], planningExtractedIds: [], name, code, batchCount: 0 });
+        }
+        const agg = rmAgg.get(id);
+        agg.totalRequired += rem;
+        if (productName && !agg.productNames.includes(productName)) agg.productNames.push(productName);
+        if (planId && !agg.planningExtractedIds.includes(planId)) agg.planningExtractedIds.push(planId);
+        if (name) agg.name = name;
+        if (code) agg.code = code;
+        agg.batchCount += countPlanningBatchesTouchingRm(planBatchesPlain, id, rmByCode, rmByName);
+      }
+
+      const allPmIdsForPlan = new Set([...fullPm.keys(), ...plannedPm.keys()]);
+      for (const id of allPmIdsForPlan) {
+        const rem = Math.max(0, (fullPm.get(id) || 0) - (plannedPm.get(id) || 0));
+        if (!(rem > 0)) continue;
+        const unit = pmUnitById.get(id) || 'PCS';
+        const name = pmNameById.get(id) || '';
+        const code = pmCodeById.get(id) || '';
+        if (!pmAgg.has(id)) {
+          pmAgg.set(id, { totalRequired: 0, unit, productNames: [], planningExtractedIds: [], name, code, batchCount: 0 });
+        }
+        const agg = pmAgg.get(id);
+        agg.totalRequired += rem;
+        if (productName && !agg.productNames.includes(productName)) agg.productNames.push(productName);
+        if (planId && !agg.planningExtractedIds.includes(planId)) agg.planningExtractedIds.push(planId);
+        if (name) agg.name = name;
+        if (code) agg.code = code;
+        agg.batchCount += countPlanningBatchesTouchingPm(planBatchesPlain, id, pmByCode, pmByName, plain);
       }
     }
 
@@ -1793,6 +1989,58 @@ async function getItemsInvolvedByPlanningId(req, res) {
       pmReq.set(pid, { quantity: Number(p.quantity) || 0, unit: p.unit || 'PCS', name: p.name || '', code: p.code || '' });
     }
 
+    const planBatchesList = await PlanningBatch.findAll({ where: { planning_extracted_id: id }, order: [['sequence', 'ASC']] });
+    const planBatchesPlain = planBatchesList.map((b) => (b.get ? b.get({ plain: true }) : b));
+    const rmByCodeMap = new Map();
+    const rmByNameMap = new Map();
+    const pmByCodeMap = new Map();
+    const pmByNameMap = new Map();
+    if (rmIds.length > 0) {
+      const rmRowsForBatch = await RawMaterial.findAll({ where: { id: { [Op.in]: rmIds } }, attributes: ['id', 'code', 'name'] });
+      for (const r of rmRowsForBatch) {
+        rmByCodeMap.set(r.code, r);
+        if (r.name) rmByNameMap.set(String(r.name).trim().toLowerCase(), r);
+      }
+    }
+    const extraRmCodes = new Set();
+    const extraPmCodes = new Set();
+    for (const bp of planBatchesPlain) {
+      for (const line of bp.rm_lines || []) {
+        const c = line.rm_code || line.code;
+        if (c && !rmByCodeMap.has(c)) extraRmCodes.add(c);
+      }
+      for (const line of bp.pm_lines || []) {
+        const c = line.pm_code || line.code;
+        if (c && !pmByCodeMap.has(c)) extraPmCodes.add(c);
+      }
+    }
+    if (extraRmCodes.size > 0) {
+      const extra = await RawMaterial.findAll({ where: { code: { [Op.in]: [...extraRmCodes] } }, attributes: ['id', 'code', 'name'] });
+      for (const r of extra) {
+        rmByCodeMap.set(r.code, r);
+        if (r.name) rmByNameMap.set(String(r.name).trim().toLowerCase(), r);
+      }
+    }
+    if (pmIds.length > 0) {
+      const pmRowsForBatch = await PackMaterial.findAll({ where: { id: { [Op.in]: pmIds } }, attributes: ['id', 'code', 'description'] });
+      for (const p of pmRowsForBatch) {
+        pmByCodeMap.set(p.code, p);
+        if (p.description) pmByNameMap.set(String(p.description).trim().toLowerCase(), p);
+      }
+    }
+    if (extraPmCodes.size > 0) {
+      const extra = await PackMaterial.findAll({ where: { code: { [Op.in]: [...extraPmCodes] } }, attributes: ['id', 'code', 'description'] });
+      for (const p of extra) {
+        pmByCodeMap.set(p.code, p);
+        if (p.description) pmByNameMap.set(String(p.description).trim().toLowerCase(), p);
+      }
+    }
+    const plannedRmFromBatches = new Map();
+    const plannedPmFromBatches = new Map();
+    for (const bp of planBatchesPlain) {
+      accumulatePlannedBatchIntoQtyMaps(bp, plain, rmByCodeMap, rmByNameMap, pmByCodeMap, pmByNameMap, plannedRmFromBatches, plannedPmFromBatches);
+    }
+
     const whWhere = [];
     if (rmIds.length) whWhere.push({ item_type: 'RM', raw_material_id: { [Op.in]: rmIds } });
     if (pmIds.length) whWhere.push({ item_type: 'PM', pack_material_id: { [Op.in]: pmIds } });
@@ -1863,7 +2111,9 @@ async function getItemsInvolvedByPlanningId(req, res) {
       const reserved = reservedByRm.get(rid) ?? 0;
       const sih = Math.max(0, stockInHand - reserved);
       const inTransit = inTransitByRm.get(rid) ?? 0;
-      const totalRequired = req.quantity || 0;
+      const fullOrderQty = req.quantity || 0;
+      const plannedInBatches = plannedRmFromBatches.get(rid) || 0;
+      const totalRequired = Math.max(0, fullOrderQty - plannedInBatches);
       const plannedQty = Number(
         await ReservedBatchItem.sum('quantity_reserved', {
           where: { raw_material_id: rid, planning_extracted_id: id },
@@ -1896,7 +2146,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
         plannedQty,
         poQty: poQtyMap.get(`rm-${rid}`) ?? 0,
         inTransit,
-        batchCount: 0,
+        batchCount: countPlanningBatchesTouchingRm(planBatchesPlain, rid, rmByCodeMap, rmByNameMap),
       });
     }
     for (const pid of pmIds) {
@@ -1905,7 +2155,9 @@ async function getItemsInvolvedByPlanningId(req, res) {
       const reserved = reservedByPm.get(pid) ?? 0;
       const sih = Math.max(0, stockInHand - reserved);
       const inTransit = inTransitByPm.get(pid) ?? 0;
-      const totalRequired = req.quantity || 0;
+      const fullOrderQtyPm = req.quantity || 0;
+      const plannedInBatchesPm = plannedPmFromBatches.get(pid) || 0;
+      const totalRequired = Math.max(0, fullOrderQtyPm - plannedInBatchesPm);
       const plannedQty = Number(
         await ReservedBatchItem.sum('quantity_reserved', {
           where: { pack_material_id: pid, planning_extracted_id: id },
@@ -1938,7 +2190,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
         plannedQty,
         poQty: poQtyMap.get(`pm-${pid}`) ?? 0,
         inTransit,
-        batchCount: 0,
+        batchCount: countPlanningBatchesTouchingPm(planBatchesPlain, pid, pmByCodeMap, pmByNameMap, plain),
       });
     }
 

@@ -85,6 +85,90 @@ async function enrichQuotationItemsFromItemsList(vendorId, items) {
   return enriched;
 }
 
+function buildQuotationLineKey(line) {
+  const rmId = line?.raw_material_id != null ? Number(line.raw_material_id) : NaN;
+  if (Number.isFinite(rmId) && rmId > 0) return `rm:${rmId}`;
+  const pmId = line?.pack_material_id != null ? Number(line.pack_material_id) : NaN;
+  if (Number.isFinite(pmId) && pmId > 0) return `pm:${pmId}`;
+  const itemId = String(line?.itemId ?? '').trim().toLowerCase();
+  if (itemId) return `code:${itemId}`;
+  const name = String(line?.name ?? '').trim().toLowerCase();
+  if (name) return `name:${name}`;
+  return `idx:${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizePriceHistoryEntries(entries) {
+  if (!Array.isArray(entries)) return [];
+  return entries
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object') return null;
+      const oldPrice = Number(entry.oldPrice);
+      const newPrice = Number(entry.newPrice);
+      const changedAt = String(entry.changedAt ?? '').trim();
+      return {
+        oldPrice: Number.isFinite(oldPrice) ? oldPrice : 0,
+        newPrice: Number.isFinite(newPrice) ? newPrice : 0,
+        changedAt: changedAt || new Date().toISOString(),
+        changedBy: String(entry.changedBy ?? '').trim() || null,
+        reason: String(entry.reason ?? '').trim() || null,
+      };
+    })
+    .filter(Boolean);
+}
+
+function withPriceHistory(items, opts = {}) {
+  const previousItems = Array.isArray(opts.previousItems) ? opts.previousItems : [];
+  const nowIso = opts.nowIso || new Date().toISOString();
+  const actor = opts.actor || null;
+  const reason = opts.reason || 'Updated from procurement quotation';
+  const previousByKey = new Map();
+  for (const prev of previousItems) {
+    previousByKey.set(buildQuotationLineKey(prev), prev);
+  }
+  return (Array.isArray(items) ? items : []).map((line) => {
+    const key = buildQuotationLineKey(line);
+    const prev = previousByKey.get(key) || null;
+    const nextPrice = Number(line.pricePerUnit) || 0;
+    const baseHistory = normalizePriceHistoryEntries(line.priceHistory);
+    const prevHistory =
+      baseHistory.length > 0
+        ? baseHistory
+        : normalizePriceHistoryEntries(prev?.priceHistory);
+    if (!prev) {
+      return {
+        ...line,
+        priceHistory: [
+          ...prevHistory,
+          {
+            oldPrice: nextPrice,
+            newPrice: nextPrice,
+            changedAt: nowIso,
+            changedBy: actor,
+            reason: 'Initial quotation price',
+          },
+        ],
+      };
+    }
+    const prevPrice = Number(prev.pricePerUnit) || 0;
+    if (Math.abs(prevPrice - nextPrice) < 1e-9) {
+      return { ...line, priceHistory: prevHistory };
+    }
+    return {
+      ...line,
+      priceHistory: [
+        ...prevHistory,
+        {
+          oldPrice: prevPrice,
+          newPrice: nextPrice,
+          changedAt: nowIso,
+          changedBy: actor,
+          reason,
+        },
+      ],
+    };
+  });
+}
+
 async function upsertItemsListRateFromQuotationLine(t, vendorId, line, paymentTerms) {
   const rmId = line.raw_material_id != null ? parseInt(String(line.raw_material_id), 10) : null;
   const pmId = line.pack_material_id != null ? parseInt(String(line.pack_material_id), 10) : null;
@@ -414,7 +498,12 @@ async function createProcurementQuotation(req, res) {
         leadTimeDays,
       };
     }
-    const totalValue = items.reduce((sum, it) => sum + (Number(it.totalValue) || 0), 0);
+    const itemsWithHistory = withPriceHistory(items, {
+      previousItems: [],
+      actor: req.user?.email ?? null,
+      reason: 'Initial quotation price',
+    });
+    const totalValue = itemsWithHistory.reduce((sum, it) => sum + (Number(it.totalValue) || 0), 0);
     const lineLeadsForHeader = items
       .map((it) => Number(it.leadTimeDays ?? 0))
       .filter((n) => Number.isFinite(n) && n > 0);
@@ -435,7 +524,7 @@ async function createProcurementQuotation(req, res) {
       quoted_by: body.quotedBy ?? body.quoted_by ?? req.user?.email ?? null,
       attachment_ref: body.attachmentRef ?? body.attachment_ref ?? null,
       attachment_status: body.attachmentStatus ?? body.attachment_status ?? 'pending',
-      items,
+      items: itemsWithHistory,
       lead_time_days: headerLeadDays,
       payment_terms: body.paymentTerms ?? body.payment_terms ?? null,
       valid_till: body.validTill ?? body.valid_till ?? null,
@@ -445,7 +534,7 @@ async function createProcurementQuotation(req, res) {
       }, { transaction: t });
 
       // Sync into Items List (single source of truth for vendor rates).
-      for (const it of items) {
+      for (const it of itemsWithHistory) {
         await upsertItemsListRateFromQuotationLine(t, vId, it, body.paymentTerms ?? body.payment_terms);
       }
 
@@ -462,9 +551,9 @@ async function createProcurementQuotation(req, res) {
           id: row.id,
           vendorId: vId,
           procurementRequestId: prId,
-          itemsCount: Array.isArray(items) ? items.length : 0,
+            itemsCount: Array.isArray(itemsWithHistory) ? itemsWithHistory.length : 0,
         });
-        (Array.isArray(items) ? items : []).slice(0, 50).forEach((it, idx) => {
+        (Array.isArray(itemsWithHistory) ? itemsWithHistory : []).slice(0, 50).forEach((it, idx) => {
           // eslint-disable-next-line no-console
           console.log('[procurementQuotations:create] item', {
             idx,
@@ -510,7 +599,16 @@ async function updateProcurementQuotation(req, res) {
     if (body.attachment_ref !== undefined) updates.attachment_ref = body.attachment_ref;
     if (body.attachmentStatus !== undefined) updates.attachment_status = body.attachmentStatus;
     if (body.attachment_status !== undefined) updates.attachment_status = body.attachment_status;
-    if (body.items !== undefined) updates.items = body.items;
+    if (body.items !== undefined) {
+      updates.items = withPriceHistory(body.items, {
+        previousItems: row.items,
+        actor: req.user?.email ?? null,
+      });
+      updates.total_value = (Array.isArray(updates.items) ? updates.items : []).reduce(
+        (sum, it) => sum + (Number(it.totalValue) || 0),
+        0
+      );
+    }
     if (body.leadTimeDays !== undefined) updates.lead_time_days = body.leadTimeDays;
     if (body.lead_time_days !== undefined) updates.lead_time_days = body.lead_time_days;
     if (body.paymentTerms !== undefined) updates.payment_terms = body.paymentTerms;

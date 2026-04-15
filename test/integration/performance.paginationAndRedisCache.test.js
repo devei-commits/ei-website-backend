@@ -319,12 +319,22 @@ describe('Performance pagination + Redis cache-aside', () => {
       });
     }
 
-    // Add one sent planning batch for items-involved.
+    // Add one planning batch for items-involved; PI must be BOM-confirmed with full-order RM totals
+    // greater than the batch so `totalRequired` (remaining) is non-zero for pagination tests.
     const planningRow = await PlanningExtracted.findOne({ order: [['id', 'ASC']] });
     await planningRow.update({
+      bom_confirmed_at: new Date(),
       sent_batch_indices: [0],
       order_qty_display: '10 units',
       total_kg_display: '500 KG',
+      raw_materials: [
+        { raw_material_id: rmInvA.id, code: rmInvA.code, name: rmInvA.name, quantity: 60, unit: 'KG' },
+        { raw_material_id: rmInvB.id, code: rmInvB.code, name: rmInvB.name, quantity: 40, unit: 'KG' },
+        { raw_material_id: rmInvC.id, code: rmInvC.code, name: rmInvC.name, quantity: 20, unit: 'KG' },
+        { raw_material_id: rmInvD.id, code: rmInvD.code, name: rmInvD.name, quantity: 50, unit: 'KG' },
+        { raw_material_id: rmInvE.id, code: rmInvE.code, name: rmInvE.name, quantity: 30, unit: 'KG' },
+      ],
+      packaging_materials: [],
     });
 
     await PlanningBatch.create({
