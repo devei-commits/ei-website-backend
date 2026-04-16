@@ -48,6 +48,10 @@ WarehouseInventoryLocationHistory.init(
     batch_no: { type: DataTypes.STRING(50), allowNull: true },
     /** Same id on all RM/PM history rows for one dispensing PATCH — ties MU consumption to production_batches.mu_dispensing_bundles. */
     dispensing_bundle_id: { type: DataTypes.STRING(80), allowNull: true },
+    /** Manual inventory edits: { before: {...}, after: {...}, fields: string[] } */
+    changes_json: { type: DataTypes.JSON, allowNull: true },
+    /** Optional operator note on manual adjustment */
+    note: { type: DataTypes.TEXT, allowNull: true },
   },
   {
     sequelize: db,

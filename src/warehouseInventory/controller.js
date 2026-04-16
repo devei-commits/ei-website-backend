@@ -15,11 +15,77 @@ const { WarehouseRackItem, WarehouseRack, WarehouseLocation } = require('../ware
 const { Op } = require('sequelize');
 const GoodsReceivedNote = require('../grn/models');
 const PurchaseOrder = require('../purchaseOrders/models');
+const { quantityToKg } = require('./quantityToKg');
+const { loadRmPmMeta } = require('./inTransitSync');
+const db = require('../../db');
 
 function toNum(x) {
   if (x == null) return 0;
   const n = Number(x);
   return Number.isNaN(n) ? 0 : n;
+}
+
+let locationHistoryAuditEnsured = false;
+async function ensureLocationHistoryAuditColumns() {
+  if (locationHistoryAuditEnsured) return;
+  locationHistoryAuditEnsured = true;
+  try {
+    const dialect = db.getDialect && db.getDialect();
+    if (dialect === 'postgres') {
+      await db.query(
+        'ALTER TABLE warehouse_inventory_location_history ADD COLUMN IF NOT EXISTS changes_json JSONB'
+      );
+      await db.query(
+        'ALTER TABLE warehouse_inventory_location_history ADD COLUMN IF NOT EXISTS note TEXT'
+      );
+    }
+  } catch (e) {
+    console.warn(
+      '[warehouse-inventory] ensureLocationHistoryAuditColumns:',
+      e && e.message ? e.message : e
+    );
+  }
+}
+
+/** Normalized snapshot for audit trail (PATCH inventory). */
+function inventoryAuditSnapshot(wh) {
+  const w = wh.get ? wh.get({ plain: true }) : wh;
+  const whStock = toNum(w.wh_stock);
+  const ml1 = toNum(w.ml1_stock);
+  const ml2 = toNum(w.ml2_stock);
+  return {
+    wh_stock: whStock,
+    ml1_stock: ml1,
+    ml2_stock: ml2,
+    stock_in_hand: whStock + ml1 + ml2,
+    reserved: toNum(w.reserved),
+    in_transit: toNum(w.in_transit),
+    zone: w.zone != null ? String(w.zone) : '',
+    rack: w.rack != null ? String(w.rack) : '',
+    qc_status: w.qc_status != null ? String(w.qc_status) : '',
+    wh_unit: w.wh_unit != null ? String(w.wh_unit) : '',
+    reorder_pt: toNum(w.reorder_pt),
+    avg_mo: toNum(w.avg_mo),
+    batch_number: w.batch_number != null ? String(w.batch_number) : '',
+    expiry_date: w.expiry_date != null ? String(w.expiry_date).slice(0, 10) : '',
+  };
+}
+
+function auditFieldChanged(key, beforeVal, afterVal) {
+  const numeric = [
+    'wh_stock',
+    'ml1_stock',
+    'ml2_stock',
+    'stock_in_hand',
+    'reserved',
+    'in_transit',
+    'reorder_pt',
+    'avg_mo',
+  ].includes(key);
+  if (numeric) {
+    return Math.abs(toNum(beforeVal) - toNum(afterVal)) > 1e-6;
+  }
+  return String(beforeVal ?? '') !== String(afterVal ?? '');
 }
 
 function buildMemberToGroupsMap(groups) {
@@ -44,6 +110,17 @@ async function getInTransitBreakdown() {
       where: { status: { [Op.in]: ['In Transit', 'Under GRN', 'Pending', 'Delayed', 'On Hold'] } },
       attributes: ['id', 'vendor', 'purchase_order_id', 'po_no', 'expected_date', 'line_items'],
     });
+    const rmIds = new Set();
+    const pmIds = new Set();
+    for (const g of grns) {
+      const d = g.get ? g.get({ plain: true }) : g;
+      const lines = Array.isArray(d.line_items) ? d.line_items : [];
+      for (const line of lines) {
+        if (line.raw_material_id != null) rmIds.add(Number(line.raw_material_id));
+        if (line.pack_material_id != null) pmIds.add(Number(line.pack_material_id));
+      }
+    }
+    const { rmMeta, pmMeta } = await loadRmPmMeta(rmIds, pmIds);
     for (const g of grns) {
       const d = g.get ? g.get({ plain: true }) : g;
       const vendor = d.vendor || '';
@@ -58,8 +135,17 @@ async function getInTransitBreakdown() {
         if (line.raw_material_id != null) key = `rm-${line.raw_material_id}`;
         else if (line.pack_material_id != null) key = `pm-${line.pack_material_id}`;
         if (!key) continue;
+        const unit = String(line.unit ?? line.UOM ?? '').trim();
+        const itemType = key.startsWith('rm-') ? 'RM' : 'PM';
+        const id = itemType === 'RM' ? Number(line.raw_material_id) : Number(line.pack_material_id);
+        const meta = itemType === 'RM' ? rmMeta.get(id) : pmMeta.get(id);
+        const qtyKg = quantityToKg(qty, unit, {
+          itemType,
+          masterUom: itemType === 'RM' ? meta?.uom : meta?.unit,
+          sizeSpec: itemType === 'PM' ? meta?.size_spec : null,
+        });
         if (!map.has(key)) map.set(key, []);
-        map.get(key).push({ vendor, poId, poNo, expectedDate, quantity: qty });
+        map.get(key).push({ vendor, poId, poNo, expectedDate, quantity: qtyKg });
       }
     }
   } catch (err) {
@@ -74,6 +160,17 @@ async function getPoQuantityByItem() {
   const poQtyDebug = process.env.EI_DEBUG_WAREHOUSE_PO_QTY === '1';
   try {
     const pos = await PurchaseOrder.findAll({ attributes: ['id', 'status', 'items'] });
+    const rmIds = new Set();
+    const pmIds = new Set();
+    for (const po of pos) {
+      const d = po.get ? po.get({ plain: true }) : po;
+      const items = Array.isArray(d.items) ? d.items : [];
+      for (const line of items) {
+        if (line.raw_material_id != null) rmIds.add(Number(line.raw_material_id));
+        if (line.pack_material_id != null) pmIds.add(Number(line.pack_material_id));
+      }
+    }
+    const { rmMeta, pmMeta } = await loadRmPmMeta(rmIds, pmIds);
     for (const po of pos) {
       const d = po.get ? po.get({ plain: true }) : po;
       const items = Array.isArray(d.items) ? d.items : [];
@@ -84,7 +181,16 @@ async function getPoQuantityByItem() {
         if (line.raw_material_id != null) key = `rm-${line.raw_material_id}`;
         else if (line.pack_material_id != null) key = `pm-${line.pack_material_id}`;
         if (!key) continue;
-        map.set(key, (map.get(key) || 0) + qty);
+        const unit = String(line.unit ?? line.UOM ?? '').trim();
+        const itemType = key.startsWith('rm-') ? 'RM' : 'PM';
+        const id = itemType === 'RM' ? Number(line.raw_material_id) : Number(line.pack_material_id);
+        const meta = itemType === 'RM' ? rmMeta.get(id) : pmMeta.get(id);
+        const qtyKg = quantityToKg(qty, unit, {
+          itemType,
+          masterUom: itemType === 'RM' ? meta?.uom : meta?.unit,
+          sizeSpec: itemType === 'PM' ? meta?.size_spec : null,
+        });
+        map.set(key, (map.get(key) || 0) + qtyKg);
       }
     }
     if (poQtyDebug) {
@@ -190,13 +296,14 @@ async function list(req, res) {
 
 /**
  * PATCH /api/v1/warehouse-inventory/:id
- * Body: { wh_stock?, ml1_stock?, ml2_stock?, reserved?, in_transit?, zone?, rack?, qc_status? }
+ * Body: any of wh_stock, ml1_stock, ml2_stock, reserved, in_transit, zone, rack, qc_status, wh_unit,
+ *       reorder_pt, avg_mo, batch_number, expiry_date (YYYY-MM-DD), note (audit note).
  * Recomputes stock_in_hand = wh_stock + ml1_stock + ml2_stock.
- *
- * NOTE: Manual Adjust Stock is considered aggregate-level; per-rack quantities remain as-is for now.
+ * Writes one INVENTORY_ADJUST history row with before/after when anything changes or note is non-empty.
  */
 async function updateStock(req, res) {
   try {
+    await ensureLocationHistoryAuditColumns();
     const id = parseInt(String(req.params.id), 10);
     if (Number.isNaN(id)) {
       return res.status(400).json({ error: 'Invalid warehouse inventory id' });
@@ -206,15 +313,16 @@ async function updateStock(req, res) {
       return res.status(404).json({ error: 'Warehouse inventory row not found' });
     }
     const wh = row.get ? row.get({ plain: true }) : row;
+    const beforeSnap = inventoryAuditSnapshot(row);
     const body = req.body || {};
     const updates = {};
-    const prevZone = wh.zone || null;
-    const prevRack = wh.rack || null;
+    const noteRaw =
+      body.note != null ? String(body.note) : body.reason != null ? String(body.reason) : '';
+    const note = noteRaw.trim() || null;
 
-    // For now, manual adjust can tweak aggregate quantities directly.
-    let whStock = toNum(wh.wh_stock);
-    let ml1Stock = toNum(wh.ml1_stock);
-    let ml2Stock = toNum(wh.ml2_stock);
+    let whStock = beforeSnap.wh_stock;
+    let ml1Stock = beforeSnap.ml1_stock;
+    let ml2Stock = beforeSnap.ml2_stock;
 
     if (body.wh_stock != null) {
       whStock = Number(body.wh_stock);
@@ -233,35 +341,82 @@ async function updateStock(req, res) {
     if (body.zone != null) updates.zone = String(body.zone);
     if (body.rack != null) updates.rack = String(body.rack);
     if (body.qc_status != null) updates.qc_status = String(body.qc_status);
+    if (body.wh_unit != null) {
+      const u = String(body.wh_unit).trim().slice(0, 20);
+      if (u) updates.wh_unit = u;
+    }
+    if (body.reorder_pt != null) updates.reorder_pt = Number(body.reorder_pt);
+    if (body.avg_mo != null) updates.avg_mo = Number(body.avg_mo);
+    if (body.batch_number !== undefined) {
+      const b = String(body.batch_number ?? '').trim().slice(0, 50);
+      updates.batch_number = b || null;
+    }
+    if (body.expiry_date !== undefined) {
+      const s = body.expiry_date == null || body.expiry_date === '' ? null : String(body.expiry_date).trim().slice(0, 10);
+      updates.expiry_date = s;
+    }
 
     updates.stock_in_hand = whStock + ml1Stock + ml2Stock;
 
-    // If storage location changed, record history for traceability
-    const nextZone = updates.zone != null ? updates.zone : prevZone;
-    const nextRack = updates.rack != null ? updates.rack : prevRack;
-    const locationChanged =
-      (prevZone || nextZone) && (prevZone !== nextZone || prevRack !== nextRack);
+    if (Object.keys(updates).length === 0 && !note) {
+      const updatedRow = await WarehouseInventory.findByPk(id);
+      const u = updatedRow.get ? updatedRow.get({ plain: true }) : updatedRow;
+      return res.json({
+        id: u.id,
+        wh_stock: toNum(u.wh_stock),
+        ml1_stock: toNum(u.ml1_stock),
+        ml2_stock: toNum(u.ml2_stock),
+        stock_in_hand: toNum(u.stock_in_hand),
+        reserved: toNum(u.reserved),
+        in_transit: toNum(u.in_transit),
+        zone: u.zone,
+        rack: u.rack,
+        qc_status: u.qc_status,
+        wh_unit: u.wh_unit,
+        reorder_pt: toNum(u.reorder_pt),
+        avg_mo: toNum(u.avg_mo),
+        batch_number: u.batch_number ?? null,
+        expiry_date: u.expiry_date ?? null,
+      });
+    }
 
-    if (locationChanged) {
+    await row.update(updates);
+    const updatedRow = await WarehouseInventory.findByPk(id);
+    const afterSnap = inventoryAuditSnapshot(updatedRow);
+    const changed = {};
+    for (const key of Object.keys(beforeSnap)) {
+      if (auditFieldChanged(key, beforeSnap[key], afterSnap[key])) {
+        changed[key] = [beforeSnap[key], afterSnap[key]];
+      }
+    }
+
+    if (Object.keys(changed).length > 0 || note) {
       await logLocationMovement({
         warehouseInventoryId: wh.id,
         itemType: wh.item_type,
         rawMaterialId: wh.raw_material_id,
         packMaterialId: wh.pack_material_id,
         productId: wh.product_id,
-        fromZone: prevZone,
-        fromRack: prevRack,
-        toZone: nextZone,
-        toRack: nextRack,
-        qtyDelta: null,
-        actionType: 'MANUAL_ADJUST',
+        fromZone: beforeSnap.zone || null,
+        fromRack: beforeSnap.rack || null,
+        toZone: afterSnap.zone || null,
+        toRack: afterSnap.rack || null,
+        qtyDelta: afterSnap.stock_in_hand - beforeSnap.stock_in_hand,
+        actionType: 'INVENTORY_ADJUST',
+        changesJson: { before: beforeSnap, after: afterSnap, changed },
+        note,
       });
     }
 
-    await row.update(updates);
-    const updatedRow = await WarehouseInventory.findByPk(id);
     const updated = updatedRow.get ? updatedRow.get({ plain: true }) : updatedRow;
-    console.log('[warehouse-inventory] PATCH id=%d: wh_stock=%s ml1=%s ml2=%s stock_in_hand=%s', id, updated.wh_stock, updated.ml1_stock, updated.ml2_stock, updated.stock_in_hand);
+    console.log(
+      '[warehouse-inventory] PATCH id=%d: wh_stock=%s ml1=%s ml2=%s stock_in_hand=%s',
+      id,
+      updated.wh_stock,
+      updated.ml1_stock,
+      updated.ml2_stock,
+      updated.stock_in_hand
+    );
     res.json({
       id: updated.id,
       wh_stock: toNum(updated.wh_stock),
@@ -273,6 +428,11 @@ async function updateStock(req, res) {
       zone: updated.zone,
       rack: updated.rack,
       qc_status: updated.qc_status,
+      wh_unit: updated.wh_unit,
+      reorder_pt: toNum(updated.reorder_pt),
+      avg_mo: toNum(updated.avg_mo),
+      batch_number: updated.batch_number ?? null,
+      expiry_date: updated.expiry_date ?? null,
     });
   } catch (err) {
     console.error('[warehouse-inventory] PATCH error:', err);
@@ -317,6 +477,8 @@ async function listLocationHistory(req, res) {
         actionType: h.action_type ?? null,
         qtyDelta: h.qty_delta != null ? Number(h.qty_delta) : null,
         dispensingBundleId: h.dispensing_bundle_id ?? null,
+        changesJson: h.changes_json ?? null,
+        note: h.note ?? null,
       };
     });
 
@@ -438,6 +600,8 @@ async function listAllLocationHistory(req, res) {
         name,
         subtitle,
         dispensingBundleId: h.dispensing_bundle_id ?? null,
+        changesJson: h.changes_json ?? null,
+        note: h.note ?? null,
       };
     });
 
@@ -583,6 +747,7 @@ async function listPayload() {
       if (stockInHand < reorderPt * 0.5) status = 'Critical';
       else if (stockInHand < reorderPt) status = 'Low Stock';
     }
+    const qcStatusRaw = (wh.qc_status || 'In Stock').trim();
     if (wh.item_type === 'RM' && wh.raw_material_id) {
       const m = rmMap.get(wh.raw_material_id);
       if (!m) continue;
@@ -613,6 +778,9 @@ async function listPayload() {
         reorderPt,
         avgMo: toNum(wh.avg_mo),
         status,
+        qcStatus: qcStatusRaw,
+        batchNumber: wh.batch_number || null,
+        expiryDate: wh.expiry_date || null,
       });
     } else if (wh.item_type === 'PM' && wh.pack_material_id) {
       const m = pmMap.get(wh.pack_material_id);
@@ -633,7 +801,7 @@ async function listPayload() {
         zone: wh.zone || '—',
         rack: wh.rack || '—',
         whStock,
-        whUnit: wh.wh_unit || 'PCS',
+        whUnit: wh.wh_unit || 'KG',
         ml1Stock,
         ml2Stock,
         stockInHand,
@@ -644,6 +812,9 @@ async function listPayload() {
         reorderPt,
         avgMo: toNum(wh.avg_mo),
         status,
+        qcStatus: qcStatusRaw,
+        batchNumber: wh.batch_number || null,
+        expiryDate: wh.expiry_date || null,
       });
     } else if (wh.item_type === 'PR' && wh.product_id) {
       const m = productMap.get(wh.product_id);
@@ -661,7 +832,7 @@ async function listPayload() {
         zone: wh.zone || '—',
         rack: wh.rack || '—',
         whStock,
-        whUnit: wh.wh_unit || 'PCS',
+        whUnit: wh.wh_unit || 'KG',
         ml1Stock,
         ml2Stock,
         stockInHand,
@@ -672,6 +843,9 @@ async function listPayload() {
         reorderPt,
         avgMo: toNum(wh.avg_mo),
         status,
+        qcStatus: qcStatusRaw,
+        batchNumber: wh.batch_number || null,
+        expiryDate: wh.expiry_date || null,
       });
     }
   }

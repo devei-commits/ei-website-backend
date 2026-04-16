@@ -13,6 +13,9 @@ const PurchaseOrder = require('../purchaseOrders/models');
 const PoTracking = require('../poTracking/models');
 const ProcurementRequest = require('../procurementRequests/models');
 const { ReservedBatchItem } = require('../fulfillment/models');
+const RawMaterial = require('../rawMaterials/models');
+const PackMaterial = require('../packMaterials/models');
+const { quantityToKg } = require('./quantityToKg');
 
 const GRN_IN_TRANSIT_STATUSES = ['In Transit', 'Under GRN', 'Pending', 'Delayed', 'On Hold'];
 
@@ -22,7 +25,37 @@ function toNum(x) {
   return Number.isNaN(n) ? 0 : n;
 }
 
-/** Sum qty per rm-{id} / pm-{id} from open inbound GRNs. */
+async function loadRmPmMeta(rmIds, pmIds) {
+  const rmMeta = new Map();
+  const pmMeta = new Map();
+  try {
+    if (rmIds.size) {
+      const rows = await RawMaterial.findAll({
+        where: { id: [...rmIds] },
+        attributes: ['id', 'uom'],
+      });
+      for (const r of rows) {
+        const x = r.get ? r.get({ plain: true }) : r;
+        rmMeta.set(Number(x.id), { uom: x.uom || '' });
+      }
+    }
+    if (pmIds.size) {
+      const rows = await PackMaterial.findAll({
+        where: { id: [...pmIds] },
+        attributes: ['id', 'unit', 'size_spec'],
+      });
+      for (const r of rows) {
+        const x = r.get ? r.get({ plain: true }) : r;
+        pmMeta.set(Number(x.id), { unit: x.unit || '', size_spec: x.size_spec || '' });
+      }
+    }
+  } catch (err) {
+    console.warn('[inTransitSync] loadRmPmMeta:', err.message);
+  }
+  return { rmMeta, pmMeta };
+}
+
+/** Sum in-transit **kg** per rm-{id} / pm-{id} from open inbound GRNs. */
 async function getGrnInTransitQtyByKey() {
   const map = new Map();
   try {
@@ -30,6 +63,17 @@ async function getGrnInTransitQtyByKey() {
       where: { status: { [Op.in]: GRN_IN_TRANSIT_STATUSES } },
       attributes: ['line_items'],
     });
+    const rmIds = new Set();
+    const pmIds = new Set();
+    for (const g of grns) {
+      const d = g.get ? g.get({ plain: true }) : g;
+      const lines = Array.isArray(d.line_items) ? d.line_items : [];
+      for (const line of lines) {
+        if (line.raw_material_id != null) rmIds.add(Number(line.raw_material_id));
+        if (line.pack_material_id != null) pmIds.add(Number(line.pack_material_id));
+      }
+    }
+    const { rmMeta, pmMeta } = await loadRmPmMeta(rmIds, pmIds);
     for (const g of grns) {
       const d = g.get ? g.get({ plain: true }) : g;
       const lines = Array.isArray(d.line_items) ? d.line_items : [];
@@ -40,7 +84,16 @@ async function getGrnInTransitQtyByKey() {
         if (line.raw_material_id != null) key = `rm-${line.raw_material_id}`;
         else if (line.pack_material_id != null) key = `pm-${line.pack_material_id}`;
         if (!key) continue;
-        map.set(key, (map.get(key) || 0) + qty);
+        const unit = String(line.unit ?? line.UOM ?? '').trim();
+        const itemType = key.startsWith('rm-') ? 'RM' : 'PM';
+        const id = itemType === 'RM' ? Number(line.raw_material_id) : Number(line.pack_material_id);
+        const meta = itemType === 'RM' ? rmMeta.get(id) : pmMeta.get(id);
+        const kg = quantityToKg(qty, unit, {
+          itemType,
+          masterUom: itemType === 'RM' ? meta?.uom : meta?.unit,
+          sizeSpec: itemType === 'PM' ? meta?.size_spec : null,
+        });
+        map.set(key, (map.get(key) || 0) + kg);
       }
     }
   } catch (err) {
@@ -66,8 +119,65 @@ async function getPurchaseOrderIdsWithInboundGrn() {
   return ids;
 }
 
-function addPoItemsToMap(map, items) {
+/** Match GRN Complete inventory logic: use rcvd qty, else poQty when rcvd unset/zero. */
+function lineReceivedQtyFromGrnLine(line) {
+  const rawRcvd = Number(line.rcvdQty ?? line.rcvd_qty);
+  let rcvd = Math.max(0, Number.isFinite(rawRcvd) ? rawRcvd || 0 : 0);
+  if (rcvd === 0) {
+    const poFb = Math.max(0, toNum(line.poQty ?? line.po_qty));
+    if (poFb > 0) rcvd = poFb;
+  }
+  return rcvd;
+}
+
+/**
+ * Per PO id: sum received quantities on GRN Complete rows, keyed rm-{id}/pm-{id}.
+ * Used so PO pipeline in_transit does not re-add stock already received (sync overwrites row in_transit after GRN Complete).
+ */
+async function getCompletedGrnReceivedByPurchaseOrderId() {
+  /** @type {Map<number, Map<string, number>>} */
+  const byPo = new Map();
+  try {
+    const grns = await GoodsReceivedNote.findAll({
+      where: {
+        status: 'GRN Complete',
+        purchase_order_id: { [Op.ne]: null },
+      },
+      attributes: ['purchase_order_id', 'line_items'],
+    });
+    for (const g of grns) {
+      const d = g.get ? g.get({ plain: true }) : g;
+      const poId = Number(d.purchase_order_id);
+      if (!Number.isFinite(poId) || poId <= 0) continue;
+      const lines = Array.isArray(d.line_items) ? d.line_items : [];
+      let inner = byPo.get(poId);
+      if (!inner) {
+        inner = new Map();
+        byPo.set(poId, inner);
+      }
+      for (const line of lines) {
+        const qNative = lineReceivedQtyFromGrnLine(line);
+        if (qNative <= 0) continue;
+        let key = null;
+        if (line.raw_material_id != null) key = `rm-${line.raw_material_id}`;
+        else if (line.pack_material_id != null) key = `pm-${line.pack_material_id}`;
+        if (!key) continue;
+        inner.set(key, (inner.get(key) || 0) + qNative);
+      }
+    }
+  } catch (err) {
+    console.warn('[inTransitSync] getCompletedGrnReceivedByPurchaseOrderId:', err.message);
+  }
+  return byPo;
+}
+
+/**
+ * Add PO line quantities to map (kg), minus completed GRN received amounts for this PO (native qty converted with same unit).
+ */
+function addPoItemsToMapNetOfCompletedGrns(map, items, receivedByKeyForPo, rmMeta, pmMeta) {
   const lines = Array.isArray(items) ? items : [];
+  /** @type {Map<string, { sum: number; unit: string }>} */
+  const poTotalsByKey = new Map();
   for (const line of lines) {
     const qty = toNum(line.quantity ?? line.qty ?? line.poQty);
     if (qty <= 0) continue;
@@ -75,7 +185,26 @@ function addPoItemsToMap(map, items) {
     if (line.raw_material_id != null) key = `rm-${line.raw_material_id}`;
     else if (line.pack_material_id != null) key = `pm-${line.pack_material_id}`;
     if (!key) continue;
-    map.set(key, (map.get(key) || 0) + qty);
+    const unit = String(line.unit ?? line.UOM ?? '').trim();
+    const prev = poTotalsByKey.get(key) || { sum: 0, unit: '' };
+    poTotalsByKey.set(key, { sum: prev.sum + qty, unit: unit || prev.unit });
+  }
+  const rec = receivedByKeyForPo || new Map();
+  for (const [key, { sum, unit }] of poTotalsByKey) {
+    const recNative = toNum(rec.get(key));
+    const itemType = key.startsWith('rm-') ? 'RM' : 'PM';
+    const id = parseInt(key.slice(3), 10);
+    const meta = itemType === 'RM' ? rmMeta.get(id) : pmMeta.get(id);
+    const ctx = {
+      itemType,
+      masterUom: itemType === 'RM' ? meta?.uom : meta?.unit,
+      sizeSpec: itemType === 'PM' ? meta?.size_spec : null,
+    };
+    const poKg = quantityToKg(sum, unit, ctx);
+    const recKg = quantityToKg(recNative, unit, ctx);
+    const net = Math.max(0, poKg - recKg);
+    if (net <= 0) continue;
+    map.set(key, (map.get(key) || 0) + net);
   }
 }
 
@@ -88,6 +217,7 @@ async function getPoPipelineInTransitQtyByKey() {
   const map = new Map();
   try {
     const skipPoIds = await getPurchaseOrderIdsWithInboundGrn();
+    const completedRcvdByPo = await getCompletedGrnReceivedByPurchaseOrderId();
     const [pos, trackingRows, pendingPrs] = await Promise.all([
       PurchaseOrder.findAll({ attributes: ['id', 'status', 'items', 'form_data'] }),
       PoTracking.findAll({
@@ -110,6 +240,26 @@ async function getPoPipelineInTransitQtyByKey() {
       })
     );
 
+    const rmIds = new Set();
+    const pmIds = new Set();
+    for (const po of pos) {
+      const d = po.get ? po.get({ plain: true }) : po;
+      if (skipPoIds.has(d.id)) continue;
+      const st = String(d.status || '').trim();
+      const tr = trackingByPo.get(d.id);
+      const fd = d.form_data && typeof d.form_data === 'object' && !Array.isArray(d.form_data) ? d.form_data : {};
+      const reqId = fd.requestId != null ? String(fd.requestId) : '';
+      const linkedDeliveryPending = reqId && deliveryPendingIds.has(reqId);
+      const releasedShipped = st === 'Released' && tr && tr.shipped_at && !tr.grn_complete_at;
+      if (!(st === 'In Transit' || releasedShipped || linkedDeliveryPending)) continue;
+      const items = Array.isArray(d.items) ? d.items : [];
+      for (const line of items) {
+        if (line.raw_material_id != null) rmIds.add(Number(line.raw_material_id));
+        if (line.pack_material_id != null) pmIds.add(Number(line.pack_material_id));
+      }
+    }
+    const { rmMeta, pmMeta } = await loadRmPmMeta(rmIds, pmIds);
+
     for (const po of pos) {
       const d = po.get ? po.get({ plain: true }) : po;
       if (skipPoIds.has(d.id)) continue;
@@ -123,7 +273,8 @@ async function getPoPipelineInTransitQtyByKey() {
         st === 'Released' && tr && tr.shipped_at && !tr.grn_complete_at;
 
       if (st === 'In Transit' || releasedShipped || linkedDeliveryPending) {
-        addPoItemsToMap(map, d.items);
+        const receivedForPo = completedRcvdByPo.get(Number(d.id)) || new Map();
+        addPoItemsToMapNetOfCompletedGrns(map, d.items, receivedForPo, rmMeta, pmMeta);
       }
     }
   } catch (err) {
@@ -201,7 +352,7 @@ async function syncWarehouseInTransitAll() {
 
   const whRows = await WarehouseInventory.findAll({
     where: { item_type: { [Op.in]: ['RM', 'PM'] } },
-    attributes: ['id', 'item_type', 'raw_material_id', 'pack_material_id', 'in_transit'],
+    attributes: ['id', 'item_type', 'raw_material_id', 'pack_material_id', 'in_transit', 'wh_unit'],
   });
 
   for (const w of whRows) {
@@ -213,8 +364,12 @@ async function syncWarehouseInTransitAll() {
       next = pmTotals.get(Number(d.pack_material_id)) || 0;
     }
     const prev = toNum(d.in_transit);
-    if (Math.abs(prev - next) > 1e-9) {
-      await WarehouseInventory.update({ in_transit: next }, { where: { id: d.id } });
+    const wu = String(d.wh_unit || '').toUpperCase();
+    const updates = {};
+    if (Math.abs(prev - next) > 1e-9) updates.in_transit = next;
+    if (wu !== 'KG') updates.wh_unit = 'KG';
+    if (Object.keys(updates).length) {
+      await WarehouseInventory.update(updates, { where: { id: d.id } });
     }
   }
 
@@ -225,8 +380,10 @@ module.exports = {
   syncWarehouseInTransitAll,
   getGrnInTransitQtyByKey,
   getPoPipelineInTransitQtyByKey,
+  getCompletedGrnReceivedByPurchaseOrderId,
   getPlannedPlanningQtyByItem,
   mergeKeyMapsIntoRmPm,
+  loadRmPmMeta,
   toNum,
   GRN_IN_TRANSIT_STATUSES,
 };

@@ -126,6 +126,27 @@ function isStockCheckPendingStatus(status) {
   return s === 'pending' || s === 'requested' || s === 'in progress';
 }
 
+function parseStockCheckNotesPayload(notes) {
+  const raw = String(notes ?? '').trim();
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function isStockCheckOneTimeCompleted(status, notes) {
+  const s = String(status || '').trim().toLowerCase();
+  if (s !== 'completed') return false;
+  const parsed = parseStockCheckNotesPayload(notes);
+  const outcome = String(parsed?.outcome ?? '').trim().toLowerCase();
+  const lines = Array.isArray(parsed?.lines) ? parsed.lines : [];
+  // Lock only when warehouse has successfully completed stock check
+  // and sent qty-level line data back.
+  return outcome === 'all_ok' && lines.length > 0;
+}
+
 function formatPR(row, enrichedItems) {
   if (!row) return null;
   const d = row.get ? row.get({ plain: true }) : row;
@@ -300,6 +321,20 @@ async function updateProcurementRequest(req, res) {
     const nextStatus = updates.status !== undefined ? updates.status : row.status;
     const nextStockCheckStatus =
       updates.stock_check_status !== undefined ? updates.stock_check_status : row.stock_check_status;
+    const lockStockCheckReopen = isStockCheckOneTimeCompleted(
+      row.stock_check_status,
+      row.stock_check_notes,
+    );
+    if (lockStockCheckReopen && updates.stock_check_status !== undefined) {
+      const incoming = String(updates.stock_check_status ?? '').trim().toLowerCase();
+      if (incoming === 'pending' || incoming === 'requested' || incoming === 'in progress') {
+        return res.status(409).json({
+          error:
+            'Stock check is a one-time procedure once warehouse has completed it successfully with quantity data.',
+          code: 'STOCK_CHECK_ONE_TIME_LOCKED',
+        });
+      }
+    }
     if (nextStatus === 'PO Released' && isStockCheckPendingStatus(nextStockCheckStatus)) {
       return res.status(409).json({
         error:

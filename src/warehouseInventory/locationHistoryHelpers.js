@@ -21,6 +21,8 @@ async function logLocationMovement({
   productionBatchId,
   batchNo,
   dispensingBundleId,
+  changesJson,
+  note,
 }) {
   if (!warehouseInventoryId || !itemType) return null;
 
@@ -42,6 +44,8 @@ async function logLocationMovement({
       production_batch_id: productionBatchId ?? null,
       batch_no: batchNo ?? null,
       dispensing_bundle_id: dispensingBundleId ?? null,
+      changes_json: changesJson != null ? changesJson : null,
+      note: note != null && String(note).trim() ? String(note).trim() : null,
     });
     return row;
   } catch (err) {

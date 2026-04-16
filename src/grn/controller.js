@@ -48,6 +48,7 @@ const PurchaseOrder = require('../purchaseOrders/models');
 const WarehouseInventory = require('../warehouseInventory/models');
 const { mergeLocationTokens } = require('../warehouseInventory/locationTokensMerge');
 const { logLocationMovement } = require('../warehouseInventory/locationHistoryHelpers');
+const { quantityToKg } = require('../warehouseInventory/quantityToKg');
 const { WarehouseLocation, WarehouseRack } = require('../warehouseLocations/models');
 
 /** Usertypes that have order-management (warehouse/GRN) access — can be assigned to GRN. */
@@ -183,6 +184,7 @@ function normalizePurchaseOrderLineItem(poItem) {
     code,
     name,
     qty,
+    unit: String(p.unit ?? p.Unit ?? p.UOM ?? p.uom ?? '').trim(),
     unitPrice,
   };
 }
@@ -432,6 +434,10 @@ async function create(req, res) {
               const clCode = String(cl.itemCode ?? cl.item_code ?? '').trim();
               return clCode && norm.code && clCode === norm.code;
             }) ?? clientLines[idx] ?? {};
+            const lineUnit =
+              String(clientLine.unit ?? clientLine.UOM ?? '').trim() ||
+              norm.unit ||
+              (allPm ? 'PCS' : 'KG');
             return {
               id: clientLine.id ?? String(Date.now() + idx),
               raw_material_id: norm.raw_material_id ?? null,
@@ -440,6 +446,7 @@ async function create(req, res) {
               item: norm.name || String(clientLine.item ?? '').trim() || '',
               itemCode: norm.code || String(clientLine.itemCode ?? clientLine.item_code ?? '').trim(),
               poQty: norm.qty,
+              unit: lineUnit,
               rcvdQty: Number(clientLine.rcvdQty ?? 0) || 0,
               invoiceQty: Number(clientLine.invoiceQty ?? 0) || 0,
               unitPrice: Number(clientLine.unitPrice ?? norm.unitPrice ?? 0) || 0,
@@ -528,30 +535,34 @@ async function applyGrnCompletionToInventory(grnRow) {
   let pmByName = {};
   let validRmIds = new Set();
   let validPmIds = new Set();
+  const rmUomById = new Map();
+  const pmMetaById = new Map();
   if (codes.length > 0 || names.length > 0) {
     const rmWhere = codes.length > 0 && names.length > 0 ? { [Op.or]: [{ code: { [Op.in]: codes } }, { name: { [Op.in]: names } }] } : (codes.length > 0 ? { code: { [Op.in]: codes } } : { name: { [Op.in]: names } });
     const pmWhere = codes.length > 0 && names.length > 0 ? { [Op.or]: [{ code: { [Op.in]: codes } }, { description: { [Op.in]: names } }] } : (codes.length > 0 ? { code: { [Op.in]: codes } } : { description: { [Op.in]: names } });
     const [rms, pms] = await Promise.all([
-      RawMaterial.findAll({ where: rmWhere, attributes: ['id', 'code', 'name'] }),
-      PackMaterial.findAll({ where: pmWhere, attributes: ['id', 'code', 'description'] }),
+      RawMaterial.findAll({ where: rmWhere, attributes: ['id', 'code', 'name', 'uom'] }),
+      PackMaterial.findAll({ where: pmWhere, attributes: ['id', 'code', 'description', 'unit', 'size_spec'] }),
     ]);
     rms.forEach((r) => {
       const x = r.get ? r.get({ plain: true }) : r;
       validRmIds.add(Number(x.id));
+      rmUomById.set(Number(x.id), x.uom || '');
       if (x.code) rmByCode[String(x.code).trim().toUpperCase()] = x.id;
       if (x.name) rmByName[String(x.name).trim().toLowerCase()] = x.id;
     });
     pms.forEach((p) => {
       const x = p.get ? p.get({ plain: true }) : p;
       validPmIds.add(Number(x.id));
+      pmMetaById.set(Number(x.id), { unit: x.unit || '', size_spec: x.size_spec || '' });
       if (x.code) pmByCode[String(x.code).trim().toUpperCase()] = x.id;
       if (x.description) pmByName[String(x.description).trim().toLowerCase()] = x.id;
     });
   }
 
-  const toAddByRm = new Map(); // raw_material_id -> qty to add
-  const toAddByPm = new Map(); // pack_material_id -> qty to add
-  const toAddByProduct = new Map(); // product_id -> qty to add
+  const toAddByRm = new Map(); // raw_material_id -> kg to add
+  const toAddByPm = new Map(); // pack_material_id -> kg to add
+  const toAddByProduct = new Map(); // product_id -> kg to add
 
   for (const line of lineItems) {
     // Some GRNs (e.g. created from Procurement) may arrive with rcvdQty=0 and rely
@@ -572,6 +583,7 @@ async function applyGrnCompletionToInventory(grnRow) {
       }
     }
     if (rcvdQty === 0) continue;
+    const lineUnit = String(line.unit ?? line.UOM ?? '').trim() || (grnType === 'PM' ? 'PCS' : 'KG');
     const code = String(resolveLineItemMasterCode(line) || '').trim().toUpperCase();
 
     console.log('[grn] GRN Complete line resolved (qty -> WH)', {
@@ -580,6 +592,7 @@ async function applyGrnCompletionToInventory(grnRow) {
       item: line.item || null,
       poQty: Number(line.poQty ?? line.po_qty) || 0,
       rcvdQtyUsed: rcvdQty,
+      lineUnit,
       raw_material_id: line.raw_material_id ?? null,
       pack_material_id: line.pack_material_id ?? null,
       product_id: line.product_id ?? null,
@@ -598,7 +611,8 @@ async function applyGrnCompletionToInventory(grnRow) {
 
     if (line.product_id != null) {
       const id = line.product_id;
-      toAddByProduct.set(id, (toAddByProduct.get(id) || 0) + rcvdQty);
+      const kg = quantityToKg(rcvdQty, lineUnit, { itemType: 'PR' });
+      toAddByProduct.set(id, (toAddByProduct.get(id) || 0) + kg);
     } else if (code || (line.item && String(line.item).trim()) || explicitRmIdValid || explicitPmIdValid) {
       // Prefer master resolution from code/name when available, then fall back to validated explicit IDs.
       const rmId = resolvedRmId != null ? resolvedRmId : (resolvedPmId == null && explicitRmIdValid ? explicitRmId : null);
@@ -622,13 +636,21 @@ async function applyGrnCompletionToInventory(grnRow) {
       }
 
       if (grnType === 'PM' && pmId != null) {
-        toAddByPm.set(pmId, (toAddByPm.get(pmId) || 0) + rcvdQty);
+        const meta = pmMetaById.get(Number(pmId)) || { unit: '', size_spec: '' };
+        const kg = quantityToKg(rcvdQty, lineUnit, { itemType: 'PM', masterUom: meta.unit, sizeSpec: meta.size_spec });
+        toAddByPm.set(pmId, (toAddByPm.get(pmId) || 0) + kg);
       } else if (grnType === 'RM' && rmId != null) {
-        toAddByRm.set(rmId, (toAddByRm.get(rmId) || 0) + rcvdQty);
+        const uom = rmUomById.get(Number(rmId)) || '';
+        const kg = quantityToKg(rcvdQty, lineUnit, { itemType: 'RM', masterUom: uom, sizeSpec: null });
+        toAddByRm.set(rmId, (toAddByRm.get(rmId) || 0) + kg);
       } else if (rmId != null) {
-        toAddByRm.set(rmId, (toAddByRm.get(rmId) || 0) + rcvdQty);
+        const uom = rmUomById.get(Number(rmId)) || '';
+        const kg = quantityToKg(rcvdQty, lineUnit, { itemType: 'RM', masterUom: uom, sizeSpec: null });
+        toAddByRm.set(rmId, (toAddByRm.get(rmId) || 0) + kg);
       } else if (pmId != null) {
-        toAddByPm.set(pmId, (toAddByPm.get(pmId) || 0) + rcvdQty);
+        const meta = pmMetaById.get(Number(pmId)) || { unit: '', size_spec: '' };
+        const kg = quantityToKg(rcvdQty, lineUnit, { itemType: 'PM', masterUom: meta.unit, sizeSpec: meta.size_spec });
+        toAddByPm.set(pmId, (toAddByPm.get(pmId) || 0) + kg);
       } else {
         console.warn('[grn] GRN Complete: line item code "%s" / name "%s" not found in RM/PM masters; skipping inventory update', code, line.item || '');
       }
@@ -673,7 +695,12 @@ async function applyGrnCompletionToInventory(grnRow) {
       const inTransit = Math.max(0, inTransitBefore - qty);
       const ml1 = Number(wh.ml1_stock) || 0;
       const ml2 = Number(wh.ml2_stock) || 0;
-      await whRow.update({ wh_stock: whStock, in_transit: inTransit, stock_in_hand: whStock + ml1 + ml2 });
+      await whRow.update({
+        wh_stock: whStock,
+        in_transit: inTransit,
+        stock_in_hand: whStock + ml1 + ml2,
+        wh_unit: 'KG',
+      });
       console.log('[grn] WH inventory RM wh_stock update', {
         rawMaterialId,
         qtyToAdd: qty,
@@ -744,7 +771,12 @@ async function applyGrnCompletionToInventory(grnRow) {
       const inTransit = Math.max(0, inTransitBefore - qty);
       const ml1 = Number(wh.ml1_stock) || 0;
       const ml2 = Number(wh.ml2_stock) || 0;
-      await whRow.update({ wh_stock: whStock, in_transit: inTransit, stock_in_hand: whStock + ml1 + ml2 });
+      await whRow.update({
+        wh_stock: whStock,
+        in_transit: inTransit,
+        stock_in_hand: whStock + ml1 + ml2,
+        wh_unit: 'KG',
+      });
       console.log('[grn] WH inventory PM wh_stock update', {
         packMaterialId,
         qtyToAdd: qty,
@@ -767,7 +799,7 @@ async function applyGrnCompletionToInventory(grnRow) {
         pack_material_id: packMaterialId,
         product_id: null,
         wh_stock: qty,
-        wh_unit: 'PCS',
+        wh_unit: 'KG',
         ml1_stock: 0,
         ml2_stock: 0,
         stock_in_hand: qty,
@@ -814,7 +846,12 @@ async function applyGrnCompletionToInventory(grnRow) {
       const inTransit = Math.max(0, inTransitBefore - qty);
       const ml1 = Number(wh.ml1_stock) || 0;
       const ml2 = Number(wh.ml2_stock) || 0;
-      await whRow.update({ wh_stock: whStock, in_transit: inTransit, stock_in_hand: whStock + ml1 + ml2 });
+      await whRow.update({
+        wh_stock: whStock,
+        in_transit: inTransit,
+        stock_in_hand: whStock + ml1 + ml2,
+        wh_unit: 'KG',
+      });
       console.log('[grn] WH inventory PR wh_stock update', {
         productId,
         qtyToAdd: qty,
@@ -837,7 +874,7 @@ async function applyGrnCompletionToInventory(grnRow) {
         pack_material_id: null,
         product_id: productId,
         wh_stock: qty,
-        wh_unit: 'PCS',
+        wh_unit: 'KG',
         ml1_stock: 0,
         ml2_stock: 0,
         stock_in_hand: qty,
@@ -1118,7 +1155,7 @@ async function applyLabelGenerationToWarehouseInventory(grnPlain, selectedItemCo
         raw_material_id: null,
         pack_material_id: where.pack_material_id,
         product_id: null,
-        wh_unit: 'PCS',
+        wh_unit: 'KG',
       });
     } else {
       inv = await WarehouseInventory.create({
@@ -1127,7 +1164,7 @@ async function applyLabelGenerationToWarehouseInventory(grnPlain, selectedItemCo
         raw_material_id: null,
         pack_material_id: null,
         product_id: where.product_id,
-        wh_unit: 'PCS',
+        wh_unit: 'KG',
       });
     }
     console.log('[grn] generateLabels: created warehouse_inventory stub for zone/rack', {
