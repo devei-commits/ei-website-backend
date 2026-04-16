@@ -35,6 +35,12 @@ MaterialRequestNote.init(
     /** MU zone/rack when transfer is completed (for location history). */
     mu_receive_zone: { type: DataTypes.STRING(100), allowNull: true },
     mu_receive_rack: { type: DataTypes.STRING(100), allowNull: true },
+    /** Outbound MTR logistics captured when warehouse initiates transfer. */
+    logistics_tracking_no: { type: DataTypes.STRING(200), allowNull: true },
+    logistics_transporter: { type: DataTypes.STRING(200), allowNull: true },
+    logistics_dispatch_date: { type: DataTypes.DATEONLY, allowNull: true },
+    logistics_eta_date: { type: DataTypes.DATEONLY, allowNull: true },
+    logistics_vehicle_no: { type: DataTypes.STRING(100), allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
   },

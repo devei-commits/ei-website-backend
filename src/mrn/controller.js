@@ -262,8 +262,37 @@ function formatRow(r, enrichedLineItems) {
     mfgBatch: d.mfg_batch ?? null,
     muReceiveZone: d.mu_receive_zone ?? null,
     muReceiveRack: d.mu_receive_rack ?? null,
+    logisticsTrackingNo: d.logistics_tracking_no ?? null,
+    logisticsTransporter: d.logistics_transporter ?? null,
+    logisticsDispatchDate: d.logistics_dispatch_date ?? null,
+    logisticsEtaDate: d.logistics_eta_date ?? null,
+    logisticsVehicleNo: d.logistics_vehicle_no ?? null,
     createdAt: d.created_at || null,
   };
+}
+
+function normalizeLogisticsFields(body = {}) {
+  return {
+    logistics_tracking_no:
+      body.logisticsTrackingNo !== undefined ? body.logisticsTrackingNo : body.logistics_tracking_no,
+    logistics_transporter:
+      body.logisticsTransporter !== undefined ? body.logisticsTransporter : body.logistics_transporter,
+    logistics_dispatch_date:
+      body.logisticsDispatchDate !== undefined ? body.logisticsDispatchDate : body.logistics_dispatch_date,
+    logistics_eta_date:
+      body.logisticsEtaDate !== undefined ? body.logisticsEtaDate : body.logistics_eta_date,
+    logistics_vehicle_no:
+      body.logisticsVehicleNo !== undefined ? body.logisticsVehicleNo : body.logistics_vehicle_no,
+  };
+}
+
+function validateRequiredOutboundLogistics(fields) {
+  if (!String(fields.logistics_tracking_no || '').trim()) return 'Tracking / LR number is required before initiating transfer.';
+  if (!String(fields.logistics_transporter || '').trim()) return 'Transporter / courier is required before initiating transfer.';
+  if (!String(fields.logistics_dispatch_date || '').trim()) return 'Dispatch date is required before initiating transfer.';
+  if (!String(fields.logistics_eta_date || '').trim()) return 'ETA is required before initiating transfer.';
+  if (!String(fields.logistics_vehicle_no || '').trim()) return 'Vehicle number is required before initiating transfer.';
+  return null;
 }
 
 async function list(req, res) {
@@ -419,6 +448,12 @@ async function update(req, res) {
     if (body.mu_receive_zone !== undefined) updates.mu_receive_zone = body.mu_receive_zone;
     if (body.muReceiveRack !== undefined) updates.mu_receive_rack = body.muReceiveRack;
     if (body.mu_receive_rack !== undefined) updates.mu_receive_rack = body.mu_receive_rack;
+    const logisticsFields = normalizeLogisticsFields(body);
+    if (logisticsFields.logistics_tracking_no !== undefined) updates.logistics_tracking_no = logisticsFields.logistics_tracking_no;
+    if (logisticsFields.logistics_transporter !== undefined) updates.logistics_transporter = logisticsFields.logistics_transporter;
+    if (logisticsFields.logistics_dispatch_date !== undefined) updates.logistics_dispatch_date = logisticsFields.logistics_dispatch_date;
+    if (logisticsFields.logistics_eta_date !== undefined) updates.logistics_eta_date = logisticsFields.logistics_eta_date;
+    if (logisticsFields.logistics_vehicle_no !== undefined) updates.logistics_vehicle_no = logisticsFields.logistics_vehicle_no;
 
     const plainBefore = row.get ? row.get({ plain: true }) : row;
 
@@ -468,6 +503,20 @@ async function update(req, res) {
       let touched = false;
 
       if (initiateIds && initiateIds.length > 0) {
+        const mergedLogistics = {
+          logistics_tracking_no:
+            updates.logistics_tracking_no !== undefined ? updates.logistics_tracking_no : plainBefore.logistics_tracking_no,
+          logistics_transporter:
+            updates.logistics_transporter !== undefined ? updates.logistics_transporter : plainBefore.logistics_transporter,
+          logistics_dispatch_date:
+            updates.logistics_dispatch_date !== undefined ? updates.logistics_dispatch_date : plainBefore.logistics_dispatch_date,
+          logistics_eta_date:
+            updates.logistics_eta_date !== undefined ? updates.logistics_eta_date : plainBefore.logistics_eta_date,
+          logistics_vehicle_no:
+            updates.logistics_vehicle_no !== undefined ? updates.logistics_vehicle_no : plainBefore.logistics_vehicle_no,
+        };
+        const logisticsErr = validateRequiredOutboundLogistics(mergedLogistics);
+        if (logisticsErr) return res.status(400).json({ error: logisticsErr });
         const err = assertSubset(initiateIds, idSet);
         if (err) return res.status(400).json({ error: err });
         for (const sid of initiateIds) {

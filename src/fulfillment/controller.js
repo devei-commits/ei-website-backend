@@ -30,13 +30,25 @@ const INCLUDE_FULL = [
 
 /* ── Helpers ── */
 
-/** Build map production_batch_id -> { bpr_status } for deriving effective ff_status from Production. */
+/** Build map production_batch_id -> production status/yield fields used by Fulfillment timeline. */
 async function getBatchStatusMap(productionBatchIds) {
   const ids = [...new Set((productionBatchIds || []).filter(Boolean))];
   if (ids.length === 0) return {};
-  const rows = await ProductionBatch.findAll({ where: { id: ids }, attributes: ['id', 'bpr_status'] });
+  const rows = await ProductionBatch.findAll({
+    where: { id: ids },
+    attributes: ['id', 'bmr_status', 'bpr_status', 'bulk_yield', 'fill_yield', 'fg_yield'],
+  });
   const map = {};
-  rows.forEach((r) => { const d = r.get ? r.get({ plain: true }) : r; map[d.id] = { bpr_status: d.bpr_status }; });
+  rows.forEach((r) => {
+    const d = r.get ? r.get({ plain: true }) : r;
+    map[d.id] = {
+      bmr_status: d.bmr_status || null,
+      bpr_status: d.bpr_status || null,
+      bulk_yield: d.bulk_yield != null ? Number(d.bulk_yield) : null,
+      fill_yield: d.fill_yield != null ? Number(d.fill_yield) : null,
+      fg_yield: d.fg_yield != null ? Number(d.fg_yield) : null,
+    };
+  });
   return map;
 }
 
@@ -98,6 +110,13 @@ function formatItem(d, batchMap = {}) {
 
 function formatSplit(d, batchMap = {}) {
   const ffStatus = effectiveFfStatus(d, batchMap);
+  const pb = d.production_batch_id && batchMap[d.production_batch_id] ? batchMap[d.production_batch_id] : {};
+  const plannedQty = Number(d.planned_qty) || 0;
+  const fgQty = Number(d.fg_qty) || 0;
+  const fgYield = pb.fg_yield != null ? Number(pb.fg_yield) : null;
+  const fgOutput = fgQty > 0 ? fgQty : (fgYield != null ? fgYield : 0);
+  const remainingQty = Math.max(0, plannedQty - fgOutput);
+  const completionPercent = plannedQty > 0 ? Math.min(100, Math.round((fgOutput / plannedQty) * 100)) : 0;
   return {
     id: d.id,
     fulfillmentOrderItemId: d.fulfillment_order_item_id,
@@ -105,8 +124,16 @@ function formatSplit(d, batchMap = {}) {
     productionBatchId: d.production_batch_id,
     bmrNo: d.bmr_no || '',
     bprNo: d.bpr_no || '',
-    plannedQty: d.planned_qty,
-    fgQty: d.fg_qty || 0,
+    plannedQty,
+    fgQty,
+    bmrStatus: pb.bmr_status || null,
+    bprStatus: pb.bpr_status || null,
+    bulkYield: pb.bulk_yield != null ? Number(pb.bulk_yield) : null,
+    fillYield: pb.fill_yield != null ? Number(pb.fill_yield) : null,
+    fgYield,
+    fgOutput,
+    remainingQty,
+    completionPercent,
     fgLocation: d.fg_location,
     ffStatus,
     pickedQty: d.picked_qty || 0,

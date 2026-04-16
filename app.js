@@ -27,6 +27,7 @@ const warehouseLocationsRouters = require('./src/warehouseLocations/routers');
 const warehouseRouters = require('./src/warehouse/routers');
 const grnRouters = require('./src/grn/routers');
 const mrnRouters = require('./src/mrn/routers');
+const logisticsSchedulesRouters = require('./src/logisticsSchedules/routers');
 const itemsListRouters = require('./src/itemsList/routers');
 const planningExtractedRouters = require('./src/planningExtracted/routers');
 const procurementRequestsRouters = require('./src/procurementRequests/routers');
@@ -149,6 +150,7 @@ app.use(`${apiPrefix}/warehouse-locations`, isAuthenticated, warehouseLocationsR
 app.use(`${apiPrefix}/warehouse`, isAuthenticated, warehouseRouters);
 app.use(`${apiPrefix}/grn`, isAuthenticated, grnRouters);
 app.use(`${apiPrefix}/mrn`, isAuthenticated, mrnRouters);
+app.use(`${apiPrefix}/logistics-schedules`, isAuthenticated, logisticsSchedulesRouters);
 app.use(`${apiPrefix}/items-list`, isAuthenticated, itemsListRouters);
 app.use(`${apiPrefix}/planning-extracted`, isAuthenticated, planningExtractedRouters);
 app.use(`${apiPrefix}/procurement`, isAuthenticated, procurementRequestsRouters);
