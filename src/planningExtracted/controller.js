@@ -922,7 +922,8 @@ async function listAllBatches(req, res) {
       const d = r.get ? r.get({ plain: true }) : r;
       const plan = d.planningExtracted || {};
       const sentIndices = Array.isArray(plan.sent_batch_indices) ? plan.sent_batch_indices : [];
-      const sent = sentIndices.includes(d.sequence - 1);
+      // Type-safe sent check (handles JSON arrays containing "1" and 1 consistently).
+      const sent = isBatchIndexSent(sentIndices, (Number(d.sequence) || 0) - 1);
       return {
         id: d.id,
         planningExtractedId: d.planning_extracted_id,
@@ -1596,6 +1597,8 @@ async function getItemsInvolved(req, res) {
 
       const plannedRm = new Map();
       const plannedPm = new Map();
+      // All planning_batches (including PE-*-rw-* rework rows) count toward "already planned"
+      // vs the PI snapshot so shortfall rework is not double-counted with order remainder.
       for (const bp of planBatchesPlain) {
         accumulatePlannedBatchIntoQtyMaps(bp, plain, rmByCode, rmByName, pmByCode, pmByName, plannedRm, plannedPm);
       }
@@ -1996,15 +1999,31 @@ async function getItemsInvolvedByPlanningId(req, res) {
     for (const r of rms) {
       const rid = r.raw_material_id != null ? Number(r.raw_material_id) : null;
       if (rid == null || Number.isNaN(rid)) continue;
-      rmIds.push(rid);
-      rmReq.set(rid, { quantity: Number(r.quantity) || 0, unit: r.unit || 'KG', name: r.name || '', code: r.code || '' });
+      const qty = Number(r.quantity) || 0;
+      const prev = rmReq.get(rid);
+      if (prev) {
+        prev.quantity += qty;
+        if (!prev.name && r.name) prev.name = r.name;
+        if (!prev.code && r.code) prev.code = r.code;
+      } else {
+        rmReq.set(rid, { quantity: qty, unit: r.unit || 'KG', name: r.name || '', code: r.code || '' });
+      }
     }
+    rmIds.push(...rmReq.keys());
     for (const p of pms) {
       const pid = p.pack_material_id != null ? Number(p.pack_material_id) : null;
       if (pid == null || Number.isNaN(pid)) continue;
-      pmIds.push(pid);
-      pmReq.set(pid, { quantity: Number(p.quantity) || 0, unit: p.unit || 'PCS', name: p.name || '', code: p.code || '' });
+      const qty = Number(p.quantity) || 0;
+      const prev = pmReq.get(pid);
+      if (prev) {
+        prev.quantity += qty;
+        if (!prev.name && p.name) prev.name = p.name;
+        if (!prev.code && p.code) prev.code = p.code;
+      } else {
+        pmReq.set(pid, { quantity: qty, unit: p.unit || 'PCS', name: p.name || '', code: p.code || '' });
+      }
     }
+    pmIds.push(...pmReq.keys());
 
     const planBatchesList = await PlanningBatch.findAll({ where: { planning_extracted_id: id }, order: [['sequence', 'ASC']] });
     const planBatchesPlain = planBatchesList.map((b) => (b.get ? b.get({ plain: true }) : b));

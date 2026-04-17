@@ -542,7 +542,15 @@ async function createBatch(req, res) {
 
 /**
  * POST /batches/create-rework — create a new rework batch (BMR-YYYY-NNN-rw-01, rw-02, ...).
- * Body: { baseBatchId: number, reason?: string } — production batch to rework from (same SO/product); optional reason stored in remarks.
+ * Body: {
+ *   baseBatchId: number,
+ *   reason?: string,
+ *   targetOrderQty?: number,        // optional override for rework qty (units)
+ *   targetBatchSizeKg?: number,     // optional override for planning batch size_kg
+ *   rmLines?: any[],                // optional edited RM lines for new rework planning batch
+ *   pmLines?: any[],                // optional edited PM lines for new rework planning batch
+ * }
+ * — production batch to rework from (same SO/product)
  * Creates a new planning_batch (PE-{id}-rw-NN) in the planning table and a new production batch linked to it (same SO).
  */
 async function createRworkBatch(req, res) {
@@ -552,6 +560,12 @@ async function createRworkBatch(req, res) {
       return res.status(400).json({ error: 'baseBatchId is required' });
     }
     const reason = typeof req.body.reason === 'string' ? req.body.reason.trim() : '';
+    const targetOrderQtyRaw = req.body.targetOrderQty;
+    const targetBatchSizeKgRaw = req.body.targetBatchSizeKg;
+    const targetOrderQty = targetOrderQtyRaw != null ? Number(targetOrderQtyRaw) : null;
+    const targetBatchSizeKg = targetBatchSizeKgRaw != null ? Number(targetBatchSizeKgRaw) : null;
+    const editedRmLines = Array.isArray(req.body.rmLines) ? req.body.rmLines : null;
+    const editedPmLines = Array.isArray(req.body.pmLines) ? req.body.pmLines : null;
     const base = await ProductionBatch.findByPk(baseBatchId);
     if (!base) return res.status(404).json({ error: 'Base batch not found' });
     const basePlain = base.get ? base.get({ plain: true }) : base;
@@ -566,6 +580,12 @@ async function createRworkBatch(req, res) {
     // so per-batch swap/BOM editor changes persist into the new batch pipeline.
     const newPb = await createRworkPlanningBatch(planId, pb.id);
     if (!newPb) return res.status(404).json({ error: 'Planning extracted not found' });
+    if (targetBatchSizeKg != null && Number.isFinite(targetBatchSizeKg) && targetBatchSizeKg > 0) {
+      newPb.size_kg = targetBatchSizeKg;
+    }
+    if (editedRmLines) newPb.rm_lines = editedRmLines;
+    if (editedPmLines) newPb.pm_lines = editedPmLines;
+    await newPb.save();
     const newPbPlain = newPb.get ? newPb.get({ plain: true }) : newPb;
 
     const baseBmr = (basePlain.bmr_no || '').replace(/-rw-\d+$/, '').trim();
@@ -575,7 +595,10 @@ async function createRworkBatch(req, res) {
     const bmrNo = `${baseBmr}-rw-${rwSuffix}`;
     const bprNo = `${baseBpr}-rw-${rwSuffix}`;
 
-    const orderQty = basePlain.order_qty ?? 0;
+    const orderQty =
+      targetOrderQty != null && Number.isFinite(targetOrderQty) && targetOrderQty > 0
+        ? Math.round(targetOrderQty)
+        : (basePlain.order_qty ?? 0);
     const batchSize = newPbPlain.size_kg != null ? Math.round(Number(newPbPlain.size_kg)) : (basePlain.batch_size ?? null);
     const remarksValue = reason ? `Rework: ${reason}` : null;
     const row = await ProductionBatch.create({
