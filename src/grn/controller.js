@@ -417,39 +417,43 @@ async function create(req, res) {
       expiry: body.expiry,
       mfg_batch: body.mfgBatch ?? body.mfg_batch,
     };
-    // When a PO is referenced, derive line_items and type from the PO's items array.
-    // This is the authoritative source — prevents split-PO item misassignment from the frontend.
+    // When a PO is referenced, do not blindly expand to all PO items.
+    // If client sends line_items, keep it item-scoped (GRN can be per-item even under one PO).
+    // We only use PO data to enrich/match those selected lines; fallback to all PO items
+    // only when the client did not send any line_items.
     if (payload.purchase_order_id != null) {
       const po = await PurchaseOrder.findByPk(payload.purchase_order_id, { attributes: ['id', 'items'] });
       if (po) {
         const poPlain = po.get({ plain: true });
         const poItems = Array.isArray(poPlain.items) ? poPlain.items : [];
         if (poItems.length > 0) {
-          const allPm = poItems.every((i) => i.pack_material_id != null);
-          payload.type = allPm ? 'PM' : 'RM';
           const clientLines = Array.isArray(body.lineItems ?? body.line_items) ? (body.lineItems ?? body.line_items) : [];
-          payload.line_items = poItems.map((poItem, idx) => {
+          const sourceLines = clientLines.length > 0 ? clientLines : poItems;
+          const allPm = sourceLines.every((i) => i.pack_material_id != null || i.packMaterialId != null);
+          payload.type = allPm ? 'PM' : 'RM';
+          payload.line_items = sourceLines.map((srcLine, idx) => {
+            const srcCode = String(srcLine.itemCode ?? srcLine.item_code ?? srcLine.code ?? '').trim();
+            const poItem = poItems.find((poIt) => {
+              const norm = normalizePurchaseOrderLineItem(poIt);
+              return srcCode && norm.code && srcCode === norm.code;
+            }) ?? poItems[idx];
             const norm = normalizePurchaseOrderLineItem(poItem);
-            const clientLine = clientLines.find((cl) => {
-              const clCode = String(cl.itemCode ?? cl.item_code ?? '').trim();
-              return clCode && norm.code && clCode === norm.code;
-            }) ?? clientLines[idx] ?? {};
             const lineUnit =
-              String(clientLine.unit ?? clientLine.UOM ?? '').trim() ||
+              String(srcLine.unit ?? srcLine.UOM ?? '').trim() ||
               norm.unit ||
               (allPm ? 'PCS' : 'KG');
             return {
-              id: clientLine.id ?? String(Date.now() + idx),
-              raw_material_id: norm.raw_material_id ?? null,
-              pack_material_id: norm.pack_material_id ?? null,
-              product_id: norm.product_id ?? null,
-              item: norm.name || String(clientLine.item ?? '').trim() || '',
-              itemCode: norm.code || String(clientLine.itemCode ?? clientLine.item_code ?? '').trim(),
-              poQty: norm.qty,
+              id: srcLine.id ?? String(Date.now() + idx),
+              raw_material_id: srcLine.raw_material_id ?? srcLine.rawMaterialId ?? norm.raw_material_id ?? null,
+              pack_material_id: srcLine.pack_material_id ?? srcLine.packMaterialId ?? norm.pack_material_id ?? null,
+              product_id: srcLine.product_id ?? srcLine.productId ?? norm.product_id ?? null,
+              item: String(srcLine.item ?? '').trim() || norm.name || '',
+              itemCode: srcCode || norm.code || '',
+              poQty: Number(srcLine.poQty ?? srcLine.po_qty ?? norm.qty ?? 0) || 0,
               unit: lineUnit,
-              rcvdQty: Number(clientLine.rcvdQty ?? 0) || 0,
-              invoiceQty: Number(clientLine.invoiceQty ?? 0) || 0,
-              unitPrice: Number(clientLine.unitPrice ?? norm.unitPrice ?? 0) || 0,
+              rcvdQty: Number(srcLine.rcvdQty ?? srcLine.rcvd_qty ?? 0) || 0,
+              invoiceQty: Number(srcLine.invoiceQty ?? srcLine.invoice_qty ?? 0) || 0,
+              unitPrice: Number(srcLine.unitPrice ?? srcLine.unit_price ?? norm.unitPrice ?? 0) || 0,
               diff: 0,
               qcStatus: 'Pending',
               qcBy: '',
