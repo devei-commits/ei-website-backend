@@ -767,7 +767,14 @@ async function applyBprFgReadyToInventory(batchRow) {
     console.warn('[production] BPR fg_ready: no product found for sku=%s product_name=%s', d.sku, d.product_name);
   } else {
     const productId = product.get ? product.get({ plain: true }).product_id : product.product_id;
-    const producedQty = Math.max(0, parseInt(d.batch_size || d.order_qty || 0, 10) || 0);
+    // FG ready quantity must reflect yield report first; planned batch/order qty is only a fallback.
+    const fgYieldQty = Number(d.fg_yield);
+    const fillYieldQty = Number(d.fill_yield);
+    const plannedQty = Number(d.batch_size || d.order_qty || 0);
+    const producedQtyRaw = Number.isFinite(fgYieldQty) && fgYieldQty > 0
+      ? fgYieldQty
+      : (Number.isFinite(fillYieldQty) && fillYieldQty > 0 ? fillYieldQty : plannedQty);
+    const producedQty = Math.max(0, Math.round(producedQtyRaw) || 0);
     if (producedQty > 0) {
       let whRow = await WarehouseInventory.findOne({ where: { item_type: 'PR', product_id: productId } });
       if (whRow) {

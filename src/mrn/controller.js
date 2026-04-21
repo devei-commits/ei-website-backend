@@ -290,7 +290,6 @@ function validateRequiredOutboundLogistics(fields) {
   if (!String(fields.logistics_tracking_no || '').trim()) return 'Tracking / LR number is required before initiating transfer.';
   if (!String(fields.logistics_transporter || '').trim()) return 'Transporter / courier is required before initiating transfer.';
   if (!String(fields.logistics_dispatch_date || '').trim()) return 'Dispatch date is required before initiating transfer.';
-  if (!String(fields.logistics_eta_date || '').trim()) return 'ETA is required before initiating transfer.';
   if (!String(fields.logistics_vehicle_no || '').trim()) return 'Vehicle number is required before initiating transfer.';
   return null;
 }

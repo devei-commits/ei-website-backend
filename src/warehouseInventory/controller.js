@@ -102,12 +102,12 @@ function buildMemberToGroupsMap(groups) {
   return map;
 }
 
-/** In-transit = GRNs with status 'In Transit' (stuff coming to us, pending GRN). Returns Map<itemKey, [{ vendor, poId, poNo, expectedDate, quantity }]>. */
+/** In-transit = GRNs currently in logistics stage (excludes Under GRN). Returns Map<itemKey, [{ vendor, poId, poNo, expectedDate, quantity }]>. */
 async function getInTransitBreakdown() {
   const map = new Map();
   try {
     const grns = await GoodsReceivedNote.findAll({
-      where: { status: { [Op.in]: ['In Transit', 'Under GRN', 'Pending', 'Delayed', 'On Hold'] } },
+      where: { status: { [Op.in]: ['In Transit', 'Pending', 'Delayed', 'On Hold'] } },
       attributes: ['id', 'vendor', 'purchase_order_id', 'po_no', 'expected_date', 'line_items'],
     });
     const rmIds = new Set();
@@ -150,6 +150,53 @@ async function getInTransitBreakdown() {
     }
   } catch (err) {
     console.warn('[warehouse-inventory] getInTransitBreakdown error:', err.message);
+  }
+  return map;
+}
+
+/** Under GRN = quantities currently in GRN workflow before inventory booking. Returns Map<itemKey, number>. */
+async function getUnderGrnQuantityByItem() {
+  const map = new Map();
+  try {
+    const grns = await GoodsReceivedNote.findAll({
+      where: { status: 'Under GRN' },
+      attributes: ['line_items'],
+    });
+    const rmIds = new Set();
+    const pmIds = new Set();
+    for (const g of grns) {
+      const d = g.get ? g.get({ plain: true }) : g;
+      const lines = Array.isArray(d.line_items) ? d.line_items : [];
+      for (const line of lines) {
+        if (line.raw_material_id != null) rmIds.add(Number(line.raw_material_id));
+        if (line.pack_material_id != null) pmIds.add(Number(line.pack_material_id));
+      }
+    }
+    const { rmMeta, pmMeta } = await loadRmPmMeta(rmIds, pmIds);
+    for (const g of grns) {
+      const d = g.get ? g.get({ plain: true }) : g;
+      const lines = Array.isArray(d.line_items) ? d.line_items : [];
+      for (const line of lines) {
+        const qty = toNum(line.poQty ?? line.quantity ?? line.qty);
+        if (qty <= 0) continue;
+        let key = null;
+        if (line.raw_material_id != null) key = `rm-${line.raw_material_id}`;
+        else if (line.pack_material_id != null) key = `pm-${line.pack_material_id}`;
+        if (!key) continue;
+        const unit = String(line.unit ?? line.UOM ?? '').trim();
+        const itemType = key.startsWith('rm-') ? 'RM' : 'PM';
+        const id = itemType === 'RM' ? Number(line.raw_material_id) : Number(line.pack_material_id);
+        const meta = itemType === 'RM' ? rmMeta.get(id) : pmMeta.get(id);
+        const qtyKg = quantityToKg(qty, unit, {
+          itemType,
+          masterUom: itemType === 'RM' ? meta?.uom : meta?.unit,
+          sizeSpec: itemType === 'PM' ? meta?.size_spec : null,
+        });
+        map.set(key, (map.get(key) || 0) + qtyKg);
+      }
+    }
+  } catch (err) {
+    console.warn('[warehouse-inventory] getUnderGrnQuantityByItem error:', err.message);
   }
   return map;
 }
@@ -229,7 +276,8 @@ async function getPoQuantityByItem() {
 /**
  * GET /api/v1/warehouse-inventory
  * Returns { rows, itemGroups }. Each row has id (e.g. rm-1), code, name, subtitle, type, itemGroupNames, itemGroupCodes,
- * warehouseInventoryId, zone, rack, whStock, whUnit, ml1Stock, ml2Stock, stockInHand (computed), reserved, inTransit, inTransitBreakdown, poQuantity, reorderPt, avgMo, status.
+ * warehouseInventoryId, zone, rack, whStock, whUnit, ml1Stock, ml2Stock, stockInHand (computed), reserved,
+ * inTransit, underGrn, inTransitBreakdown, poQuantity, reorderPt, avgMo, status.
  */
 async function list(req, res) {
   try {
@@ -733,7 +781,11 @@ async function listPayload() {
   const productMap = new Map(products.map((p) => [p.product_id, p.get ? p.get({ plain: true }) : p]));
   const rmGroupMap = buildMemberToGroupsMap(groups.filter((g) => g.type === 'RM'));
   const pmGroupMap = buildMemberToGroupsMap(groups.filter((g) => g.type === 'PM'));
-  const [inTransitByItem, poQtyByItem] = await Promise.all([getInTransitBreakdown(), getPoQuantityByItem()]);
+  const [inTransitByItem, poQtyByItem, underGrnByItem] = await Promise.all([
+    getInTransitBreakdown(),
+    getPoQuantityByItem(),
+    getUnderGrnQuantityByItem(),
+  ]);
   const rows = [];
   for (const w of whRows) {
     const wh = w.get ? w.get({ plain: true }) : w;
@@ -754,6 +806,9 @@ async function listPayload() {
       const groupList = rmGroupMap.get(wh.raw_material_id) || [];
       const itemKey = `rm-${wh.raw_material_id}`;
       const breakdown = inTransitByItem.get(itemKey) || [];
+      const inTransitQty = breakdown.reduce((sum, b) => sum + toNum(b.quantity), 0);
+      const underGrnQty = toNum(underGrnByItem.get(itemKey) || 0);
+      const poQtyRaw = toNum(poQtyByItem.get(itemKey) || 0);
       rows.push({
         id: itemKey,
         warehouseInventoryId: wh.id,
@@ -772,9 +827,12 @@ async function listPayload() {
         ml2Stock,
         stockInHand,
         reserved: toNum(wh.reserved),
-        inTransit: toNum(wh.in_transit),
+        // Stage-accurate transit quantity from GRN logistics rows (excludes Under GRN).
+        inTransit: inTransitQty,
+        underGrn: underGrnQty,
         inTransitBreakdown: breakdown,
-        poQuantity: poQtyByItem.get(itemKey) || 0,
+        // Stage split: PO should show only quantity not yet moved further.
+        poQuantity: Math.max(0, poQtyRaw - underGrnQty - inTransitQty),
         reorderPt,
         avgMo: toNum(wh.avg_mo),
         status,
@@ -788,6 +846,9 @@ async function listPayload() {
       const groupList = pmGroupMap.get(wh.pack_material_id) || [];
       const itemKey = `pm-${wh.pack_material_id}`;
       const breakdown = inTransitByItem.get(itemKey) || [];
+      const inTransitQty = breakdown.reduce((sum, b) => sum + toNum(b.quantity), 0);
+      const underGrnQty = toNum(underGrnByItem.get(itemKey) || 0);
+      const poQtyRaw = toNum(poQtyByItem.get(itemKey) || 0);
       rows.push({
         id: itemKey,
         warehouseInventoryId: wh.id,
@@ -806,9 +867,11 @@ async function listPayload() {
         ml2Stock,
         stockInHand,
         reserved: toNum(wh.reserved),
-        inTransit: toNum(wh.in_transit),
+        // Stage-accurate transit quantity from GRN logistics rows (excludes Under GRN).
+        inTransit: inTransitQty,
+        underGrn: underGrnQty,
         inTransitBreakdown: breakdown,
-        poQuantity: poQtyByItem.get(itemKey) || 0,
+        poQuantity: Math.max(0, poQtyRaw - underGrnQty - inTransitQty),
         reorderPt,
         avgMo: toNum(wh.avg_mo),
         status,
@@ -838,6 +901,7 @@ async function listPayload() {
         stockInHand,
         reserved: toNum(wh.reserved),
         inTransit: toNum(wh.in_transit),
+        underGrn: 0,
         inTransitBreakdown: [],
         poQuantity: 0,
         reorderPt,

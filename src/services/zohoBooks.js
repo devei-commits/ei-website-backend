@@ -441,6 +441,76 @@ async function createBillInBooks(billJson) {
  * Use returned currency_id for ZOHO_DEFAULT_CURRENCY_ID in .env.
  * @returns {Promise<{ raw: unknown, currencies: unknown[] }>}
  */
+/**
+ * List inventory items (GET /items) — single page.
+ * @param {{ page?: number, perPage?: number, filterBy?: string, sortColumn?: string }} options
+ * @returns {Promise<{ raw: unknown, items: Record<string, unknown>[], pageContext: Record<string, unknown> | null }>}
+ */
+async function listItemsPage(options = {}) {
+  const orgId = getOrgId();
+  const token = await getAccessToken();
+  const page = options.page != null ? Math.max(1, Number(options.page)) : 1;
+  const perPage = Math.min(200, options.perPage != null ? Number(options.perPage) : 200);
+  const qs = new URLSearchParams({
+    organization_id: orgId,
+    page: String(page),
+    per_page: String(perPage),
+  });
+  if (options.filterBy) qs.set('filter_by', String(options.filterBy));
+  if (options.sortColumn) qs.set('sort_column', String(options.sortColumn));
+
+  const url = `${getBooksBaseUrl()}/items?${qs.toString()}`;
+
+  logZohoRequest('listItemsPage', 'GET', url, null);
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Zoho-oauthtoken ${token}` },
+  });
+
+  const raw = await readBooksJsonResponse(res);
+  logZohoResponse('listItemsPage', res.status, raw);
+
+  if (!res.ok) {
+    logZohoError('listItemsPage', 'GET', url, res.status, raw);
+    const msg = raw.message || raw.error || res.statusText || 'list_items_failed';
+    const err = new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    err.zohoRaw = raw;
+    err.statusCode = res.status;
+    throw err;
+  }
+
+  const items = Array.isArray(raw.items) ? raw.items : [];
+  const pageContext =
+    raw.page_context && typeof raw.page_context === 'object' ? raw.page_context : null;
+  return { raw, items, pageContext };
+}
+
+/**
+ * All items across pages (stops when page_context.has_more_page is not true).
+ * @param {{ filterBy?: string, sortColumn?: string, perPage?: number, maxPages?: number }} options
+ * @returns {Promise<Record<string, unknown>[]>}
+ */
+async function listAllItems(options = {}) {
+  const perPage = options.perPage != null ? Math.min(200, Number(options.perPage)) : 200;
+  const maxPages = options.maxPages != null ? Math.max(1, Number(options.maxPages)) : 10000;
+  const all = [];
+  let page = 1;
+  let hasMore = true;
+
+  while (hasMore && page <= maxPages) {
+    const { items, pageContext } = await listItemsPage({
+      ...options,
+      page,
+      perPage,
+    });
+    all.push(...items);
+    hasMore = !!(pageContext && pageContext.has_more_page === true);
+    page += 1;
+  }
+
+  return all;
+}
+
 async function listCurrencies() {
   const orgId = getOrgId();
   const token = await getAccessToken();
@@ -489,6 +559,8 @@ module.exports = {
   createInvoice,
   createPurchaseOrderInBooks,
   createBillInBooks,
+  listItemsPage,
+  listAllItems,
   listCurrencies,
   normalizeZohoId,
   normalizeZohoContactId,
