@@ -130,6 +130,105 @@ function bodyToUpdatePayload(body) {
   return payload;
 }
 
+/**
+ * When expected shipment is missing, set it from order_date + max FG lead time (same as create UI).
+ * @param {Record<string, unknown>} payload
+ */
+async function applyDefaultExpectedShipmentDate(payload) {
+  if (
+    !payload.expected_shipment_date &&
+    payload.order_date &&
+    Array.isArray(payload.items) &&
+    payload.items.length > 0
+  ) {
+    const maxLead = await maxLeadDaysFromSoItems(payload.items);
+    payload.expected_shipment_date = addDaysToDateOnlyStr(payload.order_date, maxLead);
+  }
+}
+
+/**
+ * Planning rows for each SO line that resolves to a local product (same as POST /sales-orders).
+ * @param {number} salesOrderId
+ * @param {Record<string, unknown>} payload
+ */
+async function createPlanningExtractedRowsForSalesOrder(salesOrderId, payload) {
+  if (!Array.isArray(payload.items) || payload.items.length === 0) return;
+  const PlanningExtracted = require('../planningExtracted/models');
+  const BOM = require('../bom/models');
+  const { Product } = require('../products/models');
+
+  for (const item of payload.items) {
+    const productId = item.product_id || item.productId;
+    if (!productId) continue;
+
+    const product = await Product.findByPk(productId);
+    if (!product) continue;
+
+    let rawMaterials = [];
+    let packagingMaterials = [];
+    const bom = await BOM.findOne({ where: { product_id: productId } });
+    if (bom) {
+      rawMaterials = Array.isArray(bom.rm_lines) ? bom.rm_lines : [];
+      packagingMaterials = Array.isArray(bom.pm_lines) ? bom.pm_lines : [];
+    }
+
+    const orderQty = item.quantity || item.orderedQty || 0;
+    const batchSizeKg = product.batch_size_kg || 100;
+    const batchesRequired = batchSizeKg > 0 ? Math.ceil(orderQty / batchSizeKg) : 1;
+
+    await PlanningExtracted.create({
+      sales_order_id: salesOrderId,
+      product_id: productId,
+      order_qty_display: `${orderQty} units`,
+      total_kg_display: batchSizeKg ? `${orderQty} KG` : null,
+      order_date: payload.order_date || null,
+      due_date: payload.expected_shipment_date || null,
+      batch_size_display: batchSizeKg ? `${batchSizeKg} KG` : null,
+      batches_required: batchesRequired,
+      batch_count: 0,
+      batch_size_kg: batchSizeKg,
+      bom_status: bom ? 'Confirmed' : 'Pending',
+      bom_confirmed_at: bom ? new Date() : null,
+      approved_by: payload.created_by,
+      raw_materials: rawMaterials,
+      packaging_materials: packagingMaterials,
+    });
+  }
+}
+
+/**
+ * Replace planning rows for a sales order (e.g. after re-import from Zoho).
+ * @param {number} salesOrderId
+ */
+async function deletePlanningExtractedForSalesOrder(salesOrderId) {
+  const PlanningExtracted = require('../planningExtracted/models');
+  await PlanningExtracted.destroy({ where: { sales_order_id: salesOrderId } });
+}
+
+/**
+ * Persist payload like POST /sales-orders: optional default shipment date, insert row, planning lines.
+ * @param {Record<string, unknown>} payload
+ */
+async function persistSalesOrderWithPlanning(payload) {
+  await applyDefaultExpectedShipmentDate(payload);
+  const row = await SalesOrder.create(payload);
+  await createPlanningExtractedRowsForSalesOrder(row.id, payload);
+  return row;
+}
+
+/**
+ * Update an existing row and rebuild planning like a fresh create.
+ * @param {*} row Sequelize SalesOrder instance
+ * @param {Record<string, unknown>} payload
+ */
+async function updateSalesOrderWithPlanningRebuild(row, payload) {
+  await applyDefaultExpectedShipmentDate(payload);
+  await row.update(payload);
+  await deletePlanningExtractedForSalesOrder(row.id);
+  await createPlanningExtractedRowsForSalesOrder(row.id, payload);
+  return row;
+}
+
 async function createSalesOrder(req, res) {
   try {
     const payload = bodyToPayload(req.body || {});
@@ -137,56 +236,7 @@ async function createSalesOrder(req, res) {
     if (!payload.created_by && req.user) {
       payload.created_by = req.user.fullName || req.user.email;
     }
-    if (!payload.expected_shipment_date && payload.order_date && Array.isArray(payload.items) && payload.items.length > 0) {
-      const maxLead = await maxLeadDaysFromSoItems(payload.items);
-      payload.expected_shipment_date = addDaysToDateOnlyStr(payload.order_date, maxLead);
-    }
-    const row = await SalesOrder.create(payload);
-
-    // Auto-create planning_extracted rows for each item in the SO
-    if (Array.isArray(payload.items) && payload.items.length > 0) {
-      const PlanningExtracted = require('../planningExtracted/models');
-      const BOM = require('../bom/models');
-      const { Product } = require('../products/models');
-
-      for (const item of payload.items) {
-        const productId = item.product_id || item.productId;
-        if (!productId) continue;
-
-        const product = await Product.findByPk(productId);
-        if (!product) continue;
-
-        let rawMaterials = [];
-        let packagingMaterials = [];
-        const bom = await BOM.findOne({ where: { product_id: productId } });
-        if (bom) {
-          rawMaterials = Array.isArray(bom.rm_lines) ? bom.rm_lines : [];
-          packagingMaterials = Array.isArray(bom.pm_lines) ? bom.pm_lines : [];
-        }
-
-        const orderQty = item.quantity || item.orderedQty || 0;
-        const batchSizeKg = product.batch_size_kg || 100;
-        const batchesRequired = batchSizeKg > 0 ? Math.ceil(orderQty / batchSizeKg) : 1;
-
-        await PlanningExtracted.create({
-          sales_order_id: row.id,
-          product_id: productId,
-          order_qty_display: `${orderQty} units`,
-          total_kg_display: batchSizeKg ? `${orderQty} KG` : null,
-          order_date: payload.order_date || null,
-          due_date: payload.expected_shipment_date || null,
-          batch_size_display: batchSizeKg ? `${batchSizeKg} KG` : null,
-          batches_required: batchesRequired,
-          batch_count: 0,
-          batch_size_kg: batchSizeKg,
-          bom_status: bom ? 'Confirmed' : 'Pending',
-          bom_confirmed_at: bom ? new Date() : null,
-          approved_by: payload.created_by,
-          raw_materials: rawMaterials,
-          packaging_materials: packagingMaterials,
-        });
-      }
-    }
+    const row = await persistSalesOrderWithPlanning(payload);
 
     res.status(201).json(formatRow(row));
   } catch (err) {
@@ -230,4 +280,9 @@ module.exports = {
   createSalesOrder,
   updateSalesOrder,
   deleteSalesOrder,
+  applyDefaultExpectedShipmentDate,
+  createPlanningExtractedRowsForSalesOrder,
+  deletePlanningExtractedForSalesOrder,
+  persistSalesOrderWithPlanning,
+  updateSalesOrderWithPlanningRebuild,
 };

@@ -487,12 +487,16 @@ async function listItemsPage(options = {}) {
 
 /**
  * All items across pages (stops when page_context.has_more_page is not true).
- * @param {{ filterBy?: string, sortColumn?: string, perPage?: number, maxPages?: number }} options
+ * @param {{ filterBy?: string, sortColumn?: string, perPage?: number, maxPages?: number, limit?: number }} options
  * @returns {Promise<Record<string, unknown>[]>}
  */
 async function listAllItems(options = {}) {
   const perPage = options.perPage != null ? Math.min(200, Number(options.perPage)) : 200;
   const maxPages = options.maxPages != null ? Math.max(1, Number(options.maxPages)) : 10000;
+  const lim =
+    options.limit != null && Number.isFinite(Number(options.limit)) && Number(options.limit) > 0
+      ? Math.floor(Number(options.limit))
+      : undefined;
   const all = [];
   let page = 1;
   let hasMore = true;
@@ -504,11 +508,199 @@ async function listAllItems(options = {}) {
       perPage,
     });
     all.push(...items);
+    if (lim != null && all.length >= lim) {
+      return all.slice(0, lim);
+    }
     hasMore = !!(pageContext && pageContext.has_more_page === true);
     page += 1;
   }
 
   return all;
+}
+
+/**
+ * Generic list GET for Zoho Books v3 collections that return `page_context` + a top-level array.
+ * @param {string} resource Path segment, e.g. `contacts`, `invoices`, `salesorders`
+ * @param {string} arrayKey Response array key, e.g. `contacts`, `invoices`
+ * @param {{ page?: number, perPage?: number, filterBy?: string, sortColumn?: string }} options
+ * @returns {Promise<{ raw: unknown, rows: Record<string, unknown>[], pageContext: Record<string, unknown> | null }>}
+ */
+async function listBooksCollectionPage(resource, arrayKey, options = {}) {
+  const seg = String(resource || '').replace(/^\/+|\/+$/g, '');
+  if (!seg) throw new Error('listBooksCollectionPage: resource is required');
+  const key = String(arrayKey || '').trim() || seg;
+  const orgId = getOrgId();
+  const token = await getAccessToken();
+  const page = options.page != null ? Math.max(1, Number(options.page)) : 1;
+  const perPage = Math.min(200, options.perPage != null ? Number(options.perPage) : 200);
+  const qs = new URLSearchParams({
+    organization_id: orgId,
+    page: String(page),
+    per_page: String(perPage),
+  });
+  if (options.filterBy) qs.set('filter_by', String(options.filterBy));
+  if (options.sortColumn) qs.set('sort_column', String(options.sortColumn));
+
+  const url = `${getBooksBaseUrl()}/${seg}?${qs.toString()}`;
+  const op = `listBooksCollectionPage(${seg})`;
+
+  logZohoRequest(op, 'GET', url, null);
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Zoho-oauthtoken ${token}` },
+  });
+
+  const raw = await readBooksJsonResponse(res);
+  logZohoResponse(op, res.status, raw);
+
+  if (!res.ok) {
+    logZohoError(op, 'GET', url, res.status, raw);
+    const msg = raw.message || raw.error || res.statusText || `list_${seg}_failed`;
+    const err = new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    err.zohoRaw = raw;
+    err.statusCode = res.status;
+    throw err;
+  }
+
+  const rows = Array.isArray(raw[key]) ? raw[key] : [];
+  const pageContext =
+    raw.page_context && typeof raw.page_context === 'object' ? raw.page_context : null;
+  return { raw, rows, pageContext };
+}
+
+/**
+ * All rows across pages for a Books list endpoint.
+ * @param {string} resource
+ * @param {string} arrayKey
+ * @param {{ filterBy?: string, sortColumn?: string, perPage?: number, maxPages?: number, limit?: number }} options
+ * @returns {Promise<Record<string, unknown>[]>}
+ */
+async function listAllBooksCollection(resource, arrayKey, options = {}) {
+  const perPage = options.perPage != null ? Math.min(200, Number(options.perPage)) : 200;
+  const maxPages = options.maxPages != null ? Math.max(1, Number(options.maxPages)) : 10000;
+  const lim =
+    options.limit != null && Number.isFinite(Number(options.limit)) && Number(options.limit) > 0
+      ? Math.floor(Number(options.limit))
+      : undefined;
+  const all = [];
+  let page = 1;
+  let hasMore = true;
+
+  while (hasMore && page <= maxPages) {
+    const { rows, pageContext } = await listBooksCollectionPage(resource, arrayKey, {
+      ...options,
+      page,
+      perPage,
+    });
+    all.push(...rows);
+    if (lim != null && all.length >= lim) {
+      return all.slice(0, lim);
+    }
+    hasMore = !!(pageContext && pageContext.has_more_page === true);
+    page += 1;
+  }
+
+  return all;
+}
+
+/** @param {{ page?: number, perPage?: number, filterBy?: string, sortColumn?: string }} options */
+async function listContactsPage(options = {}) {
+  return listBooksCollectionPage('contacts', 'contacts', options);
+}
+
+/** @param {{ filterBy?: string, sortColumn?: string, perPage?: number, maxPages?: number }} options */
+async function listAllContacts(options = {}) {
+  return listAllBooksCollection('contacts', 'contacts', options);
+}
+
+/** @param {{ page?: number, perPage?: number, filterBy?: string, sortColumn?: string }} options */
+async function listInvoicesPage(options = {}) {
+  return listBooksCollectionPage('invoices', 'invoices', options);
+}
+
+/** @param {{ filterBy?: string, sortColumn?: string, perPage?: number, maxPages?: number }} options */
+async function listAllInvoices(options = {}) {
+  return listAllBooksCollection('invoices', 'invoices', options);
+}
+
+/** @param {{ page?: number, perPage?: number, filterBy?: string, sortColumn?: string }} options */
+async function listEstimatesPage(options = {}) {
+  return listBooksCollectionPage('estimates', 'estimates', options);
+}
+
+/** @param {{ filterBy?: string, sortColumn?: string, perPage?: number, maxPages?: number }} options */
+async function listAllEstimates(options = {}) {
+  return listAllBooksCollection('estimates', 'estimates', options);
+}
+
+/** @param {{ page?: number, perPage?: number, filterBy?: string, sortColumn?: string }} options */
+async function listSalesordersPage(options = {}) {
+  return listBooksCollectionPage('salesorders', 'salesorders', options);
+}
+
+/** @param {{ filterBy?: string, sortColumn?: string, perPage?: number, maxPages?: number }} options */
+async function listAllSalesorders(options = {}) {
+  return listAllBooksCollection('salesorders', 'salesorders', options);
+}
+
+/**
+ * GET /salesorders/{id} — includes `line_items` when the list endpoint does not.
+ * @param {string} salesorderId
+ * @returns {Promise<Record<string, unknown> | null>}
+ */
+async function getSalesorderById(salesorderId) {
+  const id = normalizeZohoId(salesorderId);
+  if (!id) {
+    const err = new Error('getSalesorderById: salesorder id is required');
+    err.code = 'MISSING_ID';
+    throw err;
+  }
+  const orgId = getOrgId();
+  const token = await getAccessToken();
+  const url = `${getBooksBaseUrl()}/salesorders/${encodeURIComponent(id)}?organization_id=${encodeURIComponent(orgId)}`;
+
+  logZohoRequest('getSalesorderById', 'GET', url, null);
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Zoho-oauthtoken ${token}` },
+  });
+
+  const raw = await readBooksJsonResponse(res);
+  logZohoResponse('getSalesorderById', res.status, raw);
+
+  const code = raw && typeof raw.code === 'number' ? raw.code : undefined;
+  const codeOk = code === undefined || code === 0;
+  if (!res.ok || !codeOk) {
+    logZohoError('getSalesorderById', 'GET', url, res.status, raw);
+    const msg = raw.message || raw.error || res.statusText || 'get_salesorder_failed';
+    const err = new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    err.zohoRaw = raw;
+    err.statusCode = res.status;
+    throw err;
+  }
+
+  const so = raw.salesorder && typeof raw.salesorder === 'object' ? raw.salesorder : null;
+  return so;
+}
+
+/** @param {{ page?: number, perPage?: number, filterBy?: string, sortColumn?: string }} options */
+async function listBillsPage(options = {}) {
+  return listBooksCollectionPage('bills', 'bills', options);
+}
+
+/** @param {{ filterBy?: string, sortColumn?: string, perPage?: number, maxPages?: number }} options */
+async function listAllBills(options = {}) {
+  return listAllBooksCollection('bills', 'bills', options);
+}
+
+/** @param {{ page?: number, perPage?: number, filterBy?: string, sortColumn?: string }} options */
+async function listPurchaseordersPage(options = {}) {
+  return listBooksCollectionPage('purchaseorders', 'purchaseorders', options);
+}
+
+/** @param {{ filterBy?: string, sortColumn?: string, perPage?: number, maxPages?: number }} options */
+async function listAllPurchaseorders(options = {}) {
+  return listAllBooksCollection('purchaseorders', 'purchaseorders', options);
 }
 
 async function listCurrencies() {
@@ -561,6 +753,21 @@ module.exports = {
   createBillInBooks,
   listItemsPage,
   listAllItems,
+  listBooksCollectionPage,
+  listAllBooksCollection,
+  listContactsPage,
+  listAllContacts,
+  listInvoicesPage,
+  listAllInvoices,
+  listEstimatesPage,
+  listAllEstimates,
+  listSalesordersPage,
+  listAllSalesorders,
+  getSalesorderById,
+  listBillsPage,
+  listAllBills,
+  listPurchaseordersPage,
+  listAllPurchaseorders,
   listCurrencies,
   normalizeZohoId,
   normalizeZohoContactId,

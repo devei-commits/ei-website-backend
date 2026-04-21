@@ -10,6 +10,7 @@ MAX_ATTEMPTS="${MAX_ATTEMPTS:-600}"
 # db.sync({ alter: true }) in seed.js creates/alters tables; then server can safely run.
 echo "Running database sync and seed..."
 node seed.js
+# node cleanData.js --yes
 
 echo "Starting server..."
 npm run dev &

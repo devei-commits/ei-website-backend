@@ -1,0 +1,49 @@
+/**
+ * Side-effect only: loads every Sequelize model so they attach to the shared `db` instance.
+ * Used by `cleanData.js` before `db.sync()` so all tables exist. Keep aligned with `seed.js`
+ * model imports when you add new tables.
+ */
+require('./src/users/models');
+require('./src/models/index');
+require('./src/products/models');
+require('./src/orders/models');
+require('./src/payments/models');
+require('./src/models/Addresses');
+require('./src/appointments/models');
+require('./src/newdevelopments/models');
+require('./src/customizations/models');
+require('./src/productCustomizations/models');
+require('./src/enquiries/models');
+require('./src/items/models');
+require('./src/vendors/models');
+require('./src/contacts/models');
+require('./src/otp/models');
+require('./src/compositeItems/models');
+require('./src/packaging/models');
+require('./src/customizationPackaging/models');
+require('./src/packMaterials/models');
+require('./src/rawMaterials/models');
+require('./src/bom/models');
+require('./src/itemsMaster/models');
+require('./src/vendorClient/models');
+require('./src/salesOrders/models');
+require('./src/purchaseOrders/models');
+require('./src/planningExtracted/models');
+require('./src/procurementRequests/models');
+require('./src/procurementQuotations/models');
+require('./src/poTracking/models');
+require('./src/universalSwap/models');
+require('./src/itemGroups/models');
+require('./src/warehouseInventory/models');
+require('./src/warehouseInventory/locationHistoryModel');
+require('./src/warehouseLocations/models');
+require('./src/grn/models');
+require('./src/mrn/models');
+require('./src/itemsList/models');
+require('./src/production/models');
+require('./src/fulfillment/models');
+require('./src/clientHub/models');
+require('./src/facilityAreas/models');
+require('./src/departments/models');
+require('./src/roles/models');
+require('./src/logisticsSchedules/models');
