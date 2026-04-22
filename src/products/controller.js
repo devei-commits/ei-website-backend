@@ -415,6 +415,8 @@ const createPRRegistration = async (req, res) => {
         bom_tax_preference: b.bom_tax_preference ?? b.bomTaxPreference ?? null,
         bom_returnable: b.bom_returnable ?? b.bomReturnable ?? false,
         bom_associate_items: b.bom_associate_items ?? b.bomAssociateItems ?? null,
+        bom_composite_item:
+          b.bom_composite_item ?? b.bomCompositeItem ?? false,
         type: b.type ?? productRow.form ?? null,
         status: 'Draft',
         client: b.client ?? null,
@@ -804,6 +806,10 @@ const getProductDetail = async (req, res) => {
 
     res.json({
       ...plain,
+      bom_composite_item: bom ? bom.bom_composite_item : null,
+      bom_tax_preference: bom ? bom.bom_tax_preference : null,
+      bom_returnable: bom ? bom.bom_returnable : null,
+      bom_associate_items: bom ? bom.bom_associate_items : null,
       formulaBom,
       packBom,
       processSteps,
@@ -872,6 +878,8 @@ const updateProduct = async (req, res) => {
           ph_range: bomPayload.ph_range ?? null,
           yield_pct: bomPayload.yield_pct ?? null,
           stability_summary: bomPayload.stability_summary ?? null,
+          bom_composite_item:
+            bomPayload.bom_composite_item ?? bomPayload.bomCompositeItem ?? false,
           created_at: new Date(),
           updated_at: new Date(),
         });
@@ -894,6 +902,11 @@ const updateProduct = async (req, res) => {
         if (bomPayload.ph_range !== undefined) bomUpdate.ph_range = bomPayload.ph_range;
         if (bomPayload.yield_pct !== undefined) bomUpdate.yield_pct = bomPayload.yield_pct;
         if (bomPayload.stability_summary !== undefined) bomUpdate.stability_summary = bomPayload.stability_summary;
+        if (bomPayload.bom_composite_item !== undefined) {
+          bomUpdate.bom_composite_item = !!bomPayload.bom_composite_item;
+        } else if (bomPayload.bomCompositeItem !== undefined) {
+          bomUpdate.bom_composite_item = !!bomPayload.bomCompositeItem;
+        }
         await bom.update(bomUpdate);
       }
     }
