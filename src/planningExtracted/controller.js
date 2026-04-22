@@ -1,4 +1,5 @@
 const { Op } = require('sequelize');
+const db = require('../../db');
 const PlanningExtracted = require('./models');
 const PlanningBomOverride = require('./planningBomOverrideModel');
 const PlanningBatch = require('./planningBatchModel');
@@ -19,6 +20,23 @@ const {
   estimateOrderTotalKg,
   batchesRequiredForOrderKg,
 } = require('./orderKgMath');
+
+/** Idempotent schema patch: adds bom_specific_gravity on Postgres if missing. Lazy, safe to call repeatedly. */
+let bomSgColumnEnsured = false;
+async function ensureBomSgColumn() {
+  if (bomSgColumnEnsured) return;
+  bomSgColumnEnsured = true;
+  try {
+    const dialect = db.getDialect && db.getDialect();
+    if (dialect === 'postgres') {
+      await db.query(
+        'ALTER TABLE planning_extracted ADD COLUMN IF NOT EXISTS bom_specific_gravity NUMERIC(5,3)'
+      );
+    }
+  } catch (e) {
+    console.warn('[planning-extracted] ensureBomSgColumn:', e && e.message ? e.message : e);
+  }
+}
 
 /** Whether `sent_batch_indices` includes this 0-based batch index (coerces string/number from JSON). */
 function isBatchIndexSent(sentRaw, batchIndex0) {
@@ -216,6 +234,7 @@ function formatRow(row) {
     plannedStartDate: d.planned_start_date || null,
     productionLine: d.production_line || null,
     bomConfirmedAt: d.bom_confirmed_at || null,
+    bomSpecificGravity: d.bom_specific_gravity != null ? Number(d.bom_specific_gravity) : null,
     customBatches: Array.isArray(d.custom_batches) ? d.custom_batches : null,
     sentBatchIndices: Array.isArray(d.sent_batch_indices) ? d.sent_batch_indices : [],
     createdAt: d.created_at,
@@ -661,7 +680,8 @@ async function syncPlanningExtractedFromSalesOrders() {
           batch_count: 0,
           batch_size_kg: batchSizeKg,
           bom_status: bom && hasBomLines ? 'Confirmed' : 'Pending',
-          bom_confirmed_at: bom && hasBomLines ? new Date() : null,
+          // BOM is never auto-confirmed on SO creation: planner must confirm BOM + SG on first-batch flow.
+          bom_confirmed_at: null,
           approved_by: so.created_by || null,
           raw_materials: rawMaterials,
           packaging_materials: packagingMaterials,
@@ -747,6 +767,7 @@ async function updatePlanningExtracted(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    await ensureBomSgColumn();
     const row = await PlanningExtracted.findByPk(id);
     if (!row) return res.status(404).json({ error: 'Planning extracted not found' });
     const prevBomConfirmedAt = row.get ? row.get('bom_confirmed_at') : row.bom_confirmed_at;
@@ -757,6 +778,7 @@ async function updatePlanningExtracted(req, res) {
       rawMaterials: 'raw_materials', packagingMaterials: 'packaging_materials', color: 'color',
       batchCount: 'batch_count', batchSizeKg: 'batch_size_kg', plannedStartDate: 'planned_start_date',
       productionLine: 'production_line', bomConfirmedAt: 'bom_confirmed_at',
+      bomSpecificGravity: 'bom_specific_gravity',
       customBatches: 'custom_batches',
       sentBatchIndices: 'sent_batch_indices',
     };
@@ -765,6 +787,7 @@ async function updatePlanningExtracted(req, res) {
       'batch_size_display', 'batches_required', 'bom_status', 'approved_by',
       'raw_materials', 'packaging_materials', 'color',
       'batch_count', 'batch_size_kg', 'planned_start_date', 'production_line', 'bom_confirmed_at',
+      'bom_specific_gravity',
       'custom_batches', 'sent_batch_indices',
     ];
     for (const key of allowed) {
@@ -775,8 +798,28 @@ async function updatePlanningExtracted(req, res) {
     }
 
     const nowBomConfirmedAt = row.get ? row.get('bom_confirmed_at') : row.bom_confirmed_at;
+    const nowBomSg = row.get ? row.get('bom_specific_gravity') : row.bom_specific_gravity;
 
     await row.save();
+
+    // When BOM is confirmed together with a BOM-level SG, fan the SG value into every rm_lines[].specific_gravity
+    // of the BOM override so downstream production vessel-volume math (which still reads per-line SG) keeps working.
+    const bomSgNumeric = Number(nowBomSg);
+    const isConfirming = prevBomConfirmedAt == null && nowBomConfirmedAt != null;
+    const wroteSg = body.bomSpecificGravity !== undefined || body.bom_specific_gravity !== undefined;
+    if (Number.isFinite(bomSgNumeric) && bomSgNumeric > 0 && (isConfirming || wroteSg)) {
+      try {
+        const override = await PlanningBomOverride.findOne({ where: { planning_extracted_id: id } });
+        if (override) {
+          const rmLinesRaw = Array.isArray(override.rm_lines) ? override.rm_lines : [];
+          const fanned = rmLinesRaw.map((line) => ({ ...line, specific_gravity: bomSgNumeric }));
+          override.rm_lines = fanned;
+          await override.save();
+        }
+      } catch (e) {
+        console.warn('[planning-extracted] fan BOM SG to override rm_lines:', e && e.message ? e.message : e);
+      }
+    }
 
     // Reserved stock is intentionally NOT changed by BOM confirm/unconfirm.
     // It is changed only by explicit BMR/BPR reserve actions.

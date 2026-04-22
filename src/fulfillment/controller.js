@@ -474,7 +474,8 @@ async function createOrder(req, res) {
             batch_count: 0,
             batch_size_kg: batchSizeKg,
             bom_status: bom ? 'Confirmed' : 'Pending',
-            bom_confirmed_at: bom ? new Date() : null,
+            // BOM is never auto-confirmed on SO creation: planner must confirm BOM + SG on first-batch flow.
+            bom_confirmed_at: null,
             approved_by: createdByName,
             raw_materials,
             packaging_materials,

@@ -188,7 +188,8 @@ async function createPlanningExtractedRowsForSalesOrder(salesOrderId, payload) {
       batch_count: 0,
       batch_size_kg: batchSizeKg,
       bom_status: bom ? 'Confirmed' : 'Pending',
-      bom_confirmed_at: bom ? new Date() : null,
+      // BOM is never auto-confirmed on SO creation: planner must confirm BOM + SG on first-batch flow.
+      bom_confirmed_at: null,
       approved_by: payload.created_by,
       raw_materials: rawMaterials,
       packaging_materials: packagingMaterials,

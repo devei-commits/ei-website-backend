@@ -401,7 +401,8 @@ const saveOrder = async (req, res) => {
                 approved_by: createdByName,
                 raw_materials: rawMaterials,
                 packaging_materials: packagingMaterials,
-                bom_confirmed_at: bom ? new Date() : null,
+                // BOM is never auto-confirmed on SO creation: planner must confirm BOM + SG on first-batch flow.
+                bom_confirmed_at: null,
                 created_at: new Date(),
                 updated_at: new Date(),
             }, { transaction: t });

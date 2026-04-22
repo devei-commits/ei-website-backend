@@ -30,6 +30,8 @@ PlanningExtracted.init(
     planned_start_date: { type: DataTypes.DATEONLY, allowNull: true },
     production_line: { type: DataTypes.STRING(200), allowNull: true },
     bom_confirmed_at: { type: DataTypes.DATE, allowNull: true },
+    /** Single BOM-level Specific Gravity (vs water). Picked on first-batch BOM confirmation, fanned out to rm_lines[].specific_gravity for production vessel math. */
+    bom_specific_gravity: { type: DataTypes.DECIMAL(5, 3), allowNull: true },
     custom_batches: { type: DataTypes.JSON, allowNull: true },
     sent_batch_indices: { type: DataTypes.JSON, allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
