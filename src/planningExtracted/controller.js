@@ -45,6 +45,19 @@ function isBatchIndexSent(sentRaw, batchIndex0) {
   return sent.some((x) => Number(x) === Number(batchIndex0));
 }
 
+/**
+ * planning_batches rows that are already sent to production (PI.sent_batch_indices, 0-based index = sequence − 1).
+ * Draft batches (e.g. auto-added B2 after B1 is sent) must not drive items-involved "used in" / planned split until sent.
+ */
+function filterPlanningBatchesSentToProduction(planPlain, planBatchesPlain) {
+  const sentRaw = planPlain.sent_batch_indices;
+  return planBatchesPlain.filter((bp) => {
+    const seq = Number(bp.sequence);
+    if (!Number.isFinite(seq) || seq < 1) return false;
+    return isBatchIndexSent(sentRaw, seq - 1);
+  });
+}
+
 function daysLeftDisplay(dueDate) {
   if (!dueDate) return '';
   const due = new Date(dueDate);
@@ -1607,7 +1620,7 @@ function countPlanningBatchesTouchingPm(planBatchesPlain, pmId, pmByCode, pmByNa
 /**
  * GET /items-involved — aggregated RM/PM for confirmed PIs, consolidated by item.
  * - totalRequired: full BOM qty for the item across those PIs (gross demand vs warehouse / procurement).
- * - unallocatedToBatches: max(0, gross − qty already rolled into planning_batches) — for batch-split / “left to assign”.
+ * - unallocatedToBatches: max(0, gross − qty in planning_batches that are **sent to production**) — draft batches excluded.
  * - surplusShortage / coverage use gross demand so stock checks stay correct after batches absorb the BOM.
  */
 async function getItemsInvolved(req, res) {
@@ -1758,12 +1771,13 @@ async function getItemsInvolved(req, res) {
 
       const planBatchesRaw = batchesByPlanId.get(planId) || [];
       const planBatchesPlain = planBatchesRaw.map((batchRow) => (batchRow.get ? batchRow.get({ plain: true }) : batchRow));
+      const planBatchesSent = filterPlanningBatchesSentToProduction(plain, planBatchesPlain);
 
       const plannedRm = new Map();
       const plannedPm = new Map();
-      // All planning_batches (including PE-*-rw-* rework rows) count toward "already planned"
-      // vs the PI snapshot so shortfall rework is not double-counted with order remainder.
-      for (const bp of planBatchesPlain) {
+      // Only batches sent to production count toward planned qty / unallocated / "used in" batch count.
+      // Draft rows (next batch auto-created in Plan Batches) stay in DB but are excluded until sent.
+      for (const bp of planBatchesSent) {
         accumulatePlannedBatchIntoQtyMaps(bp, plain, rmByCode, rmByName, pmByCode, pmByName, plannedRm, plannedPm);
       }
 
@@ -1796,7 +1810,7 @@ async function getItemsInvolved(req, res) {
         if (planId && !agg.planningExtractedIds.includes(planId)) agg.planningExtractedIds.push(planId);
         if (name) agg.name = name;
         if (code) agg.code = code;
-        agg.batchCount += countPlanningBatchesTouchingRm(planBatchesPlain, id, rmByCode, rmByName);
+        agg.batchCount += countPlanningBatchesTouchingRm(planBatchesSent, id, rmByCode, rmByName);
       }
 
       const allPmIdsForPlan = new Set([...fullPm.keys(), ...plannedPm.keys()]);
@@ -1828,7 +1842,7 @@ async function getItemsInvolved(req, res) {
         if (planId && !agg.planningExtractedIds.includes(planId)) agg.planningExtractedIds.push(planId);
         if (name) agg.name = name;
         if (code) agg.code = code;
-        agg.batchCount += countPlanningBatchesTouchingPm(planBatchesPlain, id, pmByCode, pmByName, plain);
+        agg.batchCount += countPlanningBatchesTouchingPm(planBatchesSent, id, pmByCode, pmByName, plain);
       }
     }
 
@@ -2282,6 +2296,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
 
     const planBatchesList = await PlanningBatch.findAll({ where: { planning_extracted_id: id }, order: [['sequence', 'ASC']] });
     const planBatchesPlain = planBatchesList.map((b) => (b.get ? b.get({ plain: true }) : b));
+    const planBatchesSent = filterPlanningBatchesSentToProduction(plain, planBatchesPlain);
     const rmByCodeMap = new Map();
     const rmByNameMap = new Map();
     const pmByCodeMap = new Map();
@@ -2328,18 +2343,26 @@ async function getItemsInvolvedByPlanningId(req, res) {
     }
     const plannedRmFromBatches = new Map();
     const plannedPmFromBatches = new Map();
-    for (const bp of planBatchesPlain) {
+    for (const bp of planBatchesSent) {
       accumulatePlannedBatchIntoQtyMaps(bp, plain, rmByCodeMap, rmByNameMap, pmByCodeMap, pmByNameMap, plannedRmFromBatches, plannedPmFromBatches);
     }
 
     const whWhere = [];
     if (rmIds.length) whWhere.push({ item_type: 'RM', raw_material_id: { [Op.in]: rmIds } });
     if (pmIds.length) whWhere.push({ item_type: 'PM', pack_material_id: { [Op.in]: pmIds } });
-    const [whRows, rmsList, pmsList, allPos] = await Promise.all([
+    const {
+      getGrnInTransitQtyNativeByKey,
+      getPoPipelineInTransitQtyNativeByKey,
+      getCompletedGrnReceivedNativeByKey,
+    } = require('../warehouseInventory/inTransitSync');
+    const [whRows, rmsList, pmsList, allPos, grnInTransitNative, poInTransitNative, grnReceivedNative] = await Promise.all([
       whWhere.length ? WarehouseInventory.findAll({ where: { [Op.or]: whWhere } }) : Promise.resolve([]),
       rmIds.length ? RawMaterial.findAll({ where: { id: rmIds }, attributes: ['id', 'code', 'name'] }) : Promise.resolve([]),
       pmIds.length ? PackMaterial.findAll({ where: { id: pmIds }, attributes: ['id', 'code', 'description'] }) : Promise.resolve([]),
       PurchaseOrder.findAll({ attributes: ['id', 'items'] }),
+      getGrnInTransitQtyNativeByKey(),
+      getPoPipelineInTransitQtyNativeByKey(),
+      getCompletedGrnReceivedNativeByKey(),
     ]);
 
     const poQtyMap = new Map();
@@ -2356,6 +2379,21 @@ async function getItemsInvolvedByPlanningId(req, res) {
         poQtyMap.set(key, (poQtyMap.get(key) || 0) + n);
       }
     }
+
+    const inTransitByKeyForPo = new Map();
+    for (const source of [grnInTransitNative, poInTransitNative]) {
+      for (const [k, v] of source) {
+        const n = Number(v) || 0;
+        if (n <= 0) continue;
+        inTransitByKeyForPo.set(k, (inTransitByKeyForPo.get(k) || 0) + n);
+      }
+    }
+    const netOpenPoQtyNative = (key) => {
+      const totalOnPO = Number(poQtyMap.get(key) ?? 0) || 0;
+      const totalInTransit = Number(inTransitByKeyForPo.get(key) ?? 0) || 0;
+      const totalReceived = Number(grnReceivedNative.get(key) ?? 0) || 0;
+      return Math.max(0, totalOnPO - totalInTransit - totalReceived);
+    };
 
     const sihByRm = new Map();
     const reservedByRm = new Map();
@@ -2433,9 +2471,9 @@ async function getItemsInvolvedByPlanningId(req, res) {
         batchNumber: batchByRm.get(rid) ?? null,
         expiryDate: expiryByRm.get(rid) ?? null,
         plannedQty,
-        poQty: poQtyMap.get(`rm-${rid}`) ?? 0,
+        poQty: netOpenPoQtyNative(`rm-${rid}`),
         inTransit,
-        batchCount: countPlanningBatchesTouchingRm(planBatchesPlain, rid, rmByCodeMap, rmByNameMap),
+        batchCount: countPlanningBatchesTouchingRm(planBatchesSent, rid, rmByCodeMap, rmByNameMap),
       });
     }
     for (const pid of pmIds) {
@@ -2475,9 +2513,9 @@ async function getItemsInvolvedByPlanningId(req, res) {
         batchNumber: batchByPm.get(pid) ?? null,
         expiryDate: expiryByPm.get(pid) ?? null,
         plannedQty,
-        poQty: poQtyMap.get(`pm-${pid}`) ?? 0,
+        poQty: netOpenPoQtyNative(`pm-${pid}`),
         inTransit,
-        batchCount: countPlanningBatchesTouchingPm(planBatchesPlain, pid, pmByCodeMap, pmByNameMap, plain),
+        batchCount: countPlanningBatchesTouchingPm(planBatchesSent, pid, pmByCodeMap, pmByNameMap, plain),
       });
     }
 

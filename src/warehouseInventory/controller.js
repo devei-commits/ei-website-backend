@@ -17,7 +17,7 @@ const { Op } = require('sequelize');
 const GoodsReceivedNote = require('../grn/models');
 const PurchaseOrder = require('../purchaseOrders/models');
 const { quantityToKg } = require('./quantityToKg');
-const { loadRmPmMeta } = require('./inTransitSync');
+const { loadRmPmMeta, getCompletedGrnReceivedKgByKey } = require('./inTransitSync');
 const db = require('../../db');
 
 function toNum(x) {
@@ -302,7 +302,7 @@ async function getPoQuantityByItem() {
  * GET /api/v1/warehouse-inventory
  * Returns { rows, itemGroups }. Each row has id (e.g. rm-1), code, name, subtitle, type, itemGroupNames, itemGroupCodes,
  * warehouseInventoryId, zone, rack, whStock, whUnit, ml1Stock, ml2Stock, stockInHand (computed), reserved,
- * inTransit, underGrn, inTransitBreakdown, poQuantity, reorderPt, avgMo, status.
+ * inTransit, underGrn, inTransitBreakdown, poQuantity (gross PO lines minus GRN Complete received, Under GRN, in-transit), reorderPt, avgMo, status.
  */
 async function list(req, res) {
   try {
@@ -806,10 +806,11 @@ async function listPayload() {
   const productMap = new Map(products.map((p) => [p.product_id, p.get ? p.get({ plain: true }) : p]));
   const rmGroupMap = buildMemberToGroupsMap(groups.filter((g) => g.type === 'RM'));
   const pmGroupMap = buildMemberToGroupsMap(groups.filter((g) => g.type === 'PM'));
-  const [inTransitByItem, poQtyByItem, underGrnByItem] = await Promise.all([
+  const [inTransitByItem, poQtyByItem, underGrnByItem, grnReceivedKgByItem] = await Promise.all([
     getInTransitBreakdown(),
     getPoQuantityByItem(),
     getUnderGrnQuantityByItem(),
+    getCompletedGrnReceivedKgByKey(),
   ]);
   const rows = [];
   for (const w of whRows) {
@@ -838,6 +839,7 @@ async function listPayload() {
         underGrnQty
       );
       const poQtyRaw = toNum(poQtyByItem.get(itemKey) || 0);
+      const grnReceivedKg = toNum(grnReceivedKgByItem.get(itemKey) || 0);
       rows.push({
         id: itemKey,
         warehouseInventoryId: wh.id,
@@ -860,8 +862,8 @@ async function listPayload() {
         inTransit: inTransitQty,
         underGrn: underGrnQty,
         inTransitBreakdown,
-        // Stage split: PO should show only quantity not yet moved further.
-        poQuantity: Math.max(0, poQtyRaw - underGrnQty - inTransitQty),
+        // Open PO exposure: gross PO lines minus GRN Complete received, Under GRN, and in-transit pipeline.
+        poQuantity: Math.max(0, poQtyRaw - grnReceivedKg - underGrnQty - inTransitQty),
         reorderPt,
         avgMo: toNum(wh.avg_mo),
         status,
@@ -882,6 +884,7 @@ async function listPayload() {
         underGrnQty
       );
       const poQtyRaw = toNum(poQtyByItem.get(itemKey) || 0);
+      const grnReceivedKg = toNum(grnReceivedKgByItem.get(itemKey) || 0);
       rows.push({
         id: itemKey,
         warehouseInventoryId: wh.id,
@@ -904,7 +907,7 @@ async function listPayload() {
         inTransit: inTransitQty,
         underGrn: underGrnQty,
         inTransitBreakdown,
-        poQuantity: Math.max(0, poQtyRaw - underGrnQty - inTransitQty),
+        poQuantity: Math.max(0, poQtyRaw - grnReceivedKg - underGrnQty - inTransitQty),
         reorderPt,
         avgMo: toNum(wh.avg_mo),
         status,

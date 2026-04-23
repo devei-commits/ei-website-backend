@@ -435,6 +435,56 @@ async function getCompletedGrnReceivedNativeByKey() {
   return map;
 }
 
+/**
+ * Sum received **kg** from GRN Complete per rm-{id}/pm-{id} (same UOM→kg rules as PO pipeline / getPoQuantityByItem).
+ * Used so warehouse "PO QTY" can net to 0 after material is booked from completed GRNs.
+ */
+async function getCompletedGrnReceivedKgByKey() {
+  const map = new Map();
+  try {
+    const grns = await GoodsReceivedNote.findAll({
+      where: { status: 'GRN Complete' },
+      attributes: ['line_items'],
+    });
+    const rmIds = new Set();
+    const pmIds = new Set();
+    for (const g of grns) {
+      const d = g.get ? g.get({ plain: true }) : g;
+      const lines = Array.isArray(d.line_items) ? d.line_items : [];
+      for (const line of lines) {
+        if (line.raw_material_id != null) rmIds.add(Number(line.raw_material_id));
+        if (line.pack_material_id != null) pmIds.add(Number(line.pack_material_id));
+      }
+    }
+    const { rmMeta, pmMeta } = await loadRmPmMeta(rmIds, pmIds);
+    for (const g of grns) {
+      const d = g.get ? g.get({ plain: true }) : g;
+      const lines = Array.isArray(d.line_items) ? d.line_items : [];
+      for (const line of lines) {
+        const qtyNative = lineReceivedQtyFromGrnLine(line);
+        if (qtyNative <= 0) continue;
+        let key = null;
+        if (line.raw_material_id != null) key = `rm-${line.raw_material_id}`;
+        else if (line.pack_material_id != null) key = `pm-${line.pack_material_id}`;
+        if (!key) continue;
+        const unit = String(line.unit ?? line.UOM ?? '').trim();
+        const itemType = key.startsWith('rm-') ? 'RM' : 'PM';
+        const id = itemType === 'RM' ? Number(line.raw_material_id) : Number(line.pack_material_id);
+        const meta = itemType === 'RM' ? rmMeta.get(id) : pmMeta.get(id);
+        const kg = quantityToKg(qtyNative, unit, {
+          itemType,
+          masterUom: itemType === 'RM' ? meta?.uom : meta?.unit,
+          sizeSpec: itemType === 'PM' ? meta?.size_spec : null,
+        });
+        map.set(key, (map.get(key) || 0) + kg);
+      }
+    }
+  } catch (err) {
+    console.warn('[inTransitSync] getCompletedGrnReceivedKgByKey:', err.message);
+  }
+  return map;
+}
+
 async function getPlannedPlanningQtyByItem() {
   const rmMap = new Map();
   const pmMap = new Map();
@@ -611,6 +661,7 @@ module.exports = {
   getGrnInTransitQtyNativeByKey,
   getPoPipelineInTransitQtyNativeByKey,
   getCompletedGrnReceivedNativeByKey,
+  getCompletedGrnReceivedKgByKey,
   getPlannedPlanningQtyByItem,
   mergeKeyMapsIntoRmPm,
   loadRmPmMeta,
