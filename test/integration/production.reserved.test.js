@@ -13,6 +13,7 @@ const { ReservedBatchItem } = require('../../src/fulfillment/models');
 const {
   applyRmReservedToInventory,
   applyPmReservedToInventory,
+  applyDispensingDeltaToWarehouseInventory,
 } = require('../../src/production/controller');
 const { isDbAvailable } = require('../helpers/dbAvailability');
 
@@ -95,5 +96,39 @@ describe('production reserved', () => {
     expect(Number(items[0].quantity_reserved)).toBe(500);
     const wh = await WarehouseInventory.findOne({ where: { item_type: 'PM', pack_material_id: pmId } });
     expect(Number(wh.reserved)).toBe(500);
+  });
+
+  test('dispensing delta reduces ReservedBatchItem and warehouse reserved for RM', async () => {
+    if (!dbAvailable) return;
+    const batchPlain = { id: batchId, bmr_no: 'BMR-001', bpr_no: 'BPR-001' };
+    await applyDispensingDeltaToWarehouseInventory({
+      type: 'RM',
+      code: 'RM-PROD-001',
+      delta: 20,
+      sampleLine: { code: 'RM-PROD-001', dispensed: 20 },
+      batchPlain,
+      dispensingBundleId: null,
+    });
+    const items = await ReservedBatchItem.findAll({ where: { production_batch_id: batchId, raw_material_id: rmId } });
+    expect(Number(items[0].quantity_reserved)).toBe(30);
+    const wh = await WarehouseInventory.findOne({ where: { item_type: 'RM', raw_material_id: rmId } });
+    expect(Number(wh.reserved)).toBe(30);
+  });
+
+  test('dispensing delta reduces ReservedBatchItem and warehouse reserved for PM', async () => {
+    if (!dbAvailable) return;
+    const batchPlain = { id: batchId, bmr_no: 'BMR-001', bpr_no: 'BPR-001' };
+    await applyDispensingDeltaToWarehouseInventory({
+      type: 'PM',
+      code: 'PM-PROD-001',
+      delta: 100,
+      sampleLine: { code: 'PM-PROD-001', dispensed: 100 },
+      batchPlain,
+      dispensingBundleId: null,
+    });
+    const items = await ReservedBatchItem.findAll({ where: { production_batch_id: batchId, pack_material_id: pmId } });
+    expect(Number(items[0].quantity_reserved)).toBe(400);
+    const wh = await WarehouseInventory.findOne({ where: { item_type: 'PM', pack_material_id: pmId } });
+    expect(Number(wh.reserved)).toBe(400);
   });
 });

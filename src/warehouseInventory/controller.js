@@ -1,7 +1,8 @@
 /**
  * Warehouse Inventory API — list (with RM/PM/PR + item groups) and PATCH for adjust stock.
  * stock_in_hand = wh_stock + ml1_stock + ml2_stock (computed).
- * In-transit breakdown and PO quantity derived from GRNs and Purchase Orders.
+ * RM/PM in-transit uses warehouse_inventory.in_transit (inTransitSync: GRNs + procurement PO pipeline),
+ * with GRN logistics rows as breakdown detail; PO quantity is derived from purchase_orders.items.
  */
 const WarehouseInventory = require('./models');
 const WarehouseInventoryLocationHistory = require('./locationHistoryModel');
@@ -102,7 +103,31 @@ function buildMemberToGroupsMap(groups) {
   return map;
 }
 
-/** In-transit = GRNs currently in logistics stage (excludes Under GRN). Returns Map<itemKey, [{ vendor, poId, poNo, expectedDate, quantity }]>. */
+/**
+ * `warehouse_inventory.in_transit` is recomputed by inTransitSync (GRN pipeline + PO procurement
+ * "mark in transit" / Delivery Pending). The list API used to show only GRN logistics rows here,
+ * which missed PO-side pipeline. Use persisted total minus Under GRN (shown in its own column).
+ */
+function inTransitQtyForListRow(wh, grnLogisticsBreakdown, underGrnQty) {
+  const persisted = toNum(wh.in_transit);
+  const under = toNum(underGrnQty);
+  const fromSync = Math.max(0, persisted - under);
+  const grnSum = (grnLogisticsBreakdown || []).reduce((s, b) => s + toNum(b.quantity), 0);
+  const pipelineOnly = Math.max(0, fromSync - grnSum);
+  let breakdown = Array.isArray(grnLogisticsBreakdown) ? [...grnLogisticsBreakdown] : [];
+  if (pipelineOnly > 1e-6) {
+    breakdown.push({
+      vendor: '',
+      poId: null,
+      poNo: 'Issued PO — procurement in transit (no inbound GRN row yet)',
+      expectedDate: null,
+      quantity: pipelineOnly,
+    });
+  }
+  return { inTransitQty: fromSync, inTransitBreakdown: breakdown };
+}
+
+/** GRN rows in logistics statuses only (excludes Under GRN — that column is separate). Used as list breakdown detail; totals use synced wh.in_transit. */
 async function getInTransitBreakdown() {
   const map = new Map();
   try {
@@ -805,9 +830,13 @@ async function listPayload() {
       if (!m) continue;
       const groupList = rmGroupMap.get(wh.raw_material_id) || [];
       const itemKey = `rm-${wh.raw_material_id}`;
-      const breakdown = inTransitByItem.get(itemKey) || [];
-      const inTransitQty = breakdown.reduce((sum, b) => sum + toNum(b.quantity), 0);
+      const grnLogisticsBreakdown = inTransitByItem.get(itemKey) || [];
       const underGrnQty = toNum(underGrnByItem.get(itemKey) || 0);
+      const { inTransitQty, inTransitBreakdown } = inTransitQtyForListRow(
+        wh,
+        grnLogisticsBreakdown,
+        underGrnQty
+      );
       const poQtyRaw = toNum(poQtyByItem.get(itemKey) || 0);
       rows.push({
         id: itemKey,
@@ -827,10 +856,10 @@ async function listPayload() {
         ml2Stock,
         stockInHand,
         reserved: toNum(wh.reserved),
-        // Stage-accurate transit quantity from GRN logistics rows (excludes Under GRN).
+        // Synced pipeline (GRN + procurement PO) minus Under GRN (own column); breakdown adds PO-only slice.
         inTransit: inTransitQty,
         underGrn: underGrnQty,
-        inTransitBreakdown: breakdown,
+        inTransitBreakdown,
         // Stage split: PO should show only quantity not yet moved further.
         poQuantity: Math.max(0, poQtyRaw - underGrnQty - inTransitQty),
         reorderPt,
@@ -845,9 +874,13 @@ async function listPayload() {
       if (!m) continue;
       const groupList = pmGroupMap.get(wh.pack_material_id) || [];
       const itemKey = `pm-${wh.pack_material_id}`;
-      const breakdown = inTransitByItem.get(itemKey) || [];
-      const inTransitQty = breakdown.reduce((sum, b) => sum + toNum(b.quantity), 0);
+      const grnLogisticsBreakdown = inTransitByItem.get(itemKey) || [];
       const underGrnQty = toNum(underGrnByItem.get(itemKey) || 0);
+      const { inTransitQty, inTransitBreakdown } = inTransitQtyForListRow(
+        wh,
+        grnLogisticsBreakdown,
+        underGrnQty
+      );
       const poQtyRaw = toNum(poQtyByItem.get(itemKey) || 0);
       rows.push({
         id: itemKey,
@@ -867,10 +900,10 @@ async function listPayload() {
         ml2Stock,
         stockInHand,
         reserved: toNum(wh.reserved),
-        // Stage-accurate transit quantity from GRN logistics rows (excludes Under GRN).
+        // Synced pipeline (GRN + procurement PO) minus Under GRN (own column); breakdown adds PO-only slice.
         inTransit: inTransitQty,
         underGrn: underGrnQty,
-        inTransitBreakdown: breakdown,
+        inTransitBreakdown,
         poQuantity: Math.max(0, poQtyRaw - underGrnQty - inTransitQty),
         reorderPt,
         avgMo: toNum(wh.avg_mo),

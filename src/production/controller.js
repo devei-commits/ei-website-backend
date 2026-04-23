@@ -1131,6 +1131,48 @@ async function resolvePackMaterialForDispensingLine(line) {
 }
 
 /**
+ * When dispensed qty increases, reduce this batch's reserved_batch_items so SIH − reserved matches reality.
+ * When dispensed qty decreases (correction), add back reserve up to prior level.
+ * warehouse_inventory.reserved is recomputed via syncWarehouseReserved from sums of these rows.
+ */
+async function adjustProductionReservedAfterDispenseDelta({
+  productionBatchId,
+  type,
+  materialId,
+  dispenseDelta,
+}) {
+  if (!productionBatchId || !materialId || !Number.isFinite(dispenseDelta) || Math.abs(dispenseDelta) <= 1e-9) {
+    return;
+  }
+  const where =
+    type === 'RM'
+      ? { production_batch_id: productionBatchId, raw_material_id: materialId, pack_material_id: null }
+      : { production_batch_id: productionBatchId, pack_material_id: materialId, raw_material_id: null };
+  const rbi = await ReservedBatchItem.findOne({ where });
+  if (!rbi) return;
+  const cur = Number(rbi.quantity_reserved) || 0;
+  let next;
+  if (dispenseDelta > 0) {
+    next = Math.max(0, cur - dispenseDelta);
+  } else {
+    next = cur + Math.abs(dispenseDelta);
+  }
+  if (Math.abs(next - cur) < 1e-9) return;
+  await rbi.update({ quantity_reserved: next });
+  await syncWarehouseReserved(type === 'RM' ? [materialId] : [], type === 'PM' ? [materialId] : []);
+  if (RESERVE_DEBUG) {
+    console.log('[RESERVE-DEBUG] adjustProductionReservedAfterDispenseDelta', {
+      productionBatchId,
+      type,
+      materialId,
+      dispenseDelta,
+      quantity_reserved_before: cur,
+      quantity_reserved_after: next,
+    });
+  }
+}
+
+/**
  * Apply dispensing delta: prefer ML1 then ML2 (manufacturing / MU stock), then WH if MU insufficient.
  * qty_delta in history: negative when material leaves inventory (dispense), positive when restored.
  * @returns {boolean} true if warehouse row was updated and history logged
@@ -1277,6 +1319,18 @@ async function applyDispensingDeltaToWarehouseInventory({
     ml2_stock: newMl2,
     stock_in_hand: newStockInHand,
   });
+
+  // Reserved qty for this production batch (reserved_batch_items) must drop as material is dispensed
+  // so warehouse_inventory.reserved stays aligned with stock actually still held for the batch.
+  const prodBatchId = batchPlain?.id != null ? Number(batchPlain.id) : null;
+  if (prodBatchId && !Number.isNaN(prodBatchId)) {
+    await adjustProductionReservedAfterDispenseDelta({
+      productionBatchId: prodBatchId,
+      type,
+      materialId: rmOrPmRow.id,
+      dispenseDelta: delta,
+    });
+  }
 
   console.log(DISPENDING_MU_ERR_TAG, 'applyDispensingDelta: warehouse_inventory UPDATE committed', {
     whInventoryId: plainWh.id,
@@ -2330,4 +2384,6 @@ module.exports = {
   applyRmReservedToInventory,
   applyPmReservedToInventory,
   applyBprFgReadyToInventory,
+  /** @internal exported for integration tests */
+  applyDispensingDeltaToWarehouseInventory,
 };

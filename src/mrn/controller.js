@@ -294,6 +294,32 @@ function validateRequiredOutboundLogistics(fields) {
   return null;
 }
 
+/** Destination MU zone (ML location) — required with logistics when WH initiates outbound MTR transfer. */
+function validateMlDestinationForOutboundInitiate(muReceiveZone) {
+  if (!String(muReceiveZone || '').trim()) {
+    return 'ML location (destination MU zone) is required before initiating transfer.';
+  }
+  return null;
+}
+
+function mergeOutboundMtrLogisticsAndZone(updates, plainBefore) {
+  return {
+    logistics: {
+      logistics_tracking_no:
+        updates.logistics_tracking_no !== undefined ? updates.logistics_tracking_no : plainBefore.logistics_tracking_no,
+      logistics_transporter:
+        updates.logistics_transporter !== undefined ? updates.logistics_transporter : plainBefore.logistics_transporter,
+      logistics_dispatch_date:
+        updates.logistics_dispatch_date !== undefined ? updates.logistics_dispatch_date : plainBefore.logistics_dispatch_date,
+      logistics_eta_date:
+        updates.logistics_eta_date !== undefined ? updates.logistics_eta_date : plainBefore.logistics_eta_date,
+      logistics_vehicle_no:
+        updates.logistics_vehicle_no !== undefined ? updates.logistics_vehicle_no : plainBefore.logistics_vehicle_no,
+    },
+    muReceiveZone: updates.mu_receive_zone !== undefined ? updates.mu_receive_zone : plainBefore.mu_receive_zone,
+  };
+}
+
 async function list(req, res) {
   try {
     const transferType = req.query.transferType; // 'outbound' | 'inbound_from_mu'
@@ -502,20 +528,11 @@ async function update(req, res) {
       let touched = false;
 
       if (initiateIds && initiateIds.length > 0) {
-        const mergedLogistics = {
-          logistics_tracking_no:
-            updates.logistics_tracking_no !== undefined ? updates.logistics_tracking_no : plainBefore.logistics_tracking_no,
-          logistics_transporter:
-            updates.logistics_transporter !== undefined ? updates.logistics_transporter : plainBefore.logistics_transporter,
-          logistics_dispatch_date:
-            updates.logistics_dispatch_date !== undefined ? updates.logistics_dispatch_date : plainBefore.logistics_dispatch_date,
-          logistics_eta_date:
-            updates.logistics_eta_date !== undefined ? updates.logistics_eta_date : plainBefore.logistics_eta_date,
-          logistics_vehicle_no:
-            updates.logistics_vehicle_no !== undefined ? updates.logistics_vehicle_no : plainBefore.logistics_vehicle_no,
-        };
+        const { logistics: mergedLogistics, muReceiveZone: mergedMuZone } = mergeOutboundMtrLogisticsAndZone(updates, plainBefore);
         const logisticsErr = validateRequiredOutboundLogistics(mergedLogistics);
         if (logisticsErr) return res.status(400).json({ error: logisticsErr });
+        const mlErr = validateMlDestinationForOutboundInitiate(mergedMuZone);
+        if (mlErr) return res.status(400).json({ error: mlErr });
         const err = assertSubset(initiateIds, idSet);
         if (err) return res.status(400).json({ error: err });
         for (const sid of initiateIds) {
@@ -531,6 +548,11 @@ async function update(req, res) {
 
       const reqStEarly = updates.status !== undefined ? normalizeMrnStatus(updates.status) : null;
       if (!touched && reqStEarly === 'In Transit' && (!initiateIds || initiateIds.length === 0)) {
+        const { logistics: mergedLogisticsBulk, muReceiveZone: mergedMuZoneBulk } = mergeOutboundMtrLogisticsAndZone(updates, plainBefore);
+        const logisticsErrBulk = validateRequiredOutboundLogistics(mergedLogisticsBulk);
+        if (logisticsErrBulk) return res.status(400).json({ error: logisticsErrBulk });
+        const mlErrBulk = validateMlDestinationForOutboundInitiate(mergedMuZoneBulk);
+        if (mlErrBulk) return res.status(400).json({ error: mlErrBulk });
         for (const lid of getLineItemIds(lineItemsMerged)) {
           if (map[lid] === PHASE.NOT_INITIATED) {
             map[lid] = PHASE.IN_TRANSIT;

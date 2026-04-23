@@ -12,6 +12,7 @@ const PackMaterial = require('../packMaterials/models');
 const BOM = require('../bom/models');
 const { ReservedBatchItem } = require('../fulfillment/models');
 const PurchaseOrder = require('../purchaseOrders/models');
+const ProcurementRequest = require('../procurementRequests/models');
 const {
   parseOrderQtyNum,
   parseFillSizeToKgPerUnit,
@@ -74,6 +75,125 @@ function planningItemsInvolvedDisplayStatus(warehouseStatus, sihFree, inTransit,
     return 'In Stock';
   }
   return warehouseStatus || 'In Stock';
+}
+
+/** Same as Planning.tsx `procurementRequestIsActiveForReleaseCount` — cancelled/rejected PRs do not count. */
+function prStatusCountsTowardReleaseToPlanning(status) {
+  const st = String(status ?? '').trim();
+  if (!st) return true;
+  if (/cancel/i.test(st)) return false;
+  if (/reject/i.test(st)) return false;
+  return true;
+}
+
+/** Same as Planning.tsx `normalizeMaterialCode` for PR line ↔ item matching. */
+function normalizeMaterialCodeForReleaseMatch(code) {
+  const c = String(code ?? '').trim().toLowerCase();
+  return c
+    .replace(/^ei[-_]?rm[-_]?/i, '')
+    .replace(/^ei[-_]?pm[-_]?/i, '')
+    .replace(/^rm[-_]?/i, '')
+    .replace(/^pm[-_]?/i, '');
+}
+
+function procurementLineTypeGuess(line) {
+  if (line.type) return String(line.type).trim().toUpperCase();
+  if (line.raw_material_id != null) return 'RM';
+  if (line.pack_material_id != null) return 'PM';
+  return '';
+}
+
+function procurementLineMatchesReleaseItem(line, itemType, matId, matCode, matName) {
+  if (procurementLineTypeGuess(line) !== itemType) return false;
+  const idNum = Number(matId);
+  const lineRm = Number(line.raw_material_id);
+  const linePm = Number(line.pack_material_id);
+  const lineMatId = itemType === 'RM' ? lineRm : linePm;
+  if (Number.isFinite(idNum) && idNum > 0 && Number.isFinite(lineMatId) && lineMatId === idNum) return true;
+  const codeItem = normalizeMaterialCodeForReleaseMatch(String(matCode || ''));
+  const codeLine = normalizeMaterialCodeForReleaseMatch(String(line.code || ''));
+  if (codeItem.length > 0 && codeLine.length > 0 && codeItem === codeLine) return true;
+  const nameItem = String(matName || '').trim().toLowerCase();
+  const nameLine = String(line.name || '').trim().toLowerCase();
+  return nameItem.length > 0 && nameLine.length > 0 && nameItem === nameLine;
+}
+
+function sumProcurementReleaseQtyForItem(itemType, matId, matCode, matName, planningExtractedIds, allPrs) {
+  const idSet = new Set();
+  for (const x of planningExtractedIds || []) {
+    const n = Number(x);
+    if (Number.isFinite(n) && n > 0) idSet.add(n);
+  }
+  if (idSet.size === 0) return 0;
+  let sum = 0;
+  for (const pr of allPrs) {
+    const plain = pr.get ? pr.get({ plain: true }) : pr;
+    if (!prStatusCountsTowardReleaseToPlanning(plain.status)) continue;
+    const peId = Number(plain.planning_extracted_id);
+    if (!idSet.has(peId)) continue;
+    const items = Array.isArray(plain.items) ? plain.items : [];
+    for (const line of items) {
+      if (!procurementLineMatchesReleaseItem(line, itemType, matId, matCode, matName)) continue;
+      sum += Number(line.quantity_requested ?? line.shortage ?? line.required ?? 0) || 0;
+    }
+  }
+  return sum;
+}
+
+/** Parse `reference` like `Planning PE-123` — same as Planning.tsx `plannedLinesFromBackend`. */
+function planningExtractedIdFromPlanningPoReference(reference) {
+  const ref = String(reference || '');
+  const m = ref.match(/^Planning\s+PE-(\d+)/i);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function sumPlanningLinkedDraftPoQtyForItem(itemType, matId, planningExtractedIds, allPos) {
+  const idSet = new Set();
+  for (const x of planningExtractedIds || []) {
+    const n = Number(x);
+    if (Number.isFinite(n) && n > 0) idSet.add(n);
+  }
+  if (idSet.size === 0) return 0;
+  const idNum = Number(matId);
+  let sum = 0;
+  for (const po of allPos) {
+    const d = po.get ? po.get({ plain: true }) : po;
+    const peId = planningExtractedIdFromPlanningPoReference(d.reference);
+    if (peId == null || !idSet.has(peId)) continue;
+    const items = Array.isArray(d.items) ? d.items : [];
+    for (const line of items) {
+      const qty = line.quantity ?? line.qty ?? line.poQty;
+      const n = qty != null ? Number(qty) : 0;
+      if (!(n > 0)) continue;
+      if (itemType === 'RM') {
+        const rid = line.raw_material_id != null ? Number(line.raw_material_id) : NaN;
+        if (Number.isFinite(idNum) && idNum > 0 && Number.isFinite(rid) && rid === idNum) sum += n;
+      } else {
+        const pid = line.pack_material_id != null ? Number(line.pack_material_id) : NaN;
+        if (Number.isFinite(idNum) && idNum > 0 && Number.isFinite(pid) && pid === idNum) sum += n;
+      }
+    }
+  }
+  return sum;
+}
+
+/**
+ * Qty committed via Release to Planning only — matches Planning.tsx `releasedQtyTowardPlanningGap`
+ * (max of PR lines vs Planning-linked draft PO for the same PIs + item). Not batch/BOM allocation.
+ */
+function totalReleaseToPlanningQtyForAgg(itemType, matId, agg, allPrs, allPos) {
+  const prSum = sumProcurementReleaseQtyForItem(
+    itemType,
+    matId,
+    agg.code,
+    agg.name,
+    agg.planningExtractedIds,
+    allPrs
+  );
+  const poDraftSum = sumPlanningLinkedDraftPoQtyForItem(itemType, matId, agg.planningExtractedIds, allPos);
+  return Math.max(prSum, poDraftSum);
 }
 
 /** When SO has no expected_shipment_date yet, prefer FG master lead; else SO form hints; else 45/90. */
@@ -1692,14 +1812,24 @@ async function getItemsInvolved(req, res) {
     const whWhere = [];
     if (allRmIds.length) whWhere.push({ item_type: 'RM', raw_material_id: { [Op.in]: allRmIds } });
     if (allPmIds.length) whWhere.push({ item_type: 'PM', pack_material_id: { [Op.in]: allPmIds } });
-    const [whRows, rmsList, pmsList, allPos] = await Promise.all([
+    const {
+      getGrnInTransitQtyNativeByKey,
+      getPoPipelineInTransitQtyNativeByKey,
+      getCompletedGrnReceivedNativeByKey,
+    } = require('../warehouseInventory/inTransitSync');
+
+    const [whRows, rmsList, pmsList, allPos, allPrs, grnInTransitNative, poInTransitNative, grnReceivedNative] = await Promise.all([
       whWhere.length ? WarehouseInventory.findAll({ where: { [Op.or]: whWhere } }) : Promise.resolve([]),
       allRmIds.length ? RawMaterial.findAll({ where: { id: allRmIds }, attributes: ['id', 'code', 'name'] }) : Promise.resolve([]),
       allPmIds.length ? PackMaterial.findAll({ where: { id: allPmIds }, attributes: ['id', 'code', 'description'] }) : Promise.resolve([]),
-      PurchaseOrder.findAll({ attributes: ['id', 'items'] }),
+      PurchaseOrder.findAll({ attributes: ['id', 'items', 'reference'] }),
+      ProcurementRequest.findAll({ attributes: ['planning_extracted_id', 'status', 'items'] }),
+      getGrnInTransitQtyNativeByKey(),
+      getPoPipelineInTransitQtyNativeByKey(),
+      getCompletedGrnReceivedNativeByKey(),
     ]);
 
-    // Build po_qty map keyed by rm-{id} / pm-{id} — same logic as warehouse inventory list.
+    // Build po_qty map keyed by rm-{id} / pm-{id} in native units (sum of all PO line qty for the item).
     const poQtyMap = new Map();
     for (const po of allPos) {
       const items = Array.isArray(po.items) ? po.items : [];
@@ -1712,6 +1842,16 @@ async function getItemsInvolved(req, res) {
         else if (line.pack_material_id != null) key = `pm-${line.pack_material_id}`;
         if (!key) continue;
         poQtyMap.set(key, (poQtyMap.get(key) || 0) + n);
+      }
+    }
+
+    // Combined in-transit (open GRNs + PO pipeline) by key, native units, for stage subtraction.
+    const inTransitByKey = new Map();
+    for (const source of [grnInTransitNative, poInTransitNative]) {
+      for (const [k, v] of source) {
+        const n = Number(v) || 0;
+        if (n <= 0) continue;
+        inTransitByKey.set(k, (inTransitByKey.get(k) || 0) + n);
       }
     }
     const toNum = (v) => (v != null && v !== '' ? Number(v) : 0);
@@ -1774,6 +1914,35 @@ async function getItemsInvolved(req, res) {
     const rmInfo = new Map(rmsList.map((r) => [r.id, { code: r.code, name: r.name }]));
     const pmInfo = new Map(pmsList.map((p) => [p.id, { code: p.code, name: p.description || p.code }]));
 
+    // Stage-flow math (native units, consistent with BOM/PO/GRN line units):
+    //   totalReleased  = Release to Planning only (PR + Planning PE-* draft PO), NOT planning_batches / BOM confirm
+    //   plannedQty     = totalReleased - totalOnPO (not yet on any PO)
+    //   totalOnPO      -> poQty stage balance (minus in-transit + received)
+    //   totalInTransit -> inTransitQty (still shipped, not yet received)
+    //   totalReceived  -> folded into WH stock
+    // Qty "flows" forward; any stage edit auto-rebalances on next read because every displayed
+    // number is derived from current source-of-truth tables.
+    const flowEpsilon = 1e-6;
+    const isDev = process.env.NODE_ENV !== 'production';
+    const computeStageFlow = (key, totalReleased, stockInHand) => {
+      const totalOnPO = Number(poQtyMap.get(key) ?? 0) || 0;
+      const totalInTransit = Number(inTransitByKey.get(key) ?? 0) || 0;
+      const totalReceived = Number(grnReceivedNative.get(key) ?? 0) || 0;
+      const plannedQty = Math.max(0, totalReleased - totalOnPO);
+      const poQty = Math.max(0, totalOnPO - totalInTransit - totalReceived);
+      const inTransitQty = totalInTransit;
+      const whQty = Math.max(0, Number(stockInHand) || 0);
+      if (isDev) {
+        const stageSum = plannedQty + poQty + inTransitQty;
+        if (stageSum > totalReleased + flowEpsilon && totalReleased > 0) {
+          console.warn(
+            `[items-involved] stage-flow drift for ${key}: planned+po+inTransit=${stageSum.toFixed(3)} > totalReleased=${totalReleased.toFixed(3)} (totalOnPO=${totalOnPO}, totalInTransit=${totalInTransit}, totalReceived=${totalReceived})`
+          );
+        }
+      }
+      return { totalOnPO, totalInTransit, totalReceived, plannedQty, poQty, inTransitQty, whQty };
+    };
+
     const out = [];
     for (const [id, agg] of rmAgg) {
       // "sih" in the items-involved API should represent *available/free* stock
@@ -1784,7 +1953,9 @@ async function getItemsInvolved(req, res) {
       const sih = Math.max(0, stockInHand - reserved);
       const inTransit = inTransitByRm.get(id) ?? 0;
       const surplusShortage = sih + inTransit - agg.totalRequired;
-      const plannedQty = Number(agg.plannedQty) || 0;
+      const batchAllocatedQty = Number(agg.plannedQty) || 0;
+      const totalReleased = totalReleaseToPlanningQtyForAgg('RM', id, agg, allPrs, allPos);
+      const flow = computeStageFlow(`rm-${id}`, totalReleased, stockInHand);
       const info = rmInfo.get(id) || {};
       const coverageDenom = agg.totalRequired > 0
         ? Math.min(100, Math.round(((sih + inTransit) / agg.totalRequired) * 100))
@@ -1814,8 +1985,14 @@ async function getItemsInvolved(req, res) {
         batchNumber: batchNumberByRm.get(id) ?? null,
         expiryDate: expiryByRm.get(id) ?? null,
         reserved,
-        plannedQty,
-        poQty: poQtyMap.get(`rm-${id}`) ?? 0,
+        plannedQty: flow.plannedQty,
+        poQty: flow.poQty,
+        inTransitQty: flow.inTransitQty,
+        whQty: flow.whQty,
+        totalReleased,
+        batchAllocatedQty,
+        totalOnPO: flow.totalOnPO,
+        totalReceived: flow.totalReceived,
         inTransit,
         reorderPt: reorderPtByRm.get(id) ?? 0,
         avgMo: avgMoByRm.get(id) ?? 0,
@@ -1828,7 +2005,9 @@ async function getItemsInvolved(req, res) {
       const sih = Math.max(0, stockInHand - reserved);
       const inTransit = inTransitByPm.get(id) ?? 0;
       const surplusShortage = sih + inTransit - agg.totalRequired;
-      const plannedQty = Number(agg.plannedQty) || 0;
+      const batchAllocatedQty = Number(agg.plannedQty) || 0;
+      const totalReleased = totalReleaseToPlanningQtyForAgg('PM', id, agg, allPrs, allPos);
+      const flow = computeStageFlow(`pm-${id}`, totalReleased, stockInHand);
       const info = pmInfo.get(id) || {};
       const coverageDenomPm = agg.totalRequired > 0
         ? Math.min(100, Math.round(((sih + inTransit) / agg.totalRequired) * 100))
@@ -1858,8 +2037,14 @@ async function getItemsInvolved(req, res) {
         batchNumber: batchNumberByPm.get(id) ?? null,
         expiryDate: expiryByPm.get(id) ?? null,
         reserved,
-        plannedQty,
-        poQty: poQtyMap.get(`pm-${id}`) ?? 0,
+        plannedQty: flow.plannedQty,
+        poQty: flow.poQty,
+        inTransitQty: flow.inTransitQty,
+        whQty: flow.whQty,
+        totalReleased,
+        batchAllocatedQty,
+        totalOnPO: flow.totalOnPO,
+        totalReceived: flow.totalReceived,
         inTransit,
         reorderPt: reorderPtByPm.get(id) ?? 0,
         avgMo: avgMoByPm.get(id) ?? 0,

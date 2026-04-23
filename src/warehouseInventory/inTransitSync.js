@@ -25,6 +25,29 @@ function toNum(x) {
   return Number.isNaN(n) ? 0 : n;
 }
 
+/** Stable numeric PO id for Map/Set lookups (avoids string "12" vs number 12 missing tracking rows). */
+function normPurchaseOrderId(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function poStatusNormPipeline(stRaw) {
+  return String(stRaw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+/** DB / FE may store issued PO as `Released` or `PO Released`. */
+function isPoReleasedForPipeline(stRaw) {
+  const s = poStatusNormPipeline(stRaw);
+  return s === 'released' || s === 'po released';
+}
+
+function isPoInTransitForPipeline(stRaw) {
+  return poStatusNormPipeline(stRaw) === 'in transit';
+}
+
 async function loadRmPmMeta(rmIds, pmIds) {
   const rmMeta = new Map();
   const pmMeta = new Map();
@@ -231,7 +254,8 @@ async function getPoPipelineInTransitQtyByKey() {
     const trackingByPo = new Map();
     for (const t of trackingRows) {
       const d = t.get ? t.get({ plain: true }) : t;
-      trackingByPo.set(d.purchase_order_id, d);
+      const pid = normPurchaseOrderId(d.purchase_order_id);
+      if (pid) trackingByPo.set(pid, d);
     }
     const deliveryPendingIds = new Set(
       pendingPrs.map((pr) => {
@@ -244,14 +268,15 @@ async function getPoPipelineInTransitQtyByKey() {
     const pmIds = new Set();
     for (const po of pos) {
       const d = po.get ? po.get({ plain: true }) : po;
-      if (skipPoIds.has(d.id)) continue;
+      const poId = normPurchaseOrderId(d.id);
+      if (!poId || skipPoIds.has(poId)) continue;
       const st = String(d.status || '').trim();
-      const tr = trackingByPo.get(d.id);
+      const tr = trackingByPo.get(poId);
       const fd = d.form_data && typeof d.form_data === 'object' && !Array.isArray(d.form_data) ? d.form_data : {};
       const reqId = fd.requestId != null ? String(fd.requestId) : '';
       const linkedDeliveryPending = reqId && deliveryPendingIds.has(reqId);
-      const releasedShipped = st === 'Released' && tr && tr.shipped_at && !tr.grn_complete_at;
-      if (!(st === 'In Transit' || releasedShipped || linkedDeliveryPending)) continue;
+      const releasedShipped = isPoReleasedForPipeline(st) && tr && tr.shipped_at && !tr.grn_complete_at;
+      if (!(isPoInTransitForPipeline(st) || releasedShipped || linkedDeliveryPending)) continue;
       const items = Array.isArray(d.items) ? d.items : [];
       for (const line of items) {
         if (line.raw_material_id != null) rmIds.add(Number(line.raw_material_id));
@@ -262,23 +287,150 @@ async function getPoPipelineInTransitQtyByKey() {
 
     for (const po of pos) {
       const d = po.get ? po.get({ plain: true }) : po;
-      if (skipPoIds.has(d.id)) continue;
+      const poId = normPurchaseOrderId(d.id);
+      if (!poId || skipPoIds.has(poId)) continue;
       const st = String(d.status || '').trim();
-      const tr = trackingByPo.get(d.id);
+      const tr = trackingByPo.get(poId);
       const fd = d.form_data && typeof d.form_data === 'object' && !Array.isArray(d.form_data) ? d.form_data : {};
       const reqId = fd.requestId != null ? String(fd.requestId) : '';
       const linkedDeliveryPending = reqId && deliveryPendingIds.has(reqId);
 
       const releasedShipped =
-        st === 'Released' && tr && tr.shipped_at && !tr.grn_complete_at;
+        isPoReleasedForPipeline(st) && tr && tr.shipped_at && !tr.grn_complete_at;
 
-      if (st === 'In Transit' || releasedShipped || linkedDeliveryPending) {
-        const receivedForPo = completedRcvdByPo.get(Number(d.id)) || new Map();
+      if (isPoInTransitForPipeline(st) || releasedShipped || linkedDeliveryPending) {
+        const receivedForPo = completedRcvdByPo.get(poId) || new Map();
         addPoItemsToMapNetOfCompletedGrns(map, d.items, receivedForPo, rmMeta, pmMeta);
       }
     }
   } catch (err) {
     console.warn('[inTransitSync] getPoPipelineInTransitQtyByKey:', err.message);
+  }
+  return map;
+}
+
+/**
+ * Sum in-transit **native qty** (line.poQty/quantity/qty, no KG conversion) per rm-{id}/pm-{id}
+ * from open inbound GRNs. Used by items-involved flow math to subtract in native units from
+ * raw PO line quantities so stages (planned → PO → in-transit → WH) stay in the same unit.
+ */
+async function getGrnInTransitQtyNativeByKey() {
+  const map = new Map();
+  try {
+    const grns = await GoodsReceivedNote.findAll({
+      where: { status: { [Op.in]: GRN_IN_TRANSIT_STATUSES } },
+      attributes: ['line_items'],
+    });
+    for (const g of grns) {
+      const d = g.get ? g.get({ plain: true }) : g;
+      const lines = Array.isArray(d.line_items) ? d.line_items : [];
+      for (const line of lines) {
+        const qty = toNum(line.poQty ?? line.quantity ?? line.qty);
+        if (qty <= 0) continue;
+        let key = null;
+        if (line.raw_material_id != null) key = `rm-${line.raw_material_id}`;
+        else if (line.pack_material_id != null) key = `pm-${line.pack_material_id}`;
+        if (!key) continue;
+        map.set(key, (map.get(key) || 0) + qty);
+      }
+    }
+  } catch (err) {
+    console.warn('[inTransitSync] getGrnInTransitQtyNativeByKey:', err.message);
+  }
+  return map;
+}
+
+/**
+ * PO-side pipeline in-transit in **native units** (no KG conversion), net of received qty on
+ * completed GRNs for that PO. Mirrors `getPoPipelineInTransitQtyByKey` eligibility rules:
+ *   PO status In Transit; Released + PoTracking shipped (pre-GRN complete); Released + linked PR Delivery Pending.
+ */
+async function getPoPipelineInTransitQtyNativeByKey() {
+  const map = new Map();
+  try {
+    const skipPoIds = await getPurchaseOrderIdsWithInboundGrn();
+    const completedRcvdByPo = await getCompletedGrnReceivedByPurchaseOrderId();
+    const [pos, trackingRows, pendingPrs] = await Promise.all([
+      PurchaseOrder.findAll({ attributes: ['id', 'status', 'items', 'form_data'] }),
+      PoTracking.findAll({ attributes: ['purchase_order_id', 'shipped_at', 'grn_complete_at'] }),
+      ProcurementRequest.findAll({ where: { status: 'Delivery Pending' }, attributes: ['id'] }),
+    ]);
+    const trackingByPo = new Map();
+    for (const t of trackingRows) {
+      const d = t.get ? t.get({ plain: true }) : t;
+      const pid = normPurchaseOrderId(d.purchase_order_id);
+      if (pid) trackingByPo.set(pid, d);
+    }
+    const deliveryPendingIds = new Set(
+      pendingPrs.map((pr) => {
+        const d = pr.get ? pr.get({ plain: true }) : pr;
+        return String(d.id);
+      })
+    );
+
+    for (const po of pos) {
+      const d = po.get ? po.get({ plain: true }) : po;
+      const poId = normPurchaseOrderId(d.id);
+      if (!poId || skipPoIds.has(poId)) continue;
+      const st = String(d.status || '').trim();
+      const tr = trackingByPo.get(poId);
+      const fd = d.form_data && typeof d.form_data === 'object' && !Array.isArray(d.form_data) ? d.form_data : {};
+      const reqId = fd.requestId != null ? String(fd.requestId) : '';
+      const linkedDeliveryPending = reqId && deliveryPendingIds.has(reqId);
+      const releasedShipped = isPoReleasedForPipeline(st) && tr && tr.shipped_at && !tr.grn_complete_at;
+      if (!(isPoInTransitForPipeline(st) || releasedShipped || linkedDeliveryPending)) continue;
+
+      const lines = Array.isArray(d.items) ? d.items : [];
+      const poTotalsByKey = new Map();
+      for (const line of lines) {
+        const qty = toNum(line.quantity ?? line.qty ?? line.poQty);
+        if (qty <= 0) continue;
+        let key = null;
+        if (line.raw_material_id != null) key = `rm-${line.raw_material_id}`;
+        else if (line.pack_material_id != null) key = `pm-${line.pack_material_id}`;
+        if (!key) continue;
+        poTotalsByKey.set(key, (poTotalsByKey.get(key) || 0) + qty);
+      }
+      const rec = completedRcvdByPo.get(poId) || new Map();
+      for (const [key, sum] of poTotalsByKey) {
+        const recNative = toNum(rec.get(key));
+        const net = Math.max(0, sum - recNative);
+        if (net <= 0) continue;
+        map.set(key, (map.get(key) || 0) + net);
+      }
+    }
+  } catch (err) {
+    console.warn('[inTransitSync] getPoPipelineInTransitQtyNativeByKey:', err.message);
+  }
+  return map;
+}
+
+/**
+ * Sum received qty from **completed** GRNs in native units, keyed rm-{id}/pm-{id}.
+ * Uses the same rcvdQty ?? poQty fallback as `lineReceivedQtyFromGrnLine`.
+ */
+async function getCompletedGrnReceivedNativeByKey() {
+  const map = new Map();
+  try {
+    const grns = await GoodsReceivedNote.findAll({
+      where: { status: 'GRN Complete' },
+      attributes: ['line_items'],
+    });
+    for (const g of grns) {
+      const d = g.get ? g.get({ plain: true }) : g;
+      const lines = Array.isArray(d.line_items) ? d.line_items : [];
+      for (const line of lines) {
+        const qty = lineReceivedQtyFromGrnLine(line);
+        if (qty <= 0) continue;
+        let key = null;
+        if (line.raw_material_id != null) key = `rm-${line.raw_material_id}`;
+        else if (line.pack_material_id != null) key = `pm-${line.pack_material_id}`;
+        if (!key) continue;
+        map.set(key, (map.get(key) || 0) + qty);
+      }
+    }
+  } catch (err) {
+    console.warn('[inTransitSync] getCompletedGrnReceivedNativeByKey:', err.message);
   }
   return map;
 }
@@ -341,6 +493,80 @@ function mergeKeyMapsIntoRmPm(grnMap, poMap) {
 }
 
 /**
+ * Create missing warehouse_inventory rows so procurement / GRN pipeline in-transit (kg)
+ * can be persisted. Previously only existing rows were updated, so "Mark in transit" synced
+ * nothing for materials that had never had a WH row (e.g. legacy masters).
+ */
+async function ensureWarehouseInventoryRowsForPipelineTotals(rmTotals, pmTotals) {
+  const existingRm = new Set();
+  const existingPm = new Set();
+  try {
+    const rows = await WarehouseInventory.findAll({
+      where: { item_type: { [Op.in]: ['RM', 'PM'] } },
+      attributes: ['item_type', 'raw_material_id', 'pack_material_id'],
+    });
+    for (const w of rows) {
+      const d = w.get ? w.get({ plain: true }) : w;
+      if (d.item_type === 'RM' && d.raw_material_id != null) existingRm.add(Number(d.raw_material_id));
+      if (d.item_type === 'PM' && d.pack_material_id != null) existingPm.add(Number(d.pack_material_id));
+    }
+  } catch (err) {
+    console.warn('[inTransitSync] ensureWarehouseInventoryRowsForPipelineTotals list:', err.message);
+    return;
+  }
+
+  const pipelineWhDefaults = {
+    wh_stock: 0,
+    wh_unit: 'KG',
+    ml1_stock: 0,
+    ml2_stock: 0,
+    stock_in_hand: 0,
+    reserved: 0,
+    in_transit: 0,
+    reorder_pt: 0,
+    avg_mo: 0,
+    qc_status: 'Out of Stock',
+  };
+
+  for (const [rmId, qty] of rmTotals) {
+    if (toNum(qty) <= 0) continue;
+    const id = Number(rmId);
+    if (!Number.isFinite(id) || id <= 0 || existingRm.has(id)) continue;
+    try {
+      await WarehouseInventory.findOrCreate({
+        where: { item_type: 'RM', raw_material_id: id },
+        defaults: {
+          item_type: 'RM',
+          raw_material_id: id,
+          ...pipelineWhDefaults,
+        },
+      });
+      existingRm.add(id);
+    } catch (err) {
+      console.warn('[inTransitSync] ensureWarehouseInventoryRowsForPipelineTotals RM', id, err.message);
+    }
+  }
+  for (const [pmId, qty] of pmTotals) {
+    if (toNum(qty) <= 0) continue;
+    const id = Number(pmId);
+    if (!Number.isFinite(id) || id <= 0 || existingPm.has(id)) continue;
+    try {
+      await WarehouseInventory.findOrCreate({
+        where: { item_type: 'PM', pack_material_id: id },
+        defaults: {
+          item_type: 'PM',
+          pack_material_id: id,
+          ...pipelineWhDefaults,
+        },
+      });
+      existingPm.add(id);
+    } catch (err) {
+      console.warn('[inTransitSync] ensureWarehouseInventoryRowsForPipelineTotals PM', id, err.message);
+    }
+  }
+}
+
+/**
  * Recompute and persist warehouse_inventory.in_transit for all RM/PM rows.
  */
 async function syncWarehouseInTransitAll() {
@@ -349,6 +575,7 @@ async function syncWarehouseInTransitAll() {
     getPoPipelineInTransitQtyByKey(),
   ]);
   const { rmTotals, pmTotals } = mergeKeyMapsIntoRmPm(grnMap, poMap);
+  await ensureWarehouseInventoryRowsForPipelineTotals(rmTotals, pmTotals);
 
   const whRows = await WarehouseInventory.findAll({
     where: { item_type: { [Op.in]: ['RM', 'PM'] } },
@@ -381,6 +608,9 @@ module.exports = {
   getGrnInTransitQtyByKey,
   getPoPipelineInTransitQtyByKey,
   getCompletedGrnReceivedByPurchaseOrderId,
+  getGrnInTransitQtyNativeByKey,
+  getPoPipelineInTransitQtyNativeByKey,
+  getCompletedGrnReceivedNativeByKey,
   getPlannedPlanningQtyByItem,
   mergeKeyMapsIntoRmPm,
   loadRmPmMeta,
