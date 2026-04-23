@@ -16,6 +16,7 @@ const WarehouseInventory = require('../warehouseInventory/models');
 const { applyDeltaToRack, recalculateInventoryForItem, computeStockInHand } = require('../warehouseInventory/inventoryMath');
 const { logLocationMovement } = require('../warehouseInventory/locationHistoryHelpers');
 const WarehouseInventoryLocationHistory = require('../warehouseInventory/locationHistoryModel');
+const { applyDedicatedDefaultsToNewMrn, resolveDedicatedProductionCodes, resolveProductionRackForMrn } = require('../itemDedicatedFacilityLocations/service');
 
 /** Usertypes that can be assigned as Picker / Transfer Team (same as GRN). */
 const ASSIGNABLE_USERTYPES = ['super_admin', 'admin', 'bd_manager'];
@@ -413,6 +414,10 @@ async function create(req, res) {
       source: body.source ?? null,
       is_inbound_from_mu: body.isInboundFromMu ?? body.is_inbound_from_mu ?? false,
     };
+    if (body.muReceiveZone !== undefined) payload.mu_receive_zone = body.muReceiveZone;
+    if (body.mu_receive_zone !== undefined) payload.mu_receive_zone = body.mu_receive_zone;
+    if (body.muReceiveRack !== undefined) payload.mu_receive_rack = body.muReceiveRack;
+    if (body.mu_receive_rack !== undefined) payload.mu_receive_rack = body.mu_receive_rack;
     if (sourceForMtr === 'MTR' && bmrNoForMtr && !inboundMu && lineItems.length > 0) {
       const o = {};
       lineItems.forEach((li, idx) => {
@@ -420,7 +425,15 @@ async function create(req, res) {
       });
       payload.line_transfer_status = o;
     }
-    const row = await MaterialRequestNote.create(payload);
+    let row = await MaterialRequestNote.create(payload);
+    if (sourceForMtr === 'MTR' && bmrNoForMtr && !inboundMu) {
+      const d0 = row.get ? row.get({ plain: true }) : row;
+      const extra = await applyDedicatedDefaultsToNewMrn(lineItems, d0.mu_receive_zone, d0.mu_receive_rack);
+      if (extra && Object.keys(extra).length > 0) {
+        await row.update(extra);
+        row = await MaterialRequestNote.findByPk(row.id);
+      }
+    }
     const { rmMap, pmMap, productMap } = await getMastersForLineItems([row]);
     const d = row.get ? row.get({ plain: true }) : row;
     const enriched = enrichMrnLineItems(d.line_items || [], rmMap, pmMap, productMap);
@@ -529,9 +542,20 @@ async function update(req, res) {
 
       if (initiateIds && initiateIds.length > 0) {
         const { logistics: mergedLogistics, muReceiveZone: mergedMuZone } = mergeOutboundMtrLogisticsAndZone(updates, plainBefore);
+        let mergedMuZoneEff = mergedMuZone;
+        if (!String(mergedMuZoneEff || '').trim()) {
+          const resolved = await resolveDedicatedProductionCodes(lineItemsMerged);
+          if (resolved.ok && resolved.prodZoneCode) {
+            mergedMuZoneEff = resolved.prodZoneCode;
+            updates.mu_receive_zone = resolved.prodZoneCode;
+            if (resolved.prodRackCode && !String(plainBefore.mu_receive_rack || '').trim()) {
+              updates.mu_receive_rack = resolved.prodRackCode;
+            }
+          }
+        }
         const logisticsErr = validateRequiredOutboundLogistics(mergedLogistics);
         if (logisticsErr) return res.status(400).json({ error: logisticsErr });
-        const mlErr = validateMlDestinationForOutboundInitiate(mergedMuZone);
+        const mlErr = validateMlDestinationForOutboundInitiate(mergedMuZoneEff);
         if (mlErr) return res.status(400).json({ error: mlErr });
         const err = assertSubset(initiateIds, idSet);
         if (err) return res.status(400).json({ error: err });
@@ -549,9 +573,20 @@ async function update(req, res) {
       const reqStEarly = updates.status !== undefined ? normalizeMrnStatus(updates.status) : null;
       if (!touched && reqStEarly === 'In Transit' && (!initiateIds || initiateIds.length === 0)) {
         const { logistics: mergedLogisticsBulk, muReceiveZone: mergedMuZoneBulk } = mergeOutboundMtrLogisticsAndZone(updates, plainBefore);
+        let mergedMuZoneBulkEff = mergedMuZoneBulk;
+        if (!String(mergedMuZoneBulkEff || '').trim()) {
+          const resolvedBulk = await resolveDedicatedProductionCodes(lineItemsMerged);
+          if (resolvedBulk.ok && resolvedBulk.prodZoneCode) {
+            mergedMuZoneBulkEff = resolvedBulk.prodZoneCode;
+            updates.mu_receive_zone = resolvedBulk.prodZoneCode;
+            if (resolvedBulk.prodRackCode && !String(plainBefore.mu_receive_rack || '').trim()) {
+              updates.mu_receive_rack = resolvedBulk.prodRackCode;
+            }
+          }
+        }
         const logisticsErrBulk = validateRequiredOutboundLogistics(mergedLogisticsBulk);
         if (logisticsErrBulk) return res.status(400).json({ error: logisticsErrBulk });
-        const mlErrBulk = validateMlDestinationForOutboundInitiate(mergedMuZoneBulk);
+        const mlErrBulk = validateMlDestinationForOutboundInitiate(mergedMuZoneBulkEff);
         if (mlErrBulk) return res.status(400).json({ error: mlErrBulk });
         for (const lid of getLineItemIds(lineItemsMerged)) {
           if (map[lid] === PHASE.NOT_INITIATED) {
@@ -572,6 +607,14 @@ async function update(req, res) {
           }
           map[sid] = PHASE.RECEIVED_AT_MU;
           touched = true;
+        }
+        const muZForRack =
+          updates.mu_receive_zone !== undefined ? updates.mu_receive_zone : plainBefore.mu_receive_zone;
+        const muRForRack =
+          updates.mu_receive_rack !== undefined ? updates.mu_receive_rack : plainBefore.mu_receive_rack;
+        if (!String(muRForRack || '').trim()) {
+          const rackGuess = await resolveProductionRackForMrn(lineItemsMerged, muZForRack);
+          if (rackGuess) updates.mu_receive_rack = rackGuess;
         }
       }
 

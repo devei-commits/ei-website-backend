@@ -1605,9 +1605,10 @@ function countPlanningBatchesTouchingPm(planBatchesPlain, pmId, pmByCode, pmByNa
 }
 
 /**
- * GET /items-involved — aggregated RM/PM still required for open (unplanned) order quantity, consolidated by item.
- * Per confirmed PI: totalRequired on the row is max(0, full SO BOM qty − sum(all saved planning_batches for that PI)).
- * `sent_batch_indices` does not change this math (batches are included whenever they exist in planning_batches).
+ * GET /items-involved — aggregated RM/PM for confirmed PIs, consolidated by item.
+ * - totalRequired: full BOM qty for the item across those PIs (gross demand vs warehouse / procurement).
+ * - unallocatedToBatches: max(0, gross − qty already rolled into planning_batches) — for batch-split / “left to assign”.
+ * - surplusShortage / coverage use gross demand so stock checks stay correct after batches absorb the BOM.
  */
 async function getItemsInvolved(req, res) {
   try {
@@ -1621,8 +1622,8 @@ async function getItemsInvolved(req, res) {
       console.warn('[planningExtracted] getItemsInvolved syncWarehouseInTransitAll failed:', e && e.message ? e.message : e);
     }
 
-    const rmAgg = new Map(); // key: raw_material_id -> { totalRequired, plannedQty, unit, productNames, planningExtractedIds, name, code, batchCount }
-    const pmAgg = new Map(); // key: pack_material_id -> { totalRequired, plannedQty, unit, productNames, planningExtractedIds, name, code, batchCount }
+    const rmAgg = new Map(); // key: raw_material_id -> { totalRequired (gross), unallocatedToBatches, plannedQty, ... }
+    const pmAgg = new Map(); // key: pack_material_id -> { totalRequired (gross), unallocatedToBatches, plannedQty, ... }
 
     const confirmed = await PlanningExtracted.findAll({
       where: { bom_confirmed_at: { [Op.ne]: null } },
@@ -1768,16 +1769,28 @@ async function getItemsInvolved(req, res) {
 
       const allRmIdsForPlan = new Set([...fullRm.keys(), ...plannedRm.keys()]);
       for (const id of allRmIdsForPlan) {
-        const rem = Math.max(0, (fullRm.get(id) || 0) - (plannedRm.get(id) || 0));
-        if (!(rem > 0) && !includeZeroRequired) continue;
+        const gross = (fullRm.get(id) || 0);
+        const rem = Math.max(0, gross - (plannedRm.get(id) || 0));
+        if (!(gross > 0) && !includeZeroRequired) continue;
         const unit = rmUnitById.get(id) || 'KG';
         const name = rmNameById.get(id) || '';
         const code = rmCodeById.get(id) || '';
         if (!rmAgg.has(id)) {
-          rmAgg.set(id, { totalRequired: 0, plannedQty: 0, unit, productNames: [], planningExtractedIds: [], name, code, batchCount: 0 });
+          rmAgg.set(id, {
+            totalRequired: 0,
+            unallocatedToBatches: 0,
+            plannedQty: 0,
+            unit,
+            productNames: [],
+            planningExtractedIds: [],
+            name,
+            code,
+            batchCount: 0,
+          });
         }
         const agg = rmAgg.get(id);
-        agg.totalRequired += rem;
+        agg.totalRequired += gross;
+        agg.unallocatedToBatches += rem;
         agg.plannedQty += (plannedRm.get(id) || 0);
         if (productName && !agg.productNames.includes(productName)) agg.productNames.push(productName);
         if (planId && !agg.planningExtractedIds.includes(planId)) agg.planningExtractedIds.push(planId);
@@ -1788,16 +1801,28 @@ async function getItemsInvolved(req, res) {
 
       const allPmIdsForPlan = new Set([...fullPm.keys(), ...plannedPm.keys()]);
       for (const id of allPmIdsForPlan) {
-        const rem = Math.max(0, (fullPm.get(id) || 0) - (plannedPm.get(id) || 0));
-        if (!(rem > 0) && !includeZeroRequired) continue;
+        const gross = (fullPm.get(id) || 0);
+        const rem = Math.max(0, gross - (plannedPm.get(id) || 0));
+        if (!(gross > 0) && !includeZeroRequired) continue;
         const unit = pmUnitById.get(id) || 'PCS';
         const name = pmNameById.get(id) || '';
         const code = pmCodeById.get(id) || '';
         if (!pmAgg.has(id)) {
-          pmAgg.set(id, { totalRequired: 0, plannedQty: 0, unit, productNames: [], planningExtractedIds: [], name, code, batchCount: 0 });
+          pmAgg.set(id, {
+            totalRequired: 0,
+            unallocatedToBatches: 0,
+            plannedQty: 0,
+            unit,
+            productNames: [],
+            planningExtractedIds: [],
+            name,
+            code,
+            batchCount: 0,
+          });
         }
         const agg = pmAgg.get(id);
-        agg.totalRequired += rem;
+        agg.totalRequired += gross;
+        agg.unallocatedToBatches += rem;
         agg.plannedQty += (plannedPm.get(id) || 0);
         if (productName && !agg.productNames.includes(productName)) agg.productNames.push(productName);
         if (planId && !agg.planningExtractedIds.includes(planId)) agg.planningExtractedIds.push(planId);
@@ -1976,6 +2001,7 @@ async function getItemsInvolved(req, res) {
         usedInProducts: agg.productNames,
         planningExtractedIds: agg.planningExtractedIds,
         totalRequired: agg.totalRequired,
+        unallocatedToBatches: Number(agg.unallocatedToBatches) || 0,
         unit: agg.unit,
         batchCount: agg.batchCount ?? 0,
         sih,
@@ -2028,6 +2054,7 @@ async function getItemsInvolved(req, res) {
         usedInProducts: agg.productNames,
         planningExtractedIds: agg.planningExtractedIds,
         totalRequired: agg.totalRequired,
+        unallocatedToBatches: Number(agg.unallocatedToBatches) || 0,
         unit: agg.unit,
         batchCount: agg.batchCount ?? 0,
         sih,
@@ -2377,7 +2404,8 @@ async function getItemsInvolvedByPlanningId(req, res) {
       const inTransit = inTransitByRm.get(rid) ?? 0;
       const fullOrderQty = req.quantity || 0;
       const plannedInBatches = plannedRmFromBatches.get(rid) || 0;
-      const totalRequired = Math.max(0, fullOrderQty - plannedInBatches);
+      const bomGrossRequired = fullOrderQty;
+      const unallocatedToBatches = Math.max(0, fullOrderQty - plannedInBatches);
       const plannedQty = plannedInBatches;
       const info = rmInfo.get(rid) || {};
       const name = req.name || info.name || `RM ${rid}`;
@@ -2393,13 +2421,14 @@ async function getItemsInvolvedByPlanningId(req, res) {
         category: 'RM',
         usedInProducts: plain.product ? [plain.product.product_name || plain.product.product_code] : [],
         planningExtractedIds: [id],
-        totalRequired,
+        totalRequired: bomGrossRequired,
+        unallocatedToBatches,
         unit: req.unit || 'KG',
         sih,
         reserved,
         netStock: sih,
-        surplusShortage: sih + inTransit - totalRequired,
-        coverage: totalRequired > 0 ? Math.min(100, Math.round(((sih + inTransit) / totalRequired) * 100)) : 100,
+        surplusShortage: sih + inTransit - bomGrossRequired,
+        coverage: bomGrossRequired > 0 ? Math.min(100, Math.round(((sih + inTransit) / bomGrossRequired) * 100)) : 100,
         warehouseInventoryId: whIdByRm.get(rid) ?? null,
         batchNumber: batchByRm.get(rid) ?? null,
         expiryDate: expiryByRm.get(rid) ?? null,
@@ -2417,7 +2446,8 @@ async function getItemsInvolvedByPlanningId(req, res) {
       const inTransit = inTransitByPm.get(pid) ?? 0;
       const fullOrderQtyPm = req.quantity || 0;
       const plannedInBatchesPm = plannedPmFromBatches.get(pid) || 0;
-      const totalRequired = Math.max(0, fullOrderQtyPm - plannedInBatchesPm);
+      const bomGrossRequiredPm = fullOrderQtyPm;
+      const unallocatedToBatchesPm = Math.max(0, fullOrderQtyPm - plannedInBatchesPm);
       const plannedQty = plannedInBatchesPm;
       const info = pmInfo.get(pid) || {};
       const name = req.name || info.name || `PM ${pid}`;
@@ -2433,13 +2463,14 @@ async function getItemsInvolvedByPlanningId(req, res) {
         category: 'PM',
         usedInProducts: plain.product ? [plain.product.product_name || plain.product.product_code] : [],
         planningExtractedIds: [id],
-        totalRequired,
+        totalRequired: bomGrossRequiredPm,
+        unallocatedToBatches: unallocatedToBatchesPm,
         unit: req.unit || 'PCS',
         sih,
         reserved,
         netStock: sih,
-        surplusShortage: sih + inTransit - totalRequired,
-        coverage: totalRequired > 0 ? Math.min(100, Math.round(((sih + inTransit) / totalRequired) * 100)) : 100,
+        surplusShortage: sih + inTransit - bomGrossRequiredPm,
+        coverage: bomGrossRequiredPm > 0 ? Math.min(100, Math.round(((sih + inTransit) / bomGrossRequiredPm) * 100)) : 100,
         warehouseInventoryId: whIdByPm.get(pid) ?? null,
         batchNumber: batchByPm.get(pid) ?? null,
         expiryDate: expiryByPm.get(pid) ?? null,

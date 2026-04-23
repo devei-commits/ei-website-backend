@@ -49,6 +49,7 @@ const { ProductionEquipment, ProductionTeamMember, ProductionBatch } = require('
 const { FulfillmentOrder, FulfillmentOrderItem, FulfillmentBatchSplit, Transporter, FulfillmentInvoice, ReservedBatchItem } = require('./src/fulfillment/models');
 const { ClientQuery, ClientDevelopment, ClientOrder, ClientAppointment } = require('./src/clientHub/models');
 const FacilityArea = require('./src/facilityAreas/models');
+require('./src/itemDedicatedFacilityLocations/models');
 const { Department } = require('./src/departments/models');
 const { ModuleDefinition, Permission, RolePermission } = require('./src/models/index');
 const { StaffProfile } = require('./src/roles/models');

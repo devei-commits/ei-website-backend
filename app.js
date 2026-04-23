@@ -35,6 +35,7 @@ const procurementQuotationsRouters = require('./src/procurementQuotations/router
 const poTrackingRouters = require('./src/poTracking/routers');
 const productionRouters = require('./src/production/routers');
 const facilityAreasRouters = require('./src/facilityAreas/routers');
+const itemDedicatedFacilityLocationsRouters = require('./src/itemDedicatedFacilityLocations/routers');
 const departmentsRouters = require('./src/departments/routers');
 const fulfillmentRouters = require('./src/fulfillment/routers');
 const clientHubRouters = require('./src/clientHub/routers');
@@ -158,6 +159,7 @@ app.use(`${apiPrefix}/procurement-quotations`, isAuthenticated, procurementQuota
 app.use(`${apiPrefix}/po-tracking`, isAuthenticated, poTrackingRouters);
 app.use(`${apiPrefix}/production`, isAuthenticated, productionRouters);
 app.use(`${apiPrefix}/facility-areas`, isAuthenticated, facilityAreasRouters);
+app.use(`${apiPrefix}/item-dedicated-facility-locations`, itemDedicatedFacilityLocationsRouters);
 app.use(`${apiPrefix}/departments`, departmentsRouters);
 app.use(`${apiPrefix}/fulfillment`, isAuthenticated, fulfillmentRouters);
 app.use(`${apiPrefix}/client-hub`, isAuthenticated, clientHubRouters);
