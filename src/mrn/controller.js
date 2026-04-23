@@ -261,6 +261,7 @@ function formatRow(r, enrichedLineItems) {
     grnBatchMfg: d.grn_batch_mfg ?? null,
     expiry: d.expiry ?? null,
     mfgBatch: d.mfg_batch ?? null,
+    whDispatchZone: d.wh_dispatch_zone ?? null,
     muReceiveZone: d.mu_receive_zone ?? null,
     muReceiveRack: d.mu_receive_rack ?? null,
     logisticsTrackingNo: d.logistics_tracking_no ?? null,
@@ -418,6 +419,8 @@ async function create(req, res) {
     if (body.mu_receive_zone !== undefined) payload.mu_receive_zone = body.mu_receive_zone;
     if (body.muReceiveRack !== undefined) payload.mu_receive_rack = body.muReceiveRack;
     if (body.mu_receive_rack !== undefined) payload.mu_receive_rack = body.mu_receive_rack;
+    if (body.whDispatchZone !== undefined) payload.wh_dispatch_zone = body.whDispatchZone;
+    if (body.wh_dispatch_zone !== undefined) payload.wh_dispatch_zone = body.wh_dispatch_zone;
     if (sourceForMtr === 'MTR' && bmrNoForMtr && !inboundMu && lineItems.length > 0) {
       const o = {};
       lineItems.forEach((li, idx) => {
@@ -494,6 +497,17 @@ async function update(req, res) {
     if (logisticsFields.logistics_vehicle_no !== undefined) updates.logistics_vehicle_no = logisticsFields.logistics_vehicle_no;
 
     const plainBefore = row.get ? row.get({ plain: true }) : row;
+
+    const isOutboundMtrPolicy =
+      plainBefore.source === 'MTR' && !plainBefore.is_inbound_from_mu;
+    if (isOutboundMtrPolicy) {
+      if (updates.wh_dispatch_zone !== undefined) delete updates.wh_dispatch_zone;
+      if (String(plainBefore.mu_receive_zone || '').trim() && updates.mu_receive_zone !== undefined) {
+        const inc = String(updates.mu_receive_zone || '').trim();
+        const prev = String(plainBefore.mu_receive_zone || '').trim();
+        if (inc !== prev) delete updates.mu_receive_zone;
+      }
+    }
 
     const existingPicker = String(plainBefore.assigned_picker || '').trim();
     if (existingPicker && updates.assigned_picker !== undefined) {

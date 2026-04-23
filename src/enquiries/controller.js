@@ -1,4 +1,5 @@
 const Enquiry = require('./models');
+const sequelize = require('../../db');
 const { createTicketSchema, updateTicketSchema, addMessageSchema } = require('./schemas');
 const {
   TICKET_CATEGORIES,
@@ -6,6 +7,8 @@ const {
   TICKET_STATUSES,
   TICKET_SOURCES,
   ACTIVITY_TYPES,
+  CROSS_TEAM_TEAMS,
+  TICKET_ISSUE_AREAS,
 } = require('./constants');
 const { Op } = require('sequelize');
 
@@ -15,6 +18,31 @@ function isAdmin(req) {
   return req.user && req.user.role && ADMIN_ROLES.includes(req.user.role);
 }
 
+function normalizeCollaboration(raw) {
+  if (!raw || typeof raw !== 'object') {
+    return { taggedMembers: [], taggedTeams: [], issueAreas: [] };
+  }
+  return {
+    taggedMembers: Array.isArray(raw.taggedMembers) ? raw.taggedMembers : [],
+    taggedTeams: Array.isArray(raw.taggedTeams) ? raw.taggedTeams : [],
+    issueAreas: Array.isArray(raw.issueAreas) ? raw.issueAreas : [],
+  };
+}
+
+/** Admin, ticket owner, or @mentioned on an internal ticket */
+function canAccessTicket(row, req) {
+  if (!row || !req.user) return false;
+  if (isAdmin(req)) return true;
+  const uid = Number(req.user.id);
+  if (Number(row.user_id) === uid) return true;
+  const plain = row.get ? row.get({ plain: true }) : row;
+  if (plain.ticket_scope === 'internal' && plain.collaboration) {
+    const c = normalizeCollaboration(plain.collaboration);
+    return c.taggedMembers.some((m) => Number(m.userid) === uid);
+  }
+  return false;
+}
+
 /** Format DB row to ticket response (camelCase, computed isOverdue) */
 function formatTicket(row) {
   if (!row) return null;
@@ -22,9 +50,11 @@ function formatTicket(row) {
   const sla = d.sla_deadline ? new Date(d.sla_deadline) : null;
   const now = new Date();
   const isOverdue = sla && now > sla && !d.resolved_at;
+  const scope = d.ticket_scope || 'customer';
   return {
     id: String(d.enquiry_id),
     ticketNumber: d.ticket_number || `TKT-${d.enquiry_id}`,
+    ticketScope: scope,
     customer: d.customer || null,
     subject: d.subject,
     description: d.description,
@@ -32,6 +62,7 @@ function formatTicket(row) {
     priority: d.priority || 'medium',
     status: d.status || 'new',
     source: d.source,
+    collaboration: scope === 'internal' ? normalizeCollaboration(d.collaboration) : undefined,
     tags: Array.isArray(d.tags) ? d.tags : [],
     currentAssignee: d.current_assignee || undefined,
     assignmentHistory: Array.isArray(d.assignment_history) ? d.assignment_history : [],
@@ -59,6 +90,8 @@ function getTicketTypes(req, res) {
       statuses: TICKET_STATUSES,
       sources: TICKET_SOURCES,
       activityTypes: ACTIVITY_TYPES,
+      crossTeamTeams: CROSS_TEAM_TEAMS,
+      issueAreas: TICKET_ISSUE_AREAS,
     },
   });
 }
@@ -109,11 +142,20 @@ async function createTicket(req, res, next) {
     const slaDeadline = new Date(now);
     slaDeadline.setDate(slaDeadline.getDate() + 1);
 
+    const ticketScope = value.ticket_scope || 'customer';
+    const source =
+      ticketScope === 'internal' ? value.source || 'internal-cross-team' : value.source || 'website';
+    const collaboration =
+      ticketScope === 'internal' ? normalizeCollaboration(value.collaboration) : null;
+
     const activity = {
       id: `ACT-${Date.now()}`,
       ticketId: null,
       type: 'created',
-      description: `Ticket created from ${value.source || 'website'}`,
+      description:
+        ticketScope === 'internal'
+          ? 'Cross-team internal ticket created'
+          : `Ticket created from ${source}`,
       performedBy: { id: user?.id ? String(user.id) : 'SYSTEM', name: user?.fullName || 'System', role: user?.roleName || 'System' },
       timestamp: now.toISOString(),
     };
@@ -127,7 +169,9 @@ async function createTicket(req, res, next) {
       category: value.category || 'other',
       priority: value.priority || 'medium',
       status: 'new',
-      source: value.source || 'website',
+      source,
+      ticket_scope: ticketScope,
+      collaboration,
       tags: value.tags || [],
       current_assignee: null,
       assignment_history: [],
@@ -160,7 +204,37 @@ async function createTicket(req, res, next) {
 /** List tickets: admin sees all, other users see only their own (user_id = req.user.id) */
 async function listTickets(req, res, next) {
   try {
-    const where = isAdmin(req) ? {} : { user_id: req.user.id };
+    const ticketScopeQuery = req.query.ticket_scope;
+    let where = {};
+
+    if (isAdmin(req)) {
+      if (ticketScopeQuery === 'internal') where.ticket_scope = 'internal';
+      else if (ticketScopeQuery === 'customer') {
+        where = { [Op.or]: [{ ticket_scope: 'customer' }, { ticket_scope: null }] };
+      }
+    } else {
+      const uid = Number(req.user.id);
+      const taggedInternalLiteral = sequelize.literal(`EXISTS (
+        SELECT 1 FROM jsonb_array_elements(COALESCE("Enquiry"."collaboration"->'taggedMembers', '[]'::jsonb)) elem
+        WHERE (elem->>'userid')::int = ${uid}
+      )`);
+      const ownOrTaggedInternal = {
+        [Op.or]: [{ user_id: req.user.id }, { [Op.and]: [{ ticket_scope: 'internal' }, taggedInternalLiteral] }],
+      };
+      if (ticketScopeQuery === 'internal') {
+        where = { [Op.and]: [ownOrTaggedInternal, { ticket_scope: 'internal' }] };
+      } else if (ticketScopeQuery === 'customer') {
+        where = {
+          [Op.and]: [
+            { user_id: req.user.id },
+            { [Op.or]: [{ ticket_scope: 'customer' }, { ticket_scope: null }] },
+          ],
+        };
+      } else {
+        where = ownOrTaggedInternal;
+      }
+    }
+
     const rows = await Enquiry.findAll({
       where,
       order: [['created_at', 'DESC']],
@@ -182,8 +256,8 @@ async function getTicketById(req, res, next) {
     if (Number.isNaN(id)) return res.status(400).json({ success: false, message: 'Invalid id' });
     const row = await Enquiry.findByPk(id);
     if (!row) return res.status(404).json({ success: false, message: 'Ticket not found' });
-    if (!isAdmin(req) && row.user_id !== req.user.id) {
-      return res.status(403).json({ success: false, message: 'You can only view your own tickets' });
+    if (!canAccessTicket(row, req)) {
+      return res.status(403).json({ success: false, message: 'You do not have access to this ticket' });
     }
     res.status(200).json({ success: true, data: formatTicket(row) });
   } catch (err) {
@@ -199,8 +273,8 @@ async function updateTicket(req, res, next) {
     if (Number.isNaN(id)) return res.status(400).json({ success: false, message: 'Invalid id' });
     const row = await Enquiry.findByPk(id);
     if (!row) return res.status(404).json({ success: false, message: 'Ticket not found' });
-    if (!isAdmin(req) && row.user_id !== req.user.id) {
-      return res.status(403).json({ success: false, message: 'You can only update your own tickets' });
+    if (!canAccessTicket(row, req)) {
+      return res.status(403).json({ success: false, message: 'You do not have access to this ticket' });
     }
 
     const { error, value } = updateTicketSchema.validate(req.body, { allowUnknown: true });
@@ -232,10 +306,14 @@ async function updateTicket(req, res, next) {
       }
     } else {
       for (const key of allowedSnake) {
-        if (value[key] !== undefined) row.set(key, value[key]);
+        if (value[key] !== undefined) {
+          row.set(key, key === 'collaboration' ? normalizeCollaboration(value[key]) : value[key]);
+        }
       }
       for (const [camel, snake] of Object.entries(camelToSnake)) {
-        if (value[camel] !== undefined) row.set(snake, value[camel]);
+        if (value[camel] !== undefined) {
+          row.set(snake, snake === 'collaboration' ? normalizeCollaboration(value[camel]) : value[camel]);
+        }
       }
     }
 
@@ -260,8 +338,8 @@ async function addMessage(req, res, next) {
 
     const row = await Enquiry.findByPk(id);
     if (!row) return res.status(404).json({ success: false, message: 'Ticket not found' });
-    if (!isAdmin(req) && row.user_id !== req.user.id) {
-      return res.status(403).json({ success: false, message: 'You can only add messages to your own tickets' });
+    if (!canAccessTicket(row, req)) {
+      return res.status(403).json({ success: false, message: 'You do not have access to this ticket' });
     }
 
     const user = req.user;

@@ -11,6 +11,8 @@
     "seed": "node seed.js",
     "clean-data": "node cleanData.js --yes",
     "zoho:pull-items": "node scripts/zoho-pull-items-to-products.js",
+    "zoho:seed-upload-patch": "node scripts/zoho-seed-upload-and-patch-seed.js",
+    "zoho:seed-upload-patch:force": "node scripts/zoho-seed-upload-and-patch-seed.js --force-reupload",
     "zoho:export:items": "node scripts/zoho-pull-items-data.js",
     "zoho:export:contacts": "node scripts/zoho-pull-contacts-data.js",
     "zoho:export:customers": "node scripts/zoho-pull-customers-data.js",

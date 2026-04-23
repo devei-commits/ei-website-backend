@@ -33,6 +33,14 @@ Enquiry.init(
     priority: { type: DataTypes.STRING(40), allowNull: true, defaultValue: 'medium' },
     status: { type: DataTypes.STRING(40), allowNull: true, defaultValue: 'new' },
     source: { type: DataTypes.STRING(40), allowNull: true },
+    /** customer | internal — internal = cross-team / staff-raised ticket */
+    ticket_scope: {
+      type: DataTypes.STRING(20),
+      allowNull: true,
+      defaultValue: 'customer',
+    },
+    /** { taggedMembers: [{ userid, displayName?, email? }], taggedTeams: [{ id, name }], issueAreas: string[] } */
+    collaboration: { type: DataTypes.JSON, allowNull: true },
     tags: { type: DataTypes.JSON, allowNull: true },
     current_assignee: {
       type: DataTypes.JSON,

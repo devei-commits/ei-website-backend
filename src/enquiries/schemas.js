@@ -15,6 +15,27 @@ const customerShape = Joi.object({
   isRegistered: Joi.boolean().allow(null),
 }).unknown(true);
 
+const collaborationSchema = Joi.object({
+  taggedMembers: Joi.array()
+    .items(
+      Joi.object({
+        userid: Joi.number().integer().required(),
+        displayName: Joi.string().allow('', null),
+        email: Joi.string().allow('', null),
+      })
+    )
+    .default([]),
+  taggedTeams: Joi.array()
+    .items(
+      Joi.object({
+        id: Joi.string().required(),
+        name: Joi.string().allow('', null),
+      })
+    )
+    .default([]),
+  issueAreas: Joi.array().items(Joi.string()).default([]),
+});
+
 const createTicketSchema = Joi.object({
   subject: Joi.string().max(500).required(),
   description: Joi.string().allow('', null),
@@ -23,6 +44,8 @@ const createTicketSchema = Joi.object({
   source: Joi.string().valid(...TICKET_SOURCES).allow('', null),
   tags: Joi.array().items(Joi.string()).allow(null),
   customer: customerShape.allow(null),
+  ticket_scope: Joi.string().valid('customer', 'internal').default('customer'),
+  collaboration: collaborationSchema.optional().allow(null),
 }).unknown(false);
 
 const updateTicketSchema = Joi.object({
@@ -33,6 +56,8 @@ const updateTicketSchema = Joi.object({
   status: Joi.string().valid(...TICKET_STATUSES).allow('', null),
   source: Joi.string().valid(...TICKET_SOURCES).allow('', null),
   tags: Joi.array().items(Joi.string()).allow(null),
+  ticket_scope: Joi.string().valid('customer', 'internal').allow('', null),
+  collaboration: collaborationSchema.optional().allow(null),
   current_assignee: Joi.object({
     staffId: Joi.string(),
     staffName: Joi.string(),
@@ -71,4 +96,5 @@ module.exports = {
   updateTicketSchema,
   addMessageSchema,
   enquirySchema,
+  collaborationSchema,
 };

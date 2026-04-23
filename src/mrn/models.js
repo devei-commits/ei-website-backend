@@ -32,6 +32,8 @@ MaterialRequestNote.init(
     grn_batch_mfg: { type: DataTypes.STRING(100), allowNull: true },
     expiry: { type: DataTypes.DATEONLY, allowNull: true },
     mfg_batch: { type: DataTypes.STRING(100), allowNull: true },
+    /** Outbound MTR (RM / PM): warehouse zone stock is picked from (set at Send MTR; not edited in WH). */
+    wh_dispatch_zone: { type: DataTypes.STRING(100), allowNull: true },
     /** MU zone/rack when transfer is completed (for location history). */
     mu_receive_zone: { type: DataTypes.STRING(100), allowNull: true },
     mu_receive_rack: { type: DataTypes.STRING(100), allowNull: true },

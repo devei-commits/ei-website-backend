@@ -59,27 +59,45 @@ const bcrypt = require('bcrypt');
 
 /** Zoho Books contact_id for seeded vendor_clients (by entity_code). */
 const ZOHO_SEED_VENDOR_CLIENT_CONTACT_IDS = {
-  'EI-VEN-00006': '3529895000000184022',
-  'EI-VEN-00002': '3529895000000163024',
-  'EI-VEN-00003': '3529895000000189003',
-  'EI-VEN-00004': '3529895000000190005',
-  'EI-CLI-00001': '3529895000000175022',
+  "EI-CLI-00001": "3529895000000350012",
+  "EI-CLI-00002": "3529895000000351012",
+  "EI-CLI-00003": "3529895000000338011",
+  "EI-CLI-00004": "3529895000000340011",
+  "EI-VEN-00002": "3529895000000347012",
+  "EI-VEN-00003": "3529895000000348012",
+  "EI-VEN-00004": "3529895000000349012",
+  "EI-VEN-00006": "3529895000000346012",
 };
 
 /** Zoho Books contact_id for seeded users (by email, lowercase). */
 const ZOHO_SEED_USER_CONTACT_IDS = {
-  'superadmin@example.com': '3529895000000172023',
-  'admin@example.com': '3529895000000188023',
-  'admin2@example.com': '3529895000000178042',
-  'bdmanager@example.com': '3529895000000187022',
-  'accounts@example.com': '3529895000000191003',
-  'dr.sarah@example.com': '3529895000000170004',
-  'client1@example.com': '3529895000000167023',
-  'client2@example.com': '3529895000000165312',
-  'bd@luminos.in': '3529895000000182043',
-  'priya.mehta@example.com': '3529895000000184042',
-  'suresh.kumar@example.com': '3529895000000168043',
-  'ananya.krishnan@example.com': '3529895000000185023',
+  "accounts@example.com": "3529895000000191003",
+  "admin@example.com": "3529895000000188023",
+  "admin2@example.com": "3529895000000178042",
+  "ananya.krishnan@example.com": "3529895000000185023",
+  "bd@luminos.in": "3529895000000353002",
+  "bdmanager@example.com": "3529895000000187022",
+  "client1@example.com": "3529895000000332011",
+  "client2@example.com": "3529895000000327030",
+  "dr.sarah@example.com": "3529895000000342011",
+  "priya.mehta@example.com": "3529895000000184042",
+  "superadmin@example.com": "3529895000000172023",
+  "suresh.kumar@example.com": "3529895000000168043",
+};
+
+/** Zoho Books item_id for seeded products (PR), keyed by product_code — reference only. */
+const ZOHO_SEED_PRODUCT_ITEM_IDS = {
+  "EI-PR-SUN-UYTUY-00001": "3529895000000354001",
+};
+
+/** Zoho Books item_id for seeded raw materials (RM), keyed by code — reference only. */
+const ZOHO_SEED_RAW_MATERIAL_ITEM_IDS = {
+  "EI-RM-SURF-HGVEEDB-00001": "3529895000000352494",
+};
+
+/** Zoho Books item_id for seeded pack materials (PM), keyed by code — reference only. */
+const ZOHO_SEED_PACK_MATERIAL_ITEM_IDS = {
+  "EI-PM-CLSR-KHKUHWE-00001": "3529895000000355001",
 };
 
 const ROLES_TO_SEED = [
@@ -874,7 +892,7 @@ async function seed() {
       }
       console.log(`[Seed] Zoho Books products (FG): ${nOk} linked, ${nFail} skipped/errors`);
 
-      const rms = await RawMaterial.findAll({ where: { zoho_id: '3529895000000114003' }, order: [['id', 'ASC']] });
+      const rms = await RawMaterial.findAll({ where: { zoho_id: null }, order: [['id', 'ASC']] });
       nOk = 0;
       nFail = 0;
       for (const rm of rms) {

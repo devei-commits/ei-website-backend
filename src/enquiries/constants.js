@@ -9,6 +9,8 @@ const TICKET_CATEGORIES = [
   'partnership',
   'order-issue',
   'refund',
+  /** Product Information System / master data issues (cross-team) */
+  'pis-issue',
   'other',
 ];
 
@@ -32,7 +34,34 @@ const TICKET_STATUSES = [
 /**
  * Ticket sources (how the ticket was created)
  */
-const TICKET_SOURCES = ['website', 'email', 'phone', 'chat', 'other'];
+const TICKET_SOURCES = ['website', 'email', 'phone', 'chat', 'internal-cross-team', 'other'];
+
+/** Teams that can be @tagged on internal tickets (ids stable for API/UI) */
+const CROSS_TEAM_TEAMS = [
+  { id: 'pis', name: 'PIS (Product Information)' },
+  { id: 'warehouse', name: 'Warehouse & Inventory' },
+  { id: 'planning', name: 'Planning & Production' },
+  { id: 'procurement', name: 'Procurement' },
+  { id: 'quality', name: 'Quality & Stability' },
+  { id: 'sales-bd', name: 'Sales / BD' },
+  { id: 'finance', name: 'Finance' },
+  { id: 'customer-support', name: 'Customer Support' },
+  { id: 'operations', name: 'Operations' },
+];
+
+/**
+ * Issue-area tags (include PIS). Used with collaboration.issueAreas.
+ */
+const TICKET_ISSUE_AREAS = [
+  { id: 'pis', label: 'PIS — codes, formulations, product master' },
+  { id: 'inventory', label: 'Inventory / stock' },
+  { id: 'planning', label: 'Planning / batches' },
+  { id: 'procurement', label: 'Procurement / PO' },
+  { id: 'quality', label: 'Quality / COA / stability' },
+  { id: 'fulfillment', label: 'Fulfillment / dispatch' },
+  { id: 'systems', label: 'Systems / integrations' },
+  { id: 'other', label: 'Other' },
+];
 
 /**
  * Activity types for ticket timeline
@@ -67,4 +96,6 @@ module.exports = {
   ACTIVITY_TYPES,
   ENQUIRY_TYPES,
   DETAILS_SHAPE_BY_TYPE,
+  CROSS_TEAM_TEAMS,
+  TICKET_ISSUE_AREAS,
 };
