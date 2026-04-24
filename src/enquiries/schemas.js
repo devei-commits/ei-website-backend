@@ -15,6 +15,17 @@ const customerShape = Joi.object({
   isRegistered: Joi.boolean().allow(null),
 }).unknown(true);
 
+/** Initial / update assignee payload (snake_case keys as stored in DB JSON) */
+const assigneePayloadSchema = Joi.object({
+  staffId: Joi.string().required(),
+  staffName: Joi.string().allow('', null),
+  staffEmail: Joi.string().allow('', null),
+  department: Joi.string().allow('', null),
+  assignedAt: Joi.date().iso().allow(null),
+  assignedBy: Joi.string().allow('', null),
+  isActive: Joi.boolean(),
+});
+
 const collaborationSchema = Joi.object({
   taggedMembers: Joi.array()
     .items(
@@ -43,9 +54,13 @@ const createTicketSchema = Joi.object({
   priority: Joi.string().valid(...TICKET_PRIORITIES).allow('', null),
   source: Joi.string().valid(...TICKET_SOURCES).allow('', null),
   tags: Joi.array().items(Joi.string()).allow(null),
-  customer: customerShape.allow(null),
+  customer: customerShape.allow(null).optional(),
+  /** When staff creates a customer ticket on behalf of a portal user; enquiry.user_id is set to this id */
+  customer_user_id: Joi.number().integer().positive().optional(),
   ticket_scope: Joi.string().valid('customer', 'internal').default('customer'),
   collaboration: collaborationSchema.optional().allow(null),
+  /** Optional on create (e.g. website); admin UIs should send this so tickets start assigned */
+  current_assignee: assigneePayloadSchema.optional().allow(null),
 }).unknown(false);
 
 const updateTicketSchema = Joi.object({
@@ -58,15 +73,7 @@ const updateTicketSchema = Joi.object({
   tags: Joi.array().items(Joi.string()).allow(null),
   ticket_scope: Joi.string().valid('customer', 'internal').allow('', null),
   collaboration: collaborationSchema.optional().allow(null),
-  current_assignee: Joi.object({
-    staffId: Joi.string(),
-    staffName: Joi.string(),
-    staffEmail: Joi.string(),
-    department: Joi.string(),
-    assignedAt: Joi.date().iso(),
-    assignedBy: Joi.string(),
-    isActive: Joi.boolean(),
-  }).allow(null),
+  current_assignee: assigneePayloadSchema.allow(null),
   assignment_history: Joi.array().items(Joi.object()).allow(null),
   linked_orders: Joi.array().items(Joi.object()).allow(null),
   messages: Joi.array().items(Joi.object()).allow(null),
@@ -97,4 +104,5 @@ module.exports = {
   addMessageSchema,
   enquirySchema,
   collaborationSchema,
+  assigneePayloadSchema,
 };

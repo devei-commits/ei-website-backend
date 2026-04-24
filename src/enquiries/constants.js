@@ -34,7 +34,16 @@ const TICKET_STATUSES = [
 /**
  * Ticket sources (how the ticket was created)
  */
-const TICKET_SOURCES = ['website', 'email', 'phone', 'chat', 'internal-cross-team', 'other'];
+const TICKET_SOURCES = [
+  'website',
+  'email',
+  'phone',
+  'chat',
+  'internal-cross-team',
+  /** Raised from EI-Admin enquiry management for a selected portal customer */
+  'admin-dashboard',
+  'other',
+];
 
 /** Teams that can be @tagged on internal tickets (ids stable for API/UI) */
 const CROSS_TEAM_TEAMS = [

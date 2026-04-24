@@ -440,6 +440,9 @@ const getMe = async (req, res) => {
 
 // Staff usertypes for admin dashboard (getusers?staffOnly=true)
 const STAFF_USERTYPES = ['super_admin', 'admin', 'bd_manager', 'doctor'];
+
+/** Portal users staff can link when raising a customer ticket from the dashboard */
+const PORTAL_CUSTOMER_USERTYPES = ['customer', 'doctor'];
 // Map usertype -> role_id for API consistency (matches minimal GET /roles list)
 const USERTYPE_TO_ROLE_ID = { super_admin: 1, admin: 2, bd_manager: 3, doctor: 4, customer: 5 };
 const ROLE_ID_TO_USERTYPE = { 1: 'super_admin', 2: 'admin', 3: 'bd_manager', 4: 'doctor', 5: 'customer' };
@@ -552,6 +555,51 @@ const searchUsers = async (req, res) => {
         email: formatted.email,
         department: formatted.department,
         role_name: formatted.role_name,
+      };
+    });
+    res.status(200).json(list);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+/** Enquiry management: search portal customers/doctors by name or email (min 2 chars). */
+const searchPortalCustomers = async (req, res) => {
+  try {
+    const q = req.query.q != null ? String(req.query.q).trim() : '';
+    if (q.length < 2) {
+      return res.status(200).json([]);
+    }
+    const like = { [Op.iLike]: `%${q}%` };
+    const where = {
+      usertype: { [Op.in]: PORTAL_CUSTOMER_USERTYPES },
+      [Op.or]: [
+        { display_name: like },
+        { email: like },
+        { fname: like },
+        { lname: like },
+      ],
+    };
+    const users = await User.findAll({
+      attributes: ['userid', 'fname', 'lname', 'display_name', 'email', 'mobile', 'usertype'],
+      where,
+      include: [LINKED_VC_INCLUDE],
+      order: [
+        ['display_name', 'ASC'],
+        ['email', 'ASC'],
+      ],
+      limit: 25,
+    });
+    const rolesByCode = await getRolesByCode();
+    const list = users.map((u) => {
+      const f = formatUserForStaffList(u, rolesByCode);
+      return {
+        userid: f.userid,
+        display_name: f.display_name,
+        email: f.email,
+        mobile: f.mobile,
+        role_name: f.role_name,
+        vendor_client_code: f.vendor_client_code,
       };
     });
     res.status(200).json(list);
@@ -881,6 +929,7 @@ module.exports = {
   updateUserPaymentTerms,
   getAllUsers,
   searchUsers,
+  searchPortalCustomers,
   getUserById,
   updateUserRole,
   updateUserProfile,

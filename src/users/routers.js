@@ -7,6 +7,7 @@ const {
   updateUserPaymentTerms,
   getAllUsers,
   searchUsers,
+  searchPortalCustomers,
   getUserById,
   updateUserRole,
   updateUserProfile,
@@ -27,6 +28,12 @@ router.get('/logout', deleteToken);
 
 // Search users by name/email (for approver dropdowns). Any authenticated user.
 router.get('/search', isAuthenticated, searchUsers);
+router.get(
+  '/search-portal-customers',
+  isAuthenticated,
+  requireModule('enquiry-management'),
+  searchPortalCustomers
+);
 
 // Current user's own details
 router.get('/me', isAuthenticated, getMe);

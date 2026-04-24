@@ -1,4 +1,5 @@
 const Enquiry = require('./models');
+const { User } = require('../users/models');
 const sequelize = require('../../db');
 const Newdevelopment = require('../newdevelopments/models');
 const { createTicketSchema, updateTicketSchema, addMessageSchema } = require('./schemas');
@@ -15,8 +16,40 @@ const { Op } = require('sequelize');
 
 const ADMIN_ROLES = ['super_admin', 'admin'];
 
+/** Portal accounts that can own customer-scoped tickets (website + admin on-behalf). */
+const PORTAL_CUSTOMER_USERTYPES = new Set(['customer', 'doctor']);
+
 function isAdmin(req) {
   return req.user && req.user.role && ADMIN_ROLES.includes(req.user.role);
+}
+
+/** Staff may set `customer_user_id` when creating a ticket for someone else’s portal account */
+function canProxyTicketToPortalCustomer(req) {
+  if (!req.user || !req.user.role) return false;
+  const r = String(req.user.role).toLowerCase();
+  if (r === 'customer') return false;
+  if (ADMIN_ROLES.includes(r)) return true;
+  if (r === 'bd_manager') return true;
+  const mods = req.user.allowedModules || [];
+  return mods.includes('*') || mods.includes('enquiry-management');
+}
+
+function customerSnapshotFromUserRow(targetUser, overrides = {}) {
+  const plain = targetUser.get ? targetUser.get({ plain: true }) : targetUser;
+  const baseName =
+    [plain.fname, plain.lname].filter(Boolean).join(' ').trim() ||
+    (plain.display_name && String(plain.display_name).trim()) ||
+    (plain.email && String(plain.email).trim()) ||
+    'Customer';
+  const o = overrides && typeof overrides === 'object' ? overrides : {};
+  return {
+    id: String(plain.userid),
+    name: o.name != null && String(o.name).trim() ? String(o.name).trim() : baseName,
+    email: o.email != null && String(o.email).trim() ? String(o.email).trim() : String(plain.email || '').trim(),
+    phone: o.phone != null ? String(o.phone) : String(plain.mobile || '').trim(),
+    company: o.company != null ? o.company : null,
+    isRegistered: true,
+  };
 }
 
 function normalizeCollaboration(raw) {
@@ -28,6 +61,78 @@ function normalizeCollaboration(raw) {
     taggedTeams: Array.isArray(raw.taggedTeams) ? raw.taggedTeams : [],
     issueAreas: Array.isArray(raw.issueAreas) ? raw.issueAreas : [],
   };
+}
+
+function actorDisplayName(user) {
+  if (!user) return 'System';
+  return user.fullName || user.email || String(user.id || 'System');
+}
+
+/** Normalise assignee JSON for DB (from create/update body). */
+function normalizeAssigneeBody(raw, assignedByFallback) {
+  if (!raw || typeof raw !== 'object') return null;
+  const staffId = raw.staffId != null ? String(raw.staffId).trim() : '';
+  if (!staffId) return null;
+  const by = String(raw.assignedBy || assignedByFallback || '').trim() || assignedByFallback || 'System';
+  return {
+    staffId,
+    staffName: String(raw.staffName || '').trim() || 'Unknown',
+    staffEmail: String(raw.staffEmail || ''),
+    department: String(raw.department || ''),
+    assignedAt: raw.assignedAt ? new Date(raw.assignedAt).toISOString() : new Date().toISOString(),
+    assignedBy: by,
+    isActive: raw.isActive !== false,
+  };
+}
+
+/**
+ * Apply assignee change on an enquiry row: maintain assignment_history for previous holders,
+ * set current_assignee, optionally append timeline activity.
+ */
+function applyAssigneeUpdate(row, incomingAssignee, req) {
+  const nowIso = new Date().toISOString();
+  const actor = actorDisplayName(req.user);
+  const history = Array.isArray(row.assignment_history) ? [...row.assignment_history] : [];
+  const old = row.current_assignee && typeof row.current_assignee === 'object' ? { ...row.current_assignee } : null;
+
+  if (incomingAssignee === null) {
+    if (old && old.staffId) {
+      history.push({
+        ...old,
+        endedAt: nowIso,
+        endedBy: actor,
+        reason: 'unassigned',
+      });
+    }
+    row.set('assignment_history', history);
+    row.set('current_assignee', null);
+    return;
+  }
+
+  const next = normalizeAssigneeBody(incomingAssignee, actor);
+  if (!next) {
+    row.set('current_assignee', null);
+    return;
+  }
+
+  const oldId = old && old.staffId != null ? String(old.staffId) : '';
+  const newId = next.staffId;
+
+  if (oldId && newId && oldId !== newId) {
+    history.push({
+      ...old,
+      endedAt: nowIso,
+      endedBy: actor,
+      reason: 'reassigned',
+    });
+    row.set('assignment_history', history);
+  }
+
+  row.set('current_assignee', {
+    ...next,
+    assignedBy: next.assignedBy || actor,
+    assignedAt: next.assignedAt || nowIso,
+  });
 }
 
 /** Admin, ticket owner, or @mentioned on an internal ticket */
@@ -209,7 +314,40 @@ async function createTicket(req, res, next) {
     const now = new Date();
     const user = req.user;
 
-    let customer = value.customer;
+    let customer = value.customer || null;
+    let ticketOwnerUserId = user ? user.id : null;
+
+    const proxyCustomerId =
+      value.customer_user_id != null && value.customer_user_id !== ''
+        ? Number(value.customer_user_id)
+        : null;
+    if (proxyCustomerId != null && !Number.isFinite(proxyCustomerId)) {
+      return res.status(400).json({ success: false, message: 'Invalid customer_user_id' });
+    }
+    if (proxyCustomerId != null) {
+      if (!canProxyTicketToPortalCustomer(req)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not allowed to create tickets for another customer account',
+        });
+      }
+      const targetUser = await User.findByPk(proxyCustomerId, {
+        attributes: ['userid', 'fname', 'lname', 'display_name', 'email', 'mobile', 'usertype'],
+      });
+      if (!targetUser) {
+        return res.status(400).json({ success: false, message: 'customer_user_id not found' });
+      }
+      const ut = String(targetUser.usertype || '').toLowerCase();
+      if (!PORTAL_CUSTOMER_USERTYPES.has(ut)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Selected user must be a portal customer or doctor account',
+        });
+      }
+      ticketOwnerUserId = proxyCustomerId;
+      customer = customerSnapshotFromUserRow(targetUser, customer || undefined);
+    }
+
     if (!customer && user) {
       customer = {
         id: user.id ? String(user.id) : undefined,
@@ -230,9 +368,17 @@ async function createTicket(req, res, next) {
 
     const ticketScope = value.ticket_scope || 'customer';
     const source =
-      ticketScope === 'internal' ? value.source || 'internal-cross-team' : value.source || 'website';
+      ticketScope === 'internal'
+        ? value.source || 'internal-cross-team'
+        : value.source ||
+          (proxyCustomerId != null ? 'admin-dashboard' : 'website');
     const collaboration =
       ticketScope === 'internal' ? normalizeCollaboration(value.collaboration) : null;
+
+    const actor = actorDisplayName(user);
+    const initialAssignee = value.current_assignee
+      ? normalizeAssigneeBody(value.current_assignee, actor)
+      : null;
 
     const activity = {
       id: `ACT-${Date.now()}`,
@@ -246,9 +392,21 @@ async function createTicket(req, res, next) {
       timestamp: now.toISOString(),
     };
 
+    const activities = [activity];
+    if (initialAssignee) {
+      activities.push({
+        id: `ACT-${Date.now()}-asg`,
+        ticketId: null,
+        type: 'assigned',
+        description: `Assigned to ${initialAssignee.staffName}`,
+        performedBy: { id: user?.id ? String(user.id) : 'SYSTEM', name: actor, role: user?.roleName || 'Staff' },
+        timestamp: now.toISOString(),
+      });
+    }
+
     const record = await Enquiry.create({
       ticket_number: ticketNumber,
-      user_id: user ? user.id : null,
+      user_id: ticketOwnerUserId,
       customer,
       subject: value.subject,
       description: value.description || '',
@@ -259,11 +417,11 @@ async function createTicket(req, res, next) {
       ticket_scope: ticketScope,
       collaboration,
       tags: value.tags || [],
-      current_assignee: null,
+      current_assignee: initialAssignee,
       assignment_history: [],
       linked_orders: [],
       messages: [],
-      activities: [activity],
+      activities,
       first_response_at: null,
       sla_deadline: slaDeadline,
       resolved_at: null,
@@ -273,8 +431,12 @@ async function createTicket(req, res, next) {
       updated_at: now,
     });
 
-    activity.ticketId = String(record.enquiry_id);
-    await record.update({ activities: [activity], updated_at: now });
+    const ticketIdStr = String(record.enquiry_id);
+    activity.ticketId = ticketIdStr;
+    activities.forEach((a) => {
+      a.ticketId = ticketIdStr;
+    });
+    await record.update({ activities, updated_at: now });
 
     res.status(201).json({
       success: true,
@@ -391,6 +553,34 @@ async function updateTicket(req, res, next) {
         if (value[key] !== undefined) row.set(snake, value[key]);
       }
     } else {
+      const assigneeIncoming =
+        value.current_assignee !== undefined ? value.current_assignee : value.currentAssignee;
+      if (assigneeIncoming !== undefined) {
+        const beforeId = row.current_assignee?.staffId != null ? String(row.current_assignee.staffId) : '';
+        applyAssigneeUpdate(row, assigneeIncoming, req);
+        const afterId = row.current_assignee?.staffId != null ? String(row.current_assignee.staffId) : '';
+        if (beforeId !== afterId) {
+          const acts = Array.isArray(row.activities) ? [...row.activities] : [];
+          const next = row.current_assignee;
+          acts.push({
+            id: `ACT-${Date.now()}-re`,
+            ticketId: String(row.enquiry_id),
+            type: 'reassigned',
+            description:
+              next && next.staffName ? `Assignment updated — ${next.staffName}` : 'Assignee cleared',
+            performedBy: {
+              id: String(req.user.id),
+              name: actorDisplayName(req.user),
+              role: req.user.roleName || 'Staff',
+            },
+            timestamp: now.toISOString(),
+          });
+          row.set('activities', acts);
+        }
+        delete value.current_assignee;
+        delete value.currentAssignee;
+      }
+
       for (const key of allowedSnake) {
         if (value[key] !== undefined) {
           row.set(key, key === 'collaboration' ? normalizeCollaboration(value[key]) : value[key]);
