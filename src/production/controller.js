@@ -14,6 +14,7 @@ const PlanningBatch = require('../planningExtracted/planningBatchModel');
 const { createRworkPlanningBatch } = require('../planningExtracted/controller');
 const SalesOrder = require('../salesOrders/models');
 const ProcurementRequest = require('../procurementRequests/models');
+const { hasGranularAccess } = require('../middleware/security');
 
 /* ════════════════════════════════════════════════════════════
    EQUIPMENT
@@ -176,9 +177,9 @@ async function deleteTeamMember(req, res) {
    BATCHES (BMR / BPR)
    ════════════════════════════════════════════════════════════ */
 
-function formatBatch(row) {
+function formatBatch(row, visibility = { canViewBmr: true, canViewBpr: true, canViewYield: true }) {
   const d = row.get ? row.get({ plain: true }) : row;
-  return {
+  const payload = {
     _pk: d.id,
     bmrNo: d.bmr_no,
     bprNo: d.bpr_no,
@@ -235,6 +236,47 @@ function formatBatch(row) {
     muDispensingBundleId: d.mu_dispensing_bundle_id || null,
     muDispensingBundles: Array.isArray(d.mu_dispensing_bundles) ? d.mu_dispensing_bundles : [],
   };
+  if (!visibility.canViewBmr) {
+    payload.bmrNo = null;
+    payload.bmrStatus = null;
+    payload.teamBMR = [];
+    payload.qcOfficerBMR = '';
+    payload.rmReserved = false;
+    payload.rmConnected = false;
+    payload.dispensingRM = [];
+    payload.rmConnectDate = '';
+  }
+  if (!visibility.canViewBpr) {
+    payload.bprNo = null;
+    payload.bprStatus = null;
+    payload.teamBPR = [];
+    payload.qcOfficerBPR = '';
+    payload.pmReserved = false;
+    payload.pmConnected = false;
+    payload.dispensingPM = [];
+    payload.pmConnectDate = '';
+    payload.fillDate = '';
+    payload.packDate = '';
+    payload.fgDate = '';
+  }
+  if (!visibility.canViewYield) {
+    payload.bulkYield = null;
+    payload.fillYield = null;
+    payload.fgYield = null;
+    payload.bulkBatchAccepted = null;
+    payload.fillBatchAccepted = null;
+    payload.fgBatchAccepted = null;
+  }
+  return payload;
+}
+
+async function getBatchVisibility(req) {
+  const [canViewBmr, canViewBpr, canViewYield] = await Promise.all([
+    hasGranularAccess(req, 'order-management.production-bmr', 'view'),
+    hasGranularAccess(req, 'order-management.production-bpr', 'view'),
+    hasGranularAccess(req, 'order-management.production-transfer-yield', 'view'),
+  ]);
+  return { canViewBmr, canViewBpr, canViewYield };
 }
 
 /**
@@ -366,7 +408,8 @@ async function getNextRworkSuffix(baseBmrNo) {
 async function listBatches(req, res) {
   try {
     const rows = await ProductionBatch.findAll({ order: [['bmr_no', 'ASC']] });
-    res.json(rows.map(formatBatch));
+    const visibility = await getBatchVisibility(req);
+    res.json(rows.map((r) => formatBatch(r, visibility)));
   } catch (err) {
     console.error('listBatches error:', err);
     res.status(500).json({ error: 'Failed to fetch batches' });
@@ -514,7 +557,8 @@ async function getBatchById(req, res) {
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await ProductionBatch.findByPk(id);
     if (!row) return res.status(404).json({ error: 'Batch not found' });
-    res.json(formatBatch(row));
+    const visibility = await getBatchVisibility(req);
+    res.json(formatBatch(row, visibility));
   } catch (err) {
     console.error('getBatchById error:', err);
     res.status(500).json({ error: 'Failed to fetch batch' });
@@ -533,7 +577,8 @@ async function createBatch(req, res) {
     const row = await ProductionBatch.create(data);
     await recomputeBatchVolume(row);
     await row.save();
-    res.status(201).json(formatBatch(row));
+    const visibility = await getBatchVisibility(req);
+    res.status(201).json(formatBatch(row, visibility));
   } catch (err) {
     console.error('createBatch error:', err);
     res.status(500).json({ error: 'Failed to create batch' });

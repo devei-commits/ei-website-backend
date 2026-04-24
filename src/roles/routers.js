@@ -18,12 +18,27 @@ const { isAuthenticated, requireModule } = require('../middleware/security');
 
 // Middleware: authenticate then check that the user has permission to access role-management
 const requireRoleManagement = [isAuthenticated, requireModule('role-management')];
+const requireRoleManagementMiddleware = requireModule('role-management');
+
+function canReadOwnRole(req) {
+  if (!req.user) return false;
+  const idParam = String(req.params?.id ?? '').trim().toLowerCase();
+  if (!idParam) return false;
+  const myRoleId = req.user.roleId != null ? String(req.user.roleId).trim().toLowerCase() : '';
+  const myRoleCode = req.user.role != null ? String(req.user.role).trim().toLowerCase() : '';
+  return idParam === myRoleId || idParam === myRoleCode;
+}
+
+function requireRoleManagementOrOwnRole(req, res, next) {
+  if (canReadOwnRole(req)) return next();
+  return requireRoleManagementMiddleware(req, res, next);
+}
 
 // Static path must be registered before /:id
 router.get('/module-definitions', ...requireRoleManagement, getModuleDefinitionsHandler);
 
 router.get('/', ...requireRoleManagement, listRoles);
-router.get('/:id', ...requireRoleManagement, getRoleById);
+router.get('/:id', isAuthenticated, requireRoleManagementOrOwnRole, getRoleById);
 router.post('/', ...requireRoleManagement, createRole);
 router.put('/:id', ...requireRoleManagement, updateRole);
 router.delete('/:id', ...requireRoleManagement, deleteRole);

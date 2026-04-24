@@ -12,7 +12,7 @@ const ADMIN_MODULE_IDS = [...ALL_MODULE_IDS];
 const USERTYPE_ALLOWED_MODULES = {
   super_admin: ['*'],
   admin: ADMIN_MODULE_IDS,
-  bd_manager: ['dashboard', 'user-management', 'order-list', 'order-management', 'coupon-management', 'discount-management', 'packaging-management', 'raw-materials-management', 'items-master', 'sales-purchase', 'universal-swap', 'item-groups'],
+  bd_manager: ['dashboard', 'user-management', 'order-list', 'order-management', 'coupon-management', 'discount-management', 'packaging-management', 'raw-materials-management', 'items-master', 'sales-purchase', 'universal-swap', 'item-groups', 'enquiry-management'],
   accounts_team: ['dashboard', 'vendor-client'],
   doctor: ['dashboard'],
   customer: [],
@@ -127,12 +127,25 @@ const isAuthenticated = async (req, res, next) => {
             doctorIdLegacy: user.doctor_id_legacy,
             allowedModules: getAllowedModules(user.usertype)
         };
-        // For staff (admin dashboard RBAC): attach roleId, roleName, roleLevel from staff_profiles + roles
+        // For staff (admin dashboard RBAC): attach roleId, roleName, roleLevel.
+        // Prefer role_code mapped from users.usertype (seed/source-of-truth),
+        // then fall back to staff_profiles.role_id if needed.
+        const roleByCode = user.usertype
+            ? await Role.findOne({
+                where: { role_code: String(user.usertype).trim().toLowerCase() },
+                attributes: ['role_id', 'role_name', 'level'],
+            }).catch(() => null)
+            : null;
         const staffProfile = await StaffProfile.findOne({
             where: { user_id: user.userid },
             include: [{ model: Role, as: 'role', attributes: ['role_id', 'role_name', 'level'] }]
         });
-        if (staffProfile && staffProfile.role) {
+        if (roleByCode) {
+            req.user.roleId = roleByCode.role_id;
+            req.user.roleName = roleByCode.role_name;
+            req.user.roleLevel = roleByCode.level;
+            req.user.department = staffProfile?.department;
+        } else if (staffProfile && staffProfile.role) {
             req.user.roleId = staffProfile.role.role_id;
             req.user.roleName = staffProfile.role.role_name;
             req.user.roleLevel = staffProfile.role.level;
@@ -151,6 +164,121 @@ const authorizeRoles = (...allowedRoles) => {
             return res.sendStatus(403);
         }
         next();
+    };
+};
+
+function isPrivilegedRole(reqUser) {
+    if (!reqUser) return false;
+    return (
+        reqUser.role === 'super_admin' ||
+        reqUser.role === 'admin' ||
+        reqUser.roleName === 'Super Admin' ||
+        reqUser.roleName === 'Admin'
+    );
+}
+
+function toGrantedKey(permission) {
+    const resource = permission && permission.resource ? String(permission.resource).trim() : '';
+    const action = permission && permission.action ? String(permission.action).trim().toLowerCase() : '';
+    if (!resource || !action) return '';
+    if (action === 'view' && resource.includes('.action.')) return resource;
+    if (resource.includes('.column.')) return `${resource}.${action}`;
+    return `${resource}.action.${action}`;
+}
+
+function normalizePermissionForStorage(resource, action) {
+    const safeResource = String(resource || '').trim();
+    const safeAction = String(action || '').trim().toLowerCase();
+    if (!safeResource || !safeAction) return null;
+    if (['view', 'create', 'edit', 'delete'].includes(safeAction)) {
+        return { resource: safeResource, action: safeAction };
+    }
+    return { resource: `${safeResource}.action.${safeAction}`, action: 'view' };
+}
+
+async function ensurePermissionContext(req) {
+    if (!req.user) return { granted: new Set(), byResource: new Map() };
+    if (req.user._permissionContext) return req.user._permissionContext;
+    const empty = { granted: new Set(), byResource: new Map() };
+    if (!req.user.roleId) {
+        req.user._permissionContext = empty;
+        return empty;
+    }
+    try {
+        const roleWithPerms = await Role.findByPk(req.user.roleId, {
+            include: [{ model: Permission, attributes: ['resource', 'action'] }],
+        });
+        const rows = roleWithPerms && Array.isArray(roleWithPerms.Permissions) ? roleWithPerms.Permissions : [];
+        const granted = new Set();
+        const byResource = new Map();
+        for (const perm of rows) {
+            if (!perm) continue;
+            const key = toGrantedKey(perm);
+            if (!key) continue;
+            granted.add(key);
+            const resource = String(perm.resource || '').trim();
+            const action = String(perm.action || '').trim().toLowerCase();
+            if (!resource || !action) continue;
+            if (!byResource.has(resource)) byResource.set(resource, new Set());
+            byResource.get(resource).add(action);
+        }
+        const ctx = { granted, byResource };
+        req.user._permissionContext = ctx;
+        return ctx;
+    } catch {
+        req.user._permissionContext = empty;
+        return empty;
+    }
+}
+
+function getResourceCandidates(resource) {
+    const base = String(resource || '').trim();
+    if (!base) return [];
+    const parts = base.split('.');
+    const out = [];
+    for (let i = parts.length; i >= 1; i -= 1) {
+        out.push(parts.slice(0, i).join('.'));
+    }
+    return out;
+}
+
+async function hasGranularAccess(req, resource, action = 'view') {
+    if (!req.user) return false;
+    if (isPrivilegedRole(req.user)) return true;
+    const wantedAction = String(action || 'view').trim().toLowerCase();
+    const normalized = normalizePermissionForStorage(resource, wantedAction);
+    if (!normalized) return false;
+    const { granted, byResource } = await ensurePermissionContext(req);
+    const candidates = getResourceCandidates(normalized.resource);
+    for (const candidate of candidates) {
+        const wanted = normalizePermissionForStorage(candidate, wantedAction);
+        if (wanted) {
+            const wantedKey = toGrantedKey(wanted);
+            if (wantedKey && granted.has(wantedKey)) return true;
+        }
+        const actions = byResource.get(candidate);
+        if (actions && actions.has(wantedAction)) return true;
+    }
+    return false;
+}
+
+const requireAnyGranularAccess = (requirements = []) => {
+    const reqs = Array.isArray(requirements) ? requirements : [];
+    return async (req, res, next) => {
+        if (!req.user) return res.sendStatus(403);
+        if (isPrivilegedRole(req.user)) return next();
+        if (reqs.length === 0) return res.sendStatus(403);
+        try {
+            for (const rule of reqs) {
+                const resource = rule && rule.resource ? String(rule.resource) : '';
+                const action = rule && rule.action ? String(rule.action) : 'view';
+                const ok = await hasGranularAccess(req, resource, action);
+                if (ok) return next();
+            }
+            return res.sendStatus(403);
+        } catch {
+            return res.sendStatus(500);
+        }
     };
 };
 
@@ -239,4 +367,7 @@ module.exports = {
     authorizeRoles,
     requireModule,
     getAllowedModules,
+    hasGranularAccess,
+    requireAnyGranularAccess,
+    requirePermission,
 }

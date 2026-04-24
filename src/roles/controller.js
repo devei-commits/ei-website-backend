@@ -3,23 +3,139 @@
  * All handlers are protected by isAuthenticated + requireModule('role-management').
  */
 
-const { Role, Permission, RolePermission, ModuleDefinition, User } = require('../models/index');
+const { Role, Permission, RolePermission, ModuleDefinition, User, StaffProfile } = require('../models/index');
+const { Op } = require('sequelize');
 const defaultModuleDef = require('./defaultModuleDefinition');
 
 const MODULE_DEFINITIONS = defaultModuleDef.modules;
 const DEFAULT_GLOBAL_SETTINGS = defaultModuleDef.globalSettings;
 
 const SYSTEM_ROLE_IDS = [1, 2, 3, 4, 5];
+const DB_ACTION_ENUM_SAFE = new Set(['view', 'create', 'edit', 'delete']);
+
+function normalizePermissionForStorage(resource, action) {
+  const safeResource = String(resource || '').trim();
+  const safeAction = String(action || '').trim().toLowerCase();
+  if (!safeResource || !safeAction) return null;
+  if (DB_ACTION_ENUM_SAFE.has(safeAction)) {
+    return { resource: safeResource, action: safeAction };
+  }
+  // Backward-compatible fallback for DBs where permissions.action is ENUM(view/create/edit/delete).
+  // Preserve unsupported verbs (approve/export/...) inside resource and store action as view.
+  return { resource: `${safeResource}.action.${safeAction}`, action: 'view' };
+}
+
+function parseGrantedKey(key) {
+  const raw = typeof key === 'string' ? key.trim() : String(key || '').trim();
+  if (!raw) return null;
+  const actionTag = '.action.';
+  const columnTag = '.column.';
+  if (raw.includes(actionTag)) {
+    const i = raw.lastIndexOf(actionTag);
+    const resource = raw.slice(0, i);
+    const action = raw.slice(i + actionTag.length);
+    if (!resource || !action) return null;
+    return normalizePermissionForStorage(resource, action);
+  }
+  if (raw.includes(columnTag)) {
+    const parts = raw.split('.');
+    if (parts.length >= 2) {
+      const action = parts[parts.length - 1];
+      const resource = parts.slice(0, -1).join('.');
+      if (!resource || !action) return null;
+      return normalizePermissionForStorage(resource, action);
+    }
+  }
+  return normalizePermissionForStorage(raw, 'view');
+}
+
+function toGrantedKey(permission) {
+  const resource = permission && permission.resource ? String(permission.resource).trim() : '';
+  const action = permission && permission.action ? String(permission.action).trim() : '';
+  if (!resource || !action) return resource || '';
+  if (action === 'view' && resource.includes('.action.')) return resource;
+  if (resource.includes('.column.')) return `${resource}.${action}`;
+  return `${resource}.action.${action}`;
+}
+
+async function findRoleByParam(idParam) {
+  const raw = String(idParam ?? '').trim();
+  if (!raw) return null;
+  const numeric = Number(raw);
+  if (Number.isFinite(numeric) && numeric > 0) {
+    return Role.findByPk(numeric);
+  }
+  return Role.findOne({ where: { role_code: raw } });
+}
+
+function deriveLegacyUsertypes(role) {
+  const out = new Set();
+  const code = String(role?.role_code || '').trim().toLowerCase();
+  if (code) out.add(code);
+  const nameAsType = String(role?.role_name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_');
+  if (nameAsType) out.add(nameAsType);
+  return Array.from(out);
+}
+
+async function saveRolePermissions(roleId, grantedKeys) {
+  const granted = Array.isArray(grantedKeys) ? grantedKeys : [];
+  const parsed = granted.map((k) => parseGrantedKey(k)).filter(Boolean);
+  const uniqMap = new Map();
+  for (const p of parsed) {
+    uniqMap.set(`${p.resource}|||${p.action}`, p);
+  }
+  const uniquePerms = Array.from(uniqMap.values());
+
+  await RolePermission.destroy({ where: { role_id: roleId } });
+  if (uniquePerms.length === 0) return [];
+
+  const orWhere = uniquePerms.map((p) => ({ resource: p.resource, action: p.action }));
+  let permissionRows = await Permission.findAll({ where: { [Op.or]: orWhere } });
+  const existing = new Set(permissionRows.map((p) => `${p.resource}|||${p.action}`));
+  const missing = uniquePerms.filter((p) => !existing.has(`${p.resource}|||${p.action}`));
+
+  if (missing.length > 0) {
+    await Permission.bulkCreate(missing, { ignoreDuplicates: true });
+    permissionRows = await Permission.findAll({ where: { [Op.or]: orWhere } });
+  }
+
+  const rolePermRows = permissionRows.map((p) => ({ role_id: roleId, permission_id: p.permission_id }));
+  if (rolePermRows.length > 0) {
+    await RolePermission.bulkCreate(rolePermRows, { ignoreDuplicates: true });
+  }
+  return permissionRows;
+}
 
 async function listRoles(_req, res) {
   try {
     const roles = await Role.findAll({ order: [['role_id', 'ASC']] });
+    const roleIds = roles.map((r) => r.role_id);
+
+    const [userCounts, permCounts] = await Promise.all([
+      StaffProfile.findAll({
+        attributes: ['role_id', [StaffProfile.sequelize.fn('COUNT', StaffProfile.sequelize.col('user_id')), 'count']],
+        where: { role_id: { [Op.in]: roleIds } },
+        group: ['role_id'],
+        raw: true,
+      }).catch(() => []),
+      RolePermission.findAll({
+        attributes: ['role_id', [RolePermission.sequelize.fn('COUNT', RolePermission.sequelize.col('permission_id')), 'count']],
+        where: { role_id: { [Op.in]: roleIds } },
+        group: ['role_id'],
+        raw: true,
+      }).catch(() => []),
+    ]);
+
+    const userCountByRoleId = new Map(userCounts.map((r) => [Number(r.role_id), Number(r.count) || 0]));
+    const permCountByRoleId = new Map(permCounts.map((r) => [Number(r.role_id), Number(r.count) || 0]));
+
     const list = await Promise.all(
       roles.map(async (r) => {
-        const [userCount, permCount] = await Promise.all([
-          User.count({ where: { usertype: r.role_code } }).catch(() => 0),
-          RolePermission.count({ where: { role_id: r.role_id } }).catch(() => 0),
-        ]);
+        const userCount = userCountByRoleId.get(Number(r.role_id)) || 0;
+        const permCount = permCountByRoleId.get(Number(r.role_id)) || 0;
         return {
           role_id: r.role_id,
           role_code: r.role_code,
@@ -89,13 +205,57 @@ async function getModuleDefinitionsHandler(req, res) {
 
 async function getRoleById(req, res) {
   try {
-    const id = Number(req.params.id);
-    const role = await Role.findByPk(id, { include: [Permission] });
+    const roleBase = await findRoleByParam(req.params.id);
+    const role = roleBase ? await Role.findByPk(roleBase.role_id, { include: [Permission] }) : null;
     if (!role) {
       return res.status(404).json({ error: 'Role not found' });
     }
+    const id = Number(role.role_id);
+    const staffRows = await StaffProfile.findAll({
+      where: { role_id: id },
+      include: [{ model: User, as: 'user', attributes: ['userid', 'email', 'fname', 'lname', 'display_name', 'status', 'created_at'] }],
+      order: [['created_at', 'ASC']],
+    }).catch(() => []);
+    const assignedUsersFromStaff = staffRows
+      .map((r) => {
+        const u = r.user;
+        if (!u) return null;
+        const name = [u.fname, u.lname].filter(Boolean).join(' ') || u.display_name || u.email || `User ${u.userid}`;
+        return {
+          user_id: u.userid,
+          email: u.email || '',
+          name,
+          status: u.status || 'active',
+          assigned_at: r.created_at ? String(r.created_at) : '',
+        };
+      })
+      .filter(Boolean);
+    const legacyTypes = deriveLegacyUsertypes(role);
+    const assignedUsersFromLegacy = legacyTypes.length > 0
+      ? await User.findAll({
+        where: { usertype: { [Op.in]: legacyTypes } },
+        attributes: ['userid', 'email', 'fname', 'lname', 'display_name', 'status', 'created_at'],
+        order: [['created_at', 'ASC']],
+      }).then((rows) => rows.map((u) => {
+        const name = [u.fname, u.lname].filter(Boolean).join(' ') || u.display_name || u.email || `User ${u.userid}`;
+        return {
+          user_id: u.userid,
+          email: u.email || '',
+          name,
+          status: u.status || 'active',
+          assigned_at: u.created_at ? String(u.created_at) : '',
+        };
+      })).catch(() => [])
+      : [];
+    const byUserId = new Map();
+    for (const u of [...assignedUsersFromLegacy, ...assignedUsersFromStaff]) {
+      byUserId.set(Number(u.user_id), u);
+    }
+    const assignedUsers = Array.from(byUserId.values()).sort((a, b) =>
+      String(a.assigned_at || '').localeCompare(String(b.assigned_at || ''))
+    );
     const permissions = role.Permissions || [];
-    const granted = permissions.map((p) => (p.action ? `${p.resource}.${p.action}` : p.resource));
+    const granted = permissions.map((p) => toGrantedKey(p)).filter(Boolean);
     res.status(200).json({
       role_id: role.role_id,
       role_code: role.role_code,
@@ -105,6 +265,7 @@ async function getRoleById(req, res) {
       status: role.status || 'active',
       created_at: role.created_at ? String(role.created_at) : '',
       updated_at: role.updated_at ? String(role.updated_at) : '',
+      assignedUsers,
       permissions: {
         granted,
         globalSettings: DEFAULT_GLOBAL_SETTINGS,
@@ -133,19 +294,8 @@ async function createRole(req, res) {
       status: status || 'active',
     });
     const granted = permissions?.granted && Array.isArray(permissions.granted) ? permissions.granted : [];
-    for (const key of granted) {
-      const resource = typeof key === 'string' ? key.split('.')[0] : String(key);
-      const [perm] = await Permission.findOrCreate({
-        where: { resource, action: 'view' },
-        defaults: { resource, action: 'view' },
-      });
-      await RolePermission.findOrCreate({
-        where: { role_id: role.role_id, permission_id: perm.permission_id },
-        defaults: { role_id: role.role_id, permission_id: perm.permission_id },
-      });
-    }
-    const perms = await role.getPermissions();
-    const grantedOut = perms.map((p) => (p.action ? `${p.resource}.${p.action}` : p.resource));
+    const perms = await saveRolePermissions(role.role_id, granted);
+    const grantedOut = perms.map((p) => toGrantedKey(p)).filter(Boolean);
     res.status(201).json({
       role_id: role.role_id,
       role_code: role.role_code,
@@ -158,37 +308,46 @@ async function createRole(req, res) {
       permissions: { granted: grantedOut, globalSettings: DEFAULT_GLOBAL_SETTINGS },
     });
   } catch (err) {
+    if (err?.name === 'SequelizeUniqueConstraintError') {
+      return res.status(409).json({ error: 'Role with this role_code already exists' });
+    }
     res.status(500).json({ error: err.message });
   }
 }
 
 async function updateRole(req, res) {
   try {
-    const id = Number(req.params.id);
-    const role = await Role.findByPk(id);
+    const role = await findRoleByParam(req.params.id);
     if (!role) {
       return res.status(404).json({ error: 'Role not found' });
     }
+    const id = Number(role.role_id);
     const body = req.body || {};
-    if (body.role_code != null) role.role_code = String(body.role_code).trim();
+    if (body.role_code != null) {
+      const nextRoleCode = String(body.role_code).trim();
+      if (nextRoleCode && nextRoleCode !== role.role_code) {
+        const duplicate = await Role.findOne({
+          where: { role_code: nextRoleCode, role_id: { [Op.ne]: id } },
+          attributes: ['role_id'],
+        });
+        if (duplicate) {
+          return res.status(409).json({ error: 'Role with this role_code already exists' });
+        }
+      }
+      role.role_code = nextRoleCode;
+    }
     if (body.role_name != null) role.role_name = String(body.role_name).trim();
     if (body.description !== undefined) role.description = body.description != null ? String(body.description) : null;
     if (body.level != null) role.level = String(body.level).trim();
     if (body.status != null) role.status = String(body.status);
     await role.save();
+    let perms = [];
     if (body.permissions && Array.isArray(body.permissions.granted)) {
-      await RolePermission.destroy({ where: { role_id: id } });
-      for (const key of body.permissions.granted) {
-        const resource = typeof key === 'string' ? key.split('.')[0] : String(key);
-        const [perm] = await Permission.findOrCreate({
-          where: { resource, action: 'view' },
-          defaults: { resource, action: 'view' },
-        });
-        await RolePermission.create({ role_id: id, permission_id: perm.permission_id });
-      }
+      perms = await saveRolePermissions(id, body.permissions.granted);
+    } else {
+      perms = await role.getPermissions();
     }
-    const perms = await role.getPermissions();
-    const granted = perms.map((p) => (p.action ? `${p.resource}.${p.action}` : p.resource));
+    const granted = perms.map((p) => toGrantedKey(p)).filter(Boolean);
     res.status(200).json({
       role_id: role.role_id,
       role_code: role.role_code,
@@ -201,19 +360,22 @@ async function updateRole(req, res) {
       permissions: { granted, globalSettings: DEFAULT_GLOBAL_SETTINGS },
     });
   } catch (err) {
+    if (err?.name === 'SequelizeUniqueConstraintError') {
+      return res.status(409).json({ error: 'Role with this role_code already exists' });
+    }
     res.status(500).json({ error: err.message });
   }
 }
 
 async function deleteRole(req, res) {
   try {
-    const id = Number(req.params.id);
-    if (SYSTEM_ROLE_IDS.includes(id)) {
-      return res.status(403).json({ error: 'System roles cannot be deleted' });
-    }
-    const role = await Role.findByPk(id);
+    const role = await findRoleByParam(req.params.id);
     if (!role) {
       return res.status(404).json({ error: 'Role not found' });
+    }
+    const id = Number(role.role_id);
+    if (SYSTEM_ROLE_IDS.includes(id)) {
+      return res.status(403).json({ error: 'System roles cannot be deleted' });
     }
     await RolePermission.destroy({ where: { role_id: id } });
     await role.destroy();

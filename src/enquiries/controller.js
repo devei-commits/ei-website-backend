@@ -215,7 +215,7 @@ async function listTickets(req, res, next) {
     } else {
       const uid = Number(req.user.id);
       const taggedInternalLiteral = sequelize.literal(`EXISTS (
-        SELECT 1 FROM jsonb_array_elements(COALESCE("Enquiry"."collaboration"->'taggedMembers', '[]'::jsonb)) elem
+        SELECT 1 FROM jsonb_array_elements(COALESCE(("Enquiry"."collaboration"::jsonb)->'taggedMembers', '[]'::jsonb)) elem
         WHERE (elem->>'userid')::int = ${uid}
       )`);
       const ownOrTaggedInternal = {
