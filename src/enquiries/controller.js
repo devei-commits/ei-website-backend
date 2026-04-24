@@ -1,5 +1,6 @@
 const Enquiry = require('./models');
 const sequelize = require('../../db');
+const Newdevelopment = require('../newdevelopments/models');
 const { createTicketSchema, updateTicketSchema, addMessageSchema } = require('./schemas');
 const {
   TICKET_CATEGORIES,
@@ -78,6 +79,91 @@ function formatTicket(row) {
     isOverdue: !!isOverdue,
     responseCount: d.response_count != null ? d.response_count : 0,
   };
+}
+
+/** Dashboard summary for website-raised requests shown in EI-Admin dashboard */
+async function getDashboardSummary(req, res, next) {
+  try {
+    const isCustomerScope = {
+      [Op.or]: [{ ticket_scope: 'customer' }, { ticket_scope: null }],
+    };
+    const normalizedType = sequelize.fn('lower', sequelize.fn('coalesce', sequelize.col('enquiry_type'), ''));
+    const normalizedCategory = sequelize.fn('lower', sequelize.fn('coalesce', sequelize.col('category'), ''));
+    const normalizedSource = sequelize.fn('lower', sequelize.fn('coalesce', sequelize.col('source'), ''));
+    const normalizedSubject = sequelize.fn('lower', sequelize.fn('coalesce', sequelize.col('subject'), ''));
+    const normalizedDescription = sequelize.fn('lower', sequelize.fn('coalesce', sequelize.col('description'), ''));
+
+    const contactWhere = {
+      [Op.and]: [
+        isCustomerScope,
+        {
+          [Op.or]: [
+            sequelize.where(normalizedType, { [Op.in]: ['contact'] }),
+            sequelize.where(normalizedCategory, { [Op.in]: ['contact', 'contact-enquiry', 'contact_enquiry'] }),
+            sequelize.where(normalizedSource, { [Op.in]: ['website-contact', 'website-contact-form', 'contact-form'] }),
+            sequelize.where(normalizedSubject, { [Op.like]: '%contact%' }),
+          ],
+        },
+      ],
+    };
+
+    const sampleWhere = {
+      [Op.and]: [
+        isCustomerScope,
+        {
+          [Op.or]: [
+            sequelize.where(normalizedType, { [Op.in]: ['process', 'product', 'sample', 'product-sample', 'process-sample'] }),
+            sequelize.where(normalizedCategory, { [Op.in]: ['process', 'product', 'sample', 'product-sample', 'process-sample'] }),
+            sequelize.where(normalizedSubject, { [Op.like]: '%sample%' }),
+            sequelize.where(normalizedDescription, { [Op.like]: '%sample%' }),
+          ],
+        },
+      ],
+    };
+
+    const technicalDocWhere = {
+      [Op.and]: [
+        isCustomerScope,
+        {
+          [Op.or]: [
+            sequelize.where(normalizedType, { [Op.in]: ['technical', 'technical-doc', 'tech-doc', 'documentation'] }),
+            sequelize.where(normalizedCategory, { [Op.in]: ['technical', 'technical-doc', 'tech-doc', 'documentation'] }),
+            sequelize.where(normalizedSubject, { [Op.like]: '%technical%' }),
+            sequelize.where(normalizedSubject, { [Op.like]: '%doc%' }),
+            sequelize.where(normalizedDescription, { [Op.like]: '%technical%' }),
+            sequelize.where(normalizedDescription, { [Op.like]: '%doc%' }),
+          ],
+        },
+      ],
+    };
+
+    const [openEnquiries, contactEnquiries, productSampleRequests, technicalDocRequests, newDevelopmentRequests] =
+      await Promise.all([
+        Enquiry.count({
+          where: {
+            [Op.and]: [isCustomerScope, { status: { [Op.notIn]: ['resolved', 'closed'] } }],
+          },
+        }),
+        Enquiry.count({ where: contactWhere }),
+        Enquiry.count({ where: sampleWhere }),
+        Enquiry.count({ where: technicalDocWhere }),
+        Newdevelopment.count(),
+      ]);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        openEnquiries,
+        contactEnquiries,
+        productSampleRequests,
+        technicalDocRequests,
+        newDevelopmentRequests,
+      },
+    });
+  } catch (err) {
+    console.error('Error building enquiry dashboard summary:', err);
+    next(err);
+  }
 }
 
 /** Get ticket types (categories, priorities, statuses, sources) for dropdowns */
@@ -379,6 +465,7 @@ async function addMessage(req, res, next) {
 
 module.exports = {
   getTicketTypes,
+  getDashboardSummary,
   createTicket,
   listTickets,
   getTicketById,

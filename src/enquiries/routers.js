@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const {
   getTicketTypes,
+  getDashboardSummary,
   createTicket,
   listTickets,
   getTicketById,
@@ -11,6 +12,7 @@ const {
 
 // All routes require authentication (enforced by app.js mounting with isAuthenticated)
 router.get('/types', getTicketTypes);
+router.get('/dashboard-summary', getDashboardSummary);
 router.post('/', createTicket);
 router.get('/', listTickets);
 router.get('/:id', getTicketById);
