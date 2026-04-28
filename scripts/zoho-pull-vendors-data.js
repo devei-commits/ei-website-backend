@@ -8,6 +8,20 @@
 const { listAllContacts, getOrgId } = require('../src/services/zohoBooks');
 const { parseZohoPullArgs, writeZohoPullOutput } = require('./lib/zoho-export-pull');
 
+function isInvalidFilterByError(error) {
+  const msg = String(error && error.message ? error.message : '').toLowerCase();
+  return msg.includes('invalid value passed for filter_by');
+}
+
+function getNormalizedContactType(row) {
+  const v = row && (row.contact_type || row.contactType || row.contactTypeName);
+  return String(v || '').trim().toLowerCase();
+}
+
+function filterVendors(rows) {
+  return rows.filter((row) => getNormalizedContactType(row) === 'vendor');
+}
+
 async function main() {
   const opts = parseZohoPullArgs(process.argv.slice(2));
   const filterBy = opts.filterBy || 'ContactType.Vendor';
@@ -20,17 +34,31 @@ async function main() {
     });
     return;
   }
-  const rows = await listAllContacts({
-    filterBy,
-    maxPages: opts.maxPages,
-    limit: opts.limit,
-  });
+  let rows;
+  let usedFallbackFilter = false;
+  try {
+    rows = await listAllContacts({
+      filterBy,
+      maxPages: opts.maxPages,
+      limit: opts.limit,
+    });
+  } catch (error) {
+    if (!isInvalidFilterByError(error)) throw error;
+    usedFallbackFilter = true;
+    console.error('[zoho-pull-vendors-data] filter_by not accepted by API; retrying without filter and filtering locally');
+    const allContacts = await listAllContacts({
+      maxPages: opts.maxPages,
+      limit: opts.limit,
+    });
+    rows = filterVendors(allContacts);
+  }
   const payload = {
     pulledAt: new Date().toISOString(),
     entity: 'vendors',
     count: rows.length,
     organizationId: getOrgId(),
     filterBy,
+    filterMode: usedFallbackFilter ? 'local-fallback' : 'api-filter',
     rows,
   };
   const written = await writeZohoPullOutput(payload, { out: opts.out, pretty: opts.pretty });

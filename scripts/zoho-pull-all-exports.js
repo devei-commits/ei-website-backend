@@ -23,6 +23,30 @@ const {
   getOrgId,
 } = require('../src/services/zohoBooks');
 
+function isInvalidFilterByError(error) {
+  const msg = String(error && error.message ? error.message : '').toLowerCase();
+  return msg.includes('invalid value passed for filter_by');
+}
+
+function getNormalizedContactType(row) {
+  const v = row && (row.contact_type || row.contactType || row.contactTypeName);
+  return String(v || '').trim().toLowerCase();
+}
+
+async function listAllContactsByTypeWithFallback(common, filterBy, expectedType) {
+  try {
+    return await listAllContacts({ ...common, filterBy });
+  } catch (error) {
+    if (!isInvalidFilterByError(error)) throw error;
+    process.stderr.write(
+      `[zoho-pull-all-exports] filter_by=${filterBy} not accepted; pulling all contacts and filtering ${expectedType} locally\n`,
+    );
+    const contacts = await listAllContacts(common);
+    const wanted = String(expectedType).trim().toLowerCase();
+    return contacts.filter((row) => getNormalizedContactType(row) === wanted);
+  }
+}
+
 function parseDir(argv) {
   const a = argv.find((x) => String(x).startsWith('--dir='));
   if (a) return path.resolve(process.cwd(), String(a).slice('--dir='.length).trim());
@@ -77,8 +101,16 @@ async function main() {
   const jobs = [
     { file: 'items.json', label: 'items', fn: () => listAllItems(common) },
     { file: 'contacts.json', label: 'contacts', fn: () => listAllContacts(common) },
-    { file: 'customers.json', label: 'customers', fn: () => listAllContacts({ ...common, filterBy: 'ContactType.Customer' }) },
-    { file: 'vendors.json', label: 'vendors', fn: () => listAllContacts({ ...common, filterBy: 'ContactType.Vendor' }) },
+    {
+      file: 'customers.json',
+      label: 'customers',
+      fn: () => listAllContactsByTypeWithFallback(common, 'ContactType.Customer', 'customer'),
+    },
+    {
+      file: 'vendors.json',
+      label: 'vendors',
+      fn: () => listAllContactsByTypeWithFallback(common, 'ContactType.Vendor', 'vendor'),
+    },
     { file: 'invoices.json', label: 'invoices', fn: () => listAllInvoices(common) },
     { file: 'salesorders.json', label: 'salesorders', fn: () => listAllSalesorders(common) },
     { file: 'estimates.json', label: 'estimates', fn: () => listAllEstimates(common) },
