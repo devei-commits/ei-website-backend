@@ -306,27 +306,10 @@ async function getPoQuantityByItem() {
  */
 async function list(req, res) {
   try {
-    // Keep reserved aligned with explicit BMR/BPR reservations (production_batch_id-backed rows only).
-    // This also cleans up stale reserved values left by older planning-level reservation logic.
-    try {
-      const { syncWarehouseReserved } = require('../planningExtracted/controller');
-      const reserveScopeRows = await WarehouseInventory.findAll({
-        where: { item_type: { [Op.in]: ['RM', 'PM'] } },
-        attributes: ['item_type', 'raw_material_id', 'pack_material_id'],
-      });
-      const rmIds = [];
-      const pmIds = [];
-      for (const row of reserveScopeRows) {
-        const r = row.get ? row.get({ plain: true }) : row;
-        if (r.item_type === 'RM' && r.raw_material_id != null) rmIds.push(Number(r.raw_material_id));
-        if (r.item_type === 'PM' && r.pack_material_id != null) pmIds.push(Number(r.pack_material_id));
-      }
-      if (rmIds.length || pmIds.length) {
-        await syncWarehouseReserved([...new Set(rmIds)], [...new Set(pmIds)]);
-      }
-    } catch (reserveSyncErr) {
-      console.warn('[warehouse-inventory] reserve sync-before-list failed:', reserveSyncErr && reserveSyncErr.message ? reserveSyncErr.message : reserveSyncErr);
-    }
+    // IMPORTANT:
+    // Do not recompute reserved on every GET. That caused heavy repeated RM/PM queries
+    // and log spam when clients refreshed inventory.
+    // Reserved values are synced at write paths (planning/production/warehouse updates).
 
     const limitQ = req.query.limit;
     const offsetQ = req.query.offset;

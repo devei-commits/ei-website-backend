@@ -655,6 +655,8 @@ function formatProductForList(p) {
   const d = p.get ? p.get({ plain: true }) : p;
   return {
     ...d,
+    internal_sku_code: d.product_code ?? null,
+    zoho_sku_code: d.zoho_sku_code ?? null,
     rm_ingredients_count: p.rm_ingredients_count ?? null,
     pack_items_count: p.pack_items_count ?? null,
     open_sos_count: p.open_sos_count ?? null,
@@ -816,6 +818,8 @@ const getAllProducts = async (req, res) => {
     const openSos = openSoCountByCode[p.product_code] || 0;
     return {
       ...plain,
+      internal_sku_code: plain.product_code ?? null,
+      zoho_sku_code: plain.zoho_sku_code ?? null,
       rm_ingredients_count: rmCount,
       pack_items_count: packList.length,
       open_sos_count: openSos,
@@ -890,6 +894,7 @@ const getProductDetail = async (req, res) => {
       row_number: idx + 1,
       inci_name: line.inci_name || line.inciName || line.name || '',
       rm_code: line.rm_code || line.rmCode || '',
+      zoho_sku_code: line.zoho_sku_code ?? null,
       raw_material_id: line.raw_material_id ?? line.rawMaterialId ?? null,
       qty_per_unit:
         line.qty_per_unit != null
@@ -925,6 +930,7 @@ const getProductDetail = async (req, res) => {
       pack_material_id: row.pack_material_id ?? row.packMaterialId ?? row.pm_id ?? null,
       pm_description: row.pm_description || row.description,
       pm_code: row.pm_code || row.code,
+      zoho_sku_code: row.zoho_sku_code ?? null,
       pack_type: row.pack_type || row.level,
       qty_per_unit: row.qty_per_unit != null ? row.qty_per_unit : (row.qty != null ? row.qty : 1),
       uom: row.uom || 'pc/unit',
@@ -950,6 +956,8 @@ const getProductDetail = async (req, res) => {
     const parsedNotes = bom ? parseBomNotes(bom.notes) : parseBomNotes(null);
     res.json({
       ...plain,
+      internal_sku_code: plain.product_code ?? null,
+      zoho_sku_code: plain.zoho_sku_code ?? null,
       bom_composite_item: bom ? bom.bom_composite_item : null,
       bom_tax_preference: bom ? bom.bom_tax_preference : null,
       bom_returnable: bom ? bom.bom_returnable : null,

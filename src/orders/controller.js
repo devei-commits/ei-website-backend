@@ -6,6 +6,7 @@ const Address = require('../models/Addresses');
 const { User } = require('../users/models');
 const db = require('../../db');
 const { computeCheckoutPreview } = require('./checkoutTermsFromBom');
+const { roundPlanningMaterialQty } = require('../planningExtracted/orderKgMath');
 // const { orderSchema, updateOrderSchema } = require('./schemas');
 
 /**
@@ -65,7 +66,7 @@ function validateChequeDetailsBody(raw) {
 
 function estimateTotalKgFromRawMaterials(rawMaterials, fallbackKg = 0) {
     if (!Array.isArray(rawMaterials) || rawMaterials.length === 0) {
-        return Math.max(0, Number(fallbackKg) || 0);
+        return roundPlanningMaterialQty(Math.max(0, Number(fallbackKg) || 0));
     }
     const estimated = rawMaterials.reduce((sum, line) => {
         const qty = Number(line?.quantity);
@@ -75,7 +76,9 @@ function estimateTotalKgFromRawMaterials(rawMaterials, fallbackKg = 0) {
         if (Number.isFinite(qtyPerUnit) && qtyPerUnit > 0) return sum + (qtyPerUnit * sg);
         return sum;
     }, 0);
-    return estimated > 0 ? estimated : Math.max(0, Number(fallbackKg) || 0);
+    return estimated > 0
+        ? roundPlanningMaterialQty(estimated)
+        : roundPlanningMaterialQty(Math.max(0, Number(fallbackKg) || 0));
 }
 
 
@@ -354,7 +357,7 @@ const saveOrder = async (req, res) => {
                 rawMaterials.push({
                     raw_material_id: rmId || null,
                     name: line.inci_name ?? line.name ?? line.rm_code ?? '',
-                    quantity: Math.round(totalQty * 1000) / 1000,
+                    quantity: roundPlanningMaterialQty(totalQty),
                     unit: (line.uom || 'KG').toUpperCase(),
                     code: line.rm_code ?? line.code ?? '',
                 });
@@ -363,7 +366,7 @@ const saveOrder = async (req, res) => {
             const packagingMaterials = [];
             for (const line of pmLines) {
                 const qtyPerUnit = Number(line.qty_per_unit ?? line.qty ?? 1);
-                const totalQty = Math.ceil(qtyUnits * qtyPerUnit);
+                const totalQty = roundPlanningMaterialQty(qtyUnits * qtyPerUnit);
                 if (!(totalQty > 0)) continue;
                 let pmId = line.pack_material_id != null ? Number(line.pack_material_id) : null;
                 if (!pmId && (line.pm_code || line.code)) {
@@ -390,7 +393,7 @@ const saveOrder = async (req, res) => {
                 sales_order_id: soRow.id,
                 product_id: productId,
                 order_qty_display: `${qtyUnits} units`,
-                total_kg_display: `${Math.round(totalKgEstimated * 1000) / 1000} KG`,
+                total_kg_display: `${roundPlanningMaterialQty(totalKgEstimated)} KG`,
                 order_date: orderDateStr,
                 due_date: null,
                 batch_size_display: `${batchSizeKg} KG`,

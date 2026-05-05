@@ -23,6 +23,7 @@ async function logLocationMovement({
   dispensingBundleId,
   changesJson,
   note,
+  transaction,
 }) {
   if (!warehouseInventoryId || !itemType) return null;
 
@@ -46,7 +47,7 @@ async function logLocationMovement({
       dispensing_bundle_id: dispensingBundleId ?? null,
       changes_json: changesJson != null ? changesJson : null,
       note: note != null && String(note).trim() ? String(note).trim() : null,
-    });
+    }, transaction ? { transaction } : {});
     return row;
   } catch (err) {
     console.error('[warehouse-inventory] Failed to record location movement', err);

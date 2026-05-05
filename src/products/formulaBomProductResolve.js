@@ -12,10 +12,7 @@ async function findProductByCompositeSku(compositeSku) {
   let p = await Product.findOne({ where: { zoho_sku_code: t } });
   if (p) return p;
   p = await Product.findOne({ where: { zoho_sku_code: { [Op.iLike]: t } } });
-  if (p) return p;
-  p = await Product.findOne({ where: { product_code: t } });
-  if (p) return p;
-  return Product.findOne({ where: { product_code: { [Op.iLike]: t } } });
+  return p || null;
 }
 
 /** @returns {{ product: object | null, created: boolean }} */
@@ -31,7 +28,6 @@ async function findOrCreateProductForFormulaBom(compositeSku, compositeName) {
 
   try {
     product = await Product.create({
-      product_code: sku,
       zoho_sku_code: sku,
       product_name: displayName,
       status: 'Draft',
@@ -48,8 +44,6 @@ async function findOrCreateProductForFormulaBom(compositeSku, compositeName) {
         String(e?.message || '').includes('unique'));
     if (isUnique) {
       product = await findProductByCompositeSku(sku);
-      if (product) return { product, created: false };
-      product = await Product.findOne({ where: { product_code: sku } });
       if (product) return { product, created: false };
     }
     throw e;

@@ -20,6 +20,7 @@ const {
   estimateTotalKgFromRmLines,
   estimateOrderTotalKg,
   batchesRequiredForOrderKg,
+  roundPlanningMaterialQty,
 } = require('./orderKgMath');
 
 /** Idempotent schema patch: adds bom_specific_gravity on Postgres if missing. Lazy, safe to call repeatedly. */
@@ -304,7 +305,7 @@ async function syncPlanningRowMaterialsFromBomLines(planRow, rmLines, pmLines) {
     return {
       raw_material_id: line.raw_material_id ?? null,
       name: line.inci_name ?? line.name ?? line.rm_code ?? '',
-      quantity: Math.round(quantity * 1000) / 1000,
+      quantity: roundPlanningMaterialQty(quantity),
       // Keep backend stock/reservation math canonical in KG.
       unit: 'KG',
       code: line.rm_code ?? line.code ?? '',
@@ -317,7 +318,7 @@ async function syncPlanningRowMaterialsFromBomLines(planRow, rmLines, pmLines) {
     return {
       pack_material_id: line.pack_material_id ?? null,
       name: line.description ?? line.name ?? line.pm_code ?? '',
-      quantity: Math.ceil(required),
+      quantity: roundPlanningMaterialQty(required),
       unit: 'PCS',
       code: line.pm_code ?? line.code ?? '',
     };
@@ -375,8 +376,6 @@ function formatRow(row) {
   };
 }
 
-const RESERVE_DEBUG = process.env.RESERVE_DEBUG !== '0';
-
 /** kg tolerance for float compare; PCS treated as integers but allow tiny float noise */
 const RESERVE_EPS_KG = 1e-4;
 const RESERVE_EPS_PCS = 1e-6;
@@ -408,7 +407,6 @@ async function syncWarehouseReserved(affectedRmIds, affectedPmIds) {
         reserved: val,
       });
     }
-    if (RESERVE_DEBUG) console.log('[RESERVE-DEBUG] syncWarehouseReserved RM', { raw_material_id: rid, sum_from_reserved_batch_items: val, 'warehouse_inventory.reserved': val });
   }
   for (const pid of affectedPmIds) {
     const sum = await ReservedBatchItem.sum('quantity_reserved', {
@@ -431,7 +429,6 @@ async function syncWarehouseReserved(affectedRmIds, affectedPmIds) {
         reserved: val,
       });
     }
-    if (RESERVE_DEBUG) console.log('[RESERVE-DEBUG] syncWarehouseReserved PM', { pack_material_id: pid, sum_from_reserved_batch_items: val, 'warehouse_inventory.reserved': val });
   }
 }
 
@@ -782,7 +779,7 @@ async function syncPlanningExtractedFromSalesOrders() {
         });
       }
       if (safeTotalKg <= 0) {
-        safeTotalKg = Math.round(batchSizeKg * 1000) / 1000;
+        safeTotalKg = roundPlanningMaterialQty(batchSizeKg);
       }
       const batchesRequired = batchesRequiredForOrderKg(safeTotalKg, batchSizeKg);
 
@@ -2190,7 +2187,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
             rms.push({
               raw_material_id: rid,
               name: line.inci_name ?? line.name ?? line.rm_code ?? '',
-              quantity: Math.round(quantity * 1000) / 1000,
+              quantity: roundPlanningMaterialQty(quantity),
               unit: line.uom || 'KG',
               code: line.rm_code ?? line.code ?? '',
             });
@@ -2210,7 +2207,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
             pms.push({
               pack_material_id: pid,
               name: line.description ?? line.name ?? line.pm_code ?? '',
-              quantity: Math.ceil(required),
+              quantity: roundPlanningMaterialQty(required),
               unit: 'PCS',
               code: line.pm_code ?? line.code ?? '',
             });

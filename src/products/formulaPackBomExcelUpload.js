@@ -292,6 +292,7 @@ async function processPackGroupForComposite(compositeSku, groupRows) {
     if (pm) {
       const line = {
         pm_code: pm.code || '',
+        zoho_sku_code: pm.zoho_sku_code || String(gr.component_sku || '').trim() || null,
         description: pm.description || gr.component_name,
         pm_description: pm.description || gr.component_name,
         pack_material_id: pm.id,
@@ -306,12 +307,14 @@ async function processPackGroupForComposite(compositeSku, groupRows) {
       unmatched.push({
         row_number: gr.row_number,
         component_sku: gr.component_sku,
+        zoho_sku_code: String(gr.component_sku || '').trim() || null,
         component_name: gr.component_name,
         qty: gr.qty,
         uom: lineUom,
       });
       const line = {
         pm_code: '',
+        zoho_sku_code: String(gr.component_sku || '').trim() || null,
         description: gr.component_name || '',
         pm_description: gr.component_name || '',
         pack_material_id: null,

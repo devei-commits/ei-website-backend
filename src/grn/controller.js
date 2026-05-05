@@ -204,7 +204,7 @@ function resolveLineItemMasterCode(line) {
  * This specifically fixes split-PO GRNs where index-based mapping may attach
  * the first PR line ids to all GRN lines.
  */
-async function repairLineItemsMasterLinks(rows) {
+async function repairLineItemsMasterLinks(rows, transaction) {
   if (!Array.isArray(rows) || rows.length === 0) return rows;
   const allLines = rows.flatMap((r) => {
     const d = r.get ? r.get({ plain: true }) : r;
@@ -236,8 +236,8 @@ async function repairLineItemsMasterLinks(rows) {
     : (codes.length > 0 ? { code: { [Op.in]: codes } } : { description: { [Op.in]: names } });
 
   const [rms, pms] = await Promise.all([
-    RawMaterial.findAll({ where: rmWhere, attributes: ['id', 'code', 'name'] }),
-    PackMaterial.findAll({ where: pmWhere, attributes: ['id', 'code', 'description'] }),
+    RawMaterial.findAll({ where: rmWhere, attributes: ['id', 'code', 'name'], ...(transaction ? { transaction } : {}) }),
+    PackMaterial.findAll({ where: pmWhere, attributes: ['id', 'code', 'description'], ...(transaction ? { transaction } : {}) }),
   ]);
 
   const rmByCode = {};
@@ -298,7 +298,7 @@ async function repairLineItemsMasterLinks(rows) {
       return updated;
     });
     if (changed) {
-      await row.update({ line_items: next });
+      await row.update({ line_items: next }, transaction ? { transaction } : {});
     }
   }));
 
@@ -463,7 +463,16 @@ async function create(req, res) {
       }
     }
 
-    const row = await GoodsReceivedNote.create(payload);
+    let row;
+    await db.transaction(async (transaction) => {
+      row = await GoodsReceivedNote.create(payload, { transaction });
+      const st = String((row.get ? row.get('status') : row.status) || '').trim();
+      if (st === 'GRN Complete') {
+        await repairLineItemsMasterLinks([row], transaction);
+        await row.reload({ transaction });
+        await applyGrnCompletionToInventory(row, { transaction });
+      }
+    });
     try {
       const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
       await syncWarehouseInTransitAll();
@@ -486,10 +495,19 @@ async function create(req, res) {
  * Line items from Procurement-created GRNs often have itemCode but no raw_material_id/pack_material_id;
  * we resolve by itemCode (RM/PM code) when IDs are missing.
  */
-async function applyGrnCompletionToInventory(grnRow) {
+async function applyGrnCompletionToInventory(grnRow, opts = {}) {
+  const transaction = opts.transaction;
   const d = grnRow.get ? grnRow.get({ plain: true }) : grnRow;
   const lineItems = d.line_items || [];
-  if (lineItems.length === 0) return;
+  // #region agent log
+  fetch('http://host.docker.internal:7419/ingest/d5243865-7daa-4432-a736-94efa19612b4',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7da641'},body:JSON.stringify({sessionId:'7da641',runId:'apply-entry',hypothesisId:'H2',location:'grn/controller.js:applyGrnCompletionToInventory:entry',message:'applyGrnCompletionToInventory entry',data:{grnId:d.id,grnNo:d.grn_no||null,lineCount:lineItems.length,grnType:d.type||null,purchaseOrderId:d.purchase_order_id??null},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
+  if (lineItems.length === 0) {
+    // #region agent log
+    fetch('http://host.docker.internal:7419/ingest/d5243865-7daa-4432-a736-94efa19612b4',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7da641'},body:JSON.stringify({sessionId:'7da641',runId:'apply-early',hypothesisId:'H1',location:'grn/controller.js:applyGrnCompletionToInventory:emptyLines',message:'early return: no line_items',data:{grnId:d.id,grnNo:d.grn_no||null},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    return;
+  }
 
   // Some GRN UIs embed the master code inside the display text, e.g.:
   // "Niacinamide (EI-RM-ACT-002)". When line.raw_material_id is missing/mismatched,
@@ -545,8 +563,8 @@ async function applyGrnCompletionToInventory(grnRow) {
     const rmWhere = codes.length > 0 && names.length > 0 ? { [Op.or]: [{ code: { [Op.in]: codes } }, { name: { [Op.in]: names } }] } : (codes.length > 0 ? { code: { [Op.in]: codes } } : { name: { [Op.in]: names } });
     const pmWhere = codes.length > 0 && names.length > 0 ? { [Op.or]: [{ code: { [Op.in]: codes } }, { description: { [Op.in]: names } }] } : (codes.length > 0 ? { code: { [Op.in]: codes } } : { description: { [Op.in]: names } });
     const [rms, pms] = await Promise.all([
-      RawMaterial.findAll({ where: rmWhere, attributes: ['id', 'code', 'name', 'uom'] }),
-      PackMaterial.findAll({ where: pmWhere, attributes: ['id', 'code', 'description', 'unit', 'size_spec'] }),
+      RawMaterial.findAll({ where: rmWhere, attributes: ['id', 'code', 'name', 'uom'], ...(transaction ? { transaction } : {}) }),
+      PackMaterial.findAll({ where: pmWhere, attributes: ['id', 'code', 'description', 'unit', 'size_spec'], ...(transaction ? { transaction } : {}) }),
     ]);
     rms.forEach((r) => {
       const x = r.get ? r.get({ plain: true }) : r;
@@ -667,6 +685,9 @@ async function applyGrnCompletionToInventory(grnRow) {
     toAddByProduct: Array.from(toAddByProduct.entries()),
   });
 
+  // #region agent log
+  fetch('http://host.docker.internal:7419/ingest/d5243865-7daa-4432-a736-94efa19612b4',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7da641'},body:JSON.stringify({sessionId:'7da641',runId:'apply-buckets',hypothesisId:'H2',location:'grn/controller.js:applyGrnCompletionToInventory:buckets',message:'bucket totals before WH writes',data:{grnId:d.id,toAddByRmCount:toAddByRm.size,toAddByPmCount:toAddByPm.size,toAddByProductCount:toAddByProduct.size,rmEntries:Array.from(toAddByRm.entries()),codesLen:codes.length,namesLen:names.length},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
   if (toAddByRm.size === 0 && toAddByPm.size === 0 && toAddByProduct.size === 0) {
     console.warn('[grn] GRN Complete: nothing to add into warehouse_inventory (bucket maps empty)', {
       grnId: d.id,
@@ -688,7 +709,7 @@ async function applyGrnCompletionToInventory(grnRow) {
   }
 
   for (const [rawMaterialId, qty] of toAddByRm) {
-    let whRow = await WarehouseInventory.findOne({ where: { item_type: 'RM', raw_material_id: rawMaterialId } });
+    let whRow = await WarehouseInventory.findOne({ where: { item_type: 'RM', raw_material_id: rawMaterialId }, ...(transaction ? { transaction } : {}) });
     if (whRow) {
       const wh = whRow.get ? whRow.get({ plain: true }) : whRow;
       const whStockBefore = Number(wh.wh_stock) || 0;
@@ -704,7 +725,7 @@ async function applyGrnCompletionToInventory(grnRow) {
         in_transit: inTransit,
         stock_in_hand: whStock + ml1 + ml2,
         wh_unit: 'KG',
-      });
+      }, transaction ? { transaction } : {});
       console.log('[grn] WH inventory RM wh_stock update', {
         rawMaterialId,
         qtyToAdd: qty,
@@ -736,7 +757,7 @@ async function applyGrnCompletionToInventory(grnRow) {
         reorder_pt: 0,
         avg_mo: 0,
         qc_status: 'In Stock',
-      });
+      }, transaction ? { transaction } : {});
       console.log('[grn] WH inventory RM created', {
         rawMaterialId,
         qtyToAdd: qty,
@@ -760,11 +781,12 @@ async function applyGrnCompletionToInventory(grnRow) {
       qtyDelta: qty,
       actionType: 'GRN_IN',
       sourceGrnId: d.id,
+      transaction,
     });
   }
 
   for (const [packMaterialId, qty] of toAddByPm) {
-    let whRow = await WarehouseInventory.findOne({ where: { item_type: 'PM', pack_material_id: packMaterialId } });
+    let whRow = await WarehouseInventory.findOne({ where: { item_type: 'PM', pack_material_id: packMaterialId }, ...(transaction ? { transaction } : {}) });
     if (whRow) {
       const wh = whRow.get ? whRow.get({ plain: true }) : whRow;
       const whStockBefore = Number(wh.wh_stock) || 0;
@@ -780,7 +802,7 @@ async function applyGrnCompletionToInventory(grnRow) {
         in_transit: inTransit,
         stock_in_hand: whStock + ml1 + ml2,
         wh_unit: 'KG',
-      });
+      }, transaction ? { transaction } : {});
       console.log('[grn] WH inventory PM wh_stock update', {
         packMaterialId,
         qtyToAdd: qty,
@@ -812,7 +834,7 @@ async function applyGrnCompletionToInventory(grnRow) {
         reorder_pt: 0,
         avg_mo: 0,
         qc_status: 'In Stock',
-      });
+      }, transaction ? { transaction } : {});
       console.log('[grn] WH inventory PM created', {
         packMaterialId,
         qtyToAdd: qty,
@@ -835,11 +857,12 @@ async function applyGrnCompletionToInventory(grnRow) {
       qtyDelta: qty,
       actionType: 'GRN_IN',
       sourceGrnId: d.id,
+      transaction,
     });
   }
 
   for (const [productId, qty] of toAddByProduct) {
-    let whRow = await WarehouseInventory.findOne({ where: { item_type: 'PR', product_id: productId } });
+    let whRow = await WarehouseInventory.findOne({ where: { item_type: 'PR', product_id: productId }, ...(transaction ? { transaction } : {}) });
     if (whRow) {
       const wh = whRow.get ? whRow.get({ plain: true }) : whRow;
       const whStockBefore = Number(wh.wh_stock) || 0;
@@ -855,7 +878,7 @@ async function applyGrnCompletionToInventory(grnRow) {
         in_transit: inTransit,
         stock_in_hand: whStock + ml1 + ml2,
         wh_unit: 'KG',
-      });
+      }, transaction ? { transaction } : {});
       console.log('[grn] WH inventory PR wh_stock update', {
         productId,
         qtyToAdd: qty,
@@ -887,7 +910,7 @@ async function applyGrnCompletionToInventory(grnRow) {
         reorder_pt: 0,
         avg_mo: 0,
         qc_status: 'In Stock',
-      });
+      }, transaction ? { transaction } : {});
       console.log('[grn] WH inventory PR created', {
         productId,
         qtyToAdd: qty,
@@ -910,6 +933,7 @@ async function applyGrnCompletionToInventory(grnRow) {
       qtyDelta: qty,
       actionType: 'GRN_IN',
       sourceGrnId: d.id,
+      transaction,
     });
   }
 
@@ -920,6 +944,9 @@ async function applyGrnCompletionToInventory(grnRow) {
     poNo: d.po_no,
     type: d.type,
   });
+  // #region agent log
+  fetch('http://host.docker.internal:7419/ingest/d5243865-7daa-4432-a736-94efa19612b4',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7da641'},body:JSON.stringify({sessionId:'7da641',runId:'apply-done',hypothesisId:'H6',location:'grn/controller.js:applyGrnCompletionToInventory:done',message:'applyGrnCompletionToInventory finished without throw',data:{grnId:d.id,grnNo:d.grn_no||null},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
 }
 
 /**
@@ -994,34 +1021,52 @@ async function update(req, res) {
       }
     }
     const previousStatus = (row.get ? row.get({ plain: true }) : row).status;
-    await row.update(updates);
+    // #region agent log
+    fetch('http://host.docker.internal:7419/ingest/d5243865-7daa-4432-a736-94efa19612b4',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7da641'},body:JSON.stringify({sessionId:'7da641',runId:'update-pre',hypothesisId:'H1',location:'grn/controller.js:update:beforeCommit',message:'GRN PUT before row.update',data:{grnId:id,previousStatus,updatesStatus:updates.status??null,willRunInventoryApply:updates.status==='GRN Complete'&&previousStatus!=='GRN Complete',lineItemsInUpdates:Array.isArray(updates.line_items)?updates.line_items.length:updates.line_items===undefined?'omit':'non-array'},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    await db.transaction(async (transaction) => {
+      await row.update(updates, { transaction });
+      const refreshedInTx = await GoodsReceivedNote.findByPk(id, { transaction });
+      if (updates.status === 'GRN Complete' && previousStatus !== 'GRN Complete') {
+        const refreshedPlain = refreshedInTx.get ? refreshedInTx.get({ plain: true }) : refreshedInTx;
+        const lineItems = refreshedPlain.line_items || [];
+        console.log('[grn] Status transition -> GRN Complete', {
+          grnId: id,
+          grnNo: refreshedPlain.grn_no,
+          poNo: refreshedPlain.po_no,
+          vendor: refreshedPlain.vendor,
+          purchaseOrderId: refreshedPlain.purchase_order_id,
+          previousStatus,
+          newStatus: updates.status,
+          lineCount: lineItems.length,
+        });
+        console.log('[grn] GRN Complete line_items payload', lineItems.map((li) => ({
+          itemCode: li.itemCode ?? li.item_code ?? null,
+          item: li.item ?? null,
+          resolvedMasterCode: resolveLineItemMasterCode(li) || null,
+          poQty: li.poQty ?? 0,
+          rcvdQty: li.rcvdQty ?? li.rcvd_qty ?? null,
+          raw_material_id: li.raw_material_id ?? null,
+          pack_material_id: li.pack_material_id ?? null,
+          product_id: li.product_id ?? null,
+        })));
+        await repairLineItemsMasterLinks([refreshedInTx], transaction);
+        await refreshedInTx.reload({ transaction });
+        // #region agent log
+        const _rplain = refreshedInTx.get ? refreshedInTx.get({ plain: true }) : refreshedInTx;
+        fetch('http://host.docker.internal:7419/ingest/d5243865-7daa-4432-a736-94efa19612b4',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7da641'},body:JSON.stringify({sessionId:'7da641',runId:'update-invoke',hypothesisId:'H4',location:'grn/controller.js:update:beforeApplyInventory',message:'about to applyGrnCompletionToInventory',data:{grnId:id,reloadLineCount:Array.isArray(_rplain.line_items)?_rplain.line_items.length:0,statusAfterUpdate:_rplain.status},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+        await applyGrnCompletionToInventory(refreshedInTx, { transaction });
+        // #region agent log
+        fetch('http://host.docker.internal:7419/ingest/d5243865-7daa-4432-a736-94efa19612b4',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7da641'},body:JSON.stringify({sessionId:'7da641',runId:'update-post-apply',hypothesisId:'H6',location:'grn/controller.js:update:afterApplyInventory',message:'applyGrnCompletionToInventory returned OK',data:{grnId:id},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+      }
+    });
     const refreshed = await GoodsReceivedNote.findByPk(id);
-    if (updates.status === 'GRN Complete' && previousStatus !== 'GRN Complete') {
-      const refreshedPlain = refreshed.get ? refreshed.get({ plain: true }) : refreshed;
-      const lineItems = refreshedPlain.line_items || [];
-      console.log('[grn] Status transition -> GRN Complete', {
-        grnId: id,
-        grnNo: refreshedPlain.grn_no,
-        poNo: refreshedPlain.po_no,
-        vendor: refreshedPlain.vendor,
-        purchaseOrderId: refreshedPlain.purchase_order_id,
-        previousStatus,
-        newStatus: updates.status,
-        lineCount: lineItems.length,
-      });
-      console.log('[grn] GRN Complete line_items payload', lineItems.map((li) => ({
-        itemCode: li.itemCode ?? li.item_code ?? null,
-        item: li.item ?? null,
-        resolvedMasterCode: resolveLineItemMasterCode(li) || null,
-        poQty: li.poQty ?? 0,
-        rcvdQty: li.rcvdQty ?? li.rcvd_qty ?? null,
-        raw_material_id: li.raw_material_id ?? null,
-        pack_material_id: li.pack_material_id ?? null,
-        product_id: li.product_id ?? null,
-      })));
-      await repairLineItemsMasterLinks([refreshed]);
-      await refreshed.reload();
-      await applyGrnCompletionToInventory(refreshed);
+    if (updates.status === 'GRN Complete' && previousStatus === 'GRN Complete') {
+      // #region agent log
+      fetch('http://host.docker.internal:7419/ingest/d5243865-7daa-4432-a736-94efa19612b4',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7da641'},body:JSON.stringify({sessionId:'7da641',runId:'update-skip-inv',hypothesisId:'H1',location:'grn/controller.js:update:skipInventoryApply',message:'GRN Complete update but inventory apply skipped (not first transition)',data:{grnId:id,previousStatus,updatesStatus:updates.status},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
     }
     try {
       const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');

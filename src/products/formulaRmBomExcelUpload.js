@@ -85,14 +85,8 @@ function cellToNumber(cell) {
   return Number.isFinite(n) ? n : NaN;
 }
 
-function normalizeRmUom(u) {
-  const s = normalizeHeader(u);
-  if (!s) return 'GM';
-  if (s === 'kg' || s === 'kgs' || s === 'kilogram' || s === 'kilograms') return 'KG';
-  if (s === 'gm' || s === 'g' || s === 'gram' || s === 'grams') return 'GM';
-  if (s === 'ml' || s === 'millilitre' || s === 'milliliter' || s === 'millilitres') return 'ML';
-  if (s === 'l' || s === 'lt' || s === 'ltr' || s === 'litre' || s === 'liter') return 'L';
-  return String(u || '').trim().toUpperCase() || 'GM';
+function rmQtyPerUnitUom() {
+  return 'KG';
 }
 
 async function findRawMaterialByName(name) {
@@ -200,7 +194,6 @@ async function parseWorkbookToRows(buffer) {
   if (m.component_sku == null) missing.push('Component SKU');
   if (m.component_name == null) missing.push('Component Name');
   if (m.qty == null) missing.push('Qty per Unit');
-  if (m.uom == null) missing.push('UoM');
   if (missing.length > 0) {
     const err = new Error(`Missing required column(s): ${missing.join(', ')}. Found: ${headers.join(', ')}`);
     err.code = 'MISSING_COLUMNS';
@@ -285,20 +278,21 @@ async function processRmGroupForComposite(compositeSku, groupRows, applySg) {
       : first.limit_qty_volume != null && Number.isFinite(first.limit_qty_volume)
         ? first.limit_qty_volume
         : null;
-  const limitUom = normalizeRmUom(first.uom_raw);
+  const limitUom = 'KG';
 
   const skuRmLines = [];
   const unmatched = [];
   let sgUpdated = 0;
 
   for (const gr of groupRows) {
-    const lineUom = normalizeRmUom(gr.uom_raw || first.uom_raw);
+    const lineUom = rmQtyPerUnitUom();
     const { rm } = await resolveRawMaterial(gr.component_sku, gr.component_name);
 
     if (rm) {
       skuRmLines.push({
         inci_name: rm.inci || rm.name || gr.component_name,
         rm_code: rm.code || '',
+        zoho_sku_code: rm.zoho_sku_code || String(gr.component_sku || '').trim() || null,
         raw_material_id: rm.id,
         qty_per_unit: gr.qty,
         uom: lineUom,
@@ -312,6 +306,7 @@ async function processRmGroupForComposite(compositeSku, groupRows, applySg) {
       unmatched.push({
         row_number: gr.row_number,
         component_sku: gr.component_sku,
+        zoho_sku_code: String(gr.component_sku || '').trim() || null,
         component_name: gr.component_name,
         qty: gr.qty,
         uom: lineUom,
@@ -319,6 +314,7 @@ async function processRmGroupForComposite(compositeSku, groupRows, applySg) {
       skuRmLines.push({
         inci_name: gr.component_name || '',
         rm_code: '',
+        zoho_sku_code: String(gr.component_sku || '').trim() || null,
         raw_material_id: null,
         qty_per_unit: gr.qty,
         uom: lineUom,

@@ -144,23 +144,12 @@ function classifyType(raw) {
   return null;
 }
 
-function normalizeRmUom(u) {
-  const s = normalizeHeader(u);
-  if (!s) return 'GM';
-  if (s === 'kg' || s === 'kgs' || s === 'kilogram' || s === 'kilograms') return 'KG';
-  if (s === 'gm' || s === 'g' || s === 'gram' || s === 'grams') return 'GM';
-  if (s === 'ml' || s === 'millilitre' || s === 'milliliter' || s === 'millilitres') return 'ML';
-  if (s === 'l' || s === 'lt' || s === 'ltr' || s === 'litre' || s === 'liter') return 'L';
-  return String(u || '').trim().toUpperCase() || 'GM';
+function normalizeRmUom(_u) {
+  return 'KG';
 }
 
-function normalizePmUom(u) {
-  const s = normalizeHeader(u);
-  if (!s) return 'nos';
-  if (s === 'nos' || s === 'no' || s === 'pcs' || s === 'pc' || s === 'piece' || s === 'pieces' || s === 'unit' || s === 'units') {
-    return 'nos';
-  }
-  return String(u || '').trim() || 'nos';
+function normalizePmUom(_u) {
+  return 'PCS';
 }
 
 async function findRawMaterialByName(name) {
@@ -284,6 +273,7 @@ async function uploadSkuBomExcel(req, res) {
           skuRmLines.push({
             inci_name: rm.inci || rm.name || r.component_name,
             rm_code: rm.code || '',
+            zoho_sku_code: rm.zoho_sku_code || null,
             raw_material_id: rm.id,
             qty_per_unit: r.qty,
             uom,
@@ -299,6 +289,7 @@ async function uploadSkuBomExcel(req, res) {
           skuRmLines.push({
             inci_name: r.component_name,
             rm_code: '',
+            zoho_sku_code: null,
             raw_material_id: null,
             qty_per_unit: r.qty,
             uom,
@@ -313,6 +304,7 @@ async function uploadSkuBomExcel(req, res) {
         if (pm) {
           pmLines.push({
             pm_code: pm.code || '',
+            zoho_sku_code: pm.zoho_sku_code || null,
             description: pm.description || r.component_name,
             pm_description: pm.description || r.component_name,
             pack_material_id: pm.id,
@@ -330,6 +322,7 @@ async function uploadSkuBomExcel(req, res) {
           });
           pmLines.push({
             pm_code: '',
+            zoho_sku_code: null,
             description: r.component_name,
             pm_description: r.component_name,
             pack_material_id: null,
@@ -398,7 +391,168 @@ async function uploadSkuBomExcel(req, res) {
   }
 }
 
+/**
+ * POST /api/v1/products/:id/sku-bom/clear
+ * Remove per-unit SKU RM lines and Pack BOM lines so a fresh Excel import can run.
+ * Does not change formula (% w/w) rm_lines or process_steps.
+ */
+async function clearSkuBomForReimport(req, res) {
+  try {
+    const productId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(productId)) {
+      return res.status(400).json({ error: 'Invalid product id' });
+    }
+
+    const product = await Product.findByPk(productId);
+    if (!product) return res.status(404).json({ error: 'Product not found' });
+
+    const bom = await BOM.findOne({ where: { product_id: productId } });
+    if (!bom) {
+      return res.status(200).json({
+        success: true,
+        product_id: productId,
+        bom_id: null,
+        message: 'No BOM exists for this product yet; nothing to clear.',
+      });
+    }
+
+    await bom.update({
+      sku_rm_lines: [],
+      pm_lines: [],
+      sku_bom_limit_qty: null,
+      sku_bom_limit_uom: null,
+      updated_at: new Date(),
+    });
+
+    return res.status(200).json({
+      success: true,
+      product_id: productId,
+      bom_id: bom.id,
+      message:
+        'SKU BOM and Pack BOM lines cleared. Formula BOM and process steps were not changed. You can upload Excel again.',
+    });
+  } catch (err) {
+    console.error('clearSkuBomForReimport error', err);
+    return res.status(500).json({ error: err.message || 'Failed to clear SKU BOM' });
+  }
+}
+
+/**
+ * POST /api/v1/products/:id/bom/full-reset
+ * Clear all BOM line JSON (formula %, SKU RM, pack, process) and net limits, plus BOM/product pack hints
+ * so Formula BOM + SKU Excel imports can run on a clean slate for this PR.
+ * Does not delete the product or BOM row, and does not clear overview/spec scalar fields except
+ * product.fill_size and product.product_code (internal code).
+ */
+async function clearPrBomFullForExcelReimport(req, res) {
+  try {
+    const productId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(productId)) {
+      return res.status(400).json({ error: 'Invalid product id' });
+    }
+
+    const product = await Product.findByPk(productId);
+    if (!product) return res.status(404).json({ error: 'Product not found' });
+
+    const bom = await BOM.findOne({ where: { product_id: productId } });
+    const now = new Date();
+
+    if (bom) {
+      await bom.update({
+        rm_lines: [],
+        sku_rm_lines: [],
+        pm_lines: [],
+        process_steps: [],
+        sku_bom_limit_qty: null,
+        sku_bom_limit_uom: null,
+        pack_size: null,
+        updated_at: now,
+      });
+    }
+
+    await product.update({
+      fill_size: null,
+      product_code: null,
+      updated_at: now,
+    });
+
+    return res.status(200).json({
+      success: true,
+      product_id: productId,
+      bom_id: bom ? bom.id : null,
+      message: bom
+        ? 'All BOM lines (formula, SKU RM, pack, process), net limits, and pack size were cleared; product fill size and internal product code were cleared. Re-import from Excel or edit the PR.'
+        : 'Product fill size and internal product code cleared. No BOM row existed yet.',
+    });
+  } catch (err) {
+    console.error('clearPrBomFullForExcelReimport error', err);
+    return res.status(500).json({ error: err.message || 'Failed to reset PR BOM' });
+  }
+}
+
+/** User must send this exact string in JSON body { "confirm": "..." } — prevents accidental mass wipe. */
+const ALL_PR_BOM_RESET_CONFIRM = 'RESET_ALL_PR_BOM_DATA';
+
+/**
+ * POST /api/v1/products/bom/full-reset-all
+ * Clears BOM line JSON + limits + pack_size on every `boms` row, and clears `fill_size` and
+ * `product_code` on all products linked to those BOM rows.
+ * Body: { "confirm": "RESET_ALL_PR_BOM_DATA" }
+ */
+async function clearAllPrBomForExcelReimport(req, res) {
+  try {
+    const confirm = String(req.body?.confirm ?? '').trim();
+    if (confirm !== ALL_PR_BOM_RESET_CONFIRM) {
+      return res.status(400).json({
+        error: `Confirmation required. Send JSON body: { "confirm": "${ALL_PR_BOM_RESET_CONFIRM}" }`,
+        code: 'CONFIRM_REQUIRED',
+      });
+    }
+
+    const now = new Date();
+    const idRows = await BOM.findAll({ attributes: ['product_id'], raw: true });
+    const productIds = [...new Set(idRows.map((r) => r.product_id).filter((id) => id != null))];
+
+    const [bomRowsAffected] = await BOM.update(
+      {
+        rm_lines: [],
+        sku_rm_lines: [],
+        pm_lines: [],
+        process_steps: [],
+        sku_bom_limit_qty: null,
+        sku_bom_limit_uom: null,
+        pack_size: null,
+        updated_at: now,
+      },
+      { where: {} }
+    );
+
+    let productsFillCleared = 0;
+    if (productIds.length > 0) {
+      const [n] = await Product.update(
+        { fill_size: null, product_code: null, updated_at: now },
+        { where: { product_id: { [Op.in]: productIds } } }
+      );
+      productsFillCleared = n;
+    }
+
+    return res.status(200).json({
+      success: true,
+      boms_updated: bomRowsAffected,
+      products_fill_cleared: productsFillCleared,
+      message: `Cleared BOM lines on ${bomRowsAffected} BOM row(s); cleared fill size and internal product code on ${productsFillCleared} product(s). Re-import from Excel as needed.`,
+    });
+  } catch (err) {
+    console.error('clearAllPrBomForExcelReimport error', err);
+    return res.status(500).json({ error: err.message || 'Failed to reset all PR BOM data' });
+  }
+}
+
 module.exports = {
   uploadSkuBomExcelMiddleware,
   uploadSkuBomExcel,
+  clearSkuBomForReimport,
+  clearPrBomFullForExcelReimport,
+  clearAllPrBomForExcelReimport,
+  ALL_PR_BOM_RESET_CONFIRM,
 };

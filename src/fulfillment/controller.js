@@ -17,6 +17,7 @@ const {
   estimateTotalKgFromRmLines,
   batchesRequiredForOrderKg,
   buildPlanningSnapshotFromBom,
+  roundPlanningMaterialQty,
 } = require('../planningExtracted/orderKgMath');
 const zohoEnv = require('../services/zohoEnv');
 
@@ -451,7 +452,7 @@ async function createOrder(req, res) {
             });
           }
           if (safeTotalKg <= 0) {
-            safeTotalKg = Math.round(batchSizeKg * 1000) / 1000;
+            safeTotalKg = roundPlanningMaterialQty(batchSizeKg);
           }
           const batchesRequired = batchesRequiredForOrderKg(safeTotalKg, batchSizeKg);
           const { raw_materials, packaging_materials } = buildPlanningSnapshotFromBom(

@@ -3,6 +3,20 @@
  * Used by planning_extracted sync and fulfillment SO → planning row creation.
  */
 
+/** RM kg, PM counts, and related snapshot qtys: store at 5 decimal places. */
+const PLANNING_MATERIAL_QTY_DECIMALS = 5;
+const PLANNING_MATERIAL_QTY_FACTOR = 10 ** PLANNING_MATERIAL_QTY_DECIMALS;
+
+/**
+ * @param {unknown} q
+ * @returns {number}
+ */
+function roundPlanningMaterialQty(q) {
+  const n = Number(q);
+  if (!Number.isFinite(n)) return n;
+  return Math.round((n + Number.EPSILON) * PLANNING_MATERIAL_QTY_FACTOR) / PLANNING_MATERIAL_QTY_FACTOR;
+}
+
 function parseOrderQtyNum(raw) {
   if (raw == null) return 0;
   if (typeof raw === 'number') return Number.isFinite(raw) ? raw : 0;
@@ -76,7 +90,7 @@ function estimateTotalKgFromRmLines({ rmLines, orderQty, batchSizeKg, batchesReq
     }
   }
 
-  return Math.round(totalKg * 1000) / 1000;
+  return roundPlanningMaterialQty(totalKg);
 }
 
 /**
@@ -88,7 +102,7 @@ function estimateOrderTotalKg({ orderQty, product, rmLines, batchSizeKg, batches
   const blendSg = inferBlendSpecificGravity(rmLines);
   const kgPerUnit = parseFillSizeToKgPerUnit(product?.fill_size, blendSg);
   if (kgPerUnit != null && kgPerUnit > 0) {
-    return Math.round(qty * kgPerUnit * 1000) / 1000;
+    return roundPlanningMaterialQty(qty * kgPerUnit);
   }
   return estimateTotalKgFromRmLines({ rmLines, orderQty: qty, batchSizeKg, batchesRequired });
 }
@@ -117,7 +131,7 @@ function buildPlanningSnapshotFromBom(bomRmLines, bomPmLines, orderQty, safeTota
     return {
       raw_material_id: line.raw_material_id ?? null,
       name: line.inci_name ?? line.name ?? line.rm_code ?? '',
-      quantity: Math.round(q * 1000) / 1000,
+      quantity: roundPlanningMaterialQty(q),
       unit: 'KG',
       code: line.rm_code ?? line.code ?? '',
     };
@@ -128,7 +142,7 @@ function buildPlanningSnapshotFromBom(bomRmLines, bomPmLines, orderQty, safeTota
     return {
       pack_material_id: line.pack_material_id ?? null,
       name: line.description ?? line.name ?? line.pm_code ?? '',
-      quantity: Math.ceil(required),
+      quantity: roundPlanningMaterialQty(required),
       unit: 'PCS',
       code: line.pm_code ?? line.code ?? '',
     };
@@ -137,6 +151,8 @@ function buildPlanningSnapshotFromBom(bomRmLines, bomPmLines, orderQty, safeTota
 }
 
 module.exports = {
+  PLANNING_MATERIAL_QTY_DECIMALS,
+  roundPlanningMaterialQty,
   parseOrderQtyNum,
   parseFillSizeToKgPerUnit,
   inferBlendSpecificGravity,

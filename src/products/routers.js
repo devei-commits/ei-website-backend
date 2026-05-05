@@ -3,7 +3,13 @@ const router = express.Router();
 const { requireModule } = require('../middleware/security');
 const { getAllProducts, saveProduct, syncPrProductZoho, createPRRegistration, getProductById, getProductDetail, updateProduct, deleteProduct, getCategory, saveCategory, getCategoryById, updateCategory, deleteCategory } = require('./controller');
 const { getZohoCompositeSkuBomSuggestion } = require('./zohoCompositeSkuBomSuggestion');
-const { uploadSkuBomExcelMiddleware, uploadSkuBomExcel } = require('./skuBomExcelUpload');
+const {
+  uploadSkuBomExcelMiddleware,
+  uploadSkuBomExcel,
+  clearSkuBomForReimport,
+  clearPrBomFullForExcelReimport,
+  clearAllPrBomForExcelReimport,
+} = require('./skuBomExcelUpload');
 const {
   uploadFormulaRmBomExcelMiddleware,
   uploadFormulaRmBomExcel,
@@ -55,12 +61,18 @@ router.post(
   uploadFormulaPackBomExcel
 );
 router.post('/formula-pack-bom/chunk', requireCatalogueModule, processFormulaPackBomChunk);
+/** Danger: clears BOM lines + fill size for every PR (all `boms` rows). Requires confirm body. */
+router.post('/bom/full-reset-all', requireCatalogueModule, clearAllPrBomForExcelReimport);
 router.post(
   '/:id([0-9]+)/sku-bom/upload-excel',
   requireCatalogueModule,
   uploadSkuBomExcelMiddleware,
   uploadSkuBomExcel
 );
+/** Clear SKU RM lines + Pack BOM lines (and net limit) for fresh Excel import; keeps formula % and process steps. */
+router.post('/:id([0-9]+)/sku-bom/clear', requireCatalogueModule, clearSkuBomForReimport);
+/** Full BOM line wipe + clear fill_size for the PR (for Formula BOM / SKU Excel re-import from scratch). */
+router.post('/:id([0-9]+)/bom/full-reset', requireCatalogueModule, clearPrBomFullForExcelReimport);
 router.put('/:id', requireCatalogueModule, updateProduct);
 router.delete('/:id([0-9]+)', requireCatalogueModule, deleteProduct);
 router.post('/categories', requireCatalogueModule, saveCategory);

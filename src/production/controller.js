@@ -15,6 +15,7 @@ const { createRworkPlanningBatch } = require('../planningExtracted/controller');
 const SalesOrder = require('../salesOrders/models');
 const ProcurementRequest = require('../procurementRequests/models');
 const { hasGranularAccess } = require('../middleware/security');
+const { roundPlanningMaterialQty } = require('../planningExtracted/orderKgMath');
 
 /* ════════════════════════════════════════════════════════════
    EQUIPMENT
@@ -866,7 +867,6 @@ async function applyBprFgReadyToInventory(batchRow) {
   }
 }
 
-const RESERVE_DEBUG = process.env.RESERVE_DEBUG !== '0';
 const DISPENSING_DEBUG = process.env.DISPENSING_DEBUG === '1';
 const DISPENSING_TRACE = process.env.DISPENSING_TRACE === '1';
 /** Filter server logs with this string to trace BMR dispensing → MU / warehouse_inventory. */
@@ -880,13 +880,11 @@ const DISPENDING_MU_ERR_TAG = '[dispending-mu-error]';
  */
 async function applyRmReservedToInventory(batchRow) {
   const d = batchRow.get ? batchRow.get({ plain: true }) : batchRow;
-  if (RESERVE_DEBUG) console.log('[RESERVE-DEBUG] applyRmReservedToInventory START', { production_batch_id: d.id, bmr_no: d.bmr_no });
   // Idempotent: if this batch already has RM reserved_batch_items (e.g. double PATCH), skip to avoid double-counting
   const existingRmCount = await ReservedBatchItem.count({
     where: { production_batch_id: d.id, pack_material_id: null },
   });
   if (existingRmCount > 0) {
-    if (RESERVE_DEBUG) console.log('[RESERVE-DEBUG] applyRmReservedToInventory SKIP (already has', existingRmCount, 'RM reserved_batch_items)');
     return;
   }
   // Remove existing RM reserved_batch_items for this batch so we don't double-count on repeat transition
@@ -903,7 +901,6 @@ async function applyRmReservedToInventory(batchRow) {
     ? planningBatchSizeKg
     : (Number(d.batch_size) || Number(d.order_qty) || 0);
   if (batchSizeKg <= 0) return;
-  if (RESERVE_DEBUG) console.log('[RESERVE-DEBUG] RM reserve batchSizeKg=', batchSizeKg, 'bomSource=', bomSource);
 
   // Aggregate by raw_material_id so same RM in multiple BOM lines is one reserved row (SIH - reserved = available)
   const rmQuantities = new Map(); // rmId -> { quantity, unit, code }
@@ -926,11 +923,6 @@ async function applyRmReservedToInventory(batchRow) {
   }
   const affectedRmIds = new Set(rmQuantities.keys());
   if (affectedRmIds.size === 0) return;
-  if (RESERVE_DEBUG) {
-    const perCode = [];
-    for (const [rmId, o] of rmQuantities) perCode.push({ rmId, code: o.code, quantity_reserved_X: o.quantity, unit: o.unit });
-    console.log('[RESERVE-DEBUG] RM quantities to reserve (X per item):', perCode);
-  }
   for (const [rmId, { quantity, unit }] of rmQuantities) {
     await ReservedBatchItem.create({
       production_batch_id: d.id,
@@ -959,17 +951,6 @@ async function applyRmReservedToInventory(batchRow) {
       where: { production_batch_id: d.id, raw_material_id: rid },
     });
     const reservedDelta = sum != null ? Number(sum) : 0;
-    if (RESERVE_DEBUG) {
-      const rmCode = (rmQuantities.get(rid) || {}).code;
-      console.log('[RESERVE-DEBUG] RM after reserve', {
-        code: rmCode,
-        raw_material_id: rid,
-        SIH: sih,
-        reserved_after_R_plus_X: reservedAfter,
-        reserved_delta_this_batch_X: reservedDelta,
-        available_Y_minus_X: Math.max(0, sih - reservedAfter),
-      });
-    }
     await logReservedChange({
       warehouseInventoryId: whPlain.id,
       itemType: 'RM',
@@ -983,7 +964,6 @@ async function applyRmReservedToInventory(batchRow) {
       actionType: 'BMR_RESERVED',
     });
   }
-  if (RESERVE_DEBUG) console.log('[RESERVE-DEBUG] applyRmReservedToInventory DONE');
 }
 
 /**
@@ -994,13 +974,11 @@ async function applyRmReservedToInventory(batchRow) {
  */
 async function applyPmReservedToInventory(batchRow) {
   const d = batchRow.get ? batchRow.get({ plain: true }) : batchRow;
-  if (RESERVE_DEBUG) console.log('[RESERVE-DEBUG] applyPmReservedToInventory START', { production_batch_id: d.id, bpr_no: d.bpr_no });
   // Idempotent: if this batch already has PM reserved_batch_items (e.g. double PATCH), skip to avoid double-counting
   const existingPmCount = await ReservedBatchItem.count({
     where: { production_batch_id: d.id, raw_material_id: null },
   });
   if (existingPmCount > 0) {
-    if (RESERVE_DEBUG) console.log('[RESERVE-DEBUG] applyPmReservedToInventory SKIP (already has', existingPmCount, 'PM reserved_batch_items)');
     return;
   }
   // Remove existing PM reserved_batch_items for this batch so we don't double-count on repeat transition
@@ -1019,7 +997,6 @@ async function applyPmReservedToInventory(batchRow) {
   const batchSizeUnits = (bomSource === 'planning_batch' && planningBatchSizeKg != null && planningBatchSizeKg > 0)
     ? Math.round(planningBatchSizeKg)
     : (totalBatches > 0 ? Math.ceil(orderQty / totalBatches) : (Number(d.batch_size) || orderQty || 1));
-  if (RESERVE_DEBUG) console.log('[RESERVE-DEBUG] PM reserve batchSizeUnits=', batchSizeUnits, 'bomSource=', bomSource);
 
   // Aggregate by pack_material_id so same PM in multiple BOM lines is one reserved row (SIH - reserved = available)
   const pmQuantities = new Map(); // pmId -> { quantity, unit, code }
@@ -1042,11 +1019,6 @@ async function applyPmReservedToInventory(batchRow) {
   }
   const affectedPmIds = new Set(pmQuantities.keys());
   if (affectedPmIds.size === 0) return;
-  if (RESERVE_DEBUG) {
-    const perCode = [];
-    for (const [pmId, o] of pmQuantities) perCode.push({ pmId, code: o.code, quantity_reserved_X: o.quantity, unit: o.unit });
-    console.log('[RESERVE-DEBUG] PM quantities to reserve (X per item):', perCode);
-  }
   for (const [pmId, { quantity, unit }] of pmQuantities) {
     await ReservedBatchItem.create({
       production_batch_id: d.id,
@@ -1075,17 +1047,6 @@ async function applyPmReservedToInventory(batchRow) {
       where: { production_batch_id: d.id, pack_material_id: pid },
     });
     const reservedDelta = sum != null ? Number(sum) : 0;
-    if (RESERVE_DEBUG) {
-      const pmCode = (pmQuantities.get(pid) || {}).code;
-      console.log('[RESERVE-DEBUG] PM after reserve', {
-        code: pmCode,
-        pack_material_id: pid,
-        SIH: sih,
-        reserved_after_R_plus_X: reservedAfter,
-        reserved_delta_this_batch_X: reservedDelta,
-        available_Y_minus_X: Math.max(0, sih - reservedAfter),
-      });
-    }
     await logReservedChange({
       warehouseInventoryId: whPlain.id,
       itemType: 'PM',
@@ -1099,7 +1060,6 @@ async function applyPmReservedToInventory(batchRow) {
       actionType: 'BPR_RESERVED',
     });
   }
-  if (RESERVE_DEBUG) console.log('[RESERVE-DEBUG] applyPmReservedToInventory DONE');
 }
 
 /** Master codes seeded as EI-… on dispensing line text (e.g. inci "Niacinamide (EI-RM-ACT-002)"). */
@@ -1205,16 +1165,6 @@ async function adjustProductionReservedAfterDispenseDelta({
   if (Math.abs(next - cur) < 1e-9) return;
   await rbi.update({ quantity_reserved: next });
   await syncWarehouseReserved(type === 'RM' ? [materialId] : [], type === 'PM' ? [materialId] : []);
-  if (RESERVE_DEBUG) {
-    console.log('[RESERVE-DEBUG] adjustProductionReservedAfterDispenseDelta', {
-      productionBatchId,
-      type,
-      materialId,
-      dispenseDelta,
-      quantity_reserved_before: cur,
-      quantity_reserved_after: next,
-    });
-  }
 }
 
 /**
@@ -1456,8 +1406,8 @@ async function persistMuDispensingBundleSnapshot(batchId, bundleId, consumed, pl
     const p = r.get ? r.get({ plain: true }) : r;
     return { id: p.id, planningBatchId: p.planning_batch_id, status: p.status || null };
   });
-  const rm = consumed.filter((c) => c.type === 'RM').map(({ code, qty }) => ({ code, qty: Math.round((qty + Number.EPSILON) * 1000) / 1000 }));
-  const pm = consumed.filter((c) => c.type === 'PM').map(({ code, qty }) => ({ code, qty: Math.round((qty + Number.EPSILON) * 1000) / 1000 }));
+  const rm = consumed.filter((c) => c.type === 'RM').map(({ code, qty }) => ({ code, qty: roundPlanningMaterialQty(qty) }));
+  const pm = consumed.filter((c) => c.type === 'PM').map(({ code, qty }) => ({ code, qty: roundPlanningMaterialQty(qty) }));
   const entry = {
     bundleId,
     at: new Date().toISOString(),
@@ -1569,7 +1519,7 @@ function scalePlanningJsonLines(lines, scale) {
     const copy = { ...line };
     for (const k of ['qty', 'qty_kg', 'required_kg', 'required', 'amount', 'qty_per_batch']) {
       if (typeof copy[k] === 'number' && Number.isFinite(copy[k])) {
-        copy[k] = Math.round(copy[k] * scale * 10000) / 10000;
+        copy[k] = roundPlanningMaterialQty(copy[k] * scale);
       }
     }
     return copy;
@@ -1663,15 +1613,6 @@ async function updateBatch(req, res) {
         bodyKeys: Object.keys(req.body || {}),
         dispensingRMLines: Array.isArray(bdrm) ? bdrm.map((l) => ({ code: l?.code, dispensed: l?.dispensed, required: l?.required })) : null,
         dispensingPMLines: Array.isArray(bdpm) ? bdpm.map((l) => ({ code: l?.code, dispensed: l?.dispensed, required: l?.required })) : null,
-      });
-    }
-    if (RESERVE_DEBUG && (req.body.bmr_status === 'rm_reserved' || req.body.bpr_status === 'pm_reserved')) {
-      console.log('[RESERVE-DEBUG] updateBatch PATCH body (reserve):', {
-        production_batch_id: id,
-        bmr_status: req.body.bmr_status,
-        bpr_status: req.body.bpr_status,
-        rmReserved: req.body.rmReserved,
-        pmReserved: req.body.pmReserved,
       });
     }
     applyBatchBody(row, req.body);
@@ -1837,11 +1778,9 @@ async function updateBatch(req, res) {
       await row.reload();
     }
     if (prevBmrStatus !== 'rm_reserved' && nextPlain.bmr_status === 'rm_reserved') {
-      if (RESERVE_DEBUG) console.log('[RESERVE-DEBUG] updateBatch: transition to rm_reserved -> applyRmReservedToInventory');
       await applyRmReservedToInventory(row);
     }
     if (prevBprStatus !== 'pm_reserved' && nextPlain.bpr_status === 'pm_reserved') {
-      if (RESERVE_DEBUG) console.log('[RESERVE-DEBUG] updateBatch: transition to pm_reserved -> applyPmReservedToInventory');
       await applyPmReservedToInventory(row);
     }
     if (prevBprStatus !== 'fg_ready' && nextPlain.bpr_status === 'fg_ready') {
