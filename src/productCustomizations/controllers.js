@@ -51,7 +51,7 @@ const getMyCustomizations = async (req, res, next) => {
     const userId = req.user.id;
     const customizations = await ProductCustomization.findAll({
       where: { user_id: userId },
-      include: [{ model: Product, as: 'product', attributes: ['product_name', 'product_sku', 'incredients', 'how_to_use'] }],
+      include: [{ model: Product, as: 'product', attributes: ['product_name', 'zoho_sku_code', 'incredients', 'how_to_use'] }],
       order: [['created_at', 'DESC']]
     });
 
@@ -82,7 +82,7 @@ const getAllCustomizations = async (req, res, next) => {
         {
           model: Product,
           as: 'product',
-          attributes: ['product_name', 'product_sku']
+          attributes: ['product_name', 'zoho_sku_code']
         },
         {
           model: User,
@@ -157,7 +157,7 @@ const updateCustomizationAdmin = async (req, res, next) => {
     await row.update(updates);
     await row.reload({
       include: [
-        { model: Product, as: 'product', attributes: ['product_name', 'product_sku'] },
+        { model: Product, as: 'product', attributes: ['product_name', 'zoho_sku_code'] },
         { model: User, as: 'user', attributes: ['userid', 'fname', 'lname', 'email', 'mobile', 'usertype'] }
       ]
     });

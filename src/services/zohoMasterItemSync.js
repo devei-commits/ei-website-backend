@@ -15,7 +15,7 @@ function getAttr(row, key) {
 /**
  * Map raw_material row + optional request overrides to Zoho Books POST /items JSON.
  * @param {*} row - Sequelize RawMaterial after create
- * @param {Record<string, unknown>} body - req.body (optional: name, sku, rate, tax_id, product_type, hsn_or_sac, gst)
+ * @param {Record<string, unknown>} body - req.body (optional: name, zoho_sku_code|sku, rate, tax_id, product_type, hsn_or_sac, gst)
  */
 function buildRawMaterialZohoPayload(row, body = {}) {
   const name =
@@ -26,9 +26,12 @@ function buildRawMaterialZohoPayload(row, body = {}) {
     throw new Error('name is required for Zoho item (raw material)');
   }
 
+  // Resolve the SKU we send to Zoho: prefer explicit body.zoho_sku_code (new), fall back
+  // to legacy body.sku, then the row's persisted column, then the row's code.
   const sku =
+    (body.zoho_sku_code != null && String(body.zoho_sku_code).trim()) ||
     (body.sku != null && String(body.sku).trim()) ||
-    (getAttr(row, 'sku') && String(getAttr(row, 'sku')).trim()) ||
+    (getAttr(row, 'zoho_sku_code') && String(getAttr(row, 'zoho_sku_code')).trim()) ||
     (getAttr(row, 'code') && String(getAttr(row, 'code')).trim()) ||
     `EI-RM-${getAttr(row, 'id')}`;
 
@@ -70,7 +73,7 @@ function buildRawMaterialZohoPayload(row, body = {}) {
 /**
  * Map pack_material row + optional request overrides to Zoho Books POST /items JSON.
  * @param {*} row - Sequelize PackMaterial after create
- * @param {Record<string, unknown>} body - req.body (optional: description, name, sku, rate, tax_id, product_type, hsn_or_sac, tax_percentage)
+ * @param {Record<string, unknown>} body - req.body (optional: description, name, zoho_sku_code|sku, rate, tax_id, product_type, hsn_or_sac, tax_percentage)
  */
 function buildPackMaterialZohoPayload(row, body = {}) {
   const name =
@@ -82,9 +85,12 @@ function buildPackMaterialZohoPayload(row, body = {}) {
     throw new Error('description is required for Zoho item (pack material)');
   }
 
+  // Resolve the SKU we send to Zoho: prefer explicit body.zoho_sku_code (new), fall back
+  // to legacy body.sku, then the row's persisted column, then the row's code.
   const sku =
+    (body.zoho_sku_code != null && String(body.zoho_sku_code).trim()) ||
     (body.sku != null && String(body.sku).trim()) ||
-    (getAttr(row, 'sku') && String(getAttr(row, 'sku')).trim()) ||
+    (getAttr(row, 'zoho_sku_code') && String(getAttr(row, 'zoho_sku_code')).trim()) ||
     (getAttr(row, 'code') && String(getAttr(row, 'code')).trim()) ||
     `EI-PM-${getAttr(row, 'id')}`;
 
@@ -151,7 +157,9 @@ async function syncZohoItemForNewRawMaterial(row, createBody = {}) {
     if (!itemId) {
       return { synced: false, error: 'zoho_missing_item_id', zohoMessage: raw && raw.message, duplicate: false };
     }
-    return { synced: true, itemId };
+    // Capture Zoho's persisted item.sku so the caller can mirror it back into the local row.
+    const sku = raw && raw.item && raw.item.sku ? String(raw.item.sku) : null;
+    return { synced: true, itemId, sku };
   } catch (e) {
     const msg = e && e.message ? String(e.message) : 'zoho_item_sync_failed';
     const duplicate = isZohoDuplicateItemError(e);
@@ -183,7 +191,9 @@ async function syncZohoItemForNewPackMaterial(row, createBody = {}) {
     if (!itemId) {
       return { synced: false, error: 'zoho_missing_item_id', zohoMessage: raw && raw.message, duplicate: false };
     }
-    return { synced: true, itemId };
+    // Capture Zoho's persisted item.sku so the caller can mirror it back into the local row.
+    const sku = raw && raw.item && raw.item.sku ? String(raw.item.sku) : null;
+    return { synced: true, itemId, sku };
   } catch (e) {
     const msg = e && e.message ? String(e.message) : 'zoho_item_sync_failed';
     const duplicate = isZohoDuplicateItemError(e);

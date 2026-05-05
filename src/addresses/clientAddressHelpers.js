@@ -108,14 +108,69 @@ async function loadShippingBillingByUserIds(userIds) {
  */
 async function syncClientAddressesFromVendorData(userId, data, transaction) {
   if (userId == null || !data || typeof data !== 'object') return;
-  const ship = String(data.shipping_address ?? data.shippingAddress ?? '').trim();
-  const bill = String(data.billing_address ?? data.billingAddress ?? '').trim();
-  if (!ship && !bill) return;
+  function normalizeZohoAddressObject(obj) {
+    if (!obj || typeof obj !== 'object') return null;
+    const attention = String(obj.attention || '').trim();
+    const nameParts = attention.split(/\s+/).filter(Boolean);
+    const line1 = String(obj.address || obj.street || '').trim();
+    const line2 = String(obj.street2 || obj.address_line2 || '').trim();
+    const city = String(obj.city || '').trim();
+    const state = String(obj.state || '').trim();
+    const country = String(obj.country || '').trim();
+    const zip = String(obj.zip || obj.pincode || '').trim();
+    const phone = String(obj.phone || '').trim();
+    const fallbackSingleLine = [line1, line2, city, state, zip, country].filter(Boolean).join(', ').trim();
+    return {
+      first_name: nameParts[0] || null,
+      last_name: nameParts.slice(1).join(' ').trim() || null,
+      address_line1: line1 || fallbackSingleLine || null,
+      address_line2: line2 || null,
+      city_text: city || null,
+      state_text: state || null,
+      country_text: country || null,
+      pincode: zip || null,
+      phone: phone || null,
+    };
+  }
+
+  function parseAddressFromUnknown(raw) {
+    if (!raw) return null;
+    if (typeof raw === 'object') {
+      return normalizeZohoAddressObject(raw);
+    }
+    const text = String(raw).trim();
+    if (!text) return null;
+    return {
+      first_name: null,
+      last_name: null,
+      address_line1: text,
+      address_line2: null,
+      city_text: null,
+      state_text: null,
+      country_text: null,
+      pincode: null,
+      phone: null,
+    };
+  }
+
+  const shipParsed = parseAddressFromUnknown(
+    data.shipping_address_object ??
+      data.shippingAddressObject ??
+      data.shipping_address ??
+      data.shippingAddress
+  );
+  const billParsed = parseAddressFromUnknown(
+    data.billing_address_object ??
+      data.billingAddressObject ??
+      data.billing_address ??
+      data.billingAddress
+  );
+  if (!shipParsed && !billParsed) return;
 
   const opts = transaction ? { transaction } : {};
 
-  async function upsertType(addressType, line1, isShip) {
-    if (!line1) return;
+  async function upsertType(addressType, parsed, isShip) {
+    if (!parsed || !parsed.address_line1) return;
     const defKey = isShip ? 'is_default_shipping' : 'is_default_billing';
     const where = { user_id: userId, address_type: addressType };
     let row = await Address.findOne({
@@ -124,7 +179,15 @@ async function syncClientAddressesFromVendorData(userId, data, transaction) {
       ...opts,
     });
     const payload = {
-      address_line1: line1,
+      first_name: parsed.first_name,
+      last_name: parsed.last_name,
+      address_line1: parsed.address_line1,
+      address_line2: parsed.address_line2,
+      city_text: parsed.city_text,
+      state_text: parsed.state_text,
+      country_text: parsed.country_text,
+      pincode: parsed.pincode,
+      phone: parsed.phone,
       address_type: addressType,
       [defKey]: true,
     };
@@ -141,8 +204,8 @@ async function syncClientAddressesFromVendorData(userId, data, transaction) {
     }
   }
 
-  await upsertType('shipping', ship, true);
-  await upsertType('billing', bill, false);
+  await upsertType('shipping', shipParsed, true);
+  await upsertType('billing', billParsed, false);
 }
 
 module.exports = {

@@ -78,7 +78,7 @@ describe('SO→Planning→Inventory→Production→Fulfillment pipeline (integra
     rm = await RawMaterial.create({ code: 'EI-RM-ACT-PIPE-001', name: 'Pipe RM', status: 'Active' });
     pm = await PackMaterial.create({ code: 'EI-PM-PKG-PIPE-001', description: 'Pipe PM', status: 'Active' });
     fg = await Product.create({
-      product_sku: 'SKU-FG-PIPE-001',
+      zoho_sku_code: 'SKU-FG-PIPE-001',
       product_name: 'FG Pipe Product',
       status: 'Active',
       product_code: 'FG-PIPE-001',
@@ -179,7 +179,7 @@ describe('SO→Planning→Inventory→Production→Fulfillment pipeline (integra
       bmr_no: 'BMR-2026-001',
       bpr_no: 'BPR-2026-001',
       product_name: fg.product_name,
-      sku: fg.product_sku,
+      sku: fg.zoho_sku_code,
       so_no: soNo,
       order_qty: 30,
       batch_size: 30,
@@ -208,7 +208,7 @@ describe('SO→Planning→Inventory→Production→Fulfillment pipeline (integra
     fulfillmentOrderItem = await FulfillmentOrderItem.create({
       fulfillment_order_id: fulfillmentOrder.id,
       item_no: '1',
-      sku: fg.product_sku,
+      sku: fg.zoho_sku_code,
       product_name: fg.product_name,
       pack: 'PCS',
       ordered_qty: 30,

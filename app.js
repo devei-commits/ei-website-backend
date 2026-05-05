@@ -51,6 +51,7 @@ require('./src/customizationPackaging/models');
 const customizationPackagingAdminRouter = require('./src/customizationPackaging/routers');
 const { listPublicCustomizationPackaging } = require('./src/customizationPackaging/controller');
 const { ensureCustomizationPackagingPresets } = require('./src/customizationPackaging/ensureCustomizationPackagingPresets');
+const { ensureSchemaPatches } = require('./src/db/ensureSchemaPatches');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -173,7 +174,9 @@ app.use((req, res) => {
 if (process.env.NODE_ENV !== 'test') {
   db.authenticate()
     .then(async () => {
+      await ensureSchemaPatches();
       await db.sync({ alter: true });
+      await ensureSchemaPatches();
       await ensureCustomizationPackagingPresets();
       app.listen(port, () => {
         console.log(`Server is running on port ${port}`);

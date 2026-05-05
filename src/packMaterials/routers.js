@@ -11,20 +11,32 @@ const {
   deletePackMaterial,
   getReservedStock,
 } = require('./controller');
+const { postItemReferenceBulkChunk } = require('../masterBulk/itemReferenceBulkChunk');
 const { createCacheReadMiddleware } = require('../cache/cacheReadMiddleware');
 
 const requirePackMaterials = [isAuthenticated, requireModule('packaging-management')];
+/** Item Reference excel bulk — user may have only PM or only RM; handler skips rows by module. */
+const requireItemReferenceBulk = [
+  isAuthenticated,
+  requireModule('packaging-management', 'raw-materials-management'),
+];
+/** List (GET /) only: same as raw materials — quotation & PO flows need PM lookup without packaging-management. */
+const requirePackMaterialsListRead = [
+  isAuthenticated,
+  requireModule('packaging-management', 'sales-purchase', 'order-management', 'vendor-client'),
+];
 
 const cachePackMaterialsList = createCacheReadMiddleware({ namespace: 'pack-materials', ttlSeconds: 120 });
 const cachePackMaterialsOne = createCacheReadMiddleware({ namespace: 'pack-materials', ttlSeconds: 300 });
 
 router.get('/next-code', requirePackMaterials, getNextCode);
 router.post('/zoho-sync', requirePackMaterials, syncPmZoho);
+router.post('/item-reference-bulk-chunk', requireItemReferenceBulk, postItemReferenceBulkChunk);
 router.post('/', requirePackMaterials, createPackMaterial);
 router.get('/:id/reserved-stock', requirePackMaterials, getReservedStock);
 router.get('/:id', requirePackMaterials, cachePackMaterialsOne, getPackMaterialById);
 router.put('/:id', requirePackMaterials, updatePackMaterial);
 router.delete('/:id', requirePackMaterials, deletePackMaterial);
-router.get('/', requirePackMaterials, cachePackMaterialsList, listPackMaterials);
+router.get('/', requirePackMaterialsListRead, cachePackMaterialsList, listPackMaterials);
 
 module.exports = router;

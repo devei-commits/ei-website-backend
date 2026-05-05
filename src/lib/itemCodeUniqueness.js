@@ -1,7 +1,7 @@
 const { Op } = require('sequelize');
 
 /**
- * Distinct trimmed identifiers for duplicate checks (code + optional sku when different from code).
+ * Distinct trimmed identifiers for duplicate checks (code + optional zoho_sku_code when different from code).
  */
 function identifiersFromCodeAndSku(code, sku) {
   const c = code != null ? String(code).trim() : '';
@@ -12,14 +12,14 @@ function identifiersFromCodeAndSku(code, sku) {
   return ids;
 }
 
-/** @param {object} Model Sequelize model (RawMaterial or PackMaterial) */
+/** @param {object} Model Sequelize model (RawMaterial or PackMaterial) — both expose `code` + `zoho_sku_code`. */
 async function findConflictingMasterRow(Model, code, sku, excludeId) {
   const ids = identifiersFromCodeAndSku(code, sku);
   if (!ids.length) return null;
   const ors = [];
   for (const id of ids) {
     ors.push({ code: { [Op.iLike]: id } });
-    ors.push({ sku: { [Op.iLike]: id } });
+    ors.push({ zoho_sku_code: { [Op.iLike]: id } });
   }
   const inner = { [Op.or]: ors };
   const where =

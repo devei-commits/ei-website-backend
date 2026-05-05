@@ -78,7 +78,7 @@ describe('Stage 1: website order -> planning placeholders + toggles (integration
     rm = await RawMaterial.create({ code: rmCode, name: 'Stage1 RM', status: 'Active' });
     pm = await PackMaterial.create({ code: pmCode, description: 'Stage1 PM', status: 'Active' });
     fg = await Product.create({
-      product_sku: sku,
+      zoho_sku_code: sku,
       product_name: 'Stage1 FG Product',
       status: 'Active',
       product_code: 'FG-STAGE1-001',

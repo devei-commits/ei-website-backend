@@ -203,7 +203,7 @@ async function buildZohoLineItems(lineItemsFromBody, fulfillmentOrderId) {
     } else {
       const orCond = [];
       if (code) orCond.push({ product_code: code });
-      if (sku) orCond.push({ product_sku: sku });
+      if (sku) orCond.push({ zoho_sku_code: sku });
       if (orCond.length) {
         product = await Product.findOne({ where: { [Op.or]: orCond } });
       }

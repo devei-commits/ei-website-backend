@@ -16,6 +16,7 @@ const zohoEnv = require('../services/zohoEnv');
 const { deleteItem } = require('../services/zohoBooks');
 const { zohoSyncIsMandatoryFailure } = require('../services/zohoSyncHelpers');
 const { compensateZohoItemIfAny } = require('../lib/zohoDbTransaction');
+const { validateSkuBomTotals } = require('../bom/skuBomMath');
 
 /** At least one non-empty formula line (INCI / RM code / positive %). */
 function countMeaningfulRmLines(lines) {
@@ -53,6 +54,40 @@ function appendProductCodeToList(products, productCode) {
   return [...list, code];
 }
 
+function parseBomNotes(notes) {
+  const result = {
+    pr_qc_group: null,
+    pr_sub_category: null,
+    microbial_limits: null,
+    spf_pa_rating: null,
+    photostability: null,
+    freeze_thaw_cycles: null,
+    cosmos_natural_certification: null,
+    dermatologically_tested: null,
+    cruelty_free_vegan: null,
+  };
+  const text = String(notes || '').trim();
+  if (!text) return result;
+  const parts = text.split('|').map((p) => String(p || '').trim()).filter(Boolean);
+  parts.forEach((part) => {
+    const idx = part.indexOf(':');
+    if (idx < 0) return;
+    const key = part.slice(0, idx).trim().toLowerCase();
+    const value = part.slice(idx + 1).trim();
+    if (!value) return;
+    if (key === 'qc group') result.pr_qc_group = value;
+    if (key === 'pr sub-category') result.pr_sub_category = value;
+    if (key === 'microbial limits') result.microbial_limits = value;
+    if (key === 'spf/pa rating') result.spf_pa_rating = value;
+    if (key === 'photostability') result.photostability = value;
+    if (key === 'freeze-thaw cycles') result.freeze_thaw_cycles = value;
+    if (key === 'cosmos / natural certification') result.cosmos_natural_certification = value;
+    if (key === 'dermatologically tested') result.dermatologically_tested = value;
+    if (key === 'cruelty free / vegan') result.cruelty_free_vegan = value;
+  });
+  return result;
+}
+
 const saveProduct = async (req, res) => {
   try {
     const { product_name } = req.body;
@@ -88,10 +123,15 @@ const saveProduct = async (req, res) => {
       }
       const payload = product.get ? product.get({ plain: true }) : { ...product };
       if (zoho.synced && zoho.itemId) {
-        await product.update({ zoho_item_id: zoho.itemId }, { transaction: t });
+        // Mirror Zoho's persisted item.sku into zoho_sku_code so the canonical SKU
+        // matches Zoho exactly (the column has a partial UNIQUE index).
+        const updatePatch = { zoho_item_id: zoho.itemId };
+        if (zoho.sku && String(zoho.sku).trim()) updatePatch.zoho_sku_code = String(zoho.sku).trim();
+        await product.update(updatePatch, { transaction: t });
         await product.reload({ transaction: t });
         zohoBooksItemToDelete = zoho.itemId;
         payload.zoho_item_id = zoho.itemId;
+        if (updatePatch.zoho_sku_code) payload.zoho_sku_code = updatePatch.zoho_sku_code;
       } else if (zohoSyncIsMandatoryFailure(zoho)) {
         await t.rollback();
         await compensateZohoItemIfAny(null, zoho.itemId, deleteItem);
@@ -147,13 +187,14 @@ const syncPrProductZoho = async (req, res) => {
       const n = parseFloat(String(mrpRaw).replace(/[^\d.]/g, ''));
       if (!Number.isNaN(n)) mrp_price = n;
     }
-    const bomSku = String(b.product_sku ?? b.bomSku ?? product_code).trim();
+    // Accept new `zoho_sku_code` field, fall back to legacy `product_sku` / `bomSku` for backward compat.
+    const bomSku = String(b.zoho_sku_code ?? b.product_sku ?? b.bomSku ?? product_code).trim();
     const now = new Date();
 
     const productRow = {
       product_name,
       product_code,
-      product_sku: bomSku,
+      zoho_sku_code: bomSku,
       generic_name: b.generic_name ?? b.category ?? null,
       brand_name: b.brand_name ?? b.client ?? null,
       category: b.category ?? null,
@@ -177,6 +218,17 @@ const syncPrProductZoho = async (req, res) => {
           code: 'PRODUCT_NAME_EXISTS',
         });
       }
+      // SKU uniqueness pre-check: only when SKU differs from product_code (otherwise
+      // the product_code lookup above already covered the same identifier).
+      if (bomSku && bomSku !== product_code) {
+        const skuTaken = await Product.findOne({ where: { zoho_sku_code: bomSku } });
+        if (skuTaken && skuTaken.product_id !== product.product_id) {
+          return res.status(409).json({
+            error: `Product SKU "${bomSku}" is already in use.`,
+            code: 'PRODUCT_SKU_EXISTS',
+          });
+        }
+      }
       await product.update(productRow);
     } else {
       const nameTaken = await Product.findOne({ where: { product_name } });
@@ -185,6 +237,15 @@ const syncPrProductZoho = async (req, res) => {
           error: `Product name "${product_name}" is already in use.`,
           code: 'PRODUCT_NAME_EXISTS',
         });
+      }
+      if (bomSku && bomSku !== product_code) {
+        const skuTaken = await Product.findOne({ where: { zoho_sku_code: bomSku } });
+        if (skuTaken) {
+          return res.status(409).json({
+            error: `Product SKU "${bomSku}" is already in use.`,
+            code: 'PRODUCT_SKU_EXISTS',
+          });
+        }
       }
       product = await Product.create({
         ...productRow,
@@ -200,7 +261,9 @@ const syncPrProductZoho = async (req, res) => {
     }
     if (zoho.synced && zoho.itemId) {
       try {
-        await product.update({ zoho_item_id: zoho.itemId, updated_at: now });
+        const updatePatch = { zoho_item_id: zoho.itemId, updated_at: now };
+        if (zoho.sku && String(zoho.sku).trim()) updatePatch.zoho_sku_code = String(zoho.sku).trim();
+        await product.update(updatePatch);
         await product.reload();
       } catch (dbErr) {
         console.error('syncPrProductZoho: failed to save zoho_item_id, rolling back Zoho item', dbErr);
@@ -308,7 +371,19 @@ const createPRRegistration = async (req, res) => {
     }
 
     const now = new Date();
-    const bomSku = String(b.product_sku ?? b.bomSku ?? product_code).trim();
+    // Accept new `zoho_sku_code` field, fall back to legacy `product_sku` / `bomSku` for backward compat.
+    const bomSku = String(b.zoho_sku_code ?? b.product_sku ?? b.bomSku ?? product_code).trim();
+    // SKU uniqueness pre-check: only when SKU differs from product_code (otherwise
+    // the existsCode lookup above already covered the same identifier).
+    if (bomSku && bomSku !== product_code) {
+      const existsSku = await Product.findOne({ where: { zoho_sku_code: bomSku } });
+      if (existsSku && (!preProduct || existsSku.product_id !== preProduct.product_id)) {
+        return res.status(409).json({
+          error: `Product SKU "${bomSku}" is already in use. Use a different SKU or edit the existing PR.`,
+          code: 'PRODUCT_SKU_EXISTS',
+        });
+      }
+    }
     const rm_lines = Array.isArray(b.rm_lines) ? b.rm_lines : (Array.isArray(b.rmLines) ? b.rmLines : []);
     const pm_lines = Array.isArray(b.pm_lines) ? b.pm_lines : (Array.isArray(b.pmLines) ? b.pmLines : []);
     const process_steps = Array.isArray(b.process_steps) ? b.process_steps : (Array.isArray(b.processSteps) ? b.processSteps : []);
@@ -328,6 +403,16 @@ const createPRRegistration = async (req, res) => {
       });
     }
 
+    const skuRegLines = Array.isArray(b.sku_rm_lines) ? b.sku_rm_lines : [];
+    const skuRegV = validateSkuBomTotals({
+      lines: skuRegLines,
+      limitQty: b.sku_bom_limit_qty ?? b.skuBomLimitQty,
+      limitUom: b.sku_bom_limit_uom ?? b.skuBomLimitUom,
+    });
+    if (!skuRegV.ok) {
+      return res.status(400).json({ error: skuRegV.error, code: skuRegV.code });
+    }
+
     const mrpRaw = b.mrp_price ?? b.mrp;
     let mrp_price = null;
     if (mrpRaw != null && mrpRaw !== '') {
@@ -342,7 +427,7 @@ const createPRRegistration = async (req, res) => {
     const productRow = {
       product_name,
       product_code,
-      product_sku: bomSku,
+      zoho_sku_code: bomSku,
       generic_name: b.generic_name ?? b.category ?? null,
       brand_name: b.brand_name ?? b.client ?? null,
       category: b.category ?? null,
@@ -367,6 +452,13 @@ const createPRRegistration = async (req, res) => {
     const notesParts = [];
     if (b.pr_qc_group) notesParts.push(`QC Group: ${b.pr_qc_group}`);
     if (b.pr_sub_category) notesParts.push(`PR Sub-category: ${b.pr_sub_category}`);
+    if (b.microbial_limits) notesParts.push(`Microbial Limits: ${b.microbial_limits}`);
+    if (b.spf_pa_rating) notesParts.push(`SPF/PA Rating: ${b.spf_pa_rating}`);
+    if (b.photostability) notesParts.push(`Photostability: ${b.photostability}`);
+    if (b.freeze_thaw_cycles) notesParts.push(`Freeze-Thaw Cycles: ${b.freeze_thaw_cycles}`);
+    if (b.cosmos_natural_certification) notesParts.push(`COSMOS / Natural Certification: ${b.cosmos_natural_certification}`);
+    if (b.dermatologically_tested) notesParts.push(`Dermatologically Tested: ${b.dermatologically_tested}`);
+    if (b.cruelty_free_vegan) notesParts.push(`Cruelty Free / Vegan: ${b.cruelty_free_vegan}`);
     const bomNotes = notesParts.length ? notesParts.join(' | ') : null;
 
     let zohoBooksItemToDelete = null;
@@ -390,7 +482,9 @@ const createPRRegistration = async (req, res) => {
         zoho = { synced: true, itemId: product.zoho_item_id };
       }
       if (zoho.synced && zoho.itemId) {
-        await product.update({ zoho_item_id: zoho.itemId, updated_at: now }, { transaction: t });
+        const updatePatch = { zoho_item_id: zoho.itemId, updated_at: now };
+        if (zoho.sku && String(zoho.sku).trim()) updatePatch.zoho_sku_code = String(zoho.sku).trim();
+        await product.update(updatePatch, { transaction: t });
         await product.reload({ transaction: t });
         zohoBooksItemToDelete = zoho.itemId;
       } else if (zohoSyncIsMandatoryFailure(zoho)) {
@@ -428,8 +522,18 @@ const createPRRegistration = async (req, res) => {
         regulatory: b.regulatory ?? b.applicable_regulation ?? null,
         description: b.desc ?? null,
         notes: bomNotes,
+        spec_pack: b.pack_configuration ?? b.packConfiguration ?? null,
+        spec_bulk: b.specific_gravity ?? b.specificGravity ?? null,
         stability_summary: productRow.stability_summary,
         rm_lines,
+        sku_rm_lines: Array.isArray(b.sku_rm_lines) ? b.sku_rm_lines : [],
+        sku_bom_limit_qty:
+          b.sku_bom_limit_qty != null && b.sku_bom_limit_qty !== ''
+            ? b.sku_bom_limit_qty
+            : b.skuBomLimitQty != null && b.skuBomLimitQty !== ''
+              ? b.skuBomLimitQty
+              : null,
+        sku_bom_limit_uom: (b.sku_bom_limit_uom ?? b.skuBomLimitUom) || null,
         pm_lines,
         process_steps,
         product_id: product.product_id,
@@ -465,9 +569,10 @@ const createPRRegistration = async (req, res) => {
       // Link selected RM/PM master items to this product code for downstream usage/pricing.
       // We only link rows where the line carries an explicit master id (raw_material_id / pack_material_id).
       const productCodeForLink = product_code;
+      const skuLinesForIds = Array.isArray(b.sku_rm_lines) ? b.sku_rm_lines : [];
       const rawMaterialIds = Array.from(
         new Set(
-          (Array.isArray(rm_lines) ? rm_lines : [])
+          [...(Array.isArray(rm_lines) ? rm_lines : []), ...skuLinesForIds]
             .map((l) => l?.raw_material_id ?? l?.rawMaterialId)
             .map((v) => (v != null ? parseInt(String(v), 10) : NaN))
             .filter((n) => !Number.isNaN(n))
@@ -573,6 +678,22 @@ const getAllProducts = async (req, res) => {
     let offset = null;
 
     let productWhere = null;
+    // Free-text search across product_code, zoho_sku_code, product_name, brand_name.
+    // SKU search is the canonical "find a product by its Zoho-mirrored SKU" path.
+    const search = req.query.search != null ? String(req.query.search).trim() : '';
+    let searchClause = null;
+    if (search.length > 0) {
+      const like = { [Op.iLike]: `%${search}%` };
+      searchClause = {
+        [Op.or]: [
+          { product_code: like },
+          { zoho_sku_code: like },
+          { product_name: like },
+          { brand_name: like },
+        ],
+      };
+    }
+
     const vcIdRaw = req.query.vendor_client_id;
     if (vcIdRaw != null && String(vcIdRaw).trim() !== '') {
       const vcId = normalizeInt(vcIdRaw);
@@ -616,6 +737,12 @@ const getAllProducts = async (req, res) => {
       };
     }
 
+    // Combine vendor_client_id filter with optional free-text search.
+    if (searchClause) {
+      productWhere = productWhere
+        ? { [Op.and]: [productWhere, searchClause] }
+        : searchClause;
+    }
 
     if (wantsPagination) {
       limit = limitQ != null ? normalizeInt(limitQ) : 20;
@@ -756,6 +883,22 @@ const getProductDetail = async (req, res) => {
       phase: phaseName,
       ingredients,
     }));
+
+    const skuRmRaw = bom && bom.sku_rm_lines ? bom.sku_rm_lines : [];
+    const skuRmList = Array.isArray(skuRmRaw) ? skuRmRaw : [];
+    const skuBom = skuRmList.map((line, idx) => ({
+      row_number: idx + 1,
+      inci_name: line.inci_name || line.inciName || line.name || '',
+      rm_code: line.rm_code || line.rmCode || '',
+      raw_material_id: line.raw_material_id ?? line.rawMaterialId ?? null,
+      qty_per_unit:
+        line.qty_per_unit != null
+          ? parseFloat(String(line.qty_per_unit).replace(/[^\d.-]/g, '')) || 0
+          : line.qtyPerUnit != null
+            ? parseFloat(String(line.qtyPerUnit).replace(/[^\d.-]/g, '')) || 0
+            : 0,
+      uom: line.uom || 'GM',
+    }));
     const packMaterials = allPackForProduct.filter((pm) => {
       const prods = Array.isArray(pm.products) ? pm.products : [];
       return prods.includes(plain.product_code);
@@ -804,15 +947,33 @@ const getProductDetail = async (req, res) => {
       };
     });
 
+    const parsedNotes = bom ? parseBomNotes(bom.notes) : parseBomNotes(null);
     res.json({
       ...plain,
       bom_composite_item: bom ? bom.bom_composite_item : null,
       bom_tax_preference: bom ? bom.bom_tax_preference : null,
       bom_returnable: bom ? bom.bom_returnable : null,
       bom_associate_items: bom ? bom.bom_associate_items : null,
+      brand_client: bom ? (bom.client || plain.brand_name || null) : (plain.brand_name || null),
+      applicable_regulation: bom ? (bom.regulatory || null) : null,
+      claims_substantiation: bom ? (bom.description || null) : null,
+      pr_qc_group: bom ? (parsedNotes.pr_qc_group || null) : null,
+      pr_sub_category: bom ? (parsedNotes.pr_sub_category || null) : null,
+      pack_configuration: bom ? (bom.spec_pack || null) : null,
+      specific_gravity: bom ? (bom.spec_bulk || null) : null,
+      microbial_limits: bom ? (parsedNotes.microbial_limits || null) : null,
+      spf_pa_rating: bom ? (parsedNotes.spf_pa_rating || null) : null,
+      photostability: bom ? (parsedNotes.photostability || null) : null,
+      freeze_thaw_cycles: bom ? (parsedNotes.freeze_thaw_cycles || null) : null,
+      cosmos_natural_certification: bom ? (parsedNotes.cosmos_natural_certification || null) : null,
+      dermatologically_tested: bom ? (parsedNotes.dermatologically_tested || null) : null,
+      cruelty_free_vegan: bom ? (parsedNotes.cruelty_free_vegan || null) : null,
       formulaBom,
       packBom,
       processSteps,
+      skuBom,
+      skuBomLimitQty: bom && bom.sku_bom_limit_qty != null ? Number(bom.sku_bom_limit_qty) : null,
+      skuBomLimitUom: bom && bom.sku_bom_limit_uom ? String(bom.sku_bom_limit_uom) : null,
       openSalesOrders,
     });
   } catch (err) {
@@ -848,6 +1009,31 @@ const updateProduct = async (req, res) => {
       }
     }
 
+    // if zoho_sku_code (or legacy product_sku) is being changed → check duplicate (partial UNIQUE).
+    const incomingSku = req.body.zoho_sku_code != null ? req.body.zoho_sku_code : req.body.product_sku;
+    if (incomingSku != null) {
+      const skuTrim = String(incomingSku).trim();
+      if (skuTrim) {
+        const existing = await Product.findOne({
+          where: {
+            zoho_sku_code: skuTrim,
+            product_id: { [Op.ne]: productId },
+          },
+        });
+        if (existing) {
+          return res
+            .status(409)
+            .json({ error: 'Product SKU already in use', code: 'PRODUCT_SKU_EXISTS' });
+        }
+      }
+      // Normalize the body so the subsequent generic update writes to zoho_sku_code,
+      // even if the caller used the legacy `product_sku` key.
+      if (req.body.zoho_sku_code == null) {
+        req.body.zoho_sku_code = skuTrim || null;
+      }
+      delete req.body.product_sku;
+    }
+
     // Optional: update linked BOM (formula, pack, process, specs); create BOM if missing
     const bomPayload = req.body.bom;
     if (bomPayload && typeof bomPayload === 'object') {
@@ -865,6 +1051,15 @@ const updateProduct = async (req, res) => {
             code: 'BOM_MISSING_LINES',
           });
         }
+        const nextSkuCreate = Array.isArray(bomPayload.sku_rm_lines) ? bomPayload.sku_rm_lines : [];
+        const skuCreateV = validateSkuBomTotals({
+          lines: nextSkuCreate,
+          limitQty: bomPayload.sku_bom_limit_qty ?? bomPayload.skuBomLimitQty,
+          limitUom: bomPayload.sku_bom_limit_uom ?? bomPayload.skuBomLimitUom,
+        });
+        if (!skuCreateV.ok) {
+          return res.status(400).json({ error: skuCreateV.error, code: skuCreateV.code });
+        }
         const productCode = (product && product.product_code) ? product.product_code : `PR-${productId}`;
         bom = await BOM.create({
           bom_code: `BOM-${productCode}`,
@@ -873,11 +1068,41 @@ const updateProduct = async (req, res) => {
           type: 'FG',
           status: 'Draft',
           rm_lines: nextRm,
+          sku_rm_lines: nextSkuCreate,
+          sku_bom_limit_qty: bomPayload.sku_bom_limit_qty ?? bomPayload.skuBomLimitQty ?? null,
+          sku_bom_limit_uom: bomPayload.sku_bom_limit_uom ?? bomPayload.skuBomLimitUom ?? null,
           pm_lines: nextPm,
           process_steps: Array.isArray(bomPayload.process_steps) ? bomPayload.process_steps : [],
+          client: bomPayload.brand_client ?? bomPayload.brandClient ?? product.brand_name ?? null,
+          regulatory: bomPayload.applicable_regulation ?? bomPayload.applicableRegulation ?? null,
+          description: bomPayload.claims_substantiation ?? bomPayload.claimsSubstantiation ?? null,
           ph_range: bomPayload.ph_range ?? null,
           yield_pct: bomPayload.yield_pct ?? null,
           stability_summary: bomPayload.stability_summary ?? null,
+          spec_pack: bomPayload.pack_configuration ?? bomPayload.packConfiguration ?? null,
+          spec_bulk: bomPayload.specific_gravity ?? bomPayload.specificGravity ?? null,
+          notes: (() => {
+            const parts = [];
+            const qc = String(bomPayload.pr_qc_group ?? bomPayload.prQcGroup ?? '').trim();
+            const sub = String(bomPayload.pr_sub_category ?? bomPayload.prSubCategory ?? '').trim();
+            const microbial = String(bomPayload.microbial_limits ?? bomPayload.microbialLimits ?? '').trim();
+            const spf = String(bomPayload.spf_pa_rating ?? bomPayload.sppRating ?? '').trim();
+            const photo = String(bomPayload.photostability ?? bomPayload.phototability ?? '').trim();
+            const freeze = String(bomPayload.freeze_thaw_cycles ?? bomPayload.freezeThawCycles ?? '').trim();
+            const cosmos = String(bomPayload.cosmos_natural_certification ?? bomPayload.cosmosNaturalCertification ?? '').trim();
+            const derm = String(bomPayload.dermatologically_tested ?? bomPayload.dermatologicallyTested ?? '').trim();
+            const cruelty = String(bomPayload.cruelty_free_vegan ?? bomPayload.crueltyFreeVegan ?? '').trim();
+            if (qc) parts.push(`QC Group: ${qc}`);
+            if (sub) parts.push(`PR Sub-category: ${sub}`);
+            if (microbial) parts.push(`Microbial Limits: ${microbial}`);
+            if (spf) parts.push(`SPF/PA Rating: ${spf}`);
+            if (photo) parts.push(`Photostability: ${photo}`);
+            if (freeze) parts.push(`Freeze-Thaw Cycles: ${freeze}`);
+            if (cosmos) parts.push(`COSMOS / Natural Certification: ${cosmos}`);
+            if (derm) parts.push(`Dermatologically Tested: ${derm}`);
+            if (cruelty) parts.push(`Cruelty Free / Vegan: ${cruelty}`);
+            return parts.length ? parts.join(' | ') : null;
+          })(),
           bom_composite_item:
             bomPayload.bom_composite_item ?? bomPayload.bomCompositeItem ?? false,
           created_at: new Date(),
@@ -895,13 +1120,104 @@ const updateProduct = async (req, res) => {
             });
           }
         }
+        const touchedSkuBom =
+          Array.isArray(bomPayload.sku_rm_lines) ||
+          ['sku_bom_limit_qty', 'skuBomLimitQty', 'sku_bom_limit_uom', 'skuBomLimitUom'].some((k) =>
+            Object.prototype.hasOwnProperty.call(bomPayload, k)
+          );
+        if (touchedSkuBom) {
+          const nextSkuLines = Array.isArray(bomPayload.sku_rm_lines)
+            ? bomPayload.sku_rm_lines
+            : bom.sku_rm_lines || [];
+          const nextLQ =
+            Object.prototype.hasOwnProperty.call(bomPayload, 'sku_bom_limit_qty') ||
+            Object.prototype.hasOwnProperty.call(bomPayload, 'skuBomLimitQty')
+              ? (bomPayload.sku_bom_limit_qty ?? bomPayload.skuBomLimitQty)
+              : bom.sku_bom_limit_qty;
+          const nextLU =
+            Object.prototype.hasOwnProperty.call(bomPayload, 'sku_bom_limit_uom') ||
+            Object.prototype.hasOwnProperty.call(bomPayload, 'skuBomLimitUom')
+              ? (bomPayload.sku_bom_limit_uom ?? bomPayload.skuBomLimitUom)
+              : bom.sku_bom_limit_uom;
+          const skuUpdV = validateSkuBomTotals({
+            lines: nextSkuLines,
+            limitQty: nextLQ,
+            limitUom: nextLU,
+          });
+          if (!skuUpdV.ok) {
+            return res.status(400).json({ error: skuUpdV.error, code: skuUpdV.code });
+          }
+        }
         const bomUpdate = { updated_at: new Date() };
         if (rmFromPayload) bomUpdate.rm_lines = bomPayload.rm_lines;
         if (pmFromPayload) bomUpdate.pm_lines = bomPayload.pm_lines;
+        if (Array.isArray(bomPayload.sku_rm_lines)) {
+          bomUpdate.sku_rm_lines = bomPayload.sku_rm_lines;
+        }
+        if (
+          Object.prototype.hasOwnProperty.call(bomPayload, 'sku_bom_limit_qty') ||
+          Object.prototype.hasOwnProperty.call(bomPayload, 'skuBomLimitQty')
+        ) {
+          bomUpdate.sku_bom_limit_qty = bomPayload.sku_bom_limit_qty ?? bomPayload.skuBomLimitQty ?? null;
+        }
+        if (
+          Object.prototype.hasOwnProperty.call(bomPayload, 'sku_bom_limit_uom') ||
+          Object.prototype.hasOwnProperty.call(bomPayload, 'skuBomLimitUom')
+        ) {
+          bomUpdate.sku_bom_limit_uom = bomPayload.sku_bom_limit_uom ?? bomPayload.skuBomLimitUom ?? null;
+        }
         if (Array.isArray(bomPayload.process_steps)) bomUpdate.process_steps = bomPayload.process_steps;
         if (bomPayload.ph_range !== undefined) bomUpdate.ph_range = bomPayload.ph_range;
+        if (bomPayload.brand_client !== undefined || bomPayload.brandClient !== undefined) {
+          bomUpdate.client = bomPayload.brand_client ?? bomPayload.brandClient ?? null;
+        }
+        if (bomPayload.applicable_regulation !== undefined || bomPayload.applicableRegulation !== undefined) {
+          bomUpdate.regulatory = bomPayload.applicable_regulation ?? bomPayload.applicableRegulation ?? null;
+        }
+        if (bomPayload.claims_substantiation !== undefined || bomPayload.claimsSubstantiation !== undefined) {
+          bomUpdate.description = bomPayload.claims_substantiation ?? bomPayload.claimsSubstantiation ?? null;
+        }
         if (bomPayload.yield_pct !== undefined) bomUpdate.yield_pct = bomPayload.yield_pct;
         if (bomPayload.stability_summary !== undefined) bomUpdate.stability_summary = bomPayload.stability_summary;
+        if (bomPayload.pack_configuration !== undefined || bomPayload.packConfiguration !== undefined) {
+          bomUpdate.spec_pack = bomPayload.pack_configuration ?? bomPayload.packConfiguration ?? null;
+        }
+        if (bomPayload.specific_gravity !== undefined || bomPayload.specificGravity !== undefined) {
+          bomUpdate.spec_bulk = bomPayload.specific_gravity ?? bomPayload.specificGravity ?? null;
+        }
+        if (
+          bomPayload.pr_sub_category !== undefined || bomPayload.prSubCategory !== undefined ||
+          bomPayload.pr_qc_group !== undefined || bomPayload.prQcGroup !== undefined ||
+          bomPayload.microbial_limits !== undefined || bomPayload.microbialLimits !== undefined ||
+          bomPayload.spf_pa_rating !== undefined || bomPayload.sppRating !== undefined ||
+          bomPayload.photostability !== undefined || bomPayload.phototability !== undefined ||
+          bomPayload.freeze_thaw_cycles !== undefined || bomPayload.freezeThawCycles !== undefined ||
+          bomPayload.cosmos_natural_certification !== undefined || bomPayload.cosmosNaturalCertification !== undefined ||
+          bomPayload.dermatologically_tested !== undefined || bomPayload.dermatologicallyTested !== undefined ||
+          bomPayload.cruelty_free_vegan !== undefined || bomPayload.crueltyFreeVegan !== undefined
+        ) {
+          const parsed = parseBomNotes(bom.notes);
+          const subCat = String(bomPayload.pr_sub_category ?? bomPayload.prSubCategory ?? parsed.pr_sub_category ?? '').trim();
+          const qcGroup = String(bomPayload.pr_qc_group ?? bomPayload.prQcGroup ?? parsed.pr_qc_group ?? '').trim();
+          const microbial = String(bomPayload.microbial_limits ?? bomPayload.microbialLimits ?? parsed.microbial_limits ?? '').trim();
+          const spf = String(bomPayload.spf_pa_rating ?? bomPayload.sppRating ?? parsed.spf_pa_rating ?? '').trim();
+          const photo = String(bomPayload.photostability ?? bomPayload.phototability ?? parsed.photostability ?? '').trim();
+          const freeze = String(bomPayload.freeze_thaw_cycles ?? bomPayload.freezeThawCycles ?? parsed.freeze_thaw_cycles ?? '').trim();
+          const cosmos = String(bomPayload.cosmos_natural_certification ?? bomPayload.cosmosNaturalCertification ?? parsed.cosmos_natural_certification ?? '').trim();
+          const derm = String(bomPayload.dermatologically_tested ?? bomPayload.dermatologicallyTested ?? parsed.dermatologically_tested ?? '').trim();
+          const cruelty = String(bomPayload.cruelty_free_vegan ?? bomPayload.crueltyFreeVegan ?? parsed.cruelty_free_vegan ?? '').trim();
+          const parts = [];
+          if (qcGroup) parts.push(`QC Group: ${qcGroup}`);
+          if (subCat) parts.push(`PR Sub-category: ${subCat}`);
+          if (microbial) parts.push(`Microbial Limits: ${microbial}`);
+          if (spf) parts.push(`SPF/PA Rating: ${spf}`);
+          if (photo) parts.push(`Photostability: ${photo}`);
+          if (freeze) parts.push(`Freeze-Thaw Cycles: ${freeze}`);
+          if (cosmos) parts.push(`COSMOS / Natural Certification: ${cosmos}`);
+          if (derm) parts.push(`Dermatologically Tested: ${derm}`);
+          if (cruelty) parts.push(`Cruelty Free / Vegan: ${cruelty}`);
+          bomUpdate.notes = parts.length ? parts.join(' | ') : null;
+        }
         if (bomPayload.bom_composite_item !== undefined) {
           bomUpdate.bom_composite_item = !!bomPayload.bom_composite_item;
         } else if (bomPayload.bomCompositeItem !== undefined) {
@@ -913,6 +1229,23 @@ const updateProduct = async (req, res) => {
 
     const body = { ...req.body };
     delete body.bom;
+    if (body.brand_client !== undefined) {
+      body.brand_name = body.brand_client;
+    }
+    delete body.pr_sub_category;
+    delete body.pr_qc_group;
+    delete body.pack_configuration;
+    delete body.specific_gravity;
+    delete body.microbial_limits;
+    delete body.spf_pa_rating;
+    delete body.photostability;
+    delete body.freeze_thaw_cycles;
+    delete body.cosmos_natural_certification;
+    delete body.dermatologically_tested;
+    delete body.cruelty_free_vegan;
+    delete body.brand_client;
+    delete body.applicable_regulation;
+    delete body.claims_substantiation;
 
     await product.update({
       ...body,

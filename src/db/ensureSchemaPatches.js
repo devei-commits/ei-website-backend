@@ -1,0 +1,231 @@
+/**
+ * Idempotent startup schema patches.
+ *
+ * Why this file exists: `sequelize.sync({ alter: true })` is not always reliable for adding
+ * new columns (especially JSON / DECIMAL on large tables, or when a previous failed alter
+ * left the table in a state Sequelize does not detect). When the ORM model and the live
+ * Postgres schema drift, queries fail at runtime with `column "X" does not exist`.
+ *
+ * Each patch here is `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` (Postgres-native and safe
+ * to run on every boot). Failures are logged but never fatal — server boot must still
+ * succeed even if a patch can't be applied (e.g. missing ALTER privilege on a managed DB).
+ *
+ * Add new entries when a model gains a column that older databases don't have. Keep
+ * statements ordered by table for readability.
+ */
+
+const db = require('../../db');
+
+const PATCHES = [
+  // boms — SKU BOM (per-unit RM lines + net-per-unit limit) added April 2026
+  {
+    name: 'boms.sku_rm_lines',
+    table: 'boms',
+    sql: 'ALTER TABLE "boms" ADD COLUMN IF NOT EXISTS "sku_rm_lines" JSON',
+  },
+  {
+    name: 'boms.sku_bom_limit_qty',
+    table: 'boms',
+    sql: 'ALTER TABLE "boms" ADD COLUMN IF NOT EXISTS "sku_bom_limit_qty" DECIMAL(18,6)',
+  },
+  {
+    name: 'boms.sku_bom_limit_uom',
+    table: 'boms',
+    sql: 'ALTER TABLE "boms" ADD COLUMN IF NOT EXISTS "sku_bom_limit_uom" VARCHAR(20)',
+  },
+  // boms — Composite item flag (PR/CI series switch) added 2026
+  {
+    name: 'boms.bom_composite_item',
+    table: 'boms',
+    sql: 'ALTER TABLE "boms" ADD COLUMN IF NOT EXISTS "bom_composite_item" BOOLEAN DEFAULT false',
+  },
+  // boms — pack lines + process steps + stability + linkage to products (long-running drift)
+  {
+    name: 'boms.pm_lines',
+    table: 'boms',
+    sql: 'ALTER TABLE "boms" ADD COLUMN IF NOT EXISTS "pm_lines" JSON',
+  },
+  {
+    name: 'boms.process_steps',
+    table: 'boms',
+    sql: 'ALTER TABLE "boms" ADD COLUMN IF NOT EXISTS "process_steps" JSON',
+  },
+  {
+    name: 'boms.stability_summary',
+    table: 'boms',
+    sql: 'ALTER TABLE "boms" ADD COLUMN IF NOT EXISTS "stability_summary" TEXT',
+  },
+  {
+    name: 'boms.product_id',
+    table: 'boms',
+    sql: 'ALTER TABLE "boms" ADD COLUMN IF NOT EXISTS "product_id" INTEGER',
+  },
+
+  // Item masters (RM / PM / PR) — May 2026: column rename for clarity.
+  // raw_materials.sku        → raw_materials.zoho_sku_code
+  // pack_materials.sku       → pack_materials.zoho_sku_code
+  // products.product_sku     → products.zoho_sku_code
+  //
+  // Idempotent rename via DO block (Postgres has no IF EXISTS on RENAME COLUMN).
+  // Safe scenarios:
+  //   - Old column present, new column absent  → renames.
+  //   - Old column absent, new column present  → no-op (after first successful run, or fresh DB created from updated model).
+  //   - Both present (unlikely)                → no-op (manual cleanup needed).
+  {
+    name: 'raw_materials.sku→zoho_sku_code',
+    table: 'raw_materials',
+    sql: `
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'raw_materials' AND column_name = 'sku'
+        ) AND NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'raw_materials' AND column_name = 'zoho_sku_code'
+        ) THEN
+          ALTER TABLE "raw_materials" RENAME COLUMN "sku" TO "zoho_sku_code";
+        END IF;
+      END $$;
+    `,
+  },
+  {
+    name: 'pack_materials.sku→zoho_sku_code',
+    table: 'pack_materials',
+    sql: `
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'pack_materials' AND column_name = 'sku'
+        ) AND NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'pack_materials' AND column_name = 'zoho_sku_code'
+        ) THEN
+          ALTER TABLE "pack_materials" RENAME COLUMN "sku" TO "zoho_sku_code";
+        END IF;
+      END $$;
+    `,
+  },
+  {
+    name: 'products.product_sku→zoho_sku_code',
+    table: 'products',
+    sql: `
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'products' AND column_name = 'product_sku'
+        ) AND NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'products' AND column_name = 'zoho_sku_code'
+        ) THEN
+          ALTER TABLE "products" RENAME COLUMN "product_sku" TO "zoho_sku_code";
+        END IF;
+      END $$;
+    `,
+  },
+
+  // Rename the partial-unique indexes added earlier (they still point at the renamed column,
+  // but the index name itself should reflect the new column for human legibility).
+  {
+    name: 'raw_materials_sku_uniq→zoho_sku_code_uniq',
+    table: 'raw_materials',
+    sql: 'ALTER INDEX IF EXISTS "raw_materials_sku_uniq" RENAME TO "raw_materials_zoho_sku_code_uniq"',
+  },
+  {
+    name: 'pack_materials_sku_uniq→zoho_sku_code_uniq',
+    table: 'pack_materials',
+    sql: 'ALTER INDEX IF EXISTS "pack_materials_sku_uniq" RENAME TO "pack_materials_zoho_sku_code_uniq"',
+  },
+  {
+    name: 'products_product_sku_uniq→zoho_sku_code_uniq',
+    table: 'products',
+    sql: 'ALTER INDEX IF EXISTS "products_product_sku_uniq" RENAME TO "products_zoho_sku_code_uniq"',
+  },
+
+  // (Re-)create the partial unique indexes under the new name. No-op if already present
+  // (e.g. after the rename above, or on a fresh DB where Sequelize created neither).
+  {
+    name: 'raw_materials.zoho_sku_code.unique',
+    table: 'raw_materials',
+    sql: 'CREATE UNIQUE INDEX IF NOT EXISTS "raw_materials_zoho_sku_code_uniq" ON "raw_materials" ("zoho_sku_code") WHERE "zoho_sku_code" IS NOT NULL',
+  },
+  {
+    name: 'pack_materials.zoho_sku_code.unique',
+    table: 'pack_materials',
+    sql: 'CREATE UNIQUE INDEX IF NOT EXISTS "pack_materials_zoho_sku_code_uniq" ON "pack_materials" ("zoho_sku_code") WHERE "zoho_sku_code" IS NOT NULL',
+  },
+  {
+    name: 'products.zoho_sku_code.unique',
+    table: 'products',
+    sql: 'CREATE UNIQUE INDEX IF NOT EXISTS "products_zoho_sku_code_uniq" ON "products" ("zoho_sku_code") WHERE "zoho_sku_code" IS NOT NULL',
+  },
+
+  // Item masters — ensure Zoho id columns are nullable. Models declare allowNull:true,
+  // but if an older DB was created with NOT NULL we drop it here so inserts without a
+  // Zoho id (e.g. when zoho sync is disabled or the upstream call fails) succeed.
+  {
+    name: 'raw_materials.zoho_id.drop_not_null',
+    table: 'raw_materials',
+    sql: 'ALTER TABLE "raw_materials" ALTER COLUMN "zoho_id" DROP NOT NULL',
+  },
+  {
+    name: 'pack_materials.zoho_id.drop_not_null',
+    table: 'pack_materials',
+    sql: 'ALTER TABLE "pack_materials" ALTER COLUMN "zoho_id" DROP NOT NULL',
+  },
+  {
+    name: 'products.zoho_item_id.drop_not_null',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ALTER COLUMN "zoho_item_id" DROP NOT NULL',
+  },
+];
+
+async function tableExists(tableName) {
+  try {
+    const [rows] = await db.query(
+      `SELECT to_regclass($1) AS oid`,
+      { bind: [`public."${tableName}"`] }
+    );
+    return Array.isArray(rows) && rows[0] && rows[0].oid != null;
+  } catch (_e) {
+    return false;
+  }
+}
+
+async function ensureSchemaPatches() {
+  const dialect = db.getDialect ? db.getDialect() : null;
+  if (dialect && dialect !== 'postgres') {
+    // Patches use Postgres-only `ADD COLUMN IF NOT EXISTS`; skip for sqlite (test) etc.
+    return;
+  }
+
+  // Cache existence per table so we only hit pg_catalog once per unique table name.
+  const tableExistsCache = new Map();
+  const checkTable = async (name) => {
+    if (!name) return true;
+    if (tableExistsCache.has(name)) return tableExistsCache.get(name);
+    const exists = await tableExists(name);
+    tableExistsCache.set(name, exists);
+    return exists;
+  };
+
+  for (const patch of PATCHES) {
+    const exists = await checkTable(patch.table);
+    if (!exists) {
+      // Fresh DB / table not yet created — Sequelize sync will create it with the
+      // column already present in the model. Skip silently to avoid log noise.
+      continue;
+    }
+    try {
+      await db.query(patch.sql);
+    } catch (err) {
+      console.warn(
+        `[ensureSchemaPatches] Skipped ${patch.name}: ${err && err.message ? err.message : err}`
+      );
+    }
+  }
+}
+
+module.exports = { ensureSchemaPatches };

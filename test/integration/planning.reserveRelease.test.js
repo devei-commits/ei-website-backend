@@ -27,7 +27,7 @@ describe('planning reserve and release', () => {
     if (!dbAvailable) return;
     await db.sync({ force: true });
     const so = await SalesOrder.create({ order_id: 'SO-PLAN-001', customer_name: 'Test', status: 'Approved' });
-    const product = await Product.create({ product_sku: 'SKU-PLAN-001', product_name: 'Plan Product', status: 'Active' });
+    const product = await Product.create({ zoho_sku_code: 'SKU-PLAN-001', product_name: 'Plan Product', status: 'Active' });
     const rm = await RawMaterial.create({ code: 'RM-PLAN-001', name: 'Plan RM', status: 'Active' });
     const pm = await PackMaterial.create({ code: 'PM-PLAN-001', description: 'Plan PM', status: 'Active' });
     rmId = rm.id;

@@ -1,7 +1,7 @@
 /**
  * Raw Materials model for Masters → Raw Materials dashboard.
  * Zoho Books: `zoho_id` is set on create via POST /items when Zoho is enabled (`zohoMasterItemSync`).
- * Table: raw_materials (code, name, inci, ..., zoho_id, sku, hsn_code, tax_pref, sales_purchase_account)
+ * Table: raw_materials (code, name, inci, ..., zoho_id, zoho_sku_code, hsn_code, tax_pref, sales_purchase_account)
  */
 const { DataTypes, Model } = require('sequelize');
 const db = require('../../db');
@@ -32,7 +32,13 @@ RawMaterial.init(
     products: { type: DataTypes.JSON, allowNull: true }, // array of product codes e.g. ['PR-001','PR-002']
     group: { type: DataTypes.STRING(100), allowNull: true },
     zoho_id: { type: DataTypes.STRING(100), allowNull: true },
-    sku: { type: DataTypes.STRING(100), allowNull: true },
+    /**
+     * Zoho-mirrored SKU code. After a successful Zoho item sync this matches `item.sku` in Zoho Books.
+     * Enforced UNIQUE (partial, where NOT NULL) at the DB level — see ensureSchemaPatches.
+     * Nullable while a row is in pre-sync draft state.
+     * Renamed from `sku` (May 2026) for cross-table clarity (RM/PM/PR all use `zoho_sku_code`).
+     */
+    zoho_sku_code: { type: DataTypes.STRING(100), allowNull: true },
     hsn_code: { type: DataTypes.STRING(50), allowNull: true },
     tax_pref: { type: DataTypes.STRING(50), allowNull: true },
     sales_purchase_account: { type: DataTypes.STRING(255), allowNull: true },

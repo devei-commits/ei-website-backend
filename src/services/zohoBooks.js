@@ -104,6 +104,83 @@ function getOrgId() {
   return String(id).trim();
 }
 
+/** Zoho Inventory API base (India default). Same OAuth token works if scopes include Inventory. */
+function getInventoryBaseUrl() {
+  return (process.env.ZOHO_INVENTORY_API_BASE || 'https://www.zohoapis.in/inventory/v1').replace(/\/$/, '');
+}
+
+/** Inventory org id when it differs from Books; otherwise Books org id. */
+function getInventoryOrgId() {
+  const inv = process.env.ZOHO_INVENTORY_ORGANIZATION_ID;
+  if (inv != null && String(inv).trim() !== '') return String(inv).trim();
+  return getOrgId();
+}
+
+/**
+ * Composite item (bundle) from Zoho Inventory or Zoho Books — `mapped_items` are constituents per 1 composite unit.
+ * Tries Inventory GET /compositeitems/{id} first, then Books /compositeitems/{id}.
+ * @param {string} compositeItemId
+ * @returns {Promise<Record<string, unknown>>}
+ */
+async function fetchCompositeItem(compositeItemId) {
+  const id = normalizeZohoId(compositeItemId);
+  if (!id) {
+    const err = new Error('missing_composite_item_id');
+    err.code = 'MISSING_ID';
+    throw err;
+  }
+  const token = await getAccessToken();
+
+  const tryInventory = async () => {
+    const invBase = getInventoryBaseUrl();
+    const invOrg = getInventoryOrgId();
+    const url = `${invBase}/compositeitems/${encodeURIComponent(id)}?organization_id=${encodeURIComponent(invOrg)}`;
+    logZohoRequest('fetchCompositeItem.inventory', 'GET', url, null);
+    const res = await fetch(url, { headers: { Authorization: `Zoho-oauthtoken ${token}` } });
+    const raw = await readBooksJsonResponse(res);
+    logZohoResponse('fetchCompositeItem.inventory', res.status, raw);
+    const code = raw && typeof raw.code === 'number' ? raw.code : undefined;
+    const codeOk = code === undefined || code === 0;
+    if (!res.ok || !codeOk) return null;
+    const composite = raw && raw.composite_item;
+    if (composite && typeof composite === 'object' && Array.isArray(composite.mapped_items)) {
+      return composite;
+    }
+    return null;
+  };
+
+  const tryBooks = async () => {
+    const orgId = getOrgId();
+    const url = `${getBooksBaseUrl()}/compositeitems/${encodeURIComponent(id)}?organization_id=${encodeURIComponent(orgId)}`;
+    logZohoRequest('fetchCompositeItem.books', 'GET', url, null);
+    const res = await fetch(url, { headers: { Authorization: `Zoho-oauthtoken ${token}` } });
+    const raw = await readBooksJsonResponse(res);
+    logZohoResponse('fetchCompositeItem.books', res.status, raw);
+    const code = raw && typeof raw.code === 'number' ? raw.code : undefined;
+    if (!res.ok || (code !== undefined && code !== 0)) {
+      const msg = raw?.message || raw?.error || res.statusText || 'zoho_composite_fetch_failed';
+      const err = new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+      err.zohoRaw = raw;
+      err.statusCode = res.status;
+      throw err;
+    }
+    const composite = raw?.composite_item;
+    if (composite && typeof composite === 'object') return composite;
+    return null;
+  };
+
+  const fromInv = await tryInventory();
+  if (fromInv) return fromInv;
+  const fromBooks = await tryBooks();
+  if (fromBooks) return fromBooks;
+
+  const err = new Error(
+    'Could not load composite item from Zoho Inventory or Books (check id, org id, and OAuth scopes: ZohoInventory.compositeitems.READ / ZohoBooks.bundles.READ).'
+  );
+  err.code = 'ZOHO_COMPOSITE_NOT_FOUND';
+  throw err;
+}
+
 /**
  * @returns {Promise<string>}
  */
@@ -613,6 +690,46 @@ async function listAllContacts(options = {}) {
   return listAllBooksCollection('contacts', 'contacts', options);
 }
 
+/**
+ * GET /contacts/{id} — includes billing/shipping details missing in list rows.
+ * @param {string} contactId
+ * @returns {Promise<Record<string, unknown> | null>}
+ */
+async function getContactById(contactId) {
+  const id = normalizeZohoContactId(contactId);
+  if (!id) {
+    const err = new Error('getContactById: contact id is required');
+    err.code = 'MISSING_ID';
+    throw err;
+  }
+  const orgId = getOrgId();
+  const token = await getAccessToken();
+  const url = `${getBooksBaseUrl()}/contacts/${encodeURIComponent(id)}?organization_id=${encodeURIComponent(orgId)}`;
+
+  logZohoRequest('getContactById', 'GET', url, null);
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Zoho-oauthtoken ${token}` },
+  });
+
+  const raw = await readBooksJsonResponse(res);
+  logZohoResponse('getContactById', res.status, raw);
+
+  const code = raw && typeof raw.code === 'number' ? raw.code : undefined;
+  const codeOk = code === undefined || code === 0;
+  if (!res.ok || !codeOk) {
+    logZohoError('getContactById', 'GET', url, res.status, raw);
+    const msg = raw.message || raw.error || res.statusText || 'get_contact_failed';
+    const err = new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    err.zohoRaw = raw;
+    err.statusCode = res.status;
+    throw err;
+  }
+
+  const contact = raw.contact && typeof raw.contact === 'object' ? raw.contact : null;
+  return contact;
+}
+
 /** @param {{ page?: number, perPage?: number, filterBy?: string, sortColumn?: string }} options */
 async function listInvoicesPage(options = {}) {
   return listBooksCollectionPage('invoices', 'invoices', options);
@@ -757,6 +874,7 @@ module.exports = {
   listAllBooksCollection,
   listContactsPage,
   listAllContacts,
+  getContactById,
   listInvoicesPage,
   listAllInvoices,
   listEstimatesPage,
@@ -773,6 +891,9 @@ module.exports = {
   normalizeZohoContactId,
   getBooksBaseUrl,
   getOrgId,
+  getInventoryBaseUrl,
+  getInventoryOrgId,
+  fetchCompositeItem,
   getAccessTokenCacheMeta,
   zohoDebugEnabled,
   stringifyForLog,

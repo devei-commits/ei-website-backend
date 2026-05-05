@@ -282,7 +282,7 @@ const saveOrder = async (req, res) => {
 
         const products = await Product.findAll({
             where: { product_id: productIds },
-            attributes: ['product_id', 'product_name', 'product_code', 'product_sku', 'mrp_price', 'lead_time_days', 'batch_size_kg'],
+            attributes: ['product_id', 'product_name', 'product_code', 'zoho_sku_code', 'mrp_price', 'lead_time_days', 'batch_size_kg'],
             transaction: t,
         });
         const productMap = new Map(products.map((p) => [Number(p.product_id), p.get ? p.get({ plain: true }) : p]));
@@ -292,7 +292,7 @@ const saveOrder = async (req, res) => {
             return {
                 fulfillment_order_id: ffOrder.id,
                 item_no: String(idx + 1),
-                sku: p.product_sku || p.product_code || null,
+                sku: p.zoho_sku_code || p.product_code || null,
                 product_name: p.product_name || `Product ${it.product_id}`,
                 pack: null,
                 ordered_qty: Number(it.quantity) || 0,
@@ -315,7 +315,7 @@ const saveOrder = async (req, res) => {
                 const p = productMap.get(Number(it.product_id)) || {};
                 return {
                     product_id: Number(it.product_id),
-                    sku: p.product_sku || p.product_code || '',
+                    sku: p.zoho_sku_code || p.product_code || '',
                     productName: p.product_name || `Product ${it.product_id}`,
                     pack: '',
                     quantity: Number(it.quantity) || 0,

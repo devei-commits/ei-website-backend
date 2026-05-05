@@ -39,7 +39,7 @@ function formatPackMaterial(row) {
     print_status: d.print_status,
     products: Array.isArray(d.products) ? d.products : [],
     zoho_id: d.zoho_id ?? null,
-    sku: d.sku ?? null,
+    zoho_sku_code: d.zoho_sku_code ?? null,
     hsn_code: d.hsn_code ?? null,
     unit: d.unit ?? null,
     tax_pref: d.tax_pref ?? null,
@@ -70,6 +70,7 @@ async function listPackMaterials(req, res) {
       const like = { [Op.iLike]: `%${search}%` };
       where[Op.or] = [
         { code: like },
+        { zoho_sku_code: like },
         { description: like },
         { type: like },
         { level: like },
@@ -163,7 +164,10 @@ function bodyToPackMaterial(b) {
     print_status: b.print_status ?? b.printStatus ?? null,
     products: Array.isArray(b.products) ? b.products : [],
     zoho_id: b.zoho_id ?? b.zohoId ?? null,
-    sku: b.sku ?? b.pkgSku ?? b.code ?? b.itemCode ?? null,
+    // Accept both the new `zoho_sku_code` field and legacy `sku` (backward compat).
+    zoho_sku_code:
+      b.zoho_sku_code ?? b.zohoSkuCode ??
+      b.sku ?? b.pkgSku ?? b.code ?? b.itemCode ?? null,
     hsn_code: b.hsn_code ?? b.pkgHsn ?? b.hsnCode ?? null,
     unit: b.unit ?? b.pkgUnit ?? null,
     tax_pref: b.tax_pref ?? b.pkgTaxPreference ?? b.taxPref ?? null,
@@ -192,16 +196,16 @@ async function syncPmZoho(req, res) {
       return res.status(400).json({ error: 'code or itemCode is required' });
     }
     fields.code = codeTrim;
-    if (fields.sku != null && String(fields.sku).trim() !== '') {
-      fields.sku = String(fields.sku).trim();
+    if (fields.zoho_sku_code != null && String(fields.zoho_sku_code).trim() !== '') {
+      fields.zoho_sku_code = String(fields.zoho_sku_code).trim();
     } else {
-      fields.sku = null;
+      fields.zoho_sku_code = null;
     }
 
     let createdNewRow = false;
     let row = await PackMaterial.findOne({ where: { code: codeTrim } });
     if (row) {
-      const dupSku = await findConflictingMasterRow(PackMaterial, fields.code, fields.sku, row.id);
+      const dupSku = await findConflictingMasterRow(PackMaterial, fields.code, fields.zoho_sku_code, row.id);
       if (dupSku) {
         return res.status(409).json({ error: 'A pack material with this code or SKU already exists' });
       }
@@ -211,7 +215,7 @@ async function syncPmZoho(req, res) {
       if (b.form_data !== undefined) row.set('form_data', b.form_data);
       await row.save();
     } else {
-      const dup = await findConflictingMasterRow(PackMaterial, fields.code, fields.sku, null);
+      const dup = await findConflictingMasterRow(PackMaterial, fields.code, fields.zoho_sku_code, null);
       if (dup) {
         return res.status(409).json({ error: 'A pack material with this code or SKU already exists' });
       }
@@ -243,7 +247,11 @@ async function syncPmZoho(req, res) {
     }
     if (zoho.synced && zoho.itemId) {
       try {
-        await row.update({ zoho_id: zoho.itemId });
+        // Mirror Zoho's persisted item.sku into the local row so the canonical SKU
+        // matches Zoho exactly (the column has a partial UNIQUE index).
+        const updatePatch = { zoho_id: zoho.itemId };
+        if (zoho.sku && String(zoho.sku).trim()) updatePatch.zoho_sku_code = String(zoho.sku).trim();
+        await row.update(updatePatch);
         await row.reload();
       } catch (dbErr) {
         console.error('syncPmZoho: failed to save zoho_id, rolling back Zoho item', dbErr);
@@ -326,12 +334,12 @@ async function createPackMaterial(req, res) {
         });
       }
       fields.code = codeTrim;
-      if (fields.sku != null && String(fields.sku).trim() !== '') {
-        fields.sku = String(fields.sku).trim();
+      if (fields.zoho_sku_code != null && String(fields.zoho_sku_code).trim() !== '') {
+        fields.zoho_sku_code = String(fields.zoho_sku_code).trim();
       } else {
-        fields.sku = null;
+        fields.zoho_sku_code = null;
       }
-      const nextSku = fields.sku !== undefined ? fields.sku : existingRow.sku;
+      const nextSku = fields.zoho_sku_code !== undefined ? fields.zoho_sku_code : existingRow.zoho_sku_code;
       const dup = await findConflictingMasterRow(PackMaterial, fields.code, nextSku, existingRow.id);
       if (dup) {
         return res.status(409).json({ error: 'A pack material with this code or SKU already exists' });
@@ -353,7 +361,9 @@ async function createPackMaterial(req, res) {
           zoho = { synced: true, itemId: existingRow.zoho_id };
         }
         if (zoho.synced && zoho.itemId) {
-          await existingRow.update({ zoho_id: zoho.itemId }, { transaction: t });
+          const updatePatch = { zoho_id: zoho.itemId };
+          if (zoho.sku && String(zoho.sku).trim()) updatePatch.zoho_sku_code = String(zoho.sku).trim();
+          await existingRow.update(updatePatch, { transaction: t });
           await existingRow.reload({ transaction: t });
           zohoBooksItemToDelete = zoho.itemId;
         } else if (zohoSyncIsMandatoryFailure(zoho)) {
@@ -395,12 +405,12 @@ async function createPackMaterial(req, res) {
       return res.status(400).json({ error: 'code or itemCode is required' });
     }
     fields.code = codeTrim;
-    if (fields.sku != null && String(fields.sku).trim() !== '') {
-      fields.sku = String(fields.sku).trim();
+    if (fields.zoho_sku_code != null && String(fields.zoho_sku_code).trim() !== '') {
+      fields.zoho_sku_code = String(fields.zoho_sku_code).trim();
     } else {
-      fields.sku = null;
+      fields.zoho_sku_code = null;
     }
-    const dupCheck = await findConflictingMasterRow(PackMaterial, fields.code, fields.sku, null);
+    const dupCheck = await findConflictingMasterRow(PackMaterial, fields.code, fields.zoho_sku_code, null);
     if (dupCheck) {
       return res.status(409).json({ error: 'A pack material with this code or SKU already exists' });
     }
@@ -434,7 +444,9 @@ async function createPackMaterial(req, res) {
         zoho = { synced: true, itemId: row.zoho_id };
       }
       if (zoho.synced && zoho.itemId) {
-        await row.update({ zoho_id: zoho.itemId }, { transaction: t });
+        const updatePatch = { zoho_id: zoho.itemId };
+        if (zoho.sku && String(zoho.sku).trim()) updatePatch.zoho_sku_code = String(zoho.sku).trim();
+        await row.update(updatePatch, { transaction: t });
         await row.reload({ transaction: t });
         zohoBooksItemToDelete = zoho.itemId;
       } else if (zohoSyncIsMandatoryFailure(zoho)) {
@@ -518,14 +530,14 @@ async function updatePackMaterial(req, res) {
       return res.status(400).json({ error: 'code or itemCode is required' });
     }
     let nextSku;
-    if (fields.sku !== undefined) {
+    if (fields.zoho_sku_code !== undefined) {
       nextSku =
-        fields.sku == null || String(fields.sku).trim() === ''
+        fields.zoho_sku_code == null || String(fields.zoho_sku_code).trim() === ''
           ? null
-          : String(fields.sku).trim();
-      fields.sku = nextSku;
+          : String(fields.zoho_sku_code).trim();
+      fields.zoho_sku_code = nextSku;
     } else {
-      nextSku = row.sku == null ? null : String(row.sku).trim() || null;
+      nextSku = row.zoho_sku_code == null ? null : String(row.zoho_sku_code).trim() || null;
     }
     const dup = await findConflictingMasterRow(PackMaterial, nextCode, nextSku, row.id);
     if (dup) {

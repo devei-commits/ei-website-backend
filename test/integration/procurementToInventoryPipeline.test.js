@@ -37,7 +37,7 @@ describe('procurement pipeline (PR → PO → GRN → inventory)', () => {
     // Masters
     const rm = await RawMaterial.create({ code: 'RM-PR-INV-001', name: 'PR/Inv RM', status: 'Active' });
     const pm = await PackMaterial.create({ code: 'PM-PR-INV-001', description: 'PR/Inv PM', status: 'Active' });
-    const fg = await Product.create({ product_sku: 'SKU-FG-PR-INV-001', product_name: 'PR/Inv FG', status: 'Active' });
+    const fg = await Product.create({ zoho_sku_code: 'SKU-FG-PR-INV-001', product_name: 'PR/Inv FG', status: 'Active' });
 
     const so = await SalesOrder.create({ order_id: 'SO-PR-INV-001', customer_name: 'PR Inv Customer', status: 'Approved' });
 
@@ -186,7 +186,7 @@ describe('procurement pipeline (PR → PO → GRN → inventory)', () => {
     // Masters
     const rm = await RawMaterial.create({ code: 'RM-PR-INV-002', name: 'PR/Inv RM 2', status: 'Active' });
     const pm = await PackMaterial.create({ code: 'PM-PR-INV-002', description: 'PR/Inv PM 2', status: 'Active' });
-    const fg = await Product.create({ product_sku: 'SKU-FG-PR-INV-002', product_name: 'PR/Inv FG 2', status: 'Active' });
+    const fg = await Product.create({ zoho_sku_code: 'SKU-FG-PR-INV-002', product_name: 'PR/Inv FG 2', status: 'Active' });
 
     const so = await SalesOrder.create({ order_id: 'SO-PR-INV-002', customer_name: 'PR Inv Customer 2', status: 'Approved' });
 

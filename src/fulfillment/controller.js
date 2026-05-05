@@ -411,7 +411,7 @@ async function createOrder(req, res) {
         for (const item of (items || [])) {
           let productId = null;
           if (item.sku) {
-            const prod = await Product.findOne({ where: { product_sku: item.sku } });
+            const prod = await Product.findOne({ where: { zoho_sku_code: item.sku } });
             if (prod) productId = prod.product_id;
           }
           if (!productId && item.productName) {
@@ -555,7 +555,7 @@ async function createOrder(req, res) {
           const plannedQty = split.plannedQty || item.orderedQty || 0;
           let productId = null;
           if (item.sku) {
-            const prod = await Product.findOne({ where: { product_sku: item.sku } });
+            const prod = await Product.findOne({ where: { zoho_sku_code: item.sku } });
             if (prod) productId = prod.product_id;
           }
           if (!productId && item.productName) {
@@ -1085,10 +1085,30 @@ async function getCustomers(_req, res) {
 }
 
 /** Products lookup for Add SO modal: only Finished Goods (FG). RMs and PMs are materials used to build FGs. */
+function derivePackSizeForFulfillmentRow(fillSize, productName) {
+  const fromFill = String(fillSize || '').trim();
+  if (fromFill) return fromFill;
+  const n = String(productName || '').trim();
+  if (!n) return '';
+  const m = n.match(/(\d+(?:\.\d+)?)\s*(ML|MILLILIT(?:ER|RE)S?|L|LTR|LT|LIT(?:ER|RE)S?|G|GM|GRAMS?|KG|KGS|KILOGRAMS?)\b/i);
+  if (!m) return '';
+  const qty = Number(m[1]);
+  if (!Number.isFinite(qty) || qty <= 0) return '';
+  const uRaw = String(m[2] || '').trim().toUpperCase();
+  const uom =
+    uRaw === 'ML' || uRaw.startsWith('MILLI') ? 'ML'
+      : (uRaw === 'L' || uRaw === 'LTR' || uRaw === 'LT' || uRaw.startsWith('LIT')) ? 'L'
+        : (uRaw === 'G' || uRaw === 'GM' || uRaw.startsWith('GRAM')) ? 'G'
+          : (uRaw === 'KG' || uRaw === 'KGS' || uRaw.startsWith('KILO')) ? 'KG'
+            : '';
+  if (!uom) return '';
+  return `${qty % 1 === 0 ? String(Math.trunc(qty)) : String(qty)} ${uom}`;
+}
+
 async function getProducts(_req, res) {
   try {
     const products = await Product.findAll({
-      attributes: ['product_id', 'product_code', 'product_name', 'product_sku', 'fill_size', 'form', 'category', 'mrp_price'],
+      attributes: ['product_id', 'product_code', 'product_name', 'zoho_sku_code', 'fill_size', 'form', 'category', 'mrp_price'],
       order: [['product_name', 'ASC']],
     });
 
@@ -1098,8 +1118,8 @@ async function getProducts(_req, res) {
         id: `PR-${d.product_id}`,
         type: 'product',
         name: d.product_name || d.product_code,
-        sku: d.product_sku || d.product_code || '',
-        pack: d.fill_size ? `${d.fill_size} ${d.form || ''}`.trim() : d.form || '',
+        sku: d.zoho_sku_code || d.product_code || '',
+        pack: derivePackSizeForFulfillmentRow(d.fill_size, d.product_name),
         category: d.category || '',
         price: d.mrp_price != null ? Number(d.mrp_price) : 0,
       };
@@ -1335,7 +1355,7 @@ async function getSoPlanningAvailability(req, res) {
       where: { sales_order_id: salesOrder.id },
       attributes: ['id', 'batch_count', 'order_qty_display', 'sent_batch_indices'],
       include: [
-        { model: ProductModel, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'product_sku'] },
+        { model: ProductModel, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'zoho_sku_code'] },
       ],
     });
     console.log('[FULFILLMENT-AVAIL] PLANNING_ROWS', {
@@ -1664,7 +1684,7 @@ async function getSoPlanningAvailability(req, res) {
         soNo,
         planningExtractedId: planId,
         productName: product.product_name || '',
-        sku: product.product_sku || product.product_code || '',
+        sku: product.zoho_sku_code || product.product_code || '',
         effectiveTotalBatches,
         sentCount,
         rmStartableCount,
@@ -1688,7 +1708,7 @@ async function getSoPlanningAvailability(req, res) {
       });
       items.push({
         productName: product.product_name || '',
-        sku: product.product_sku || product.product_code || '',
+        sku: product.zoho_sku_code || product.product_code || '',
         totalBatches: effectiveTotalBatches,
         sentCount,
         rmStartableCount,

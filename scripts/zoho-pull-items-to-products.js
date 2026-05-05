@@ -33,6 +33,7 @@ const RawMaterial = require('../src/rawMaterials/models');
 const PackMaterial = require('../src/packMaterials/models');
 const { listAllItems, normalizeZohoId, getOrgId } = require('../src/services/zohoBooks');
 const { parseZohoPullArgs } = require('./lib/zoho-export-pull');
+const { evaluateRequiredFields, writeMissingFieldsReport, cleanOutputFile } = require('./lib/zoho-required-fields');
 
 const STATE_VERSION = 2;
 
@@ -62,6 +63,12 @@ function parseMaybeNum(v) {
   if (v == null || v === '') return null;
   const n = typeof v === 'string' ? parseFloat(v) : Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+function trunc(v, maxLen) {
+  const s = String(v || '').trim();
+  if (!s) return null;
+  return s.length > maxLen ? s.slice(0, maxLen) : s;
 }
 
 /**
@@ -103,11 +110,73 @@ function compileKindRegex(envKey, fallbackPattern) {
 
 /**
  * @param {Record<string, unknown>} item
- * @returns {'pr' | 'rm' | 'pm' | 'skip'}
+ * @returns {string}
+ */
+function normalizeCategoryKey(v) {
+  return String(v || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+/**
+ * @param {Record<string, unknown>} item
+ * @returns {string}
+ */
+function getZohoCfCategory(item) {
+  const direct = item.cf_category != null ? String(item.cf_category).trim() : '';
+  if (direct) return direct;
+  const alt = item.cf_category_unformatted != null ? String(item.cf_category_unformatted).trim() : '';
+  if (alt) return alt;
+  const h = item.custom_field_hash && typeof item.custom_field_hash === 'object' ? item.custom_field_hash : null;
+  if (h && h.cf_category != null && String(h.cf_category).trim()) return String(h.cf_category).trim();
+  if (h && h.cf_category_unformatted != null && String(h.cf_category_unformatted).trim()) return String(h.cf_category_unformatted).trim();
+  return '';
+}
+
+/**
+ * @param {Record<string, unknown>} item
+ * @returns {{ kind: 'pr' | 'rm' | 'pm' | 'skip', bucket: string, cfCategory: string | null }}
  */
 function classifyZohoMasterItem(item) {
   const sku = item.sku != null ? String(item.sku).trim() : '';
   const name = item.name != null ? String(item.name).trim() : '';
+  const cfCategory = getZohoCfCategory(item);
+  const cfKey = normalizeCategoryKey(cfCategory);
+
+  const byCfCategory = {
+    // PR
+    'fg- ongoing': { kind: 'pr', bucket: 'Product' },
+    // RM
+    fragrance: { kind: 'rm', bucket: 'Raw Material' },
+    'raw material': { kind: 'rm', bucket: 'Raw Material' },
+    'rm- active': { kind: 'rm', bucket: 'Raw Material' },
+    'rm- base': { kind: 'rm', bucket: 'Raw Material' },
+    'rm- exceipient': { kind: 'rm', bucket: 'Raw Material' },
+    // PM
+    'packaging material': { kind: 'pm', bucket: 'Packaging Material' },
+    ppm: { kind: 'pm', bucket: 'Packaging Material' },
+    'ppm - bottle': { kind: 'pm', bucket: 'Packaging Material' },
+    'ppm - closure': { kind: 'pm', bucket: 'Packaging Material' },
+    'spm - label': { kind: 'pm', bucket: 'Packaging Material' },
+    'spm - others': { kind: 'pm', bucket: 'Packaging Material' },
+    'spm-carton and kit': { kind: 'pm', bucket: 'Packaging Material' },
+    // Composite
+    'terminated composites': { kind: 'pr', bucket: 'Composite' },
+    'temporary composites': { kind: 'pr', bucket: 'Composite' },
+    'permenant composites': { kind: 'pr', bucket: 'Composite' },
+    'inhouse composites': { kind: 'pr', bucket: 'Composite' },
+    // Other
+    'equipment and accessories': { kind: 'pr', bucket: 'Other' },
+    consumables: { kind: 'pr', bucket: 'Other' },
+    'other expense': { kind: 'pr', bucket: 'Other' },
+  };
+
+  if (cfKey && byCfCategory[cfKey]) {
+    const mapped = byCfCategory[cfKey];
+    return { kind: mapped.kind, bucket: mapped.bucket, cfCategory: cfCategory || null };
+  }
+
   const rePr = compileKindRegex('ZOHO_PULL_KIND_PR_REGEX', '^EI-PR[-_]');
   const rePm = compileKindRegex('ZOHO_PULL_KIND_PM_REGEX', '^EI-PM[-_]');
   const reRm = compileKindRegex('ZOHO_PULL_KIND_RM_REGEX', '^EI-RM[-_]');
@@ -120,18 +189,24 @@ function classifyZohoMasterItem(item) {
 
   const test = (re) => re.test(sku) || re.test(name);
   for (const k of order) {
-    if (test(map[k])) return /** @type {'pr'|'rm'|'pm'} */ (k);
+    if (test(map[k])) {
+      const bucket = k === 'rm' ? 'Raw Material' : k === 'pm' ? 'Packaging Material' : 'Product';
+      return { kind: /** @type {'pr'|'rm'|'pm'} */ (k), bucket, cfCategory: cfCategory || null };
+    }
   }
 
   const u = String(process.env.ZOHO_PULL_UNMATCHED || 'skip').toLowerCase();
-  if (u === 'pr' || u === 'rm' || u === 'pm') return u;
-  return 'skip';
+  if (u === 'pr' || u === 'rm' || u === 'pm') {
+    const bucket = u === 'rm' ? 'Raw Material' : u === 'pm' ? 'Packaging Material' : 'Product';
+    return { kind: u, bucket, cfCategory: cfCategory || null };
+  }
+  return { kind: 'skip', bucket: 'Unclassified', cfCategory: cfCategory || null };
 }
 
 /**
  * @param {Record<string, unknown>} item
  */
-function zohoItemToProductAttrs(item) {
+function zohoItemToProductAttrs(item, classification) {
   const zid = normalizeZohoId(item.item_id);
   const sku = item.sku != null ? String(item.sku).trim() : '';
   const name = item.name != null ? String(item.name).trim() : '';
@@ -152,10 +227,11 @@ function zohoItemToProductAttrs(item) {
   return {
     zoho_item_id: zid,
     product_code: productCode,
-    product_sku: sku || null,
+    zoho_sku_code: sku || null,
     product_name: name || productCode || 'Zoho item',
     mrp_price: mrp,
     tax_rate: taxRate,
+    category: classification && classification.bucket ? classification.bucket : null,
     product_description: description,
     status,
     created_at: now,
@@ -166,11 +242,11 @@ function zohoItemToProductAttrs(item) {
 /**
  * @param {Record<string, unknown>} item
  */
-function zohoItemToRawMaterialAttrs(item) {
+function zohoItemToRawMaterialAttrs(item, classification) {
   const zid = normalizeZohoId(item.item_id);
   const sku = item.sku != null ? String(item.sku).trim() : '';
   const name = item.name != null ? String(item.name).trim() : '';
-  const code = sku || (zid ? `ZHO-RM-${zid}` : 'UNKNOWN');
+  const code = trunc(sku || (zid ? `ZHO-RM-${zid}` : 'UNKNOWN'), 100) || 'UNKNOWN';
   const rateRaw =
     item.purchase_rate != null && String(item.purchase_rate).trim() !== ''
       ? item.purchase_rate
@@ -187,12 +263,14 @@ function zohoItemToRawMaterialAttrs(item) {
 
   return {
     code,
-    name: name || code,
+    name: trunc(name || code, 255) || code,
     price_per_kg: parseMaybeNum(rateRaw),
     gst: parseMaybeNum(item.tax_percentage),
-    sku: sku || null,
-    hsn_code: hsn,
-    uom: unit,
+    sku: trunc(sku, 100),
+    hsn_code: trunc(hsn, 50),
+    uom: trunc(unit, 20),
+    category: classification && classification.bucket ? classification.bucket : null,
+    group: trunc(classification && classification.cfCategory ? classification.cfCategory : null, 100),
     zoho_id: zid,
     status,
     created_at: now,
@@ -203,11 +281,11 @@ function zohoItemToRawMaterialAttrs(item) {
 /**
  * @param {Record<string, unknown>} item
  */
-function zohoItemToPackMaterialAttrs(item) {
+function zohoItemToPackMaterialAttrs(item, classification) {
   const zid = normalizeZohoId(item.item_id);
   const sku = item.sku != null ? String(item.sku).trim() : '';
   const name = item.name != null ? String(item.name).trim() : '';
-  const code = sku || (zid ? `ZHO-PM-${zid}` : 'UNKNOWN');
+  const code = trunc(sku || (zid ? `ZHO-PM-${zid}` : 'UNKNOWN'), 100) || 'UNKNOWN';
   const rateRaw =
     item.purchase_rate != null && String(item.purchase_rate).trim() !== ''
       ? item.purchase_rate
@@ -224,11 +302,13 @@ function zohoItemToPackMaterialAttrs(item) {
 
   return {
     code,
-    description: name || code,
+    description: trunc(name || code, 500) || code,
     price_per_pc: parseMaybeNum(rateRaw),
-    sku: sku || null,
-    hsn_code: hsn,
-    unit,
+    sku: trunc(sku, 100),
+    hsn_code: trunc(hsn, 50),
+    unit: trunc(unit, 20),
+    type: trunc(classification && classification.bucket ? classification.bucket : null, 100),
+    group: trunc(classification && classification.cfCategory ? classification.cfCategory : null, 100),
     zoho_id: zid,
     status,
     created_at: now,
@@ -335,10 +415,11 @@ async function applyUpdate(kind, row, attrs, dryRun) {
   if (kind === 'pr') {
     await row.update({
       product_name: attrs.product_name,
-      product_sku: attrs.product_sku,
+      zoho_sku_code: attrs.zoho_sku_code,
       product_code: attrs.product_code,
       mrp_price: attrs.mrp_price,
       tax_rate: attrs.tax_rate,
+      category: attrs.category,
       product_description: attrs.product_description,
       status: attrs.status,
       updated_at: new Date(),
@@ -352,6 +433,8 @@ async function applyUpdate(kind, row, attrs, dryRun) {
       gst: attrs.gst,
       hsn_code: attrs.hsn_code,
       uom: attrs.uom,
+      category: attrs.category,
+      group: attrs.group,
       status: attrs.status,
       updated_at: new Date(),
     });
@@ -363,6 +446,8 @@ async function applyUpdate(kind, row, attrs, dryRun) {
       price_per_pc: attrs.price_per_pc,
       hsn_code: attrs.hsn_code,
       unit: attrs.unit,
+      type: attrs.type,
+      group: attrs.group,
       status: attrs.status,
       updated_at: new Date(),
     });
@@ -401,6 +486,9 @@ async function main() {
     }
     return;
   }
+
+  // Ensure stale report is removed before exporting missing entries.
+  await cleanOutputFile('exports/zoho-items-missing-required-fields.json');
 
   const orgId = getOrgId();
   let prevState = await readState(statePath);
@@ -457,18 +545,60 @@ async function main() {
   let skipped = 0;
   let errors = 0;
   let skippedUnclassified = 0;
+  let skippedMissingRequired = 0;
+  const missingRequiredItems = [];
   const byKind = { pr: { inserted: 0, updated: 0 }, rm: { inserted: 0, updated: 0 }, pm: { inserted: 0, updated: 0 } };
+  const requiredFieldsForItemImport = [
+    { key: 'item_id', getValue: (item) => normalizeZohoId(item?.item_id) },
+    { key: 'name', getValue: (item) => String(item?.name || '').trim() },
+    {
+      key: 'classification',
+      getValue: (item) => {
+        const cls = classifyZohoMasterItem(item);
+        return cls.kind !== 'skip' ? cls.kind : '';
+      },
+    },
+    {
+      key: 'mrp_price',
+      getValue: (item) => {
+        const cls = classifyZohoMasterItem(item);
+        if (cls.kind !== 'pr') return '__N/A__'; // only required for PR/Product
+        const rateRaw = item.rate != null ? item.rate : item.sales_rate;
+        return parseMaybeNum(rateRaw);
+      },
+    },
+  ];
 
   const incrementalMode = cutoffMs != null;
 
   for (const item of itemsToProcess) {
+    const missingFields = evaluateRequiredFields(item, requiredFieldsForItemImport);
+    if (missingFields.length > 0) {
+      skippedMissingRequired += 1;
+      skipped += 1;
+      const classification = classifyZohoMasterItem(item);
+      const mrpRateRaw = item.rate != null ? item.rate : item.sales_rate;
+      const mrp_price = classification.kind === 'pr' ? parseMaybeNum(mrpRateRaw) : null;
+      missingRequiredItems.push({
+        zoho_item_id: normalizeZohoId(item?.item_id) || null,
+        name: String(item?.name || '').trim() || null,
+        sku: String(item?.sku || '').trim() || null,
+        status: String(item?.status || '').trim() || null,
+        cf_category: getZohoCfCategory(item) || null,
+        mrp_price,
+        missing_fields: missingFields,
+      });
+      continue;
+    }
+
     const zid = normalizeZohoId(item.item_id);
     if (!zid) {
       skipped += 1;
       continue;
     }
 
-    const kind = classifyZohoMasterItem(item);
+    const classification = classifyZohoMasterItem(item);
+    const { kind } = classification;
     if (kind === 'skip') {
       skippedUnclassified += 1;
       skipped += 1;
@@ -476,14 +606,14 @@ async function main() {
     }
 
     let attrsForCreate;
-    if (kind === 'pr') attrsForCreate = zohoItemToProductAttrs(item);
-    else if (kind === 'rm') attrsForCreate = zohoItemToRawMaterialAttrs(item);
-    else attrsForCreate = zohoItemToPackMaterialAttrs(item);
+    if (kind === 'pr') attrsForCreate = zohoItemToProductAttrs(item, classification);
+    else if (kind === 'rm') attrsForCreate = zohoItemToRawMaterialAttrs(item, classification);
+    else attrsForCreate = zohoItemToPackMaterialAttrs(item, classification);
 
     function attrsForKind(k) {
-      if (k === 'pr') return zohoItemToProductAttrs(item);
-      if (k === 'rm') return zohoItemToRawMaterialAttrs(item);
-      return zohoItemToPackMaterialAttrs(item);
+      if (k === 'pr') return zohoItemToProductAttrs(item, classification);
+      if (k === 'rm') return zohoItemToRawMaterialAttrs(item, classification);
+      return zohoItemToPackMaterialAttrs(item, classification);
     }
 
     try {
@@ -528,6 +658,22 @@ async function main() {
 
   const pullCompletedAt = new Date().toISOString();
 
+  const missingReportPath = await writeMissingFieldsReport({
+    outputPath: 'exports/zoho-items-missing-required-fields.json',
+    entity: 'zoho-items-to-products-rm-pm',
+    requiredFields: requiredFieldsForItemImport.map((f) => f.key),
+    missingRecords: missingRequiredItems,
+    meta: {
+      organizationId: orgId,
+      filterBy,
+      dryRun,
+      maxPages: opts.maxPages ?? null,
+      limit: opts.limit ?? null,
+      fetchedFromZoho: allItems.length,
+      processedAfterFilter: itemsToProcess.length,
+    },
+  });
+
   if (!dryRun && errors === 0) {
     /** @type {PullState} */
     const nextState = {
@@ -561,6 +707,9 @@ async function main() {
 
   console.log(
     `[zoho-pull] done: inserted=${inserted}, updated=${updated}, skipped=${skipped} (unclassified=${skippedUnclassified}), errors=${errors}, dryRun=${dryRun}`
+  );
+  console.log(
+    `[zoho-pull] required-fields: skippedMissingRequired=${skippedMissingRequired}, report=${missingReportPath}`
   );
   console.log(
     `[zoho-pull] by kind: PR ins=${byKind.pr.inserted} up=${byKind.pr.updated}, RM ins=${byKind.rm.inserted} up=${byKind.rm.updated}, PM ins=${byKind.pm.inserted} up=${byKind.pm.updated}`

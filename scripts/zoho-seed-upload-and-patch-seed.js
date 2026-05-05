@@ -492,7 +492,7 @@ async function main() {
       }
 
       const sku =
-        (p.product_sku && String(p.product_sku).trim()) ||
+        (p.zoho_sku_code && String(p.zoho_sku_code).trim()) ||
         (p.product_code && String(p.product_code).trim()) ||
         '';
       let itemId = null;

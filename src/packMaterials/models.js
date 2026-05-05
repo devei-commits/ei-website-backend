@@ -28,7 +28,13 @@ PackMaterial.init(
     print_status: { type: DataTypes.STRING(100), allowNull: true },
     products: { type: DataTypes.JSON, allowNull: true }, // array of product codes e.g. ['PR-002']
     zoho_id: { type: DataTypes.STRING(100), allowNull: true },
-    sku: { type: DataTypes.STRING(100), allowNull: true },
+    /**
+     * Zoho-mirrored SKU code. After a successful Zoho item sync this matches `item.sku` in Zoho Books.
+     * Enforced UNIQUE (partial, where NOT NULL) at the DB level — see ensureSchemaPatches.
+     * Nullable while a row is in pre-sync draft state.
+     * Renamed from `sku` (May 2026) for cross-table clarity (RM/PM/PR all use `zoho_sku_code`).
+     */
+    zoho_sku_code: { type: DataTypes.STRING(100), allowNull: true },
     hsn_code: { type: DataTypes.STRING(50), allowNull: true },
     unit: { type: DataTypes.STRING(20), allowNull: true },
     tax_pref: { type: DataTypes.STRING(50), allowNull: true },

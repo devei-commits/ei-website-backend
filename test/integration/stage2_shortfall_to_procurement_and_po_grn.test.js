@@ -85,7 +85,7 @@ describe('Stage 2: shortfall -> PR; PO -> GRN -> inventory (integration)', () =>
     rm = await RawMaterial.create({ code: rmCode, name: 'Stage2 RM', status: 'Active' });
     pm = await PackMaterial.create({ code: pmCode, description: 'Stage2 PM', status: 'Active' });
     fg = await Product.create({
-      product_sku: sku,
+      zoho_sku_code: sku,
       product_name: 'Stage2 FG Product',
       status: 'Active',
       product_code: 'FG-STAGE2-001',

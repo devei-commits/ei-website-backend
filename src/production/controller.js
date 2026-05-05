@@ -354,7 +354,7 @@ async function recomputeBatchVolume(row) {
   const batchSizeKg = Number(d.batch_size) || Number(d.order_qty) || 0;
   if (batchSizeKg <= 0) return;
   let product = null;
-  if (d.sku) product = await Product.findOne({ where: { product_sku: d.sku }, attributes: ['product_id'] });
+  if (d.sku) product = await Product.findOne({ where: { zoho_sku_code: d.sku }, attributes: ['product_id'] });
   if (!product && d.product_name) product = await Product.findOne({ where: { product_name: d.product_name }, attributes: ['product_id'] });
   if (!product) return;
   const productId = product.product_id;
@@ -426,7 +426,7 @@ async function syncBatchesFromPlanning(req, res) {
     const planRows = await PlanningExtracted.findAll({
       include: [
         { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id'], required: true },
-        { model: Product, as: 'product', attributes: ['product_id', 'product_sku', 'product_name'], required: true },
+        { model: Product, as: 'product', attributes: ['product_id', 'zoho_sku_code', 'product_name'], required: true },
       ],
     });
     const plansWithSent = planRows.filter((r) => {
@@ -441,7 +441,7 @@ async function syncBatchesFromPlanning(req, res) {
       const sentIndices = Array.isArray(plan.sent_batch_indices) ? plan.sent_batch_indices : [];
       const soOrderId = plan.salesOrder?.order_id || '';
       const product = plan.product || {};
-      const productSku = product.product_sku || '';
+      const productSku = product.zoho_sku_code || '';
       const productName = product.product_name || '';
 
       for (const sentIndex of sentIndices) {
@@ -513,7 +513,7 @@ async function syncBatchesFromPlanning(req, res) {
       const plans = await PlanningExtracted.findAll({
         include: [
           { model: SalesOrder, as: 'salesOrder', attributes: ['order_id'], required: true },
-          { model: Product, as: 'product', attributes: ['product_id', 'product_sku', 'product_name'], required: true },
+          { model: Product, as: 'product', attributes: ['product_id', 'zoho_sku_code', 'product_name'], required: true },
         ],
       });
       const planMatch = plans.find((p) => {
@@ -523,7 +523,7 @@ async function syncBatchesFromPlanning(req, res) {
           || orderId.replace(/^EI-SO-?/i, 'SO-') === soNo.replace(/^EI-SO-?/i, 'SO-')
           || orderId.replace(/^SO-?/i, 'EI-SO-') === soNo.replace(/^SO-?/i, 'EI-SO-');
         if (!soMatch) return false;
-        const sku = (plain.product?.product_sku || '').trim().toLowerCase();
+        const sku = (plain.product?.zoho_sku_code || '').trim().toLowerCase();
         const pname = (plain.product?.product_name || '').trim().toLowerCase();
         const bSku = (d.sku || '').trim().toLowerCase();
         const bName = (d.product_name || '').trim().toLowerCase();
@@ -806,7 +806,7 @@ async function applyBprFgReadyToInventory(batchRow) {
 
   // 3. Add FG (product) to warehouse_inventory
   let product = null;
-  if (d.sku) product = await Product.findOne({ where: { product_sku: d.sku } });
+  if (d.sku) product = await Product.findOne({ where: { zoho_sku_code: d.sku } });
   if (!product && d.product_name) product = await Product.findOne({ where: { product_name: d.product_name } });
   if (!product) {
     console.warn('[production] BPR fg_ready: no product found for sku=%s product_name=%s', d.sku, d.product_name);
@@ -1910,7 +1910,7 @@ const BOM_DEBUG = process.env.BOM_DEBUG !== '0';
  */
 async function resolveProductIdForBomFallback(d) {
   if (d.sku) {
-    const prod = await Product.findOne({ where: { product_sku: d.sku }, attributes: ['product_id'] });
+    const prod = await Product.findOne({ where: { zoho_sku_code: d.sku }, attributes: ['product_id'] });
     if (prod) return prod.product_id;
   }
   if (d.product_name) {
@@ -2005,7 +2005,7 @@ async function getBomLinesForBatch(d) {
   if (!skipInference && soNorm && (d.sku || d.product_name)) {
     let productId = null;
     if (d.sku) {
-      const prod = await Product.findOne({ where: { product_sku: d.sku }, attributes: ['product_id'] });
+      const prod = await Product.findOne({ where: { zoho_sku_code: d.sku }, attributes: ['product_id'] });
       if (prod) productId = prod.product_id;
     }
     if (productId == null && d.product_name) {
@@ -2069,7 +2069,7 @@ async function getBomLinesForBatch(d) {
   // 3) Fallback: product master BOM (items master list).
   if (source === 'product_bom') {
     let product = null;
-    if (d.sku) product = await Product.findOne({ where: { product_sku: d.sku } });
+    if (d.sku) product = await Product.findOne({ where: { zoho_sku_code: d.sku } });
     if (!product && d.product_name) product = await Product.findOne({ where: { product_name: d.product_name } });
     if (product) {
       const productId = product.get ? product.get({ plain: true }).product_id : product.product_id;
@@ -2362,7 +2362,7 @@ async function buildIngredientBulkSpecsForBom(rmLines, pmLines) {
 
 async function buildFgProductSpecsForBatch(batchPlain) {
   let product = null;
-  if (batchPlain.sku) product = await Product.findOne({ where: { product_sku: batchPlain.sku } });
+  if (batchPlain.sku) product = await Product.findOne({ where: { zoho_sku_code: batchPlain.sku } });
   if (!product && batchPlain.product_name) {
     product = await Product.findOne({ where: { product_name: batchPlain.product_name } });
   }

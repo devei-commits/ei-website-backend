@@ -29,7 +29,7 @@ describe('production reserved', () => {
     if (!dbAvailable) return;
     await db.sync({ force: true });
     const product = await Product.create({
-      product_sku: 'SKU-PROD-001',
+      zoho_sku_code: 'SKU-PROD-001',
       product_name: 'Test Product',
       status: 'Active',
     });

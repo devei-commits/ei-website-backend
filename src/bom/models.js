@@ -48,6 +48,11 @@ BOM.init(
     ph_range: { type: DataTypes.STRING(50), allowNull: true },
     description: { type: DataTypes.TEXT, allowNull: true },
     rm_lines: { type: DataTypes.JSON, allowNull: true },
+    /** Per finished SKU unit: RM qty — separate from formula % w/w. Sum must equal sku_bom_limit_* exactly. */
+    sku_rm_lines: { type: DataTypes.JSON, allowNull: true },
+    /** Net content per 1 finished unit (e.g. 50 with UOM GM). SKU RM lines must sum to this exactly. */
+    sku_bom_limit_qty: { type: DataTypes.DECIMAL(18, 6), allowNull: true },
+    sku_bom_limit_uom: { type: DataTypes.STRING(20), allowNull: true },
     pm_lines: { type: DataTypes.JSON, allowNull: true },
     process_steps: { type: DataTypes.JSON, allowNull: true },
     stability_summary: { type: DataTypes.TEXT, allowNull: true },

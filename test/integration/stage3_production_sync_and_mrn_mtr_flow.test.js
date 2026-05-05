@@ -134,7 +134,7 @@ describe('Stage 3: sync-from-planning + MTR MRN completion (labels + history)', 
 
     // Build minimal data for sync-from-planning
     syncProduct = await Product.create({
-      product_sku: 'SKU-FG-STAGE3-SYNC-001',
+      zoho_sku_code: 'SKU-FG-STAGE3-SYNC-001',
       product_name: 'Stage3 Sync FG',
       product_code: 'FG-SYNC-001',
       batch_size_kg: 100,

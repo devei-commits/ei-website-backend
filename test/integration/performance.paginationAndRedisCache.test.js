@@ -184,7 +184,7 @@ describe('Performance pagination + Redis cache-aside', () => {
     // Seed planning data for planning-extracted pagination + items-involved.
     const product = await Product.create({
       product_code: 'EI-PRD-001',
-      product_sku: 'SKU-001',
+      zoho_sku_code: 'SKU-001',
       product_name: 'Test Product',
       batch_size_kg: 100,
       status: 'Active',

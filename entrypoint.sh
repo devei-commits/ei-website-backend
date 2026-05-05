@@ -9,7 +9,7 @@ MAX_ATTEMPTS="${MAX_ATTEMPTS:-600}"
 # Run seed first so tables exist before the server accepts requests (avoids "relation users does not exist").
 # db.sync({ alter: true }) in seed.js creates/alters tables; then server can safely run.
 echo "Running database sync and seed..."
-node seed.js
+# node seed.js
 # node cleanData.js --yes
 
 echo "Starting server..."

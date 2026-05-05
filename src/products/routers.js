@@ -2,6 +2,18 @@ const express = require('express');
 const router = express.Router();
 const { requireModule } = require('../middleware/security');
 const { getAllProducts, saveProduct, syncPrProductZoho, createPRRegistration, getProductById, getProductDetail, updateProduct, deleteProduct, getCategory, saveCategory, getCategoryById, updateCategory, deleteCategory } = require('./controller');
+const { getZohoCompositeSkuBomSuggestion } = require('./zohoCompositeSkuBomSuggestion');
+const { uploadSkuBomExcelMiddleware, uploadSkuBomExcel } = require('./skuBomExcelUpload');
+const {
+  uploadFormulaRmBomExcelMiddleware,
+  uploadFormulaRmBomExcel,
+  processFormulaRmBomChunk,
+} = require('./formulaRmBomExcelUpload');
+const {
+  uploadFormulaPackBomExcelMiddleware,
+  uploadFormulaPackBomExcel,
+  processFormulaPackBomChunk,
+} = require('./formulaPackBomExcelUpload');
 const { createCacheReadMiddleware } = require('../cache/cacheReadMiddleware');
 
 const requireCatalogueModule = requireModule('catalogue-management', 'packaging-management', 'active-ingredients');
@@ -13,6 +25,12 @@ const cacheProductsOne = createCacheReadMiddleware({ namespace: 'products', ttlS
 router.get('/', cacheProductsList, getAllProducts);
 router.get('/categories', getCategory);
 router.get('/categories/:id([0-9]+)', getCategoryById);
+/** Zoho Inventory/Books composite → SKU BOM lines (per-unit), before /:id routes. */
+router.get(
+  '/zoho-composite/:zohoCompositeId([0-9]+)/sku-bom-suggestion',
+  requireCatalogueModule,
+  getZohoCompositeSkuBomSuggestion
+);
 router.get('/:id/detail', cacheProductsOne, getProductDetail);
 router.get('/:id', cacheProductsOne, getProductById);
 
@@ -20,6 +38,29 @@ router.get('/:id', cacheProductsOne, getProductById);
 router.post('/pr-zoho-sync', requireCatalogueModule, syncPrProductZoho);
 router.post('/pr-registration', requireCatalogueModule, createPRRegistration);
 router.post('/', requireCatalogueModule, saveProduct);
+/** Multi-composite "Formula BOM - RM per KG-LTR" sheet: SKU RM lines + limits only (before /:id). */
+router.post(
+  '/formula-rm-bom/upload-excel',
+  requireCatalogueModule,
+  uploadFormulaRmBomExcelMiddleware,
+  uploadFormulaRmBomExcel
+);
+/** Chunked JSON import for large workbooks (same row shape as formula-rm-bom sheet). */
+router.post('/formula-rm-bom/chunk', requireCatalogueModule, processFormulaRmBomChunk);
+/** Full-file Packaging BOM sheet import (optional; chunked flow preferred from UI). */
+router.post(
+  '/formula-pack-bom/upload-excel',
+  requireCatalogueModule,
+  uploadFormulaPackBomExcelMiddleware,
+  uploadFormulaPackBomExcel
+);
+router.post('/formula-pack-bom/chunk', requireCatalogueModule, processFormulaPackBomChunk);
+router.post(
+  '/:id([0-9]+)/sku-bom/upload-excel',
+  requireCatalogueModule,
+  uploadSkuBomExcelMiddleware,
+  uploadSkuBomExcel
+);
 router.put('/:id', requireCatalogueModule, updateProduct);
 router.delete('/:id([0-9]+)', requireCatalogueModule, deleteProduct);
 router.post('/categories', requireCatalogueModule, saveCategory);

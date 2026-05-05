@@ -25,7 +25,7 @@ describe('production fg_ready', () => {
     if (!dbAvailable) return;
     await db.sync({ force: true });
     const product = await Product.create({
-      product_sku: 'SKU-FG-001',
+      zoho_sku_code: 'SKU-FG-001',
       product_name: 'FG Product',
       status: 'Active',
     });

@@ -12,7 +12,7 @@ function numOrZero(v) {
  * Map Product + optional request body to Zoho Books POST /items JSON.
  * Omits empty strings so Zoho applies org defaults (avoid " " placeholders).
  * @param {*} product - Sequelize Product instance (after create)
- * @param {Record<string, unknown>} body - req.body (optional overrides: rate, sku, tax_id, product_type, hsn_or_sac)
+ * @param {Record<string, unknown>} body - req.body (optional overrides: rate, zoho_sku_code|product_sku, tax_id, product_type, hsn_or_sac)
  */
 function buildZohoItemPayload(product, body = {}) {
   const name = (body.product_name != null ? body.product_name : product.product_name) || '';
@@ -25,9 +25,12 @@ function buildZohoItemPayload(product, body = {}) {
       ? numOrZero(body.rate)
       : numOrZero(product.mrp_price);
 
+  // Resolve the SKU we send to Zoho: prefer explicit body.zoho_sku_code (new), fall back
+  // to legacy body.product_sku, then the row's persisted column, then product_code.
   const skuRaw =
+    (body.zoho_sku_code != null && String(body.zoho_sku_code).trim()) ||
     (body.product_sku != null && String(body.product_sku).trim()) ||
-    (product.product_sku && String(product.product_sku).trim()) ||
+    (product.zoho_sku_code && String(product.zoho_sku_code).trim()) ||
     (body.product_code != null && String(body.product_code).trim()) ||
     (product.product_code && String(product.product_code).trim()) ||
     `EI-P-${product.product_id}`;
@@ -96,7 +99,9 @@ async function syncZohoItemForNewProduct(product, createBody = {}) {
     if (!itemId) {
       return { synced: false, error: 'zoho_missing_item_id', zohoMessage: raw && raw.message, duplicate: false };
     }
-    return { synced: true, itemId };
+    // Capture Zoho's persisted item.sku so the caller can mirror it back into zoho_sku_code.
+    const sku = raw && raw.item && raw.item.sku ? String(raw.item.sku) : null;
+    return { synced: true, itemId, sku };
   } catch (e) {
     const msg = e && e.message ? String(e.message) : 'zoho_item_sync_failed';
     const duplicate = isZohoDuplicateItemError(e);

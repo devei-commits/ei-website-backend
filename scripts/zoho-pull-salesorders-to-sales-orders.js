@@ -4,7 +4,7 @@
  * using the same persistence path as POST /api/.../sales-orders (see salesOrders/controller).
  *
  * Match / upsert key: `form_data.zohoSalesorderId` (stable Zoho salesorder_id).
- * Line items: resolve `product_id` via `products.zoho_item_id`, then `product_sku` / `product_code`.
+ * Line items: resolve `product_id` via `products.zoho_item_id`, then `zoho_sku_code` / `product_code`.
  *
  * Usage:
  *   node scripts/zoho-pull-salesorders-to-sales-orders.js [--dry-run] [--max-pages=N] [--limit=N] [--filter-by=...]
@@ -116,13 +116,13 @@ async function resolveProductForZohoLine(line) {
   const or = [];
   if (zohoItemId) or.push({ zoho_item_id: zohoItemId });
   if (sku) {
-    or.push({ product_sku: sku });
+    or.push({ zoho_sku_code: sku });
     or.push({ product_code: sku });
   }
   if (or.length === 0) return null;
   return Product.findOne({
     where: { [Op.or]: or },
-    attributes: ['product_id', 'product_name', 'product_code', 'product_sku'],
+    attributes: ['product_id', 'product_name', 'product_code', 'zoho_sku_code'],
   });
 }
 
@@ -180,7 +180,7 @@ async function zohoRowToPayload(zohoRow, zohoId) {
     const name = String(line.name || line.item_name || '').trim();
     const sku = String(line.sku || '').trim();
     const entry = {
-      sku: sku || (plain && (plain.product_sku || plain.product_code)) || '',
+      sku: sku || (plain && (plain.zoho_sku_code || plain.product_code)) || '',
       productName: (plain && plain.product_name) || name || 'Line item',
       pack: String(line.unit || '').trim() || '',
       quantity: Number.isFinite(qty) ? qty : 0,
