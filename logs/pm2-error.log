@@ -598,3 +598,1203 @@
     hostname: 'db'
   }
 }
+2026-05-09 18:58:30 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:58:30 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:58:30 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:58:30 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:58:30 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:58:30 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:58:30 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:58:30 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:58:46 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:58:46 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:58:46 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:58:46 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:58:46 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:58:46 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:58:46 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:58:46 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:00 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:00 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:00 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:00 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:00 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:00 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:00 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:00 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:15 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:15 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:15 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:16 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:16 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:16 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:16 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:16 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:29 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:29 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:29 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:30 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:30 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:30 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:30 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:30 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:48 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:48 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:48 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:49 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:49 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:49 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:49 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
+2026-05-09 18:59:49 +05:30: Failed to connect to the database HostNotFoundError [SequelizeHostNotFoundError]: getaddrinfo ENOTFOUND db
+    at Client._connectionCallback (D:\project\sprdlx\ei-website-backend\node_modules\sequelize\src\dialects\postgres\connection-manager.js:187:24)
+    at Client._handleErrorWhileConnecting (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:326:19)
+    at Client._handleErrorEvent (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\client.js:336:19)
+    at Connection.emit (node:events:508:28)
+    at Socket.reportStreamError (D:\project\sprdlx\ei-website-backend\node_modules\pg\lib\connection.js:57:12)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  parent: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  },
+  original: Error: getaddrinfo ENOTFOUND db
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'db'
+  }
+}
