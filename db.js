@@ -9,6 +9,7 @@ const db = new Sequelize(process.env.DATABASE_URL, {
     acquire: 120000,
     idle: 10000
   },
+  logging: false,
   requestTimeout: 120000,
   dialectOptions: {
     connectTimeout: 120000,

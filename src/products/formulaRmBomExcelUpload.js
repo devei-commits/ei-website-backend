@@ -1,7 +1,8 @@
 /**
  * POST /api/v1/products/formula-rm-bom/upload-excel
- * Worksheet "Formula BOM - RM per KG-LTR" (or fuzzy match): multi-composite SKU rows,
- * updates only boms.sku_rm_lines, sku_bom_limit_qty, sku_bom_limit_uom — preserves pm_lines, rm_lines, process_steps.
+ * Worksheet "Formula BOM - RM per KG-LTR" (or fuzzy match): multi-composite SKU rows.
+ * Writes Formula BOM (boms.rm_lines) from uploaded RM qty values (fraction of 1.0000 batch),
+ * preserving SKU BOM and packaging lines.
  */
 
 const ExcelJS = require('exceljs');
@@ -85,8 +86,36 @@ function cellToNumber(cell) {
   return Number.isFinite(n) ? n : NaN;
 }
 
-function rmQtyPerUnitUom() {
+function normalizeUom(raw) {
+  const u = String(raw || '')
+    .trim()
+    .toUpperCase();
+  if (!u) return null;
+  if (['ML', 'MILLILITER', 'MILLILITRE', 'MILLILITERS', 'MILLILITRES'].includes(u)) return 'ML';
+  if (['L', 'LTR', 'LT', 'LITER', 'LITRE', 'LITERS', 'LITRES'].includes(u)) return 'L';
+  if (['G', 'GM', 'GRAM', 'GRAMS'].includes(u)) return 'G';
+  if (['KG', 'KGS', 'KILOGRAM', 'KILOGRAMS'].includes(u)) return 'KG';
+  return u;
+}
+
+function formulaLineUomFromPrUom(raw) {
+  const u = normalizeUom(raw);
+  if (u === 'ML' || u === 'L') return 'LTR';
+  if (u === 'G' || u === 'KG') return 'KG';
   return 'KG';
+}
+
+function toFixedNumber(value, places = 6) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Number(n.toFixed(places));
+}
+
+function isAquaText(value) {
+  const s = String(value || '')
+    .trim()
+    .toLowerCase();
+  return s === 'aqua' || s === 'water' || s.includes('aqua');
 }
 
 async function findRawMaterialByName(name) {
@@ -168,7 +197,11 @@ function detectFormulaRmHeaders(sheet) {
       (norm === 'qty per unit' ||
         norm === 'qty per sku kg nos' ||
         norm === 'qty per sku' ||
-        norm === 'quantity per unit') &&
+        norm === 'quantity per unit' ||
+        norm === 'qty kg ltr' ||
+        norm === 'qty in kg ltr' ||
+        norm === 'qty kg litre' ||
+        norm === 'qty kg liter') &&
       map.qty == null
     ) {
       map.qty = idx;
@@ -272,29 +305,34 @@ async function processRmGroupForComposite(compositeSku, groupRows, applySg) {
   }
 
   const productId = product.product_id;
-  const limitQty =
-    first.limit_qty_vol_kg_ltr != null && Number.isFinite(first.limit_qty_vol_kg_ltr)
-      ? first.limit_qty_vol_kg_ltr
-      : first.limit_qty_volume != null && Number.isFinite(first.limit_qty_volume)
-        ? first.limit_qty_volume
-        : null;
-  const limitUom = 'KG';
+  const lineUom = formulaLineUomFromPrUom(first?.uom_raw);
 
-  const skuRmLines = [];
+  const formulaLinesRaw = [];
   const unmatched = [];
   let sgUpdated = 0;
+  let totalQty = 0;
+  let aquaPresent = false;
 
   for (const gr of groupRows) {
-    const lineUom = rmQtyPerUnitUom();
+    const qty = Number.isFinite(Number(gr.qty)) ? Math.max(0, Number(gr.qty)) : 0;
     const { rm } = await resolveRawMaterial(gr.component_sku, gr.component_name);
+    const lineIsAqua =
+      isAquaText(gr.component_name) ||
+      isAquaText(gr.component_sku) ||
+      isAquaText(rm?.inci) ||
+      isAquaText(rm?.name) ||
+      isAquaText(rm?.code);
+    if (lineIsAqua) aquaPresent = true;
+    totalQty += qty;
 
     if (rm) {
-      skuRmLines.push({
+      formulaLinesRaw.push({
+        phase: 'Main',
         inci_name: rm.inci || rm.name || gr.component_name,
         rm_code: rm.code || '',
         zoho_sku_code: rm.zoho_sku_code || String(gr.component_sku || '').trim() || null,
         raw_material_id: rm.id,
-        qty_per_unit: gr.qty,
+        qty_per_unit: qty,
         uom: lineUom,
       });
 
@@ -308,18 +346,46 @@ async function processRmGroupForComposite(compositeSku, groupRows, applySg) {
         component_sku: gr.component_sku,
         zoho_sku_code: String(gr.component_sku || '').trim() || null,
         component_name: gr.component_name,
-        qty: gr.qty,
+        qty,
         uom: lineUom,
       });
-      skuRmLines.push({
+      formulaLinesRaw.push({
+        phase: 'Main',
         inci_name: gr.component_name || '',
         rm_code: '',
         zoho_sku_code: String(gr.component_sku || '').trim() || null,
         raw_material_id: null,
-        qty_per_unit: gr.qty,
+        qty_per_unit: qty,
         uom: lineUom,
       });
     }
+  }
+
+  const baseTotal = Math.max(0, totalQty);
+  const computedAquaQty = aquaPresent ? 0 : Math.max(0, 1 - baseTotal);
+  const denominator = baseTotal + computedAquaQty;
+  const safeDenominator = denominator > 0 ? denominator : 1;
+  const formulaRmLines = formulaLinesRaw.map((line) => ({
+    phase: line.phase || 'Main',
+    inci_name: line.inci_name,
+    rm_code: line.rm_code,
+    zoho_sku_code: line.zoho_sku_code || null,
+    raw_material_id: line.raw_material_id,
+    pct_w_w: toFixedNumber((Number(line.qty_per_unit) || 0) / safeDenominator)*100,
+    uom: line.uom,
+  }));
+
+  if (computedAquaQty > 0) {
+    const aquaRm = await findRawMaterialByName('Aqua');
+    formulaRmLines.push({
+      phase: 'Main',
+      inci_name: aquaRm?.inci || aquaRm?.name || 'Aqua',
+      rm_code: aquaRm?.code || '',
+      zoho_sku_code: aquaRm?.zoho_sku_code || null,
+      raw_material_id: aquaRm?.id ?? null,
+      pct_w_w: toFixedNumber(computedAquaQty / safeDenominator),
+      uom: lineUom,
+    });
   }
 
   let bom = await BOM.findOne({ where: { product_id: productId } });
@@ -331,10 +397,10 @@ async function processRmGroupForComposite(compositeSku, groupRows, applySg) {
       product_id: productId,
       type: 'FG',
       status: 'Draft',
-      rm_lines: [],
-      sku_rm_lines: skuRmLines,
-      sku_bom_limit_qty: limitQty,
-      sku_bom_limit_uom: limitUom,
+      rm_lines: formulaRmLines,
+      sku_rm_lines: [],
+      sku_bom_limit_qty: null,
+      sku_bom_limit_uom: null,
       pm_lines: [],
       process_steps: [],
       created_at: new Date(),
@@ -342,9 +408,7 @@ async function processRmGroupForComposite(compositeSku, groupRows, applySg) {
     });
   } else {
     await bom.update({
-      sku_rm_lines: skuRmLines,
-      sku_bom_limit_qty: limitQty,
-      sku_bom_limit_uom: limitUom,
+      rm_lines: formulaRmLines,
       updated_at: new Date(),
     });
   }
@@ -361,11 +425,14 @@ async function processRmGroupForComposite(compositeSku, groupRows, applySg) {
     product_id: productId,
     bom_id: bom.id,
     product_created: created,
-    lines_written: skuRmLines.length,
-    sku_rm_matched: skuRmLines.filter((l) => l.raw_material_id != null).length,
-    sku_rm_unmatched: skuRmLines.filter((l) => l.raw_material_id == null).length,
+    lines_written: formulaRmLines.length,
+    sku_rm_matched: formulaRmLines.filter((l) => l.raw_material_id != null).length,
+    sku_rm_unmatched: formulaRmLines.filter((l) => l.raw_material_id == null).length,
     sg_updates: applySg ? sgUpdated : 0,
     fill_size: packMeta.pack_size,
+    rm_qty_total: toFixedNumber(baseTotal, 6),
+    aqua_added_qty: toFixedNumber(computedAquaQty, 6),
+    composition_total: toFixedNumber(baseTotal + computedAquaQty, 6),
     unmatched,
   };
 }

@@ -178,7 +178,7 @@ if (process.env.NODE_ENV !== 'test') {
       await db.sync({ alter: true });
       await ensureSchemaPatches();
       await ensureCustomizationPackagingPresets();
-      app.listen(port, () => {
+      app.listen(port, '0.0.0.0',() => {
         console.log(`Server is running on port ${port}`);
       });
     })

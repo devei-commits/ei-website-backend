@@ -13,7 +13,7 @@ echo "Running database sync and seed..."
 # node cleanData.js --yes
 
 echo "Starting server..."
-npm run dev &
+npm run pm2:runtime &
 PID=$!
 
 echo "Waiting for server at ${HEALTH_URL} (up to ${MAX_ATTEMPTS}s)..."

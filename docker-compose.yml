@@ -45,6 +45,10 @@ services:
     environment:
       NODE_ENV: development
       REDIS_URL: redis://redis:6379
+      PM2_POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      PM2_EXEC_MODE: fork
+      PM2_INSTANCES: 1
     volumes:
       - ./:/usr/src/app
     command: sh -c "npm install && sh /usr/src/app/entrypoint.sh"
