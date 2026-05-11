@@ -5,20 +5,23 @@ const dotenv = require("dotenv");
 dotenv.config({ path: path.join(__dirname, ".env") });
 
 const pm2Port = Number(process.env.PM2_PORT || process.env.PORT || 3001);
+// Docker Compose: default fork + 1 instance (one DB pool, simpler signals). Bare metal: cluster scales with CPUs.
+const defaultExecMode =
+  String(process.env.PM2_EXEC_MODE || (process.env.DOCKER_DEFAULT_PM2 === "1" ? "fork" : "cluster")).toLowerCase();
+const pm2ExecMode = defaultExecMode === "fork" ? "fork" : "cluster";
 const pm2Instances = Number(
   process.env.PM2_INSTANCES || Math.max(1, Math.min(4, os.cpus().length - 1))
 );
-const pm2ExecMode = String(process.env.PM2_EXEC_MODE || "cluster").toLowerCase() === "fork"
-  ? "fork"
-  : "cluster";
 
 const pgUser = encodeURIComponent(process.env.POSTGRES_USER || "postgres");
 const pgPassword = encodeURIComponent(process.env.POSTGRES_PASSWORD || "");
 const pgHost = process.env.PM2_POSTGRES_HOST || "localhost";
 const pgPort = process.env.POSTGRES_PORT || "5432";
 const pgDb = process.env.POSTGRES_DB || "postgres";
+// Prefer explicit Compose / runtime DATABASE_URL so PM2 does not rebuild a mismatched URL.
 const pm2DatabaseUrl =
   process.env.DATABASE_URL_PM2 ||
+  process.env.DATABASE_URL ||
   `postgres://${pgUser}:${pgPassword}@${pgHost}:${pgPort}/${pgDb}`;
 
 module.exports = {

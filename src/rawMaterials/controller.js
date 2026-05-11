@@ -12,8 +12,6 @@ const WarehouseInventoryLocationHistory = require('../warehouseInventory/locatio
 const { ReservedBatchItem } = require('../fulfillment/models');
 const { resetRawMaterialsMasterData } = require('../masters/resetMaterialMasters');
 const redis = require('../cache/redis');
-const { nextNumericCode } = require('../lib/nextNumericMasterCode');
-
 /** List-view only (no form_data). */
 function formatRawMaterial(row) {
   if (!row) return null;
@@ -55,19 +53,65 @@ function formatRawMaterialFull(row) {
  * GET /api/v1/raw-materials — list all raw materials, optional ?search= for filter.
  * Search matches code, name, inci, category (case-insensitive).
  */
+
+/** Mirrors EI-Admin RM category → internal code series prefix (EI-RM-*). */
+const RM_CATEGORY_SERIAL_PREFIX = {
+  ACT: 'EI-RM-ACT',
+  EMOL: 'EI-RM-EMOL',
+  SURF: 'EI-RM-SURF',
+  PRES: 'EI-RM-PRES',
+  FRAG: 'EI-RM-FRAG',
+  THIC: 'EI-RM-THIC',
+  COL: 'EI-RM-COL',
+  BUF: 'EI-RM-BUF',
+  SOLV: 'EI-RM-SOLV',
+  MISC: 'EI-RM-MISC',
+};
+
+function escapeRegex(str) {
+  return String(str || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function resolveRmSeriesPrefixFromBody(b) {
+  const fd =
+    b.form_data != null && typeof b.form_data === 'object' && !Array.isArray(b.form_data)
+      ? b.form_data
+      : b;
+  const key = String(fd.rmCategoryKey || '').trim();
+  if (key && RM_CATEGORY_SERIAL_PREFIX[key]) return RM_CATEGORY_SERIAL_PREFIX[key];
+  return String(fd.seriesPrefix || '').trim();
+}
+
 /**
- * GET /api/v1/raw-materials/next-code — next numeric code only (e.g. 00002). Query prefix is ignored (legacy).
+ * Allocate next `{prefix}-{NNNNN}` for new RMs; only scans rows with that prefix (not full table).
+ * @returns {Promise<{ code: string, seriesPrefix: string }|{ error: string }>}
  */
-async function getNextCode(req, res) {
-  try {
-    const rows = await RawMaterial.findAll({ attributes: ['code'] });
-    const codes = rows.map((row) => (row.get ? row.get('code') : row.code));
-    const nextCode = nextNumericCode(codes, 5);
-    res.json({ nextCode });
-  } catch (err) {
-    console.error('getNextCode (RM) error', err);
-    res.status(500).json({ error: 'Failed to get next code' });
+async function allocateNextRmSkuCode(b, { transaction }) {
+  const seriesPrefix = resolveRmSeriesPrefixFromBody(b);
+  if (!seriesPrefix) {
+    return {
+      error:
+        'Choose an RM category (or set series prefix in form data) so an internal code can be assigned on save.',
+    };
   }
+  const like = `${seriesPrefix}-%`;
+  const rows = await RawMaterial.findAll({
+    attributes: ['code'],
+    where: { code: { [Op.like]: like } },
+    transaction,
+  });
+  const re = new RegExp(`^${escapeRegex(seriesPrefix)}-(\\d+)$`, 'i');
+  let max = 0;
+  for (const row of rows) {
+    const codeStr = row.get ? row.get('code') : row.code;
+    const m = String(codeStr || '').match(re);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (Number.isFinite(n) && n > max) max = n;
+    }
+  }
+  const code = `${seriesPrefix}-${String(max + 1).padStart(5, '0')}`;
+  return { code, seriesPrefix };
 }
 
 async function listRawMaterials(req, res) {
@@ -407,25 +451,40 @@ async function createRawMaterial(req, res) {
       }
     }
 
-    const fields = payloadToListFields(b);
-    const codeTrim = fields.code != null ? String(fields.code).trim() : '';
-    if (!codeTrim) {
-      return res.status(400).json({ error: 'code or rmSku is required' });
-    }
-    fields.code = codeTrim;
-    if (fields.zoho_sku_code != null && String(fields.zoho_sku_code).trim() !== '') {
-      fields.zoho_sku_code = String(fields.zoho_sku_code).trim();
-    } else {
-      fields.zoho_sku_code = null;
-    }
-    const dupCheck = await findConflictingMasterRow(RawMaterial, fields.code, fields.zoho_sku_code, null);
-    if (dupCheck) {
-      return res.status(409).json({ error: 'A raw material with this code or SKU already exists' });
-    }
-
     let zohoBooksItemToDelete = null;
     const t = await db.transaction();
     try {
+      const fields = payloadToListFields(b);
+      let codeTrim = fields.code != null ? String(fields.code).trim() : '';
+      if (!codeTrim) {
+        const alloc = await allocateNextRmSkuCode(b, { transaction: t });
+        if (alloc.error) {
+          await t.rollback();
+          return res.status(400).json({ error: alloc.error });
+        }
+        fields.code = alloc.code;
+        codeTrim = alloc.code;
+        if (fields.form_data && typeof fields.form_data === 'object' && !Array.isArray(fields.form_data)) {
+          fields.form_data = {
+            ...fields.form_data,
+            rmSku: alloc.code,
+            seriesPrefix: alloc.seriesPrefix,
+          };
+        }
+      } else {
+        fields.code = codeTrim;
+      }
+      if (fields.zoho_sku_code != null && String(fields.zoho_sku_code).trim() !== '') {
+        fields.zoho_sku_code = String(fields.zoho_sku_code).trim();
+      } else {
+        fields.zoho_sku_code = null;
+      }
+      const dupCheck = await findConflictingMasterRow(RawMaterial, fields.code, fields.zoho_sku_code, null);
+      if (dupCheck) {
+        await t.rollback();
+        return res.status(409).json({ error: 'A raw material with this code or SKU already exists' });
+      }
+
       const row = await RawMaterial.create(fields, { transaction: t });
       await WarehouseInventory.findOrCreate({
         where: { item_type: 'RM', raw_material_id: row.id },
@@ -643,7 +702,6 @@ async function resetAllRawMaterials(req, res) {
 module.exports = {
   listRawMaterials,
   getRawMaterialById,
-  getNextCode,
   syncRmZoho,
   createRawMaterial,
   updateRawMaterial,

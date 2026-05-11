@@ -13,12 +13,38 @@ const zohoEnv = require('../services/zohoEnv');
 const { deleteItem } = require('../services/zohoBooks');
 const { zohoSyncIsMandatoryFailure } = require('../services/zohoSyncHelpers');
 const { compensateZohoItemIfAny } = require('../lib/zohoDbTransaction');
-const { validateSkuBomTotals } = require('../bom/skuBomMath');
+const { validateSkuBomTotals, countMeaningfulSkuRmLines } = require('../bom/skuBomMath');
 const {
   destroyProductWithDependents,
   scrubProcurementJsonForDeletedProducts,
 } = require('./destroyProductWithDependents');
 const { linkMaterialMastersToProductCode } = require('./linkMaterialMastersToProduct');
+const { nextNumericCode } = require('../lib/nextNumericMasterCode');
+
+function normSkuLimitQty(v) {
+  if (v == null || v === '') return null;
+  const n = parseFloat(String(v));
+  return Number.isNaN(n) ? null : n;
+}
+
+function normSkuLimitUom(v) {
+  const s = String(v ?? '')
+    .trim()
+    .toUpperCase();
+  return s || null;
+}
+
+function skuLimitQtyClose(a, b) {
+  const na = normSkuLimitQty(a);
+  const nb = normSkuLimitQty(b);
+  if (na == null && nb == null) return true;
+  if (na == null || nb == null) return false;
+  return Math.abs(na - nb) < 1e-9;
+}
+
+function skuLimitUomClose(a, b) {
+  return normSkuLimitUom(a) === normSkuLimitUom(b);
+}
 
 /** At least one non-empty formula line (INCI / RM code / positive %). */
 function countMeaningfulRmLines(lines) {
@@ -315,16 +341,15 @@ const syncPrProductZoho = async (req, res) => {
 
 /**
  * POST /products/pr-registration — PR Master wizard: create `products` row + linked `boms` row.
- * Expects product_name, product_code (or name, bomCode); optional rm_lines, pm_lines, process_steps.
- * Optional `product_id` when the draft row was created via POST /products/pr-zoho-sync.
+ * Expects product_name; product_code optional (auto-allocated as next global numeric when omitted).
+ * Optional `product_id` when the draft row was created via POST /products/pr-zoho-sync (code must match draft).
  */
 const createPRRegistration = async (req, res) => {
   try {
     const b = req.body || {};
     const product_name = String(b.product_name ?? b.name ?? '').trim();
-    const product_code = String(b.product_code ?? b.bomCode ?? '').trim();
+    let product_code = String(b.product_code ?? b.bomCode ?? '').trim();
     if (!product_name) return res.status(400).json({ error: 'product_name is required' });
-    if (!product_code) return res.status(400).json({ error: 'product_code is required' });
 
     const preProductIdRaw = b.product_id ?? b.draft_product_id;
     const preProductId =
@@ -339,6 +364,9 @@ const createPRRegistration = async (req, res) => {
       if (!preProduct) {
         return res.status(404).json({ error: 'Draft product not found', code: 'PRODUCT_NOT_FOUND' });
       }
+      if (!product_code) {
+        product_code = String(preProduct.product_code || '').trim();
+      }
       if (String(preProduct.product_code).trim() !== product_code) {
         return res.status(400).json({
           error:
@@ -346,11 +374,27 @@ const createPRRegistration = async (req, res) => {
           code: 'PRODUCT_CODE_MISMATCH',
         });
       }
-    } else {
+    } else if (!product_code) {
+      const [bomRows, prodRows] = await Promise.all([
+        BOM.findAll({ attributes: ['bom_code'] }),
+        Product.findAll({ attributes: ['product_code'] }),
+      ]);
+      const codes = [
+        ...bomRows.map((row) => (row.get ? row.get('bom_code') : row.bom_code)),
+        ...prodRows.map((row) => (row.get ? row.get('product_code') : row.product_code)),
+      ];
+      product_code = nextNumericCode(codes, 5);
+    }
+
+    if (!product_code) {
+      return res.status(400).json({ error: 'product_code is required' });
+    }
+
+    if (!hasPreProduct) {
       const existsCode = await Product.findOne({ where: { product_code } });
       if (existsCode) {
         return res.status(409).json({
-          error: `Product code "${product_code}" is already registered. Regenerate the PR code or edit that product.`,
+          error: `Product code "${product_code}" is already registered. Pick another code or edit that product.`,
           code: 'PRODUCT_CODE_EXISTS',
         });
       }
@@ -611,7 +655,7 @@ const createPRRegistration = async (req, res) => {
     if (err.name === 'SequelizeUniqueConstraintError') {
       const paths = (err.errors || []).map((e) => e.path).filter(Boolean);
       const hint = paths.some((p) => String(p).includes('bom_code'))
-        ? 'This PR/BOM code is already used. Use “Generate Code Now” again or pick another code.'
+        ? 'This PR/BOM code is already in use. Retry save or pick another code.'
         : 'A unique constraint failed (code or name may already exist).';
       return res.status(409).json({ error: hint, code: 'UNIQUE_VIOLATION', fields: paths });
     }
@@ -782,6 +826,7 @@ const getAllProducts = async (req, res) => {
     const list = products.map((p) => {
     const plain = p.get ? p.get({ plain: true }) : p;
     const bom = bomsByProductId[p.product_id];
+    const parsedNotes = bom ? parseBomNotes(bom.notes) : parseBomNotes(null);
     const rmCount = bom && Array.isArray(bom.rm_lines) ? bom.rm_lines.length : 0;
     const packList = packMaterialsByCode[p.product_code] || [];
     const openSos = openSoCountByCode[p.product_code] || 0;
@@ -789,6 +834,7 @@ const getAllProducts = async (req, res) => {
       ...plain,
       internal_sku_code: plain.product_code ?? null,
       zoho_sku_code: plain.zoho_sku_code ?? null,
+      pr_sub_category: parsedNotes.pr_sub_category || null,
       rm_ingredients_count: rmCount,
       pack_items_count: packList.length,
       open_sos_count: openSos,
@@ -1097,25 +1143,33 @@ const updateProduct = async (req, res) => {
             });
           }
         }
-        const touchedSkuBom =
-          Array.isArray(bomPayload.sku_rm_lines) ||
-          ['sku_bom_limit_qty', 'skuBomLimitQty', 'sku_bom_limit_uom', 'skuBomLimitUom'].some((k) =>
-            Object.prototype.hasOwnProperty.call(bomPayload, k)
-          );
-        if (touchedSkuBom) {
-          const nextSkuLines = Array.isArray(bomPayload.sku_rm_lines)
-            ? bomPayload.sku_rm_lines
-            : bom.sku_rm_lines || [];
-          const nextLQ =
-            Object.prototype.hasOwnProperty.call(bomPayload, 'sku_bom_limit_qty') ||
-            Object.prototype.hasOwnProperty.call(bomPayload, 'skuBomLimitQty')
-              ? (bomPayload.sku_bom_limit_qty ?? bomPayload.skuBomLimitQty)
-              : bom.sku_bom_limit_qty;
-          const nextLU =
-            Object.prototype.hasOwnProperty.call(bomPayload, 'sku_bom_limit_uom') ||
-            Object.prototype.hasOwnProperty.call(bomPayload, 'skuBomLimitUom')
-              ? (bomPayload.sku_bom_limit_uom ?? bomPayload.skuBomLimitUom)
-              : bom.sku_bom_limit_uom;
+        const payloadSkuRm = Array.isArray(bomPayload.sku_rm_lines) ? bomPayload.sku_rm_lines : null;
+        const meaningfulSkuInPayload = payloadSkuRm && countMeaningfulSkuRmLines(payloadSkuRm) > 0;
+
+        const hasLqKey =
+          Object.prototype.hasOwnProperty.call(bomPayload, 'sku_bom_limit_qty') ||
+          Object.prototype.hasOwnProperty.call(bomPayload, 'skuBomLimitQty');
+        const hasLuKey =
+          Object.prototype.hasOwnProperty.call(bomPayload, 'sku_bom_limit_uom') ||
+          Object.prototype.hasOwnProperty.call(bomPayload, 'skuBomLimitUom');
+
+        const rawLQ = bomPayload.sku_bom_limit_qty ?? bomPayload.skuBomLimitQty;
+        const rawLU = bomPayload.sku_bom_limit_uom ?? bomPayload.skuBomLimitUom;
+
+        const limitQtyChanged = hasLqKey && !skuLimitQtyClose(rawLQ, bom.sku_bom_limit_qty);
+        const limitUomChanged = hasLuKey && !skuLimitUomClose(rawLU, bom.sku_bom_limit_uom);
+
+        const storedSkuLines = bom.sku_rm_lines || [];
+        const meaningfulStoredSku = countMeaningfulSkuRmLines(storedSkuLines) > 0;
+
+        const mustValidateSkuBom =
+          meaningfulSkuInPayload ||
+          ((limitQtyChanged || limitUomChanged) && meaningfulStoredSku);
+
+        if (mustValidateSkuBom) {
+          const nextSkuLines = meaningfulSkuInPayload ? payloadSkuRm : storedSkuLines;
+          const nextLQ = hasLqKey ? rawLQ : bom.sku_bom_limit_qty;
+          const nextLU = hasLuKey ? rawLU : bom.sku_bom_limit_uom;
           const skuUpdV = validateSkuBomTotals({
             lines: nextSkuLines,
             limitQty: nextLQ,
@@ -1128,7 +1182,7 @@ const updateProduct = async (req, res) => {
         const bomUpdate = { updated_at: new Date() };
         if (rmFromPayload) bomUpdate.rm_lines = bomPayload.rm_lines;
         if (pmFromPayload) bomUpdate.pm_lines = bomPayload.pm_lines;
-        if (Array.isArray(bomPayload.sku_rm_lines)) {
+        if (Array.isArray(bomPayload.sku_rm_lines) && meaningfulSkuInPayload) {
           bomUpdate.sku_rm_lines = bomPayload.sku_rm_lines;
         }
         if (

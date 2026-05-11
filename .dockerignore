@@ -1,1 +1,15 @@
 node_modules
+npm-debug.log*
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+coverage
+logs
+*.md
+.vscode
+.idea
+test
+**/__tests__
+**/*.test.js

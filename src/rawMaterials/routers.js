@@ -4,7 +4,6 @@ const { isAuthenticated, requireModule } = require('../middleware/security');
 const {
   listRawMaterials,
   getRawMaterialById,
-  getNextCode,
   syncRmZoho,
   createRawMaterial,
   updateRawMaterial,
@@ -46,7 +45,6 @@ function resetAllMethodNotAllowed(_req, res) {
 }
 
 router.get('/', requireRawMaterialsListRead, cacheRawMaterialsList, listRawMaterials);
-router.get('/next-code', requireRawMaterials, getNextCode);
 router.get('/reset-all', resetAllMethodNotAllowed);
 router.post('/reset-all', requireRawMaterials, resetAllRawMaterials);
 router.post('/item-reference-bulk-chunk', requireItemReferenceBulk, postItemReferenceBulkChunk);
