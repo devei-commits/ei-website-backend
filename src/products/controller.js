@@ -4,11 +4,8 @@ const { productSchema, productUpdateSchema, categorySchema, categoryUpdateSchema
 const { Op, fn, col, where: sqlWhere } = require('sequelize');
 const BOM = require('../bom/models');
 const PackMaterial = require('../packMaterials/models');
-const RawMaterial = require('../rawMaterials/models');
 const SalesOrder = require('../salesOrders/models');
 const WarehouseInventory = require('../warehouseInventory/models');
-const WarehouseInventoryLocationHistory = require('../warehouseInventory/locationHistoryModel');
-const PlanningExtracted = require('../planningExtracted/models');
 const VendorClient = require('../vendorClient/models');
 const redisCache = require('../cache/redis');
 const { syncZohoItemForNewProduct } = require('./zohoItemSync');
@@ -17,6 +14,11 @@ const { deleteItem } = require('../services/zohoBooks');
 const { zohoSyncIsMandatoryFailure } = require('../services/zohoSyncHelpers');
 const { compensateZohoItemIfAny } = require('../lib/zohoDbTransaction');
 const { validateSkuBomTotals } = require('../bom/skuBomMath');
+const {
+  destroyProductWithDependents,
+  scrubProcurementJsonForDeletedProducts,
+} = require('./destroyProductWithDependents');
+const { linkMaterialMastersToProductCode } = require('./linkMaterialMastersToProduct');
 
 /** At least one non-empty formula line (INCI / RM code / positive %). */
 function countMeaningfulRmLines(lines) {
@@ -44,14 +46,6 @@ function countMeaningfulPmLines(lines) {
     const code = String(line?.pm_code ?? line?.pmCode ?? '').trim();
     return Boolean(desc || code);
   }).length;
-}
-
-function appendProductCodeToList(products, productCode) {
-  const code = String(productCode || '').trim();
-  if (!code) return Array.isArray(products) ? products : [];
-  const list = Array.isArray(products) ? products.map(String) : [];
-  if (list.includes(code)) return list;
-  return [...list, code];
 }
 
 function parseBomNotes(notes) {
@@ -567,40 +561,15 @@ const createPRRegistration = async (req, res) => {
       }
 
       // Link selected RM/PM master items to this product code for downstream usage/pricing.
-      // We only link rows where the line carries an explicit master id (raw_material_id / pack_material_id).
-      const productCodeForLink = product_code;
-      const skuLinesForIds = Array.isArray(b.sku_rm_lines) ? b.sku_rm_lines : [];
-      const rawMaterialIds = Array.from(
-        new Set(
-          [...(Array.isArray(rm_lines) ? rm_lines : []), ...skuLinesForIds]
-            .map((l) => l?.raw_material_id ?? l?.rawMaterialId)
-            .map((v) => (v != null ? parseInt(String(v), 10) : NaN))
-            .filter((n) => !Number.isNaN(n))
-        )
+      await linkMaterialMastersToProductCode(
+        product,
+        {
+          rm_lines,
+          sku_rm_lines: Array.isArray(b.sku_rm_lines) ? b.sku_rm_lines : [],
+          pm_lines,
+        },
+        { transaction: t, productCodeOverride: product_code }
       );
-      const packMaterialIds = Array.from(
-        new Set(
-          (Array.isArray(pm_lines) ? pm_lines : [])
-            .map((l) => l?.pack_material_id ?? l?.packMaterialId ?? l?.pm_id ?? l?.pmId)
-            .map((v) => (v != null ? parseInt(String(v), 10) : NaN))
-            .filter((n) => !Number.isNaN(n))
-        )
-      );
-
-      if (rawMaterialIds.length > 0) {
-        const rms = await RawMaterial.findAll({ where: { id: { [Op.in]: rawMaterialIds } }, transaction: t });
-        for (const rm of rms) {
-          const next = appendProductCodeToList(rm.products, productCodeForLink);
-          await rm.update({ products: next, updated_at: now }, { transaction: t });
-        }
-      }
-      if (packMaterialIds.length > 0) {
-        const pms = await PackMaterial.findAll({ where: { id: { [Op.in]: packMaterialIds } }, transaction: t });
-        for (const pm of pms) {
-          const next = appendProductCodeToList(pm.products, productCodeForLink);
-          await pm.update({ products: next, updated_at: now }, { transaction: t });
-        }
-      }
 
       await WarehouseInventory.findOrCreate({
         where: { item_type: 'PR', product_id: product.product_id },
@@ -1277,22 +1246,10 @@ const deleteProduct = async (req, res) => {
         }
         const resolvedProductId = product.product_id;
 
-        // FK blockers:
-        // - warehouse_inventory.product_id -> products.product_id (restricts product delete)
-        // - planning_extracted.product_id -> products.product_id (restricts product delete)
-        // Remove these dependents first.
-
-        // warehouse_inventory may store item_type as 'PR', while UI labels it 'FG/PR'.
-        // Don't rely on item_type here; just remove any warehouse_inventory row tied to the product.
-        const whInvRows = await WarehouseInventory.findAll({ where: { product_id: resolvedProductId } });
-        for (const whInv of whInvRows) {
-          await WarehouseInventoryLocationHistory.destroy({ where: { warehouse_inventory_id: whInv.id } });
-          await whInv.destroy(); // cascades to rack items via FK onDelete: CASCADE
-        }
-
-        await PlanningExtracted.destroy({ where: { product_id: resolvedProductId } }); // cascades to planning_batches/bom_override/reserved rows
-
-        await product.destroy();
+        await db.transaction(async (transaction) => {
+          await destroyProductWithDependents(resolvedProductId, transaction);
+          await scrubProcurementJsonForDeletedProducts([resolvedProductId], transaction);
+        });
 
         // Invalidate cached product lists/details so the UI refreshes immediately.
         // Cache key pattern is built by createCacheReadMiddleware:

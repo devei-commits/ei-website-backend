@@ -10,8 +10,10 @@ const {
   updatePackMaterial,
   deletePackMaterial,
   getReservedStock,
+  resetAllPackMaterials,
 } = require('./controller');
 const { postItemReferenceBulkChunk } = require('../masterBulk/itemReferenceBulkChunk');
+const { uploadPmMasterExcelMiddleware, postPmMasterExcelUpload } = require('../masterBulk/pmMasterExcelUpload');
 const { createCacheReadMiddleware } = require('../cache/cacheReadMiddleware');
 
 const requirePackMaterials = [isAuthenticated, requireModule('packaging-management')];
@@ -29,9 +31,26 @@ const requirePackMaterialsListRead = [
 const cachePackMaterialsList = createCacheReadMiddleware({ namespace: 'pack-materials', ttlSeconds: 120 });
 const cachePackMaterialsOne = createCacheReadMiddleware({ namespace: 'pack-materials', ttlSeconds: 300 });
 
+function uploadPmMasterExcelSafe(req, res, next) {
+  uploadPmMasterExcelMiddleware(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message || 'File upload failed' });
+    next();
+  });
+}
+
+function resetAllPmMethodNotAllowed(_req, res) {
+  res.status(405).json({
+    error:
+      'Use POST /api/v1/pack-materials/reset-all with JSON body { "confirm": "RESET_ALL_PACK_MATERIALS" } (Bearer auth required).',
+  });
+}
+
 router.get('/next-code', requirePackMaterials, getNextCode);
+router.get('/reset-all', resetAllPmMethodNotAllowed);
+router.post('/reset-all', requirePackMaterials, resetAllPackMaterials);
 router.post('/zoho-sync', requirePackMaterials, syncPmZoho);
 router.post('/item-reference-bulk-chunk', requireItemReferenceBulk, postItemReferenceBulkChunk);
+router.post('/import-excel', requirePackMaterials, uploadPmMasterExcelSafe, postPmMasterExcelUpload);
 router.post('/', requirePackMaterials, createPackMaterial);
 router.get('/:id/reserved-stock', requirePackMaterials, getReservedStock);
 router.get('/:id', requirePackMaterials, cachePackMaterialsOne, getPackMaterialById);

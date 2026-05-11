@@ -11,7 +11,13 @@ const { Op, fn, col, where: sqlWhere } = require('sequelize');
 
 const BOM = require('../bom/models');
 const RawMaterial = require('../rawMaterials/models');
-const { findOrCreateProductForFormulaBom, applyPackSizeToProductAndBom } = require('./formulaBomProductResolve');
+const { findRawMaterialByMasterSku } = require('./masterSkuLookup');
+const {
+  findOrCreateProductForFormulaBom,
+  syncProductSkuCodesFromCompositeImport,
+  applyPackSizeToProductAndBom,
+} = require('./formulaBomProductResolve');
+const { linkMaterialMastersToProductFromBomRow } = require('./linkMaterialMastersToProduct');
 
 const PREFERRED_SHEET_NAME = 'Formula BOM - RM per KG-LTR';
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
@@ -141,20 +147,11 @@ async function findRawMaterialByName(name) {
   });
 }
 
-async function findRawMaterialByZohoSku(sku) {
-  const t = String(sku || '').trim();
-  if (!t) return null;
-  let rm = await RawMaterial.findOne({ where: { zoho_sku_code: t } });
-  if (rm) return rm;
-  rm = await RawMaterial.findOne({ where: { zoho_sku_code: { [Op.iLike]: t } } });
-  return rm || null;
-}
-
 async function resolveRawMaterial(componentSku, componentName) {
   const skuTrim = String(componentSku || '').trim();
   const nameTrim = String(componentName || '').trim();
   if (skuTrim) {
-    const bySku = await findRawMaterialByZohoSku(skuTrim);
+    const bySku = await findRawMaterialByMasterSku(skuTrim);
     if (bySku) return { rm: bySku };
   }
   if (nameTrim) {
@@ -178,8 +175,16 @@ function detectFormulaRmHeaders(sheet) {
   headers.forEach((h, idx) => {
     if (!h) return;
     const norm = normalizeHeader(h);
-    if (norm === 'composite sku' && map.composite_sku == null) map.composite_sku = idx;
-    else if (norm === 'composite name' && map.composite_name == null) map.composite_name = idx;
+    if (
+      (norm === 'composite sku' ||
+        norm === 'sku code' ||
+        norm === 'product sku' ||
+        norm === 'product sku code' ||
+        norm === 'fg sku') &&
+      map.composite_sku == null
+    ) {
+      map.composite_sku = idx;
+    } else if (norm === 'composite name' && map.composite_name == null) map.composite_name = idx;
     else if (
       (norm === 'volume in kg ltr' || norm === 'volume in kg litre' || norm === 'volume in kg liter') &&
       map.volume_kg_ltr == null
@@ -191,8 +196,15 @@ function detectFormulaRmHeaders(sheet) {
       map.uom = idx;
     } else if ((norm === 'sg' || norm === 'specific gravity') && map.sg == null) {
       map.sg = idx;
-    } else if (norm === 'component sku' && map.component_sku == null) map.component_sku = idx;
-    else if (norm === 'component name' && map.component_name == null) map.component_name = idx;
+    } else if (
+      (norm === 'component sku' ||
+        norm === 'component sku code' ||
+        norm === 'item sku' ||
+        norm === 'material sku') &&
+      map.component_sku == null
+    ) {
+      map.component_sku = idx;
+    } else if (norm === 'component name' && map.component_name == null) map.component_name = idx;
     else if (
       (norm === 'qty per unit' ||
         norm === 'qty per sku kg nos' ||
@@ -223,8 +235,8 @@ async function parseWorkbookToRows(buffer) {
 
   const { headerMap: m, headers } = detectFormulaRmHeaders(sheet);
   const missing = [];
-  if (m.composite_sku == null) missing.push('Composite SKU');
-  if (m.component_sku == null) missing.push('Component SKU');
+  if (m.composite_sku == null) missing.push('Composite SKU (or SKU Code)');
+  if (m.component_sku == null) missing.push('Component SKU (or Item SKU / Material SKU)');
   if (m.component_name == null) missing.push('Component Name');
   if (m.qty == null) missing.push('Qty per Unit');
   if (missing.length > 0) {
@@ -299,6 +311,8 @@ async function processRmGroupForComposite(compositeSku, groupRows, applySg) {
       bom_id: null,
     };
   }
+
+  await syncProductSkuCodesFromCompositeImport(product, compositeSku);
 
   if (!created && compositeName && String(product.product_name || '').trim() !== compositeName) {
     await product.update({ product_name: compositeName, updated_at: new Date() });
@@ -418,6 +432,10 @@ async function processRmGroupForComposite(compositeSku, groupRows, applySg) {
     groupFirstRow: first,
     now: new Date(),
   });
+
+  await bom.reload();
+  await product.reload();
+  await linkMaterialMastersToProductFromBomRow(product, bom);
 
   return {
     composite_sku: compositeSku,

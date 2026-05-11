@@ -12,6 +12,10 @@ async function findProductByCompositeSku(compositeSku) {
   let p = await Product.findOne({ where: { zoho_sku_code: t } });
   if (p) return p;
   p = await Product.findOne({ where: { zoho_sku_code: { [Op.iLike]: t } } });
+  if (p) return p;
+  p = await Product.findOne({ where: { product_code: t } });
+  if (p) return p;
+  p = await Product.findOne({ where: { product_code: { [Op.iLike]: t } } });
   return p || null;
 }
 
@@ -29,6 +33,7 @@ async function findOrCreateProductForFormulaBom(compositeSku, compositeName) {
   try {
     product = await Product.create({
       zoho_sku_code: sku,
+      product_code: sku,
       product_name: displayName,
       status: 'Draft',
       lifecycle_status: 'Draft',
@@ -48,6 +53,23 @@ async function findOrCreateProductForFormulaBom(compositeSku, compositeName) {
     }
     throw e;
   }
+}
+
+/**
+ * Align PR product_code + zoho_sku_code with Formula/Packaging BOM Excel composite SKU.
+ * @param {object} product — Sequelize Product instance
+ * @param {string} compositeSku
+ */
+async function syncProductSkuCodesFromCompositeImport(product, compositeSku) {
+  const sku = String(compositeSku || '').trim();
+  if (!sku || !product) return;
+
+  const updates = {};
+  if (String(product.zoho_sku_code || '').trim() !== sku) updates.zoho_sku_code = sku;
+  if (String(product.product_code || '').trim() !== sku) updates.product_code = sku;
+  if (Object.keys(updates).length === 0) return;
+
+  await product.update({ ...updates, updated_at: new Date() });
 }
 
 function normalizePackSizeUom(raw) {
@@ -109,6 +131,7 @@ async function applyPackSizeToProductAndBom({ product, bom, groupFirstRow, now =
 module.exports = {
   findProductByCompositeSku,
   findOrCreateProductForFormulaBom,
+  syncProductSkuCodesFromCompositeImport,
   derivePackSizeFromFormulaRow,
   applyPackSizeToProductAndBom,
 };

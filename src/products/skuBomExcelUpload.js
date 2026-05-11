@@ -2,17 +2,17 @@
  * POST /api/v1/products/:id/sku-bom/upload-excel — import SKU BOM + Pack BOM from an Excel file.
  *
  * Workbook format (first sheet, first row = headers — case-insensitive match):
- *   - "Composite SKU"            (ignored)
- *   - "Component SKU"            (ignored)
- *   - "Component Name"           → material name (used for RM/PM lookup)
+ *   - "Composite SKU"            (ignored if present)
+ *   - "Component SKU" / "SKU Code" / "Item SKU" — match raw_materials / pack_materials by zoho_sku_code or code
+ *   - "Component Name"           → material name (fallback RM/PM lookup)
  *   - "Type"                     → "Raw Material" or "Packaging"
  *   - "Qty per SKU (kg/nos)"     → numeric quantity per 1 finished unit
  *   - "UOM"                      → kg / gm for RM; nos for PM
  *
  * Flow:
  *   1. Parse with exceljs (first sheet, header row = 1).
- *   2. Match Component Name against raw_materials.{inci|name} (type = Raw Material)
- *      or pack_materials.description (type = Packaging), case-insensitive.
+ *   2. Match Component SKU (if present) against masters' zoho_sku_code then code; else match Component Name
+ *      against raw_materials.{inci|name} or pack_materials.description (case-insensitive).
  *   3. Persist to the product's linked BOM:
  *        - sku_rm_lines (Raw Material rows)
  *        - pm_lines     (Packaging rows)
@@ -27,11 +27,21 @@
 const ExcelJS = require('exceljs');
 const multer = require('multer');
 const { Op, fn, col, where: sqlWhere } = require('sequelize');
+const db = require('../../db');
+const { OrderItem } = require('../orders/models');
+const redisCache = require('../cache/redis');
+const {
+  destroyProductWithDependents,
+  scrubProcurementJsonForDeletedProducts,
+  reconcileItemMasterBomIdsRemovingBomIds,
+} = require('./destroyProductWithDependents');
 
 const { Product } = require('./models');
 const BOM = require('../bom/models');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
+const { findRawMaterialByMasterSku, findPackMaterialByMasterSku } = require('./masterSkuLookup');
+const { linkMaterialMastersToProductFromBomRow } = require('./linkMaterialMastersToProduct');
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const ALLOWED_MIME = new Set([
@@ -76,6 +86,14 @@ function detectHeaders(sheet) {
     if (!norm) return;
     if (norm === 'component name' || norm === 'name' || norm === 'material name') {
       map.name = idx;
+    } else if (
+      norm === 'component sku' ||
+      norm === 'component sku code' ||
+      norm === 'item sku' ||
+      norm === 'material sku' ||
+      norm === 'sku code'
+    ) {
+      if (map.component_sku == null) map.component_sku = idx;
     } else if (norm === 'type' || norm === 'material type') {
       map.type = idx;
     } else if (
@@ -200,7 +218,9 @@ async function parseWorkbookBuffer(buffer) {
   }
   const { headerMap, headers } = detectHeaders(sheet);
   const missing = [];
-  if (headerMap.name == null) missing.push('Component Name');
+  if (headerMap.name == null && headerMap.component_sku == null) {
+    missing.push('Component Name (or Component SKU / SKU Code)');
+  }
   if (headerMap.type == null) missing.push('Type');
   if (headerMap.qty == null) missing.push('Qty per SKU');
   if (headerMap.uom == null) missing.push('UOM');
@@ -216,18 +236,21 @@ async function parseWorkbookBuffer(buffer) {
   const lastRow = sheet.actualRowCount || sheet.rowCount || 1;
   for (let rowNum = 2; rowNum <= lastRow; rowNum += 1) {
     const row = sheet.getRow(rowNum);
-    const nameCell = row.getCell(headerMap.name);
+    const nameCell = headerMap.name != null ? row.getCell(headerMap.name) : null;
     const typeCell = row.getCell(headerMap.type);
     const qtyCell = row.getCell(headerMap.qty);
     const uomCell = row.getCell(headerMap.uom);
-    const name = cellToText(nameCell);
+    const skuCell = headerMap.component_sku != null ? row.getCell(headerMap.component_sku) : null;
+    const name = nameCell ? cellToText(nameCell) : '';
+    const componentSku = skuCell ? cellToText(skuCell) : '';
     const typeRaw = cellToText(typeCell);
     const qty = cellToNumber(qtyCell);
     const uomRaw = cellToText(uomCell);
-    if (!name && !typeRaw && !Number.isFinite(qty) && !uomRaw) continue;
+    if (!name && !componentSku && !typeRaw && !Number.isFinite(qty) && !uomRaw) continue;
     parsed.push({
       row_number: rowNum,
       component_name: name,
+      component_sku: componentSku,
       type_raw: typeRaw,
       kind: classifyType(typeRaw),
       qty: Number.isFinite(qty) ? qty : 0,
@@ -264,10 +287,12 @@ async function uploadSkuBomExcel(req, res) {
     const skippedUnknownType = [];
 
     for (const r of parsed.rows) {
-      if (!r.component_name) continue;
+      if (!r.component_name && !String(r.component_sku || '').trim()) continue;
 
       if (r.kind === 'raw') {
-        const rm = await findRawMaterialByName(r.component_name);
+        const skuTrim = String(r.component_sku || '').trim();
+        let rm = skuTrim ? await findRawMaterialByMasterSku(skuTrim) : null;
+        if (!rm && r.component_name) rm = await findRawMaterialByName(r.component_name);
         const uom = normalizeRmUom(r.uom_raw);
         if (rm) {
           skuRmLines.push({
@@ -299,7 +324,9 @@ async function uploadSkuBomExcel(req, res) {
       }
 
       if (r.kind === 'pack') {
-        const pm = await findPackMaterialByName(r.component_name);
+        const skuTrim = String(r.component_sku || '').trim();
+        let pm = skuTrim ? await findPackMaterialByMasterSku(skuTrim) : null;
+        if (!pm && r.component_name) pm = await findPackMaterialByName(r.component_name);
         const uom = normalizePmUom(r.uom_raw);
         if (pm) {
           pmLines.push({
@@ -364,6 +391,10 @@ async function uploadSkuBomExcel(req, res) {
         updated_at: new Date(),
       });
     }
+
+    await bom.reload();
+    await product.reload();
+    await linkMaterialMastersToProductFromBomRow(product, bom);
 
     return res.status(200).json({
       success: true,
@@ -495,8 +526,10 @@ const ALL_PR_BOM_RESET_CONFIRM = 'RESET_ALL_PR_BOM_DATA';
 
 /**
  * POST /api/v1/products/bom/full-reset-all
- * Clears BOM line JSON + limits + pack_size on every `boms` row, and clears `fill_size` and
- * `product_code` on all products linked to those BOM rows.
+ * Destructive: removes every PR / catalogue product that is linked from `boms.product_id`, deletes all
+ * `boms` rows (including orphans), and scrubs procurement JSON lines that referenced those products.
+ * Same dependent cleanup as DELETE /products/:id (inventory, planning, customizations, items_list PR rows).
+ * Blocked when ecommerce order lines still reference any of those products.
  * Body: { "confirm": "RESET_ALL_PR_BOM_DATA" }
  */
 async function clearAllPrBomForExcelReimport(req, res) {
@@ -509,38 +542,41 @@ async function clearAllPrBomForExcelReimport(req, res) {
       });
     }
 
-    const now = new Date();
-    const idRows = await BOM.findAll({ attributes: ['product_id'], raw: true });
-    const productIds = [...new Set(idRows.map((r) => r.product_id).filter((id) => id != null))];
+    const bomRows = await BOM.findAll({ attributes: ['id', 'product_id'], raw: true });
+    const allBomIds = bomRows.map((r) => r.id);
+    const productIds = [...new Set(bomRows.map((r) => r.product_id).filter((id) => id != null))];
 
-    const [bomRowsAffected] = await BOM.update(
-      {
-        rm_lines: [],
-        sku_rm_lines: [],
-        pm_lines: [],
-        process_steps: [],
-        sku_bom_limit_qty: null,
-        sku_bom_limit_uom: null,
-        pack_size: null,
-        updated_at: now,
-      },
-      { where: {} }
-    );
-
-    let productsFillCleared = 0;
     if (productIds.length > 0) {
-      const [n] = await Product.update(
-        { fill_size: null, product_code: null, updated_at: now },
-        { where: { product_id: { [Op.in]: productIds } } }
-      );
-      productsFillCleared = n;
+      const orderLineCount = await OrderItem.count({
+        where: { product_id: { [Op.in]: productIds } },
+      });
+      if (orderLineCount > 0) {
+        return res.status(409).json({
+          error: `Cannot remove PR masters: ${orderLineCount} order line(s) still reference these catalogue products. Remove or change those orders first.`,
+          code: 'PR_RESET_BLOCKED_BY_ORDERS',
+          order_items: orderLineCount,
+        });
+      }
     }
+
+    await db.transaction(async (transaction) => {
+      await reconcileItemMasterBomIdsRemovingBomIds(allBomIds, transaction);
+      for (const pid of productIds) {
+        await destroyProductWithDependents(pid, transaction);
+      }
+      await BOM.destroy({ where: {}, transaction });
+      if (productIds.length > 0) {
+        await scrubProcurementJsonForDeletedProducts(productIds, transaction);
+      }
+    });
+
+    await redisCache.delByPattern('products:v1:/api/v1/products:').catch(() => {});
 
     return res.status(200).json({
       success: true,
-      boms_updated: bomRowsAffected,
-      products_fill_cleared: productsFillCleared,
-      message: `Cleared BOM lines on ${bomRowsAffected} BOM row(s); cleared fill size and internal product code on ${productsFillCleared} product(s). Re-import from Excel as needed.`,
+      products_deleted: productIds.length,
+      boms_removed: allBomIds.length,
+      message: `Removed ${productIds.length} PR product(s) and ${allBomIds.length} BOM row(s) from the database. Raw and pack material masters were not changed.`,
     });
   } catch (err) {
     console.error('clearAllPrBomForExcelReimport error', err);

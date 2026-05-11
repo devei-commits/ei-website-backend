@@ -1,0 +1,261 @@
+/**
+ * POST /api/v1/raw-materials/import-excel — multipart field `file` (.xlsx / .xlsm).
+ * Parses workbooks with exceljs (multi-tab RM layout or legacy "Item Reference" sheet),
+ * then runs the same upserts as item-reference bulk (raw materials only from this route).
+ */
+
+const ExcelJS = require('exceljs');
+const multer = require('multer');
+const { executeItemReferenceBulkRows, userAllows } = require('./itemReferenceBulkChunk');
+
+const ITEM_REFERENCE_SHEET = 'Item Reference';
+const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
+const MAX_DATA_ROWS = 50000;
+/** Same ceiling as POST /item-reference-bulk-chunk — keeps DB work per batch bounded. */
+const RM_EXCEL_IMPORT_CHUNK_SIZE = 200;
+const ALLOWED_MIME = new Set([
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-excel',
+  'application/octet-stream',
+]);
+
+const RM_IMPORT_SHEET_NAMES_NORMALIZED = new Set([
+  'raw materials',
+  'fragrances',
+  'colors & pigments',
+  'club items',
+]);
+
+function normalizeRmWorksheetTabName(name) {
+  return String(name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function isRmCategoryImportSheet(name) {
+  return RM_IMPORT_SHEET_NAMES_NORMALIZED.has(normalizeRmWorksheetTabName(name));
+}
+
+function cellToText(cell) {
+  if (cell == null) return '';
+  const v = cell.value;
+  if (v == null) return '';
+  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+    return String(v).trim();
+  }
+  if (v instanceof Date && !Number.isNaN(v.getTime())) {
+    return v.toISOString().slice(0, 10);
+  }
+  if (v.richText && Array.isArray(v.richText)) {
+    return v.richText.map((r) => r.text || '').join('').trim();
+  }
+  if (v.text) return String(v.text).trim();
+  if (v.result != null) return String(v.result).trim();
+  if (v.hyperlink && v.text) return String(v.text).trim();
+  return String(v).trim();
+}
+
+function workbookHasRmCategoryTabs(workbook) {
+  return (workbook.worksheets || []).some((w) => isRmCategoryImportSheet(w.name));
+}
+
+/**
+ * Row 4 = headers A–M; data from row 5. Columns 2–12 = B–L (see FE spec); I,J,M ignored by upsert.
+ */
+function parseRmMultiSheetWorkbook(workbook) {
+  const rows = [];
+  for (const worksheet of workbook.worksheets || []) {
+    if (!isRmCategoryImportSheet(worksheet.name)) continue;
+    const sheetName = worksheet.name;
+    const lastRow = worksheet.actualRowCount || worksheet.rowCount || 0;
+    for (let r = 5; r <= lastRow; r += 1) {
+      const row = worksheet.getRow(r);
+      const sku = cellToText(row.getCell(2));
+      const itemName = cellToText(row.getCell(3));
+      const category = cellToText(row.getCell(4));
+      const subCategory = cellToText(row.getCell(5));
+      const uom = cellToText(row.getCell(6));
+      const hsn = cellToText(row.getCell(7));
+      const gstCell = row.getCell(8);
+      const purchaseCell = row.getCell(9);
+      const inci = cellToText(row.getCell(12));
+      if (!sku && !itemName) continue;
+      rows.push({
+        excel_row: r,
+        line_type: 'Raw Material',
+        import_profile: 'rm_multi_sheet',
+        zoho_sku_code: sku,
+        description: itemName,
+        sheet_name: sheetName,
+        category,
+        sub_category: subCategory,
+        uom,
+        hsn_code: hsn,
+        gst_pct: gstCell.value,
+        purchase_rate_inr: purchaseCell.value,
+        inci_name: inci,
+      });
+    }
+  }
+  return rows;
+}
+
+function parseLegacyItemReferenceSheet(workbook) {
+  const sheet =
+    workbook.getWorksheet(ITEM_REFERENCE_SHEET) ||
+    (workbook.worksheets || []).find((w) => String(w.name).trim() === ITEM_REFERENCE_SHEET);
+  if (!sheet) return { rows: [], packagingRowsSkipped: 0 };
+  const rows = [];
+  let packagingRowsSkipped = 0;
+  const lastRow = sheet.actualRowCount || sheet.rowCount || 0;
+  for (let r = 2; r <= lastRow; r += 1) {
+    const row = sheet.getRow(r);
+    const sku = cellToText(row.getCell(1));
+    const itemName = cellToText(row.getCell(2));
+    const typeCell = cellToText(row.getCell(3));
+    if (!sku && !itemName && !typeCell) continue;
+    const tNorm = typeCell.toLowerCase().replace(/\s+/g, ' ');
+    if (tNorm === 'packaging') {
+      packagingRowsSkipped += 1;
+      continue;
+    }
+    if (tNorm !== 'raw material') continue;
+    rows.push({
+      excel_row: r,
+      line_type: 'Raw Material',
+      zoho_sku_code: sku,
+      description: itemName,
+    });
+  }
+  return { rows, packagingRowsSkipped };
+}
+
+async function extractRowsFromBuffer(buffer) {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
+  if (!workbook.worksheets || workbook.worksheets.length === 0) {
+    throw new Error('Workbook has no worksheets');
+  }
+
+  if (workbookHasRmCategoryTabs(workbook)) {
+    const rows = parseRmMultiSheetWorkbook(workbook);
+    return { rows, format: 'multi_sheet', packagingRowsSkipped: 0 };
+  }
+
+  const hasItemRef =
+    workbook.getWorksheet(ITEM_REFERENCE_SHEET) != null ||
+    (workbook.worksheets || []).some((w) => String(w.name).trim() === ITEM_REFERENCE_SHEET);
+  if (!hasItemRef) {
+    throw new Error(
+      'No supported sheets found. Use tabs named Raw Materials, Fragrances, Colors & Pigments, and/or Club Items (headers row 4, data from row 5), or a legacy sheet named "Item Reference".'
+    );
+  }
+
+  const { rows, packagingRowsSkipped } = parseLegacyItemReferenceSheet(workbook);
+  return { rows, format: 'item_reference', packagingRowsSkipped };
+}
+
+async function postRmMasterExcelUpload(req, res) {
+  try {
+    const user = req.user;
+    if (!user) return res.sendStatus(401);
+    if (!userAllows(user, 'raw-materials-management')) {
+      return res.status(403).json({ error: 'raw-materials-management access required' });
+    }
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({ error: 'Expected multipart file field "file" (.xlsx or .xlsm)' });
+    }
+
+    const details =
+      req.query.details === '1' || req.query.details === 'true' || req.body?.details === true;
+
+    let extracted;
+    try {
+      extracted = await extractRowsFromBuffer(req.file.buffer);
+    } catch (loadErr) {
+      console.error('rmMasterExcel load/parse error', loadErr);
+      return res.status(400).json({ error: loadErr.message || 'Invalid Excel file' });
+    }
+
+    const { rows, format, packagingRowsSkipped } = extracted;
+
+    if (!rows.length) {
+      const hint =
+        format === 'multi_sheet'
+          ? 'No data rows found under RM category tabs (data should start on row 5).'
+          : `No Raw Material rows in "${ITEM_REFERENCE_SHEET}" (type column C, from row 2).`;
+      return res.status(400).json({
+        error: hint,
+        format,
+        packaging_rows_skipped: packagingRowsSkipped || 0,
+      });
+    }
+    if (rows.length > MAX_DATA_ROWS) {
+      return res.status(400).json({ error: `At most ${MAX_DATA_ROWS} data rows` });
+    }
+
+    const chunkSize = RM_EXCEL_IMPORT_CHUNK_SIZE;
+    const aggregated = {
+      raw_created: 0,
+      raw_updated: 0,
+      skipped: 0,
+      errors: 0,
+      row_log: [],
+    };
+    let chunkIndex = 0;
+    const chunkTotal = Math.max(1, Math.ceil(rows.length / chunkSize));
+
+    for (let offset = 0; offset < rows.length; offset += chunkSize) {
+      const slice = rows.slice(offset, offset + chunkSize);
+      const part = await executeItemReferenceBulkRows(slice, user, details);
+      aggregated.raw_created += part.raw_created;
+      aggregated.raw_updated += part.raw_updated;
+      aggregated.skipped += part.skipped;
+      aggregated.errors += part.errors;
+      if (details && Array.isArray(part.row_log) && part.row_log.length) {
+        aggregated.row_log.push(
+          ...part.row_log.map((entry) => ({ ...entry, chunk_index: chunkIndex, chunk_total: chunkTotal }))
+        );
+      }
+      chunkIndex += 1;
+    }
+
+    return res.json({
+      ok: true,
+      format,
+      packaging_rows_skipped: packagingRowsSkipped || 0,
+      rows_total: rows.length,
+      chunk_size: chunkSize,
+      chunks_processed: chunkTotal,
+      summary: {
+        raw_material_created: aggregated.raw_created,
+        raw_material_updated: aggregated.raw_updated,
+        skipped: aggregated.skipped,
+        errors: aggregated.errors,
+      },
+      ...(details ? { row_log: aggregated.row_log } : {}),
+    });
+  } catch (err) {
+    console.error('postRmMasterExcelUpload error', err);
+    return res.status(500).json({ error: err.message || 'Import failed' });
+  }
+}
+
+const uploadRmMasterExcelMiddleware = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_UPLOAD_BYTES },
+  fileFilter: (_req, file, cb) => {
+    const name = String(file?.originalname || '').toLowerCase();
+    const okName = name.endsWith('.xlsx') || name.endsWith('.xlsm');
+    const okMime = !file?.mimetype || ALLOWED_MIME.has(file.mimetype);
+    if (okName && okMime) return cb(null, true);
+    cb(new Error('Only .xlsx / .xlsm files are accepted'));
+  },
+}).single('file');
+
+module.exports = {
+  uploadRmMasterExcelMiddleware,
+  postRmMasterExcelUpload,
+  extractRowsFromBuffer,
+};

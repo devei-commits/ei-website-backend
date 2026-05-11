@@ -61,7 +61,7 @@ router.post(
   uploadFormulaPackBomExcel
 );
 router.post('/formula-pack-bom/chunk', requireCatalogueModule, processFormulaPackBomChunk);
-/** Danger: clears BOM lines + fill size for every PR (all `boms` rows). Requires confirm body. */
+/** Danger: deletes all PR-linked products, all `boms` rows, and dependents (same as per-product delete). Requires confirm body. */
 router.post('/bom/full-reset-all', requireCatalogueModule, clearAllPrBomForExcelReimport);
 router.post(
   '/:id([0-9]+)/sku-bom/upload-excel',

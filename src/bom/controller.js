@@ -1,12 +1,6 @@
 const BOM = require('./models');
 const { Op } = require('sequelize');
-
-function parseSuffix(code, prefix) {
-  if (!code || !prefix || !String(code).startsWith(prefix)) return null;
-  const rest = String(code).slice(prefix.length).replace(/^-+/, '');
-  const num = parseInt(rest, 10);
-  return Number.isNaN(num) ? null : num;
-}
+const { nextNumericCode } = require('../lib/nextNumericMasterCode');
 
 function formatBOM(row) {
   if (!row) return null;
@@ -60,26 +54,13 @@ function formatBOM(row) {
 }
 
 /**
- * GET /api/v1/bom/next-code?prefix=EI-PR-SKC — next bom_code for series (e.g. EI-PR-SKC-00002).
+ * GET /api/v1/bom/next-code — next numeric bom_code only (e.g. 00002). Query prefix is ignored (legacy).
  */
 async function getNextCode(req, res) {
   try {
-    const prefix = req.query.prefix != null ? String(req.query.prefix).trim() : '';
-    if (!prefix) {
-      return res.status(400).json({ error: 'Query parameter "prefix" is required' });
-    }
-    const rows = await BOM.findAll({
-      attributes: ['bom_code'],
-      where: { bom_code: { [Op.iLike]: `${prefix}%` } },
-    });
-    let maxNum = 0;
-    for (const row of rows) {
-      const code = row.get ? row.get('bom_code') : row.bom_code;
-      const n = parseSuffix(code, prefix);
-      if (n != null && n > maxNum) maxNum = n;
-    }
-    const nextNum = maxNum + 1;
-    const nextCode = `${prefix}-${String(nextNum).padStart(5, '0')}`;
+    const rows = await BOM.findAll({ attributes: ['bom_code'] });
+    const codes = rows.map((row) => (row.get ? row.get('bom_code') : row.bom_code));
+    const nextCode = nextNumericCode(codes, 5);
     res.json({ nextCode });
   } catch (err) {
     console.error('getNextCode (BOM) error', err);

@@ -10,16 +10,9 @@ const { findConflictingMasterRow } = require('../lib/itemCodeUniqueness');
 const WarehouseInventory = require('../warehouseInventory/models');
 const WarehouseInventoryLocationHistory = require('../warehouseInventory/locationHistoryModel');
 const { ReservedBatchItem } = require('../fulfillment/models');
-
-/**
- * Parse numeric suffix from code after prefix (e.g. "EI-PM-PRI-00001" -> 1, "EI-PM-BOX-001" -> 1).
- */
-function parseSuffix(code, prefix) {
-  if (!code || !prefix || !String(code).startsWith(prefix)) return null;
-  const rest = String(code).slice(prefix.length).replace(/^-+/, '');
-  const num = parseInt(rest, 10);
-  return Number.isNaN(num) ? null : num;
-}
+const { resetPackMaterialsMasterData } = require('../masters/resetMaterialMasters');
+const redis = require('../cache/redis');
+const { nextNumericCode } = require('../lib/nextNumericMasterCode');
 
 function formatPackMaterial(row) {
   if (!row) return null;
@@ -120,27 +113,13 @@ async function listPackMaterials(req, res) {
 }
 
 /**
- * GET /api/v1/pack-materials/next-code?prefix=EI-PM-PRI — returns next code for series (e.g. EI-PM-PRI-00002).
- * Prefix must be given. Counts existing codes starting with prefix, takes max numeric suffix + 1, pads to 5 digits.
+ * GET /api/v1/pack-materials/next-code — next numeric code only (e.g. 00002). Query prefix is ignored (legacy).
  */
 async function getNextCode(req, res) {
   try {
-    const prefix = req.query.prefix != null ? String(req.query.prefix).trim() : '';
-    if (!prefix) {
-      return res.status(400).json({ error: 'Query parameter "prefix" is required' });
-    }
-    const rows = await PackMaterial.findAll({
-      attributes: ['code'],
-      where: { code: { [Op.iLike]: `${prefix}%` } },
-    });
-    let maxNum = 0;
-    for (const row of rows) {
-      const code = row.get ? row.get('code') : row.code;
-      const n = parseSuffix(code, prefix);
-      if (n != null && n > maxNum) maxNum = n;
-    }
-    const nextNum = maxNum + 1;
-    const nextCode = `${prefix}-${String(nextNum).padStart(5, '0')}`;
+    const rows = await PackMaterial.findAll({ attributes: ['code'] });
+    const codes = rows.map((row) => (row.get ? row.get('code') : row.code));
+    const nextCode = nextNumericCode(codes, 5);
     res.json({ nextCode });
   } catch (err) {
     console.error('getNextCode error', err);
@@ -624,6 +603,41 @@ async function getReservedStock(req, res) {
   }
 }
 
+/**
+ * POST /api/v1/pack-materials/reset-all — delete every pack material and clean dependent rows (destructive).
+ * Body: { "confirm": "RESET_ALL_PACK_MATERIALS" }
+ */
+async function resetAllPackMaterials(req, res) {
+  const confirm = req.body && req.body.confirm != null ? String(req.body.confirm) : '';
+  if (confirm !== 'RESET_ALL_PACK_MATERIALS') {
+    return res.status(400).json({
+      error: 'Confirmation required: POST JSON body { "confirm": "RESET_ALL_PACK_MATERIALS" }.',
+    });
+  }
+  const t = await db.transaction();
+  try {
+    const stats = await resetPackMaterialsMasterData(t);
+    await t.commit();
+    Promise.all([
+      redis.delByPattern('pack-materials:').catch(() => {}),
+      redis.delByPattern('warehouse-inventory:').catch(() => {}),
+      redis.delByPattern('planning-extracted:').catch(() => {}),
+      redis.delByPattern('fulfillment:').catch(() => {}),
+      redis.delByPattern('items-list:').catch(() => {}),
+      redis.delByPattern('procurement:').catch(() => {}),
+    ]).catch(() => {});
+    res.json({
+      ok: true,
+      deletedPackMaterials: stats.deletedPackMaterials,
+      message: 'All pack materials and dependent master data were removed.',
+    });
+  } catch (err) {
+    await t.rollback();
+    console.error('resetAllPackMaterials error', err);
+    res.status(500).json({ error: err.message || 'Failed to reset pack materials' });
+  }
+}
+
 module.exports = {
   listPackMaterials,
   getNextCode,
@@ -633,5 +647,6 @@ module.exports = {
   updatePackMaterial,
   deletePackMaterial,
   getReservedStock,
+  resetAllPackMaterials,
   formatPackMaterial,
 };

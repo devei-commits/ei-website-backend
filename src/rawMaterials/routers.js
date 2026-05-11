@@ -1,8 +1,19 @@
 const express = require('express');
 const router = express.Router();
 const { isAuthenticated, requireModule } = require('../middleware/security');
-const { listRawMaterials, getRawMaterialById, getNextCode, syncRmZoho, createRawMaterial, updateRawMaterial, deleteRawMaterial, getReservedStock } = require('./controller');
+const {
+  listRawMaterials,
+  getRawMaterialById,
+  getNextCode,
+  syncRmZoho,
+  createRawMaterial,
+  updateRawMaterial,
+  deleteRawMaterial,
+  getReservedStock,
+  resetAllRawMaterials,
+} = require('./controller');
 const { postItemReferenceBulkChunk } = require('../masterBulk/itemReferenceBulkChunk');
+const { uploadRmMasterExcelMiddleware, postRmMasterExcelUpload } = require('../masterBulk/rmMasterExcelUpload');
 const { createCacheReadMiddleware } = require('../cache/cacheReadMiddleware');
 
 const requireRawMaterials = [isAuthenticated, requireModule('raw-materials-management')];
@@ -19,9 +30,27 @@ const requireRawMaterialsListRead = [
 const cacheRawMaterialsList = createCacheReadMiddleware({ namespace: 'raw-materials', ttlSeconds: 120 });
 const cacheRawMaterialsOne = createCacheReadMiddleware({ namespace: 'raw-materials', ttlSeconds: 300 });
 
+function uploadRmMasterExcelSafe(req, res, next) {
+  uploadRmMasterExcelMiddleware(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message || 'File upload failed' });
+    next();
+  });
+}
+
+/** Avoid treating "reset-all" as a numeric id on GET (was returning "Raw material not found"). */
+function resetAllMethodNotAllowed(_req, res) {
+  res.status(405).json({
+    error:
+      'Use POST /api/v1/raw-materials/reset-all with JSON body { "confirm": "RESET_ALL_RAW_MATERIALS" } (Bearer auth required).',
+  });
+}
+
 router.get('/', requireRawMaterialsListRead, cacheRawMaterialsList, listRawMaterials);
 router.get('/next-code', requireRawMaterials, getNextCode);
+router.get('/reset-all', resetAllMethodNotAllowed);
+router.post('/reset-all', requireRawMaterials, resetAllRawMaterials);
 router.post('/item-reference-bulk-chunk', requireItemReferenceBulk, postItemReferenceBulkChunk);
+router.post('/import-excel', requireRawMaterials, uploadRmMasterExcelSafe, postRmMasterExcelUpload);
 router.post('/zoho-sync', requireRawMaterials, syncRmZoho);
 router.post('/', requireRawMaterials, createRawMaterial);
 router.get('/:id/reserved-stock', requireRawMaterials, getReservedStock);
