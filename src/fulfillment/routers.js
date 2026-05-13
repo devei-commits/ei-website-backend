@@ -7,7 +7,7 @@ const {
   pickSplits, invoiceSplits, shipSplits, deliverSplits,
   listBatchSplits,
   getNextSoNo, getCustomers, getProducts,
-  listTransporters, getNextInvoiceNo, createInvoice, listInvoices,
+  listTransporters, createInvoice, listInvoices,
   getSoPlanningAvailability,
 } = require('./controller');
 
@@ -21,7 +21,6 @@ router.get('/customers', guard, getCustomers);
 router.get('/products', guard, getProducts);
 router.get('/batch-splits', guard, listBatchSplits);
 router.get('/transporters', guard, listTransporters);
-router.get('/next-invoice-no', guard, getNextInvoiceNo);
 router.get('/invoices', guard, cacheFulfillment, listInvoices);
 router.post('/invoices', guard, createInvoice);
 // SO planning availability summary (RM/PM needed vs requested vs available)

@@ -19,7 +19,74 @@ const {
   scrubProcurementJsonForDeletedProducts,
 } = require('./destroyProductWithDependents');
 const { linkMaterialMastersToProductCode } = require('./linkMaterialMastersToProduct');
-const { nextNumericCode } = require('../lib/nextNumericMasterCode');
+
+/** @param {Record<string, unknown>} b @param {{ defaultPermanent?: boolean }} [opts] @returns {'temporary'|'permanent'|null} */
+function normalizePrRecordTypeFromBody(b, opts = {}) {
+  const { defaultPermanent = false } = opts;
+  const raw = b?.pr_record_type ?? b?.prRecordType ?? b?.record_type ?? b?.recordType;
+  if (raw == null || raw === '') {
+    return defaultPermanent ? 'permanent' : null;
+  }
+  const s = String(raw).trim().toLowerCase();
+  if (['temporary', 'temp', 't'].includes(s)) return 'temporary';
+  if (['permanent', 'perm', 'p'].includes(s)) return 'permanent';
+  return defaultPermanent ? 'permanent' : null;
+}
+
+/**
+ * @param {string} code
+ * @param {'temporary'|'permanent'|null|undefined} recordType
+ * @returns {string|null} error message
+ */
+function validatePrProductCodeForRecordType(code, recordType) {
+  if (!recordType) return null;
+  const c = String(code || '').trim();
+  if (!c) return 'product_code is required';
+  if (recordType === 'temporary') {
+    if (!/^TPR/i.test(c)) {
+      return 'Temporary PR records must use an internal product code starting with "TPR".';
+    }
+    return null;
+  }
+  if (recordType === 'permanent') {
+    if (!/^PR/i.test(c)) {
+      return 'Permanent PR records must use an internal product code starting with "PR".';
+    }
+    return null;
+  }
+  return null;
+}
+
+/**
+ * Next internal PR code: TPR##### or PR##### (shared sequence space with boms.bom_code).
+ * @param {'temporary'|'permanent'} recordType
+ * @param {import('sequelize').Transaction} transaction
+ */
+async function allocateNextPrProductCode(recordType, transaction) {
+  const sequelize = Product.sequelize;
+  const dialect = sequelize.getDialect && sequelize.getDialect();
+  if (dialect === 'postgres') {
+    await sequelize.query('SELECT pg_advisory_xact_lock(98273503, 3)', { transaction });
+  }
+  const prefix = recordType === 'temporary' ? 'TPR' : 'PR';
+  const re = recordType === 'temporary' ? /^TPR(\d{5})$/i : /^PR(\d{5})$/i;
+  const like = `${prefix}%`;
+  const [bomRows, prodRows] = await Promise.all([
+    BOM.findAll({ attributes: ['bom_code'], where: { bom_code: { [Op.like]: like } }, transaction }),
+    Product.findAll({ attributes: ['product_code'], where: { product_code: { [Op.like]: like } }, transaction }),
+  ]);
+  let max = 0;
+  const bump = (raw) => {
+    const m = String(raw || '').trim().match(re);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (Number.isFinite(n) && n > max) max = n;
+    }
+  };
+  for (const row of bomRows) bump(row.get ? row.get('bom_code') : row.bom_code);
+  for (const row of prodRows) bump(row.get ? row.get('product_code') : row.product_code);
+  return `${prefix}${String(max + 1).padStart(5, '0')}`;
+}
 
 function normSkuLimitQty(v) {
   if (v == null || v === '') return null;
@@ -341,7 +408,7 @@ const syncPrProductZoho = async (req, res) => {
 
 /**
  * POST /products/pr-registration — PR Master wizard: create `products` row + linked `boms` row.
- * Expects product_name; product_code optional (auto-allocated as next global numeric when omitted).
+ * Expects product_name; product_code optional (auto-allocated as TPR##### / PR##### when omitted).
  * Optional `product_id` when the draft row was created via POST /products/pr-zoho-sync (code must match draft).
  */
 const createPRRegistration = async (req, res) => {
@@ -375,19 +442,29 @@ const createPRRegistration = async (req, res) => {
         });
       }
     } else if (!product_code) {
-      const [bomRows, prodRows] = await Promise.all([
-        BOM.findAll({ attributes: ['bom_code'] }),
-        Product.findAll({ attributes: ['product_code'] }),
-      ]);
-      const codes = [
-        ...bomRows.map((row) => (row.get ? row.get('bom_code') : row.bom_code)),
-        ...prodRows.map((row) => (row.get ? row.get('product_code') : row.product_code)),
-      ];
-      product_code = nextNumericCode(codes, 5);
+      const recordTypeForAlloc = normalizePrRecordTypeFromBody(b, { defaultPermanent: true });
+      try {
+        product_code = await db.transaction(async (txn) =>
+          allocateNextPrProductCode(recordTypeForAlloc, txn)
+        );
+      } catch (allocErr) {
+        console.error('createPRRegistration allocate code', allocErr);
+        return res.status(500).json({ error: allocErr.message || 'Failed to allocate PR product code' });
+      }
     }
 
     if (!product_code) {
       return res.status(400).json({ error: 'product_code is required' });
+    }
+
+    const recordTypeExplicit = normalizePrRecordTypeFromBody(b, { defaultPermanent: false });
+    const prRecordStored = hasPreProduct
+      ? recordTypeExplicit ?? preProduct.pr_record_type ?? null
+      : recordTypeExplicit ?? 'permanent';
+    const recordTypeForRules = hasPreProduct ? null : recordTypeExplicit ?? 'permanent';
+    const codeErr = validatePrProductCodeForRecordType(product_code, recordTypeForRules);
+    if (codeErr) {
+      return res.status(400).json({ error: codeErr, code: 'PR_CODE_RECORD_TYPE_MISMATCH' });
     }
 
     if (!hasPreProduct) {
@@ -465,6 +542,7 @@ const createPRRegistration = async (req, res) => {
     const productRow = {
       product_name,
       product_code,
+      pr_record_type: prRecordStored,
       zoho_sku_code: bomSku,
       generic_name: b.generic_name ?? b.category ?? null,
       brand_name: b.brand_name ?? b.client ?? null,
@@ -1015,6 +1093,41 @@ const updateProduct = async (req, res) => {
     const product = await Product.findByPk(productId);
     if (!product) {
       return res.status(404).json({ error: "Product not found" });
+    }
+
+    const nextCode =
+      req.body.product_code != null && String(req.body.product_code).trim() !== ''
+        ? String(req.body.product_code).trim()
+        : String(product.product_code || '').trim();
+    const typeExplicitlySet =
+      Object.prototype.hasOwnProperty.call(req.body, 'pr_record_type') ||
+      Object.prototype.hasOwnProperty.call(req.body, 'prRecordType');
+    const typeFromBody = typeExplicitlySet
+      ? normalizePrRecordTypeFromBody(req.body, { defaultPermanent: false })
+      : undefined;
+    if (typeExplicitlySet) {
+      const rawTr = req.body.pr_record_type ?? req.body.prRecordType;
+      const isEmpty = rawTr == null || (typeof rawTr === 'string' && !String(rawTr).trim());
+      if (!isEmpty && typeFromBody == null) {
+        return res.status(400).json({
+          error: 'Invalid pr_record_type. Use "temporary" or "permanent" (or null for legacy).',
+          code: 'PR_RECORD_TYPE_INVALID',
+        });
+      }
+    }
+    const mergedType =
+      typeFromBody !== undefined
+        ? typeFromBody
+        : product.pr_record_type != null
+          ? String(product.pr_record_type).trim()
+          : null;
+    const mergedTypeNorm =
+      mergedType && ['temporary', 'permanent'].includes(String(mergedType).toLowerCase())
+        ? String(mergedType).toLowerCase()
+        : null;
+    const codeRuleErr = validatePrProductCodeForRecordType(nextCode, mergedTypeNorm);
+    if (codeRuleErr) {
+      return res.status(400).json({ error: codeRuleErr, code: 'PR_CODE_RECORD_TYPE_MISMATCH' });
     }
 
     // if product_name is being changed → check duplicate

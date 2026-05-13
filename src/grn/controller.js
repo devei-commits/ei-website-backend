@@ -83,31 +83,37 @@ async function assignableUsers(req, res) {
 
 /**
  * Enrich line_items from RM/PM/Product masters: resolve item, itemCode; set diff = rcvdQty - poQty; auto Hold when diff < 0 (shortfall).
+ *
  * @param {Array} lineItems - raw line_items (may have raw_material_id, pack_material_id, product_id)
  * @param {{ [id: string]: { code: string, name: string } }} rmMap
  * @param {{ [id: string]: { code: string, name: string } }} pmMap - name from description
  * @param {{ [id: string]: { code: string, name: string } }} productMap - Product uses product_id
+ * @param {string|null} [grnType] - 'RM' | 'PM' | null. When the GRN type is known, the matching FK
+ *   wins even if a stale FK from the other side is also present on the line. This is what stops
+ *   legacy contaminated rows (PM line carrying both raw_material_id=AQUA AND pack_material_id=PM)
+ *   from displaying as the wrong master in the warehouse Inbound list.
  */
-function enrichLineItems(lineItems, rmMap, pmMap, productMap) {
+function enrichLineItems(lineItems, rmMap, pmMap, productMap, grnType) {
   if (!Array.isArray(lineItems)) return [];
+  const typeU = String(grnType || '').trim().toUpperCase();
   return lineItems.map((line) => {
     const poQty = Number(line.poQty ?? line.po_qty) || 0;
     const rcvdQty = Number(line.rcvdQty ?? line.rcvd_qty) || 0;
-    const diff = rcvdQty - poQty; // positive = over-received, negative = shortfall
+    const diff = rcvdQty - poQty;
     let item = line.item || '';
     let itemCode = line.itemCode || '';
-    if (line.raw_material_id != null && rmMap[String(line.raw_material_id)]) {
-      const m = rmMap[String(line.raw_material_id)];
-      item = m.name || item;
-      itemCode = m.code || itemCode;
-    } else if (line.pack_material_id != null && pmMap[String(line.pack_material_id)]) {
-      const m = pmMap[String(line.pack_material_id)];
-      item = m.name || item;
-      itemCode = m.code || itemCode;
-    } else if (line.product_id != null && productMap[String(line.product_id)]) {
-      const m = productMap[String(line.product_id)];
-      item = m.name || item;
-      itemCode = m.code || itemCode;
+    const rmHit = line.raw_material_id != null ? rmMap[String(line.raw_material_id)] : null;
+    const pmHit = line.pack_material_id != null ? pmMap[String(line.pack_material_id)] : null;
+    const productHit = line.product_id != null ? productMap[String(line.product_id)] : null;
+    let preferred = null;
+    if (typeU === 'PM' && pmHit) preferred = pmHit;
+    else if (typeU === 'RM' && rmHit) preferred = rmHit;
+    else if (rmHit) preferred = rmHit;
+    else if (pmHit) preferred = pmHit;
+    else if (productHit) preferred = productHit;
+    if (preferred) {
+      item = preferred.name || item;
+      itemCode = preferred.code || itemCode;
     }
     const qcStatus = diff < 0 ? 'Hold' : (line.qcStatus || 'Pending');
     return {
@@ -165,8 +171,11 @@ function extractMasterCodeFromText(text) {
   const s = String(text);
   const m = s.match(/EI-[A-Z0-9-]+/i);
   if (m && m[0]) return String(m[0]).trim().toUpperCase();
+  // Parenthesized fallback must look like a real master code (contain at least one digit),
+  // otherwise vendor / common-name suffixes like "(ROMAT)", "(ALCH)" get mistaken for codes
+  // and route a GRN line to the wrong RM/PM master row.
   const m2 = s.match(/\(([A-Z0-9-]+)\)/);
-  if (m2 && m2[1]) return String(m2[1]).trim().toUpperCase();
+  if (m2 && m2[1] && /[0-9]/.test(m2[1])) return String(m2[1]).trim().toUpperCase();
   return '';
 }
 
@@ -273,26 +282,25 @@ async function repairLineItemsMasterLinks(rows, transaction) {
       const resolvedPm = pmByCode[code] ?? (name ? pmByName[name] : undefined);
       const currentRm = line.raw_material_id != null ? Number(line.raw_material_id) : null;
       const currentPm = line.pack_material_id != null ? Number(line.pack_material_id) : null;
+      // Only repair when the line is missing its FK. If a FK is already present, trust it —
+      // overwriting with name-resolved twins (e.g. trade name "LICORICE EXTRACT (ROMAT)"
+      // stripped to "LICORICE EXTRACT") can silently re-point lines at the wrong master.
+      const rmFkPresent = currentRm != null && !Number.isNaN(currentRm);
+      const pmFkPresent = currentPm != null && !Number.isNaN(currentPm);
       let updated = line;
-      if (grnType === 'RM' && resolvedRm != null) {
-        if (currentRm !== Number(resolvedRm) || currentPm != null) {
-          updated = { ...line, raw_material_id: Number(resolvedRm) };
-          if (updated.pack_material_id != null) delete updated.pack_material_id;
-          changed = true;
-        }
-      } else if (grnType === 'PM' && resolvedPm != null) {
-        if (currentPm !== Number(resolvedPm) || currentRm != null) {
-          updated = { ...line, pack_material_id: Number(resolvedPm) };
-          if (updated.raw_material_id != null) delete updated.raw_material_id;
-          changed = true;
-        }
-      } else if (resolvedRm != null && currentRm !== Number(resolvedRm)) {
+      if (grnType === 'RM' && resolvedRm != null && !rmFkPresent) {
         updated = { ...line, raw_material_id: Number(resolvedRm) };
         if (updated.pack_material_id != null) delete updated.pack_material_id;
         changed = true;
-      } else if (resolvedPm != null && currentPm !== Number(resolvedPm)) {
+      } else if (grnType === 'PM' && resolvedPm != null && !pmFkPresent) {
         updated = { ...line, pack_material_id: Number(resolvedPm) };
         if (updated.raw_material_id != null) delete updated.raw_material_id;
+        changed = true;
+      } else if (resolvedRm != null && !rmFkPresent && !pmFkPresent) {
+        updated = { ...line, raw_material_id: Number(resolvedRm) };
+        changed = true;
+      } else if (resolvedPm != null && !rmFkPresent && !pmFkPresent) {
+        updated = { ...line, pack_material_id: Number(resolvedPm) };
         changed = true;
       }
       return updated;
@@ -353,7 +361,7 @@ async function list(req, res) {
     const { rmMap, pmMap, productMap } = await getMastersForLineItems(rows);
     const out = rows.map((r) => {
       const d = r.get ? r.get({ plain: true }) : r;
-      const enriched = enrichLineItems(d.line_items || [], rmMap, pmMap, productMap);
+      const enriched = enrichLineItems(d.line_items || [], rmMap, pmMap, productMap, d.type);
       return formatRow(r, enriched);
     });
     res.json(out);
@@ -376,7 +384,7 @@ async function getById(req, res) {
     await repairLineItemsMasterLinks([row]);
     const { rmMap, pmMap, productMap } = await getMastersForLineItems([row]);
     const d = row.get ? row.get({ plain: true }) : row;
-    const enriched = enrichLineItems(d.line_items || [], rmMap, pmMap, productMap);
+    const enriched = enrichLineItems(d.line_items || [], rmMap, pmMap, productMap, d.type);
     res.json(formatRow(row, enriched));
   } catch (err) {
     console.error('[grn] getById error:', err);
@@ -431,24 +439,63 @@ async function create(req, res) {
           const sourceLines = clientLines.length > 0 ? clientLines : poItems;
           const allPm = sourceLines.every((i) => i.pack_material_id != null || i.packMaterialId != null);
           payload.type = allPm ? 'PM' : 'RM';
+          // Master resolution rule for GRN line creation:
+          //   1. Honour explicit raw_material_id / pack_material_id from the client. These are FKs
+          //      flowing PR -> PO -> PR-line-mapper, so they're authoritative.
+          //   2. Otherwise try to find a PO row whose code matches srcCode (NOT a positional fallback —
+          //      `poItems[idx]` was silently mapping every PM line to the first RM row of mixed POs,
+          //      which is how we ended up with PM lines stored as "AQUA" / 1000612 / raw_material_id 3411).
+          //   3. PM lines never carry raw_material_id, and RM lines never carry pack_material_id. We
+          //      mutually exclude them here so a stale value from one side cannot cross-contaminate
+          //      the other (and through enrichLineItems, flip the display name to the wrong master).
           payload.line_items = sourceLines.map((srcLine, idx) => {
             const srcCode = String(srcLine.itemCode ?? srcLine.item_code ?? srcLine.code ?? '').trim();
-            const poItem = poItems.find((poIt) => {
+            const explicitRm = srcLine.raw_material_id ?? srcLine.rawMaterialId ?? null;
+            const explicitPm = srcLine.pack_material_id ?? srcLine.packMaterialId ?? null;
+            // First try FK match against PO, then code match. Positional fallback is intentionally
+            // dropped — it was the root cause of the "PM shows as AQUA" bug.
+            const poItemByFk = poItems.find((poIt) => {
+              const norm = normalizePurchaseOrderLineItem(poIt);
+              if (explicitPm != null && norm.pack_material_id != null && Number(norm.pack_material_id) === Number(explicitPm)) return true;
+              if (explicitRm != null && norm.raw_material_id != null && Number(norm.raw_material_id) === Number(explicitRm)) return true;
+              return false;
+            });
+            const poItemByCode = poItemByFk || poItems.find((poIt) => {
               const norm = normalizePurchaseOrderLineItem(poIt);
               return srcCode && norm.code && srcCode === norm.code;
-            }) ?? poItems[idx];
-            const norm = normalizePurchaseOrderLineItem(poItem);
+            });
+            const norm = poItemByCode ? normalizePurchaseOrderLineItem(poItemByCode) : { code: '', name: '', qty: 0, unit: '', unitPrice: 0, raw_material_id: null, pack_material_id: null, product_id: null };
             const lineUnit =
               String(srcLine.unit ?? srcLine.UOM ?? '').trim() ||
               norm.unit ||
               (allPm ? 'PCS' : 'KG');
+            // Determine which side this line belongs to. Explicit FKs win; only when both are
+            // missing do we look at the matched PO line's FKs.
+            const resolvedRmId = explicitRm != null
+              ? Number(explicitRm)
+              : (explicitPm == null && norm.raw_material_id != null ? Number(norm.raw_material_id) : null);
+            const resolvedPmId = explicitPm != null
+              ? Number(explicitPm)
+              : (explicitRm == null && norm.pack_material_id != null ? Number(norm.pack_material_id) : null);
+            const resolvedProductId = srcLine.product_id ?? srcLine.productId ?? norm.product_id ?? null;
+            // For item / itemCode text, only inherit from `norm` when the matched PO row is for the
+            // same master as the resolved FK. Otherwise stick to what the client sent (which itself
+            // may be a synthetic code like "EI-RM-004" — that's OK; enrichLineItems will hydrate the
+            // display from the master tables using the correct FK).
+            const normMatchesMaster = (() => {
+              if (resolvedRmId != null && norm.raw_material_id != null) return Number(norm.raw_material_id) === Number(resolvedRmId);
+              if (resolvedPmId != null && norm.pack_material_id != null) return Number(norm.pack_material_id) === Number(resolvedPmId);
+              return false;
+            })();
+            const fallbackItem = normMatchesMaster ? (norm.name || '') : '';
+            const fallbackCode = normMatchesMaster ? (norm.code || '') : '';
             return {
               id: srcLine.id ?? String(Date.now() + idx),
-              raw_material_id: srcLine.raw_material_id ?? srcLine.rawMaterialId ?? norm.raw_material_id ?? null,
-              pack_material_id: srcLine.pack_material_id ?? srcLine.packMaterialId ?? norm.pack_material_id ?? null,
-              product_id: srcLine.product_id ?? srcLine.productId ?? norm.product_id ?? null,
-              item: String(srcLine.item ?? '').trim() || norm.name || '',
-              itemCode: srcCode || norm.code || '',
+              raw_material_id: resolvedRmId,
+              pack_material_id: resolvedPmId,
+              product_id: resolvedProductId,
+              item: String(srcLine.item ?? '').trim() || fallbackItem,
+              itemCode: srcCode || fallbackCode,
               poQty: Number(srcLine.poQty ?? srcLine.po_qty ?? norm.qty ?? 0) || 0,
               unit: lineUnit,
               rcvdQty: Number(srcLine.rcvdQty ?? srcLine.rcvd_qty ?? 0) || 0,
@@ -481,7 +528,7 @@ async function create(req, res) {
     }
     const { rmMap, pmMap, productMap } = await getMastersForLineItems([row]);
     const d = row.get ? row.get({ plain: true }) : row;
-    const enriched = enrichLineItems(d.line_items || [], rmMap, pmMap, productMap);
+    const enriched = enrichLineItems(d.line_items || [], rmMap, pmMap, productMap, d.type);
     res.status(201).json(formatRow(row, enriched));
   } catch (err) {
     console.error('[grn] create error:', err);
@@ -492,8 +539,12 @@ async function create(req, res) {
 /**
  * When GRN status transitions to 'GRN Complete', add each line item's received qty to warehouse_inventory
  * (wh_stock and stock_in_hand) so SIH reflects in Planning / Plan Batches.
- * Line items from Procurement-created GRNs often have itemCode but no raw_material_id/pack_material_id;
- * we resolve by itemCode (RM/PM code) when IDs are missing.
+ *
+ * Master resolution rule (must match the rest of the codebase):
+ *   1. If line carries a valid raw_material_id / pack_material_id, USE IT. Never override with name.
+ *   2. Only when the FK is missing (or points at a deleted master) fall back to itemCode, then name.
+ *   3. Name collisions are common (e.g. "LICORICE EXTRACT (ROMAT)" vs "LICORICE EXTRACT") so name
+ *      resolution is the last resort, not a parallel source of truth.
  */
 async function applyGrnCompletionToInventory(grnRow, opts = {}) {
   const transaction = opts.transaction;
@@ -518,9 +569,10 @@ async function applyGrnCompletionToInventory(grnRow, opts = {}) {
     // Prefer codes that start with "EI-" (seeded master codes).
     const m = s.match(/EI-[A-Z0-9-]+/i);
     if (m && m[0]) return m[0];
-    // Fallback: allow parenthesized/all-caps-ish codes.
+    // Parenthesized fallback must contain at least one digit so vendor/common-name
+    // suffixes like "(ROMAT)" / "(ALCH)" are not mistaken for codes.
     const m2 = s.match(/\(([A-Z0-9-]+)\)/);
-    if (m2 && m2[1]) return m2[1];
+    if (m2 && m2[1] && /[0-9]/.test(m2[1])) return m2[1];
     return '';
   };
 
@@ -559,6 +611,64 @@ async function applyGrnCompletionToInventory(grnRow, opts = {}) {
   let validPmIds = new Set();
   const rmUomById = new Map();
   const pmMetaById = new Map();
+
+  const mergeRmMasterRows = (rms) => {
+    for (const r of rms || []) {
+      const x = r.get ? r.get({ plain: true }) : r;
+      validRmIds.add(Number(x.id));
+      rmUomById.set(Number(x.id), x.uom || '');
+      if (x.code) rmByCode[String(x.code).trim().toUpperCase()] = x.id;
+      if (x.name) rmByName[String(x.name).trim().toLowerCase()] = x.id;
+    }
+  };
+  const mergePmMasterRows = (pms) => {
+    for (const p of pms || []) {
+      const x = p.get ? p.get({ plain: true }) : p;
+      validPmIds.add(Number(x.id));
+      pmMetaById.set(Number(x.id), { unit: x.unit || '', size_spec: x.size_spec || '' });
+      if (x.code) pmByCode[String(x.code).trim().toUpperCase()] = x.id;
+      if (x.description) pmByName[String(x.description).trim().toLowerCase()] = x.id;
+    }
+  };
+
+  // FK-first: lines often carry raw_material_id / pack_material_id only (no itemCode / blank item text).
+  // Previously validRmIds / validPmIds were filled only from code/name queries — when both were empty,
+  // explicit IDs were never "valid" and GRN Complete skipped warehouse_inventory updates entirely.
+  const explicitRmIdsFromLines = [
+    ...new Set(
+      lineItems
+        .map((l) => (l.raw_material_id != null ? Number(l.raw_material_id) : NaN))
+        .filter((id) => Number.isFinite(id) && id > 0)
+    ),
+  ];
+  const explicitPmIdsFromLines = [
+    ...new Set(
+      lineItems
+        .map((l) => (l.pack_material_id != null ? Number(l.pack_material_id) : NaN))
+        .filter((id) => Number.isFinite(id) && id > 0)
+    ),
+  ];
+  if (explicitRmIdsFromLines.length > 0 || explicitPmIdsFromLines.length > 0) {
+    const [rmsById, pmsById] = await Promise.all([
+      explicitRmIdsFromLines.length > 0
+        ? RawMaterial.findAll({
+            where: { id: { [Op.in]: explicitRmIdsFromLines } },
+            attributes: ['id', 'code', 'name', 'uom'],
+            ...(transaction ? { transaction } : {}),
+          })
+        : Promise.resolve([]),
+      explicitPmIdsFromLines.length > 0
+        ? PackMaterial.findAll({
+            where: { id: { [Op.in]: explicitPmIdsFromLines } },
+            attributes: ['id', 'code', 'description', 'unit', 'size_spec'],
+            ...(transaction ? { transaction } : {}),
+          })
+        : Promise.resolve([]),
+    ]);
+    mergeRmMasterRows(rmsById);
+    mergePmMasterRows(pmsById);
+  }
+
   if (codes.length > 0 || names.length > 0) {
     const rmWhere = codes.length > 0 && names.length > 0 ? { [Op.or]: [{ code: { [Op.in]: codes } }, { name: { [Op.in]: names } }] } : (codes.length > 0 ? { code: { [Op.in]: codes } } : { name: { [Op.in]: names } });
     const pmWhere = codes.length > 0 && names.length > 0 ? { [Op.or]: [{ code: { [Op.in]: codes } }, { description: { [Op.in]: names } }] } : (codes.length > 0 ? { code: { [Op.in]: codes } } : { description: { [Op.in]: names } });
@@ -566,20 +676,8 @@ async function applyGrnCompletionToInventory(grnRow, opts = {}) {
       RawMaterial.findAll({ where: rmWhere, attributes: ['id', 'code', 'name', 'uom'], ...(transaction ? { transaction } : {}) }),
       PackMaterial.findAll({ where: pmWhere, attributes: ['id', 'code', 'description', 'unit', 'size_spec'], ...(transaction ? { transaction } : {}) }),
     ]);
-    rms.forEach((r) => {
-      const x = r.get ? r.get({ plain: true }) : r;
-      validRmIds.add(Number(x.id));
-      rmUomById.set(Number(x.id), x.uom || '');
-      if (x.code) rmByCode[String(x.code).trim().toUpperCase()] = x.id;
-      if (x.name) rmByName[String(x.name).trim().toLowerCase()] = x.id;
-    });
-    pms.forEach((p) => {
-      const x = p.get ? p.get({ plain: true }) : p;
-      validPmIds.add(Number(x.id));
-      pmMetaById.set(Number(x.id), { unit: x.unit || '', size_spec: x.size_spec || '' });
-      if (x.code) pmByCode[String(x.code).trim().toUpperCase()] = x.id;
-      if (x.description) pmByName[String(x.description).trim().toLowerCase()] = x.id;
-    });
+    mergeRmMasterRows(rms);
+    mergePmMasterRows(pms);
   }
 
   const toAddByRm = new Map(); // raw_material_id -> kg to add
@@ -636,12 +734,18 @@ async function applyGrnCompletionToInventory(grnRow, opts = {}) {
       const kg = quantityToKg(rcvdQty, lineUnit, { itemType: 'PR' });
       toAddByProduct.set(id, (toAddByProduct.get(id) || 0) + kg);
     } else if (code || (line.item && String(line.item).trim()) || explicitRmIdValid || explicitPmIdValid) {
-      // Prefer master resolution from code/name when available, then fall back to validated explicit IDs.
-      const rmId = resolvedRmId != null ? resolvedRmId : (resolvedPmId == null && explicitRmIdValid ? explicitRmId : null);
-      const pmId = resolvedPmId != null ? resolvedPmId : (resolvedRmId == null && explicitPmIdValid ? explicitPmId : null);
+      // Prefer the explicit raw_material_id / pack_material_id when it points at a real master row.
+      // Falling back to name resolution (e.g. "LICORICE EXTRACT (ROMAT)" -> "LICORICE EXTRACT")
+      // can otherwise route stock to a same-named twin RM and silently dump qty into the wrong row.
+      const rmId = explicitRmIdValid
+        ? explicitRmId
+        : (resolvedRmId != null ? resolvedRmId : null);
+      const pmId = explicitPmIdValid
+        ? explicitPmId
+        : (resolvedPmId != null ? resolvedPmId : null);
 
       if (explicitRmIdValid && resolvedRmId != null && Number(explicitRmId) !== Number(resolvedRmId)) {
-        console.warn('[grn] RM id mismatch on line, preferring code/name resolution', {
+        console.warn('[grn] RM id mismatch on line, keeping explicit raw_material_id from line', {
           explicitRmId,
           resolvedRmId,
           itemCode: code || null,
@@ -649,7 +753,7 @@ async function applyGrnCompletionToInventory(grnRow, opts = {}) {
         });
       }
       if (explicitPmIdValid && resolvedPmId != null && Number(explicitPmId) !== Number(resolvedPmId)) {
-        console.warn('[grn] PM id mismatch on line, preferring code/name resolution', {
+        console.warn('[grn] PM id mismatch on line, keeping explicit pack_material_id from line', {
           explicitPmId,
           resolvedPmId,
           itemCode: code || null,
@@ -1076,7 +1180,7 @@ async function update(req, res) {
     }
     const { rmMap, pmMap, productMap } = await getMastersForLineItems([refreshed]);
     const d = refreshed.get ? refreshed.get({ plain: true }) : refreshed;
-    const enriched = enrichLineItems(d.line_items || [], rmMap, pmMap, productMap);
+    const enriched = enrichLineItems(d.line_items || [], rmMap, pmMap, productMap, d.type);
     res.json(formatRow(refreshed, enriched));
   } catch (err) {
     console.error('[grn] update error:', err);

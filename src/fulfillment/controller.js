@@ -1153,47 +1153,54 @@ async function listTransporters(_req, res) {
 
 /* ── Invoice endpoints ── */
 
-async function getNextInvoiceNo(_req, res) {
-  try {
-    const latest = await FulfillmentInvoice.findOne({
-      order: [['id', 'DESC']],
-      attributes: ['invoice_no'],
-    });
-
-    let nextNum = 1;
-    if (latest && latest.invoice_no) {
-      const match = latest.invoice_no.match(/(\d+)$/);
-      if (match) nextNum = parseInt(match[1], 10) + 1;
-    }
-
-    const year = new Date().getFullYear();
-    const invoiceNo = `INV-${year}-${String(nextNum).padStart(4, '0')}`;
-    res.json({ invoiceNo });
-  } catch (err) {
-    console.error('getNextInvoiceNo error:', err);
-    res.status(500).json({ error: 'Failed to generate invoice number' });
+/** Serialize invoice number allocation (Postgres). Must run inside `transaction`. */
+async function allocateNextFulfillmentInvoiceNo(sequelize, transaction) {
+  const dialect = sequelize.getDialect && sequelize.getDialect();
+  if (dialect === 'postgres') {
+    await sequelize.query('SELECT pg_advisory_xact_lock(98273491, 1)', { transaction });
   }
+
+  const latest = await FulfillmentInvoice.findOne({
+    order: [['id', 'DESC']],
+    attributes: ['invoice_no'],
+    transaction,
+  });
+
+  let nextNum = 1;
+  if (latest && latest.invoice_no) {
+    const match = String(latest.invoice_no).match(/(\d+)$/);
+    if (match) nextNum = parseInt(match[1], 10) + 1;
+  }
+
+  const year = new Date().getFullYear();
+  return `INV-${year}-${String(nextNum).padStart(4, '0')}`;
 }
 
 /**
  * POST /fulfillment/invoices — Zoho sync reads Books ids from local DB:
  * Body: `vendorClientId` / `vendor_client_id` (vendor_clients.id → zoho_id) or `userId` / `user_id` (users → zoho_contact_id).
  * lineItems: `{ productId }` / `{ rawMaterialId }` / `{ packMaterialId }` (+ optional rate, qty, name) → products.zoho_item_id / raw_materials.zoho_id / pack_materials.zoho_id.
+ *
+ * `invoiceNo` is optional: when omitted or blank, the next number is allocated inside this request's DB transaction
+ * (with an advisory lock on Postgres) so concurrent creates cannot reuse the same number.
  */
 async function createInvoice(req, res) {
   const tx = await FulfillmentOrder.sequelize.transaction();
   try {
     const {
-      fulfillmentOrderId, invoiceNo, invoiceDate, dueDate,
+      fulfillmentOrderId, invoiceNo: invoiceNoRaw, invoiceDate, dueDate,
       preparedBy, transporterId, transporterName, lrAwbNo,
       remarks, subtotal, gstPercent, totalValue, lineItems, bprNos,
       vendorClientId, vendor_client_id, userId, user_id,
     } = req.body;
 
-    if (!fulfillmentOrderId || !invoiceNo) {
+    if (!fulfillmentOrderId) {
       await tx.rollback();
-      return res.status(400).json({ error: 'fulfillmentOrderId and invoiceNo are required' });
+      return res.status(400).json({ error: 'fulfillmentOrderId is required' });
     }
+
+    const trimmed = invoiceNoRaw != null && String(invoiceNoRaw).trim() !== '' ? String(invoiceNoRaw).trim() : '';
+    const invoiceNo = trimmed || (await allocateNextFulfillmentInvoiceNo(FulfillmentOrder.sequelize, tx));
 
     const order = await FulfillmentOrder.findByPk(fulfillmentOrderId, { transaction: tx });
     if (!order) {
@@ -1757,7 +1764,6 @@ module.exports = {
   getCustomers,
   getProducts,
   listTransporters,
-  getNextInvoiceNo,
   createInvoice,
   listInvoices,
   getSoPlanningAvailability,

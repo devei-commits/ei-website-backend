@@ -14,6 +14,97 @@ const { resetPackMaterialsMasterData } = require('../masters/resetMaterialMaster
 const redis = require('../cache/redis');
 const { nextNumericCode } = require('../lib/nextNumericMasterCode');
 
+/** Canonical PM sub-categories (EI-Admin). Internal code: Primary → 4…, Monocarton → 5M…, Labels → 5l… */
+function getPmSubCategoryNormalized(b) {
+  const fd =
+    b.form_data != null && typeof b.form_data === 'object' && !Array.isArray(b.form_data) ? b.form_data : null;
+  const fromGroup = String(b.group ?? '').trim().toLowerCase();
+  if (fromGroup) return fromGroup;
+  return String(fd?.subCategory ?? b.subCategory ?? '').trim().toLowerCase();
+}
+
+/** @returns {{ regex: RegExp, like: string, build: (n: number) => string } | null} */
+function pmSkuSeriesForSubCategory(subLower) {
+  if (subLower === 'primary') {
+    return {
+      regex: /^4(\d{5})$/,
+      like: '4%',
+      build: (n) => `4${String(n).padStart(5, '0')}`,
+    };
+  }
+  if (subLower === 'monocarton') {
+    return {
+      regex: /^5M(\d{5})$/,
+      like: '5M%',
+      build: (n) => `5M${String(n).padStart(5, '0')}`,
+    };
+  }
+  if (subLower === 'labels') {
+    return {
+      regex: /^5l(\d{5})$/,
+      like: '5l%',
+      build: (n) => `5l${String(n).padStart(5, '0')}`,
+    };
+  }
+  return null;
+}
+
+/**
+ * When sub-category is Primary / Monocarton / Labels, internal `code` must start with 4 / 5M / 5l respectively.
+ * @returns {string|null} error message or null
+ */
+function validatePmCodeForSubCategory(code, b) {
+  const sub = getPmSubCategoryNormalized(b);
+  if (!pmSkuSeriesForSubCategory(sub)) return null;
+  const c = String(code || '').trim();
+  if (sub === 'primary' && !c.startsWith('4')) {
+    return 'Internal PM code must start with "4" for Primary sub-category.';
+  }
+  if (sub === 'monocarton' && !c.startsWith('5M')) {
+    return 'Internal PM code must start with "5M" for Monocarton sub-category.';
+  }
+  if (sub === 'labels' && !c.startsWith('5l')) {
+    return 'Internal PM code must start with "5l" (digit 5 + lowercase L) for Labels sub-category.';
+  }
+  return null;
+}
+
+/**
+ * Next internal PM code for Primary / Monocarton / Labels.
+ * @returns {Promise<{ code: string, seriesKey: string }|{ error: string }>}
+ */
+async function allocateNextPmInternalCode(b, { transaction }) {
+  const sub = getPmSubCategoryNormalized(b);
+  const series = pmSkuSeriesForSubCategory(sub);
+  if (!series) {
+    return {
+      error:
+        'Select PM Sub-Category (Primary, Labels, or Monocarton) so an internal code can be assigned on save, or send an explicit code.',
+    };
+  }
+  const sequelize = PackMaterial.sequelize;
+  const dialect = sequelize.getDialect && sequelize.getDialect();
+  if (dialect === 'postgres') {
+    await sequelize.query('SELECT pg_advisory_xact_lock(98273502, 2)', { transaction });
+  }
+  const rows = await PackMaterial.findAll({
+    attributes: ['code'],
+    where: { code: { [Op.like]: series.like } },
+    transaction,
+  });
+  let max = 0;
+  for (const row of rows) {
+    const codeStr = row.get ? row.get('code') : row.code;
+    const m = String(codeStr || '').match(series.regex);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (Number.isFinite(n) && n > max) max = n;
+    }
+  }
+  const code = series.build(max + 1);
+  return { code, seriesKey: sub };
+}
+
 function formatPackMaterial(row) {
   if (!row) return null;
   const d = row.get ? row.get({ plain: true }) : row;
@@ -324,6 +415,24 @@ async function createPackMaterial(req, res) {
         return res.status(409).json({ error: 'A pack material with this code or SKU already exists' });
       }
 
+      const exPlain = existingRow.get({ plain: true });
+      const exFd =
+        exPlain.form_data != null && typeof exPlain.form_data === 'object' && !Array.isArray(exPlain.form_data)
+          ? exPlain.form_data
+          : {};
+      const bodyFd = b.form_data != null && typeof b.form_data === 'object' && !Array.isArray(b.form_data) ? b.form_data : {};
+      const mergedForRule = {
+        ...b,
+        group: fields.group !== undefined && fields.group != null && String(fields.group).trim() !== ''
+          ? fields.group
+          : exPlain.group,
+        form_data: { ...exFd, ...bodyFd },
+      };
+      const pmSkuErr = validatePmCodeForSubCategory(codeTrim, mergedForRule);
+      if (pmSkuErr) {
+        return res.status(400).json({ error: pmSkuErr });
+      }
+
       let zohoBooksItemToDelete = null;
       const t = await db.transaction();
       try {
@@ -378,25 +487,41 @@ async function createPackMaterial(req, res) {
       }
     }
 
-    const fields = bodyToPackMaterial(b);
-    const codeTrim = fields.code != null ? String(fields.code).trim() : '';
-    if (!codeTrim) {
-      return res.status(400).json({ error: 'code or itemCode is required' });
-    }
-    fields.code = codeTrim;
-    if (fields.zoho_sku_code != null && String(fields.zoho_sku_code).trim() !== '') {
-      fields.zoho_sku_code = String(fields.zoho_sku_code).trim();
-    } else {
-      fields.zoho_sku_code = null;
-    }
-    const dupCheck = await findConflictingMasterRow(PackMaterial, fields.code, fields.zoho_sku_code, null);
-    if (dupCheck) {
-      return res.status(409).json({ error: 'A pack material with this code or SKU already exists' });
-    }
-
     let zohoBooksItemToDelete = null;
     const t = await db.transaction();
     try {
+      const fields = bodyToPackMaterial(b);
+      let codeTrim = fields.code != null ? String(fields.code).trim() : '';
+      if (!codeTrim) {
+        const alloc = await allocateNextPmInternalCode(b, { transaction: t });
+        if (alloc.error) {
+          await t.rollback();
+          return res.status(400).json({ error: alloc.error });
+        }
+        fields.code = alloc.code;
+        codeTrim = alloc.code;
+        if (fields.form_data != null && typeof fields.form_data === 'object' && !Array.isArray(fields.form_data)) {
+          fields.form_data = { ...fields.form_data, itemCode: alloc.code };
+        }
+      } else {
+        const errSku = validatePmCodeForSubCategory(codeTrim, b);
+        if (errSku) {
+          await t.rollback();
+          return res.status(400).json({ error: errSku });
+        }
+        fields.code = codeTrim;
+      }
+      if (fields.zoho_sku_code != null && String(fields.zoho_sku_code).trim() !== '') {
+        fields.zoho_sku_code = String(fields.zoho_sku_code).trim();
+      } else {
+        fields.zoho_sku_code = null;
+      }
+      const dupCheck = await findConflictingMasterRow(PackMaterial, fields.code, fields.zoho_sku_code, null);
+      if (dupCheck) {
+        await t.rollback();
+        return res.status(409).json({ error: 'A pack material with this code or SKU already exists' });
+      }
+
       const row = await PackMaterial.create(fields, { transaction: t });
       await WarehouseInventory.findOrCreate({
         where: { item_type: 'PM', pack_material_id: row.id },
@@ -521,6 +646,23 @@ async function updatePackMaterial(req, res) {
     const dup = await findConflictingMasterRow(PackMaterial, nextCode, nextSku, row.id);
     if (dup) {
       return res.status(409).json({ error: 'A pack material with this code or SKU already exists' });
+    }
+    const plain = row.get({ plain: true });
+    const rowFd =
+      plain.form_data != null && typeof plain.form_data === 'object' && !Array.isArray(plain.form_data)
+        ? plain.form_data
+        : {};
+    const bodyFd = b.form_data != null && typeof b.form_data === 'object' && !Array.isArray(b.form_data) ? b.form_data : {};
+    const mergedForRule = {
+      ...b,
+      group: fields.group !== undefined && fields.group != null && String(fields.group).trim() !== ''
+        ? fields.group
+        : plain.group,
+      form_data: { ...rowFd, ...bodyFd },
+    };
+    const pmSkuErr = validatePmCodeForSubCategory(nextCode, mergedForRule);
+    if (pmSkuErr) {
+      return res.status(400).json({ error: pmSkuErr });
     }
     fields.code = nextCode;
     Object.keys(fields).forEach((key) => {

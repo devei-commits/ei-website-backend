@@ -64,6 +64,20 @@ async function resolveZohoCustomerId(fulfillmentOrder, options = {}) {
       attributes: ['zoho_id'],
     });
     if (vc && vc.zoho_id) return String(vc.zoho_id).trim();
+    // Customers uploaded through the limited-upload flow live in `users`
+    // (usertype='customer') with a populated `zoho_contact_id`. Fall back to
+    // matching by display_name so backoffice SOs without a website Order row
+    // (and without a backfilled vendor_clients.zoho_id) still resolve.
+    const userByName = await User.findOne({
+      where: {
+        display_name: { [Op.iLike]: name },
+        zoho_contact_id: { [Op.ne]: null },
+      },
+      attributes: ['zoho_contact_id'],
+    });
+    if (userByName && userByName.zoho_contact_id) {
+      return String(userByName.zoho_contact_id).trim();
+    }
   }
   const fb = zohoEnv.fallbackCustomerId;
   return fb || null;

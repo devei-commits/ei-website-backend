@@ -180,6 +180,11 @@ const PATCHES = [
     table: 'products',
     sql: 'ALTER TABLE "products" ALTER COLUMN "zoho_item_id" DROP NOT NULL',
   },
+  {
+    name: 'products.pr_record_type',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "pr_record_type" VARCHAR(20)',
+  },
 ];
 
 async function tableExists(tableName) {

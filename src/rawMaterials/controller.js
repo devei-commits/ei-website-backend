@@ -54,53 +54,61 @@ function formatRawMaterialFull(row) {
  * Search matches code, name, inci, category (case-insensitive).
  */
 
-/** Mirrors EI-Admin RM category → internal code series prefix (EI-RM-*). */
-const RM_CATEGORY_SERIAL_PREFIX = {
-  ACT: 'EI-RM-ACT',
-  EMOL: 'EI-RM-EMOL',
-  SURF: 'EI-RM-SURF',
-  PRES: 'EI-RM-PRES',
-  FRAG: 'EI-RM-FRAG',
-  THIC: 'EI-RM-THIC',
-  COL: 'EI-RM-COL',
-  BUF: 'EI-RM-BUF',
-  SOLV: 'EI-RM-SOLV',
-  MISC: 'EI-RM-MISC',
-};
+/** Canonical RM sub-categories (must match EI-Admin). Internal SKU = one digit + 5 digits. */
+const RM_SUB_CATEGORY_TO_SKU_LEADING_DIGIT = new Map(
+  Object.entries({
+    'raw material': '1',
+    fragrance: '2',
+    'colors & pigments': '3',
+  })
+);
 
-function escapeRegex(str) {
-  return String(str || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function resolveRmSeriesPrefixFromBody(b) {
+function normalizeRmSubCategoryLabel(b) {
   const fd =
     b.form_data != null && typeof b.form_data === 'object' && !Array.isArray(b.form_data)
       ? b.form_data
       : b;
-  const key = String(fd.rmCategoryKey || '').trim();
-  if (key && RM_CATEGORY_SERIAL_PREFIX[key]) return RM_CATEGORY_SERIAL_PREFIX[key];
-  return String(fd.seriesPrefix || '').trim();
+  return String(fd.subCategory ?? b.subCategory ?? '').trim().toLowerCase();
+}
+
+/** Leading digit 1|2|3 when sub-category is canonical; otherwise null (legacy / unset). */
+function leadingDigitFromRmSubCategoryBody(b) {
+  return RM_SUB_CATEGORY_TO_SKU_LEADING_DIGIT.get(normalizeRmSubCategoryLabel(b)) || null;
 }
 
 /**
- * Allocate next `{prefix}-{NNNNN}` for new RMs; only scans rows with that prefix (not full table).
+ * When sub-category is one of Raw material / Fragrance / Colors & Pigments, internal `code` must start with 1 / 2 / 3.
+ * @returns {string|null} error message or null if OK / rule does not apply
+ */
+function validateInternalRmCodeForSubCategory(code, b) {
+  const digit = leadingDigitFromRmSubCategoryBody(b);
+  if (!digit) return null;
+  const c = String(code || '').trim();
+  if (!c.startsWith(digit)) {
+    return `Internal RM code (SKU) must start with "${digit}" for the selected RM sub-category.`;
+  }
+  return null;
+}
+
+/**
+ * Allocate next internal RM code: `{digit}{NNNNN}` (e.g. `100001`) from RM sub-category.
  * @returns {Promise<{ code: string, seriesPrefix: string }|{ error: string }>}
  */
 async function allocateNextRmSkuCode(b, { transaction }) {
-  const seriesPrefix = resolveRmSeriesPrefixFromBody(b);
-  if (!seriesPrefix) {
+  const digit = leadingDigitFromRmSubCategoryBody(b);
+  if (!digit) {
     return {
       error:
-        'Choose an RM category (or set series prefix in form data) so an internal code can be assigned on save.',
+        'Select RM Sub-Category (Raw material, Fragrance, or Colors & Pigments) so an internal code can be assigned on save.',
     };
   }
-  const like = `${seriesPrefix}-%`;
+  const like = `${digit}%`;
   const rows = await RawMaterial.findAll({
     attributes: ['code'],
     where: { code: { [Op.like]: like } },
     transaction,
   });
-  const re = new RegExp(`^${escapeRegex(seriesPrefix)}-(\\d+)$`, 'i');
+  const re = new RegExp(`^${digit}(\\d{5})$`);
   let max = 0;
   for (const row of rows) {
     const codeStr = row.get ? row.get('code') : row.code;
@@ -110,8 +118,8 @@ async function allocateNextRmSkuCode(b, { transaction }) {
       if (Number.isFinite(n) && n > max) max = n;
     }
   }
-  const code = `${seriesPrefix}-${String(max + 1).padStart(5, '0')}`;
-  return { code, seriesPrefix };
+  const code = `${digit}${String(max + 1).padStart(5, '0')}`;
+  return { code, seriesPrefix: digit };
 }
 
 async function listRawMaterials(req, res) {
@@ -402,6 +410,17 @@ async function createRawMaterial(req, res) {
         return res.status(409).json({ error: 'A raw material with this code or SKU already exists' });
       }
 
+      const draftRowFd =
+        existingRow.form_data != null && typeof existingRow.form_data === 'object' && !Array.isArray(existingRow.form_data)
+          ? existingRow.form_data
+          : {};
+      const draftBodyFd = b.form_data != null && typeof b.form_data === 'object' && !Array.isArray(b.form_data) ? b.form_data : {};
+      const draftMergedForSkuRule = { ...b, form_data: { ...draftRowFd, ...draftBodyFd } };
+      const draftSkuRuleErr = validateInternalRmCodeForSubCategory(codeTrim, draftMergedForSkuRule);
+      if (draftSkuRuleErr) {
+        return res.status(400).json({ error: draftSkuRuleErr });
+      }
+
       let zohoBooksItemToDelete = null;
       const t = await db.transaction();
       try {
@@ -473,6 +492,11 @@ async function createRawMaterial(req, res) {
         }
       } else {
         fields.code = codeTrim;
+        const skuRuleErr = validateInternalRmCodeForSubCategory(codeTrim, b);
+        if (skuRuleErr) {
+          await t.rollback();
+          return res.status(400).json({ error: skuRuleErr });
+        }
       }
       if (fields.zoho_sku_code != null && String(fields.zoho_sku_code).trim() !== '') {
         fields.zoho_sku_code = String(fields.zoho_sku_code).trim();
@@ -589,6 +613,14 @@ async function updateRawMaterial(req, res) {
     const dup = await findConflictingMasterRow(RawMaterial, nextCode, nextSku, row.id);
     if (dup) {
       return res.status(409).json({ error: 'A raw material with this code or SKU already exists' });
+    }
+    const rowFd =
+      row.form_data != null && typeof row.form_data === 'object' && !Array.isArray(row.form_data) ? row.form_data : {};
+    const bodyFd = b.form_data != null && typeof b.form_data === 'object' && !Array.isArray(b.form_data) ? b.form_data : {};
+    const mergedForSkuRule = { ...b, form_data: { ...rowFd, ...bodyFd } };
+    const skuRuleErr = validateInternalRmCodeForSubCategory(nextCode, mergedForSkuRule);
+    if (skuRuleErr) {
+      return res.status(400).json({ error: skuRuleErr });
     }
     await row.update(fields);
     res.json(formatRawMaterialFull(row));
