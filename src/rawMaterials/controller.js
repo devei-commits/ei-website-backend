@@ -58,8 +58,11 @@ function formatRawMaterialFull(row) {
 const RM_SUB_CATEGORY_TO_SKU_LEADING_DIGIT = new Map(
   Object.entries({
     'raw material': '1',
+    'raw materials': '1',
     fragrance: '2',
+    fragrances: '2',
     'colors & pigments': '3',
+    'club items': '1',
   })
 );
 
@@ -99,7 +102,7 @@ async function allocateNextRmSkuCode(b, { transaction }) {
   if (!digit) {
     return {
       error:
-        'Select RM Sub-Category (Raw material, Fragrance, or Colors & Pigments) so an internal code can be assigned on save.',
+        'Select RM Sub-Category (Raw material, Raw materials, Fragrance(s), Colors & Pigments, or Club items) so an internal code can be assigned on save.',
     };
   }
   const like = `${digit}%`;

@@ -14,6 +14,12 @@ const {
   ensureClientVendorMasterForUser,
   syncLinkedVendorClientFromUser,
 } = require("../vendorClient/userLink");
+const {
+  PORTAL_USERTYPES,
+  isPortalUsertype,
+  isInternalStaffUsertype,
+  buildInternalStaffWhere,
+} = require('./internalStaff');
 
 const isDev = process.env.DEV === "true" || process.env.NODE_ENV === "development";
 const DEV_BYPASS_EMAIL = "client1@example.com";
@@ -438,11 +444,11 @@ const getMe = async (req, res) => {
   }
 };
 
-// Staff usertypes for admin dashboard (getusers?staffOnly=true)
-const STAFF_USERTYPES = ['super_admin', 'admin', 'bd_manager', 'doctor'];
+/** Internal team (User Management, approver search). Excludes portal customer/doctor. */
+const STAFF_USERTYPES = ['super_admin', 'admin', 'bd_manager', 'accounts_team'];
 
 /** Portal users staff can link when raising a customer ticket from the dashboard */
-const PORTAL_CUSTOMER_USERTYPES = ['customer', 'doctor'];
+const PORTAL_CUSTOMER_USERTYPES = PORTAL_USERTYPES;
 // Map usertype -> role_id for API consistency (matches minimal GET /roles list)
 const USERTYPE_TO_ROLE_ID = { super_admin: 1, admin: 2, bd_manager: 3, doctor: 4, customer: 5 };
 const ROLE_ID_TO_USERTYPE = { 1: 'super_admin', 2: 'admin', 3: 'bd_manager', 4: 'doctor', 5: 'customer' };
@@ -490,7 +496,7 @@ const getAllUsers = async (req, res) => {
     const attributes = [
       'userid', 'fname', 'lname', 'display_name', 'email', 'mobile', 'usertype', 'department', 'status', 'created_at', 'zoho_contact_id',
     ];
-    let where = {};
+    const where = staffOnly ? buildInternalStaffWhere() : {};
     let rolesByCode = null;
     if (staffOnly) {
       const roles = await Role.findAll({ attributes: ['role_id', 'role_code', 'role_name'] });
@@ -618,6 +624,9 @@ const getUserById = async (req, res) => {
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
+    if (!isInternalStaffUsertype(user.usertype)) {
+      return res.status(404).json({ error: 'User not found' });
+    }
     const rolesByCode = await getRolesByCode();
     res.status(200).json(formatUserForStaffList(user, rolesByCode));
   } catch (err) {
@@ -632,12 +641,19 @@ const updateUserRole = async (req, res) => {
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
+    if (!isInternalStaffUsertype(user.usertype)) {
+      return res.status(400).json({ error: 'Only internal team members can be updated here' });
+    }
     const { roleId, department } = req.body;
     if (roleId != null) {
       const role = await Role.findByPk(Number(roleId));
-      if (role) {
-        user.usertype = role.role_code;
+      if (!role) {
+        return res.status(400).json({ error: 'Invalid roleId' });
       }
+      if (isPortalUsertype(role.role_code)) {
+        return res.status(400).json({ error: 'Portal roles cannot be assigned to internal team members' });
+      }
+      user.usertype = role.role_code;
     }
     if (department !== undefined) {
       user.department = department || null;
@@ -664,6 +680,9 @@ const updateUserProfile = async (req, res) => {
     const user = await User.findByPk(req.params.id);
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
+    }
+    if (!isInternalStaffUsertype(user.usertype)) {
+      return res.status(400).json({ error: 'Only internal team members can be updated here' });
     }
     const { display_name, name, email, mobile, status } = req.body;
     if (display_name !== undefined) user.display_name = display_name;
@@ -718,6 +737,11 @@ const createStaffUser = async (req, res) => {
       if (!role) return res.status(400).json({ error: 'Invalid roleId' });
     }
     const usertype = role.role_code;
+    if (isPortalUsertype(usertype)) {
+      return res.status(400).json({
+        error: 'Customer and doctor accounts cannot be created from User Management. Use portal signup or Client master.',
+      });
+    }
 
     const existing = await User.findOne({ where: { email } });
     if (existing) return res.status(409).json({ error: 'Email already in use' });
@@ -767,6 +791,10 @@ const deleteUser = async (req, res) => {
     if (!user) {
       await t.rollback();
       return res.status(404).json({ error: 'User not found' });
+    }
+    if (!isInternalStaffUsertype(user.usertype)) {
+      await t.rollback();
+      return res.status(400).json({ error: 'Only internal team members can be deleted here' });
     }
     const userid = user.userid;
     const email = user.email;

@@ -4,6 +4,7 @@ const BOM = require('../bom/models');
 const { ProductionBatch } = require('../production/models');
 const SalesOrder = require('../salesOrders/models');
 const VendorClient = require('../vendorClient/models');
+const { buildActiveClientWhere, buildActiveClientWhereByName } = require('../vendorClient/clientMasterQuery');
 const { loadShippingBillingByUserIds, loadAddressCityStateCountryByUserIds } = require('../addresses/clientAddressHelpers');
 const { Product } = require('../products/models');
 const { Order } = require('../orders/models');
@@ -368,6 +369,16 @@ async function createOrder(req, res) {
 
     if (!soNo || !customer) {
       return res.status(400).json({ error: 'soNo and customer are required' });
+    }
+
+    const clientMaster = await VendorClient.findOne({
+      where: buildActiveClientWhereByName(customer),
+      attributes: ['id', 'name', 'entity_code'],
+    });
+    if (!clientMaster) {
+      return res.status(400).json({
+        error: 'Select a valid active client from the customer list',
+      });
     }
 
     const ptErr = validateStagedPaymentTermsJson(paymentTerms);
@@ -1009,7 +1020,7 @@ async function getNextSoNo(_req, res) {
 async function getCustomers(_req, res) {
   try {
     const clients = await VendorClient.findAll({
-      where: { type: 'client', status: 'active' },
+      where: buildActiveClientWhere(),
       attributes: [
         'id', 'entity_code', 'name', 'city', 'location', 'country',
         'email', 'phone', 'category', 'notes', 'priority', 'segment',

@@ -116,8 +116,23 @@ async function buildZohoLineItems(lineItemsFromBody, fulfillmentOrderId) {
     const code = (line.product_code != null && String(line.product_code).trim())
       || (line.productCode != null && String(line.productCode).trim())
       || '';
-    let qty = num(line.quantity ?? line.qty ?? line.ordered_qty, 1);
+    let qty = num(
+      line.quantity
+        ?? line.qty
+        ?? line.ordered_qty
+        ?? line.pickedQty
+        ?? line.picked_qty,
+      NaN,
+    );
     let rate = num(line.rate ?? line.unitPrice ?? line.unit_price, 0);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      const amount = num(line.amount, 0);
+      if (amount > 0 && rate > 0) {
+        qty = amount / rate;
+      } else {
+        qty = 1;
+      }
+    }
     let name =
       (line.name && String(line.name).trim())
       || (line.product_name && String(line.product_name).trim())

@@ -5,6 +5,7 @@
 
 const { Role, Permission, RolePermission, ModuleDefinition, User, StaffProfile } = require('../models/index');
 const { Op } = require('sequelize');
+const { buildInternalStaffRolesWhere } = require('../users/internalStaff');
 const defaultModuleDef = require('./defaultModuleDefinition');
 
 const MODULE_DEFINITIONS = defaultModuleDef.modules;
@@ -109,9 +110,11 @@ async function saveRolePermissions(roleId, grantedKeys) {
   return permissionRows;
 }
 
-async function listRoles(_req, res) {
+async function listRoles(req, res) {
   try {
-    const roles = await Role.findAll({ order: [['role_id', 'ASC']] });
+    const staffOnly = req.query.staffOnly === 'true';
+    const roleWhere = staffOnly ? buildInternalStaffRolesWhere() : {};
+    const roles = await Role.findAll({ where: roleWhere, order: [['role_id', 'ASC']] });
     const roleIds = roles.map((r) => r.role_id);
 
     const [userCounts, permCounts] = await Promise.all([

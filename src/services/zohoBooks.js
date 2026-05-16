@@ -356,17 +356,31 @@ async function createItem(itemJson) {
  * @returns {Promise<{ raw: unknown }>}
  */
 async function deleteItem(itemId) {
-  const id = normalizeZohoId(itemId);
+  return deleteBooksResource('items', itemId, 'deleteItem');
+}
+
+/**
+ * Shared DELETE helper for Zoho Books v3 collection resources.
+ * @param {string} resource - URL segment, e.g. `contacts`, `invoices`, `bills`
+ * @param {string} resourceId
+ * @param {string} opName - log label
+ * @returns {Promise<{ raw: unknown }>}
+ */
+async function deleteBooksResource(resource, resourceId, opName) {
+  const seg = String(resource || '').replace(/^\/+|\/+$/g, '');
+  if (!seg) throw new Error('deleteBooksResource: resource is required');
+  const id = normalizeZohoId(resourceId);
   if (!id) {
-    const err = new Error('delete_item_missing_id');
+    const err = new Error(`${opName || 'delete'}_missing_id`);
     err.code = 'MISSING_ID';
     throw err;
   }
   const orgId = getOrgId();
   const token = await getAccessToken();
-  const url = `${getBooksBaseUrl()}/items/${encodeURIComponent(id)}?organization_id=${encodeURIComponent(orgId)}`;
+  const url = `${getBooksBaseUrl()}/${seg}/${encodeURIComponent(id)}?organization_id=${encodeURIComponent(orgId)}`;
+  const op = opName || `delete_${seg}`;
 
-  logZohoRequest('deleteItem', 'DELETE', url, null);
+  logZohoRequest(op, 'DELETE', url, null);
 
   const res = await fetch(url, {
     method: 'DELETE',
@@ -374,20 +388,51 @@ async function deleteItem(itemId) {
   });
 
   const raw = await readBooksJsonResponse(res);
-  logZohoResponse('deleteItem', res.status, raw);
+  logZohoResponse(op, res.status, raw);
 
   const code = raw && typeof raw.code === 'number' ? raw.code : undefined;
   const codeOk = code === undefined || code === 0;
   if (!res.ok || !codeOk) {
-    logZohoError('deleteItem', 'DELETE', url, res.status, raw);
-    const msg = raw.message || raw.error || res.statusText || 'delete_item_failed';
+    logZohoError(op, 'DELETE', url, res.status, raw);
+    const msg = raw.message || raw.error || res.statusText || `${op}_failed`;
     const err = new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
     err.zohoRaw = raw;
     err.statusCode = res.status;
+    err.zohoCode = code;
     throw err;
   }
 
   return { raw };
+}
+
+/** @param {string} contactId */
+async function deleteContact(contactId) {
+  return deleteBooksResource('contacts', contactId, 'deleteContact');
+}
+
+/** @param {string} invoiceId */
+async function deleteInvoice(invoiceId) {
+  return deleteBooksResource('invoices', invoiceId, 'deleteInvoice');
+}
+
+/** @param {string} estimateId */
+async function deleteEstimate(estimateId) {
+  return deleteBooksResource('estimates', estimateId, 'deleteEstimate');
+}
+
+/** @param {string} salesorderId */
+async function deleteSalesorder(salesorderId) {
+  return deleteBooksResource('salesorders', salesorderId, 'deleteSalesorder');
+}
+
+/** @param {string} billId */
+async function deleteBill(billId) {
+  return deleteBooksResource('bills', billId, 'deleteBill');
+}
+
+/** @param {string} purchaseorderId */
+async function deletePurchaseOrder(purchaseorderId) {
+  return deleteBooksResource('purchaseorders', purchaseorderId, 'deletePurchaseOrder');
 }
 
 /**
@@ -865,6 +910,13 @@ module.exports = {
   createContact,
   createItem,
   deleteItem,
+  deleteBooksResource,
+  deleteContact,
+  deleteInvoice,
+  deleteEstimate,
+  deleteSalesorder,
+  deleteBill,
+  deletePurchaseOrder,
   createInvoice,
   createPurchaseOrderInBooks,
   createBillInBooks,
