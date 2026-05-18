@@ -20,9 +20,27 @@ function addDays(isoDateStr, days) {
   return d.toISOString().slice(0, 10);
 }
 
+/** Usertypes allowed to supply Zoho Books `customer_id` on sales invoices (see ZOHO_SYNC_USERTYPES). */
+function zohoInvoiceCustomerUsertypes() {
+  return [...zohoEnv.syncUsertypes];
+}
+
+function isZohoInvoiceBillToUser(user) {
+  if (!user || !user.zoho_contact_id || !String(user.zoho_contact_id).trim()) return false;
+  const ut = user.usertype != null ? String(user.usertype).trim().toLowerCase() : '';
+  return zohoEnv.syncUsertypes.has(ut);
+}
+
+function isZohoInvoiceBillToVendorClient(vc) {
+  if (!vc || !vc.zoho_id || !String(vc.zoho_id).trim()) return false;
+  const t = vc.type != null ? String(vc.type).trim().toLowerCase() : '';
+  return t === 'client';
+}
+
 /**
  * Resolve Zoho Books customer_id (contact id string).
  * Priority: local DB ids from options → website order user → vendor_client name match → env fallback.
+ * Only **client** vendor_clients and bill-to users (ZOHO_SYNC_USERTYPES) are used — vendor contacts are skipped.
  * @param {*} fulfillmentOrder
  * @param {Record<string, unknown>} [options] — vendorClientId | vendor_client_id, userId | user_id (local PKs → zoho_id / zoho_contact_id)
  */
@@ -32,7 +50,7 @@ async function resolveZohoCustomerId(fulfillmentOrder, options = {}) {
     const id = parseInt(String(vcid), 10);
     if (!Number.isNaN(id)) {
       const vc = await VendorClient.findByPk(id, { attributes: ['zoho_id', 'type', 'name'] });
-      if (vc && vc.zoho_id && String(vc.zoho_id).trim()) {
+      if (isZohoInvoiceBillToVendorClient(vc)) {
         return String(vc.zoho_id).trim();
       }
     }
@@ -42,8 +60,8 @@ async function resolveZohoCustomerId(fulfillmentOrder, options = {}) {
   if (uid !== undefined && uid !== null && String(uid).trim() !== '') {
     const id = parseInt(String(uid), 10);
     if (!Number.isNaN(id)) {
-      const user = await User.findByPk(id, { attributes: ['zoho_contact_id'] });
-      if (user && user.zoho_contact_id && String(user.zoho_contact_id).trim()) {
+      const user = await User.findByPk(id, { attributes: ['zoho_contact_id', 'usertype'] });
+      if (isZohoInvoiceBillToUser(user)) {
         return String(user.zoho_contact_id).trim();
       }
     }
@@ -53,29 +71,33 @@ async function resolveZohoCustomerId(fulfillmentOrder, options = {}) {
   if (soNo) {
     const webOrder = await Order.findOne({ where: { so_no: soNo } });
     if (webOrder) {
-      const user = await User.findByPk(webOrder.user_id, { attributes: ['zoho_contact_id'] });
-      if (user && user.zoho_contact_id) return String(user.zoho_contact_id).trim();
+      const user = await User.findByPk(webOrder.user_id, { attributes: ['zoho_contact_id', 'usertype'] });
+      if (isZohoInvoiceBillToUser(user)) {
+        return String(user.zoho_contact_id).trim();
+      }
     }
   }
   const name = fulfillmentOrder.customer_name && String(fulfillmentOrder.customer_name).trim();
   if (name) {
     const vc = await VendorClient.findOne({
       where: { type: 'client', name: { [Op.iLike]: name } },
-      attributes: ['zoho_id'],
+      attributes: ['zoho_id', 'type'],
     });
-    if (vc && vc.zoho_id) return String(vc.zoho_id).trim();
-    // Customers uploaded through the limited-upload flow live in `users`
-    // (usertype='customer') with a populated `zoho_contact_id`. Fall back to
-    // matching by display_name so backoffice SOs without a website Order row
-    // (and without a backfilled vendor_clients.zoho_id) still resolve.
-    const userByName = await User.findOne({
-      where: {
-        display_name: { [Op.iLike]: name },
-        zoho_contact_id: { [Op.ne]: null },
-      },
-      attributes: ['zoho_contact_id'],
-    });
-    if (userByName && userByName.zoho_contact_id) {
+    if (isZohoInvoiceBillToVendorClient(vc)) {
+      return String(vc.zoho_id).trim();
+    }
+    const billToTypes = zohoInvoiceCustomerUsertypes();
+    const userByName = billToTypes.length
+      ? await User.findOne({
+        where: {
+          display_name: { [Op.iLike]: name },
+          zoho_contact_id: { [Op.ne]: null },
+          usertype: { [Op.in]: billToTypes },
+        },
+        attributes: ['zoho_contact_id', 'usertype'],
+      })
+      : null;
+    if (isZohoInvoiceBillToUser(userByName)) {
       return String(userByName.zoho_contact_id).trim();
     }
   }
@@ -539,8 +561,8 @@ async function pushZohoSeedDemoInvoice({
   if (vendorClientId != null && String(vendorClientId).trim() !== '') {
     const vid = parseInt(String(vendorClientId), 10);
     if (!Number.isNaN(vid)) {
-      const vc = await VendorClient.findByPk(vid, { attributes: ['zoho_id'] });
-      if (vc && vc.zoho_id && String(vc.zoho_id).trim()) {
+      const vc = await VendorClient.findByPk(vid, { attributes: ['zoho_id', 'type'] });
+      if (isZohoInvoiceBillToVendorClient(vc)) {
         cid = String(vc.zoho_id).trim();
       }
     }

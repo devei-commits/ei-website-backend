@@ -865,6 +865,46 @@ async function listAllPurchaseorders(options = {}) {
   return listAllBooksCollection('purchaseorders', 'purchaseorders', options);
 }
 
+/**
+ * GET /purchaseorders/{id} — includes `line_items` when the list endpoint does not.
+ * @param {string} purchaseorderId
+ * @returns {Promise<Record<string, unknown> | null>}
+ */
+async function getPurchaseOrderById(purchaseorderId) {
+  const id = normalizeZohoId(purchaseorderId);
+  if (!id) {
+    const err = new Error('getPurchaseOrderById: purchaseorder id is required');
+    err.code = 'MISSING_ID';
+    throw err;
+  }
+  const orgId = getOrgId();
+  const token = await getAccessToken();
+  const url = `${getBooksBaseUrl()}/purchaseorders/${encodeURIComponent(id)}?organization_id=${encodeURIComponent(orgId)}`;
+
+  logZohoRequest('getPurchaseOrderById', 'GET', url, null);
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Zoho-oauthtoken ${token}` },
+  });
+
+  const raw = await readBooksJsonResponse(res);
+  logZohoResponse('getPurchaseOrderById', res.status, raw);
+
+  const code = raw && typeof raw.code === 'number' ? raw.code : undefined;
+  const codeOk = code === undefined || code === 0;
+  if (!res.ok || !codeOk) {
+    logZohoError('getPurchaseOrderById', 'GET', url, res.status, raw);
+    const msg = raw.message || raw.error || res.statusText || 'get_purchaseorder_failed';
+    const err = new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    err.zohoRaw = raw;
+    err.statusCode = res.status;
+    throw err;
+  }
+
+  const po = raw.purchaseorder && typeof raw.purchaseorder === 'object' ? raw.purchaseorder : null;
+  return po;
+}
+
 async function listCurrencies() {
   const orgId = getOrgId();
   const token = await getAccessToken();
@@ -938,6 +978,7 @@ module.exports = {
   listAllBills,
   listPurchaseordersPage,
   listAllPurchaseorders,
+  getPurchaseOrderById,
   listCurrencies,
   normalizeZohoId,
   normalizeZohoContactId,

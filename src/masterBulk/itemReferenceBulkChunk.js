@@ -18,6 +18,13 @@ const RawMaterial = require('../rawMaterials/models');
 const WarehouseInventory = require('../warehouseInventory/models');
 const { findConflictingMasterRow } = require('../lib/itemCodeUniqueness');
 const redis = require('../cache/redis');
+const { mapRmImportCategories, mapPmImportCategories } = require('./masterCategoryImportMap');
+
+function mergeFormData(existing, patch) {
+  const base =
+    existing != null && typeof existing === 'object' && !Array.isArray(existing) ? existing : {};
+  return { ...base, ...patch };
+}
 
 const RM_PREFIX = 'EI-RM-BULK';
 const PM_PREFIX = 'EI-PM-BULK';
@@ -234,10 +241,13 @@ async function upsertPackMaterialMultiSheetRow(
   const skuTrim = sku != null ? String(sku).trim() : '';
   const descTrim = description != null ? String(description).trim() : '';
   const subFromCol = subCategoryCol != null ? String(subCategoryCol).trim() : '';
-  const wsDefault = sheetName != null ? String(sheetName).trim() : '';
-  const effectiveSubCategory = subFromCol || wsDefault;
   const catFromCol = categoryCol != null ? String(categoryCol).trim() : '';
-  const groupDb = effectiveSubCategory || catFromCol || 'Packaging';
+  const mapped = mapPmImportCategories({
+    sheetName,
+    categoryCol: catFromCol,
+    subCategoryCol: subFromCol,
+  });
+  const groupDb = mapped.groupDb;
   const uomTrim = uom != null ? String(uom).trim() : '';
   const hsnTrim = hsnCode != null ? String(hsnCode).trim() : '';
   const gstNum = parsePercent(gstPct);
@@ -300,7 +310,7 @@ async function upsertPackMaterialMultiSheetRow(
     const updatePayload = {
       description: descTrim,
       group: groupDb,
-      material: catFromCol || null,
+      material: mapped.materialDb,
       type: 'Packaging',
       unit: uomTrim || row.unit || 'PCS',
       hsn_code: hsnTrim || null,
@@ -308,6 +318,7 @@ async function upsertPackMaterialMultiSheetRow(
       zoho_sku_code: skuTrim,
     };
     if (taxPref) updatePayload.tax_pref = taxPref;
+    updatePayload.form_data = mergeFormData(row.form_data, mapped.formDataPatch);
 
     const codeLower = String(row.code || '').trim().toLowerCase();
     if (skuTrim && codeLower !== skuTrim.toLowerCase()) {
@@ -355,12 +366,13 @@ async function upsertPackMaterialMultiSheetRow(
         type: 'Packaging',
         level: 'Primary',
         group: groupDb,
-        material: catFromCol || null,
+        material: mapped.materialDb,
         unit: uomTrim || 'PCS',
         hsn_code: hsnTrim || null,
         price_per_pc: rateNum != null ? rateNum : null,
         tax_pref: taxPref,
         products: [],
+        form_data: mapped.formDataPatch,
       },
       { transaction: t }
     );
@@ -419,11 +431,14 @@ async function upsertRawMaterialMultiSheetRow(
   const nameTrim = description != null ? String(description).trim() : '';
   const inciTrim = inci != null ? String(inci).trim() : '';
   const subFromCol = subCategoryCol != null ? String(subCategoryCol).trim() : '';
-  const wsDefault = sheetName != null ? String(sheetName).trim() : '';
-  const effectiveSubCategory = subFromCol || wsDefault;
   const catFromCol = categoryCol != null ? String(categoryCol).trim() : '';
-  const categoryDb = effectiveSubCategory || catFromCol || 'Raw Materials';
-  const rmType = catFromCol || 'Raw Material';
+  const mapped = mapRmImportCategories({
+    sheetName,
+    categoryCol: catFromCol,
+    subCategoryCol: subFromCol,
+  });
+  const categoryDb = mapped.categoryDb;
+  const groupDb = mapped.subCategory;
   const uomTrim = uom != null ? String(uom).trim() : '';
   const hsnTrim = hsnCode != null ? String(hsnCode).trim() : '';
   const gstNum = parsePercent(gstPct);
@@ -487,7 +502,7 @@ async function upsertRawMaterialMultiSheetRow(
       name: nameTrim,
       inci: inciTrim || null,
       category: categoryDb,
-      rm_type: rmType,
+      group: groupDb,
       uom: uomTrim || row.uom || 'KG',
       hsn_code: hsnTrim || null,
       gst: gstNum != null ? gstNum : row.gst,
@@ -495,6 +510,7 @@ async function upsertRawMaterialMultiSheetRow(
       zoho_sku_code: skuTrim,
     };
     if (taxPref) updatePayload.tax_pref = taxPref;
+    updatePayload.form_data = mergeFormData(row.form_data, mapped.formDataPatch);
 
     const codeLower = String(row.code || '').trim().toLowerCase();
     if (skuTrim && codeLower !== skuTrim.toLowerCase()) {
@@ -540,7 +556,7 @@ async function upsertRawMaterialMultiSheetRow(
         name: nameTrim,
         inci: inciTrim || null,
         category: categoryDb,
-        rm_type: rmType,
+        group: groupDb,
         uom: uomTrim || 'KG',
         hsn_code: hsnTrim || null,
         gst: gstNum != null ? gstNum : null,
@@ -549,6 +565,7 @@ async function upsertRawMaterialMultiSheetRow(
         tax_pref: taxPref,
         status: 'active',
         products: [],
+        form_data: mapped.formDataPatch,
       },
       { transaction: t }
     );

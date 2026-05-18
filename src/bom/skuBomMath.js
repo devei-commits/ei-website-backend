@@ -106,7 +106,8 @@ function validateSkuBomTotals({ lines, limitQty, limitUom }) {
   const limU = limitUom != null && String(limitUom).trim() !== '' ? String(limitUom).trim() : null;
   const dim = limU ? dimensionOfLimitUom(limU) : null;
 
-  if (meaningful === 0 && !limQ && !limU) {
+  // SKU BOM is optional: no per-unit RM lines → skip limit/sum checks (fill size alone must not force SKU lines).
+  if (meaningful === 0) {
     return { ok: true };
   }
   if (meaningful > 0 && (!limQ || !limU || !dim)) {
@@ -115,13 +116,6 @@ function validateSkuBomTotals({ lines, limitQty, limitUom }) {
       code: 'SKU_BOM_LIMIT_REQUIRED',
       error:
         'SKU BOM lines are present: set net per-unit limit quantity and UOM (e.g. 50 GM or 50 ML) so the sum of lines can match exactly.',
-    };
-  }
-  if ((limQ || limU) && meaningful === 0) {
-    return {
-      ok: false,
-      code: 'SKU_BOM_LINES_REQUIRED',
-      error: 'SKU BOM net per-unit limit is set: add RM lines whose quantities sum to that limit exactly.',
     };
   }
   if (!dim) {

@@ -22,7 +22,9 @@ function getNamespacesToInvalidate(req) {
   // Cross-module cache dependencies (write root -> affected read namespaces).
   const dependencyMap = {
     // Website checkout write path; creates SO/Planning/Fulfillment/Production linkage.
-    orders: ['fulfillment', 'planning-extracted', 'production', 'warehouse-inventory', 'sales-orders'],
+    orders: ['fulfillment', 'planning-extracted', 'production', 'warehouse-inventory', 'sales-orders', 'dashboard'],
+    enquiries: ['dashboard'],
+    users: ['dashboard'],
     // SO edits can affect planning + downstream fulfillment scheduling.
     'sales-orders': ['planning-extracted', 'fulfillment', 'production', 'warehouse-inventory'],
     // Planning reserve/release changes warehouse availability and fulfillment readiness decisions.

@@ -7,9 +7,17 @@ const {
   estimateOrderTotalKg,
   buildPlanningSnapshotFromBom,
   batchesRequiredForOrderKg,
+  roundPlanningMaterialQty,
+  PLANNING_MATERIAL_QTY_DECIMALS,
 } = orderKgMath;
 
 describe('orderKgMath', () => {
+  it('roundPlanningMaterialQty keeps up to 16 decimal places', () => {
+    expect(PLANNING_MATERIAL_QTY_DECIMALS).toBe(16);
+    const tiny = 0.12345678901234567;
+    expect(roundPlanningMaterialQty(tiny)).toBe(Number(tiny.toFixed(16)));
+  });
+
   it('50 ml per unit × SG 1 → 0.05 kg/unit; 1000 units → 50 kg FG', () => {
     expect(parseFillSizeToKgPerUnit('50 ml', 1)).toBeCloseTo(0.05, 6);
     const total = estimateOrderTotalKg({

@@ -11,6 +11,7 @@ const {
   buildLeadResolutionCache,
   enrichProcurementItemsWithResolvedLead,
 } = require('./procurementItemLead');
+const { roundPlanningMaterialQty } = require('../planningExtracted/orderKgMath');
 
 /**
  * Coerce item quantities to finite numbers (handles strings / comma-formatted values from clients).
@@ -30,9 +31,9 @@ function normalizeProcurementItems(items) {
       out.lead_time_days = out.leadTimeDays;
     }
     if (out.leadTimeDays !== undefined) delete out.leadTimeDays;
-    out.quantity_requested = toNum(out.quantity_requested);
-    if (out.required != null) out.required = toNum(out.required);
-    if (out.shortage != null) out.shortage = toNum(out.shortage);
+    out.quantity_requested = roundPlanningMaterialQty(toNum(out.quantity_requested));
+    if (out.required != null) out.required = roundPlanningMaterialQty(toNum(out.required));
+    if (out.shortage != null) out.shortage = roundPlanningMaterialQty(toNum(out.shortage));
     if (out.moq_min != null && out.moq_min !== '') {
       const m = toNum(out.moq_min);
       if (m > 0) out.moq_min = m;

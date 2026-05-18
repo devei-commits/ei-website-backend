@@ -265,4 +265,6 @@ module.exports = {
   syncVendorMasterItemsToPriceList,
   deleteAllVendorPriceListRates,
   normType,
+  findOrCreateItemsListRow,
+  upsertVendorRateAndTier,
 };

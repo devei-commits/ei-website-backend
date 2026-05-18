@@ -10,6 +10,10 @@ const {
   listLowThresholdAlerts,
   listUsageStats,
 } = require('./controller');
+const {
+  uploadInventorySummaryExcelSafe,
+  postInventorySummaryExcelImport,
+} = require('./inventorySummaryExcelImport');
 const { createCacheReadMiddleware } = require('../cache/cacheReadMiddleware');
 
 const cacheWarehouseInventoryList = createCacheReadMiddleware({
@@ -17,6 +21,12 @@ const cacheWarehouseInventoryList = createCacheReadMiddleware({
   ttlSeconds: 120,
 });
 
+router.post(
+  '/import-inventory-summary-excel',
+  isAuthenticated,
+  uploadInventorySummaryExcelSafe,
+  postInventorySummaryExcelImport
+);
 router.get('/', isAuthenticated, cacheWarehouseInventoryList, list);
 router.get('/location-history', isAuthenticated, listAllLocationHistory);
 router.get('/low-threshold-alerts', isAuthenticated, listLowThresholdAlerts);

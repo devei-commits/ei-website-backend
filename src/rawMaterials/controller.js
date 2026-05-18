@@ -219,7 +219,9 @@ function payloadToListFields(b, omitGroupIfUnset = false) {
     shelf: fd.shelfLife ?? fd.retestPeriod ?? fd.shelf ?? null,
     status: (fd.status && String(fd.status).toLowerCase() === 'inactive') ? 'inactive' : 'active',
     products: Array.isArray(fd.products) ? fd.products : [],
-    ...(omitGroupIfUnset && !hasGroup ? {} : { group: fd.group ?? b.group ?? null }),
+    ...(omitGroupIfUnset && !hasGroup
+      ? {}
+      : { group: fd.subCategory ?? fd.group ?? b.group ?? b.subCategory ?? null }),
     zoho_id: fd.zoho_id ?? fd.zohoId ?? b.zoho_id ?? null,
     // Accept both the new `zoho_sku_code` field and legacy `sku` (backward compat).
     zoho_sku_code:

@@ -185,6 +185,60 @@ const PATCHES = [
     table: 'products',
     sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "pr_record_type" VARCHAR(20)',
   },
+
+  // RM/PM qty precision through SO lifecycle (planning → reserve → inventory)
+  {
+    name: 'reserved_batch_items.quantity_reserved_decimal_16',
+    table: 'reserved_batch_items',
+    sql: 'ALTER TABLE "reserved_batch_items" ALTER COLUMN "quantity_reserved" TYPE DECIMAL(28, 16)',
+  },
+  {
+    name: 'warehouse_inventory.wh_stock_decimal_16',
+    table: 'warehouse_inventory',
+    sql: 'ALTER TABLE "warehouse_inventory" ALTER COLUMN "wh_stock" TYPE DECIMAL(28, 16)',
+  },
+  {
+    name: 'warehouse_inventory.ml1_stock_decimal_16',
+    table: 'warehouse_inventory',
+    sql: 'ALTER TABLE "warehouse_inventory" ALTER COLUMN "ml1_stock" TYPE DECIMAL(28, 16)',
+  },
+  {
+    name: 'warehouse_inventory.ml2_stock_decimal_16',
+    table: 'warehouse_inventory',
+    sql: 'ALTER TABLE "warehouse_inventory" ALTER COLUMN "ml2_stock" TYPE DECIMAL(28, 16)',
+  },
+  {
+    name: 'warehouse_inventory.stock_in_hand_decimal_16',
+    table: 'warehouse_inventory',
+    sql: 'ALTER TABLE "warehouse_inventory" ALTER COLUMN "stock_in_hand" TYPE DECIMAL(28, 16)',
+  },
+  {
+    name: 'warehouse_inventory.reserved_decimal_16',
+    table: 'warehouse_inventory',
+    sql: 'ALTER TABLE "warehouse_inventory" ALTER COLUMN "reserved" TYPE DECIMAL(28, 16)',
+  },
+  {
+    name: 'warehouse_inventory.in_transit_decimal_16',
+    table: 'warehouse_inventory',
+    sql: 'ALTER TABLE "warehouse_inventory" ALTER COLUMN "in_transit" TYPE DECIMAL(28, 16)',
+  },
+
+  // po_tracking — payment transaction captured at PO release (Treasury)
+  {
+    name: 'po_tracking.payment_transaction_no',
+    table: 'po_tracking',
+    sql: 'ALTER TABLE "po_tracking" ADD COLUMN IF NOT EXISTS "payment_transaction_no" VARCHAR(100)',
+  },
+  {
+    name: 'po_tracking.payment_mode',
+    table: 'po_tracking',
+    sql: 'ALTER TABLE "po_tracking" ADD COLUMN IF NOT EXISTS "payment_mode" VARCHAR(50)',
+  },
+  {
+    name: 'po_tracking.payment_transaction_date',
+    table: 'po_tracking',
+    sql: 'ALTER TABLE "po_tracking" ADD COLUMN IF NOT EXISTS "payment_transaction_date" DATE',
+  },
 ];
 
 async function tableExists(tableName) {

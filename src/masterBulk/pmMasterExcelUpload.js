@@ -7,6 +7,7 @@
 const ExcelJS = require('exceljs');
 const multer = require('multer');
 const { executeItemReferenceBulkRows, userAllows } = require('./itemReferenceBulkChunk');
+const { detectWorksheetLayout, parseWorksheetDataRows, cellToText } = require('./masterExcelFlexibleParse');
 
 const ITEM_REFERENCE_SHEET = 'Item Reference';
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
@@ -21,12 +22,16 @@ const ALLOWED_MIME = new Set([
 /** Tab names (case-insensitive, normalized spacing). "Shippers CFB" variant included if % is omitted in Excel. */
 const PM_IMPORT_SHEET_NAMES_NORMALIZED = new Set([
   'primary packaging',
+  'packaging - primary',
+  'packaging - secondary',
   'labels',
   'monocartons',
   'shrink sleeves',
   'shippers %cfb',
   'shippers cfb',
   'fitness & misc',
+  'other components',
+  'stickers & kits',
 ]);
 
 function normalizePmWorksheetTabName(name) {
@@ -37,26 +42,21 @@ function normalizePmWorksheetTabName(name) {
 }
 
 function isPmCategoryImportSheet(name) {
-  return PM_IMPORT_SHEET_NAMES_NORMALIZED.has(normalizePmWorksheetTabName(name));
-}
-
-function cellToText(cell) {
-  if (cell == null) return '';
-  const v = cell.value;
-  if (v == null) return '';
-  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
-    return String(v).trim();
+  const n = normalizePmWorksheetTabName(name);
+  if (PM_IMPORT_SHEET_NAMES_NORMALIZED.has(n)) return true;
+  if (
+    n.includes('packaging') ||
+    n.includes('label') ||
+    n.includes('carton') ||
+    n.includes('sleeve') ||
+    n.includes('sticker') ||
+    n.includes('kit') ||
+    n.includes('component') ||
+    n.includes('shipper')
+  ) {
+    return true;
   }
-  if (v instanceof Date && !Number.isNaN(v.getTime())) {
-    return v.toISOString().slice(0, 10);
-  }
-  if (v.richText && Array.isArray(v.richText)) {
-    return v.richText.map((r) => r.text || '').join('').trim();
-  }
-  if (v.text) return String(v.text).trim();
-  if (v.result != null) return String(v.result).trim();
-  if (v.hyperlink && v.text) return String(v.text).trim();
-  return String(v).trim();
+  return false;
 }
 
 function workbookHasPmCategoryTabs(workbook) {
@@ -70,34 +70,11 @@ function parsePmMultiSheetWorkbook(workbook) {
   const rows = [];
   for (const worksheet of workbook.worksheets || []) {
     if (!isPmCategoryImportSheet(worksheet.name)) continue;
-    const sheetName = worksheet.name;
-    const lastRow = worksheet.actualRowCount || worksheet.rowCount || 0;
-    for (let r = 5; r <= lastRow; r += 1) {
-      const row = worksheet.getRow(r);
-      const sku = cellToText(row.getCell(2));
-      const itemName = cellToText(row.getCell(3));
-      const category = cellToText(row.getCell(4));
-      const subCategory = cellToText(row.getCell(5));
-      const uom = cellToText(row.getCell(6));
-      const hsn = cellToText(row.getCell(7));
-      const gstCell = row.getCell(8);
-      const purchaseCell = row.getCell(9);
-      if (!sku && !itemName) continue;
-      rows.push({
-        excel_row: r,
-        line_type: 'Packaging',
-        import_profile: 'pm_multi_sheet',
-        zoho_sku_code: sku,
-        description: itemName,
-        sheet_name: sheetName,
-        category,
-        sub_category: subCategory,
-        uom,
-        hsn_code: hsn,
-        gst_pct: gstCell.value,
-        purchase_rate_inr: purchaseCell.value,
-      });
-    }
+    const layout = detectWorksheetLayout(worksheet);
+    if (!layout) continue;
+    rows.push(
+      ...parseWorksheetDataRows(worksheet, worksheet.name, layout, 'Packaging', 'pm_multi_sheet')
+    );
   }
   return rows;
 }

@@ -403,6 +403,18 @@ async function create(req, res) {
       }
     }
     const mrnNo = body.mrnNo || body.mrn_no || (await generateMrnNo());
+    let muReceiveZone =
+      body.muReceiveZone !== undefined ? body.muReceiveZone : body.mu_receive_zone;
+    if (sourceForMtr === 'MTR' && !inboundMu && lineItems.length > 0 && !String(muReceiveZone || '').trim()) {
+      const { prodZoneCode, ok } = await resolveDedicatedProductionCodes(lineItems);
+      if (ok && prodZoneCode) muReceiveZone = prodZoneCode;
+    }
+    if (sourceForMtr === 'MTR' && !inboundMu && lineItems.length > 0 && !String(muReceiveZone || '').trim()) {
+      return res.status(400).json({
+        error:
+          'Transfer To (manufacturing / ML zone) is required for MTR. Select it in Production → Send MTR, or set item dedicated production location in Masters.',
+      });
+    }
     const payload = {
       mrn_no: mrnNo,
       requested_by: body.requestedBy ?? body.requested_by,
@@ -415,8 +427,7 @@ async function create(req, res) {
       source: body.source ?? null,
       is_inbound_from_mu: body.isInboundFromMu ?? body.is_inbound_from_mu ?? false,
     };
-    if (body.muReceiveZone !== undefined) payload.mu_receive_zone = body.muReceiveZone;
-    if (body.mu_receive_zone !== undefined) payload.mu_receive_zone = body.mu_receive_zone;
+    if (String(muReceiveZone || '').trim()) payload.mu_receive_zone = String(muReceiveZone).trim();
     if (body.muReceiveRack !== undefined) payload.mu_receive_rack = body.muReceiveRack;
     if (body.mu_receive_rack !== undefined) payload.mu_receive_rack = body.mu_receive_rack;
     if (body.whDispatchZone !== undefined) payload.wh_dispatch_zone = body.whDispatchZone;

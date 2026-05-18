@@ -274,7 +274,7 @@ ReservedBatchItem.init(
       references: { model: 'pack_materials', key: 'id' },
       onDelete: 'CASCADE',
     },
-    quantity_reserved: { type: DataTypes.DECIMAL(14, 4), allowNull: false, defaultValue: 0 },
+    quantity_reserved: { type: DataTypes.DECIMAL(28, 16), allowNull: false, defaultValue: 0 },
     unit: { type: DataTypes.STRING(20), allowNull: true, defaultValue: 'KG' },
     so_no: { type: DataTypes.STRING(50), allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },

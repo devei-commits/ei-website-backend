@@ -14,7 +14,7 @@ const { resetPackMaterialsMasterData } = require('../masters/resetMaterialMaster
 const redis = require('../cache/redis');
 const { nextNumericCode } = require('../lib/nextNumericMasterCode');
 
-/** Canonical PM sub-categories (EI-Admin). Internal code: Primary → 4…, Monocarton → 5M…, Labels → 5l… */
+/** Canonical PM sub-categories (EI-Admin). Internal code: Primary → 4…, Monocarton → 5M…, Labels → 5L… */
 function getPmSubCategoryNormalized(b) {
   const fd =
     b.form_data != null && typeof b.form_data === 'object' && !Array.isArray(b.form_data) ? b.form_data : null;
@@ -41,16 +41,16 @@ function pmSkuSeriesForSubCategory(subLower) {
   }
   if (subLower === 'labels') {
     return {
-      regex: /^5l(\d{5})$/,
-      like: '5l%',
-      build: (n) => `5l${String(n).padStart(5, '0')}`,
+      regex: /^5[Ll](\d{5})$/,
+      like: '5L%',
+      build: (n) => `5L${String(n).padStart(5, '0')}`,
     };
   }
   return null;
 }
 
 /**
- * When sub-category is Primary / Monocarton / Labels, internal `code` must start with 4 / 5M / 5l respectively.
+ * When sub-category is Primary / Monocarton / Labels, internal `code` must start with 4 / 5M / 5L respectively.
  * @returns {string|null} error message or null
  */
 function validatePmCodeForSubCategory(code, b) {
@@ -63,8 +63,8 @@ function validatePmCodeForSubCategory(code, b) {
   if (sub === 'monocarton' && !c.startsWith('5M')) {
     return 'Internal PM code must start with "5M" for Monocarton sub-category.';
   }
-  if (sub === 'labels' && !c.startsWith('5l')) {
-    return 'Internal PM code must start with "5l" (digit 5 + lowercase L) for Labels sub-category.';
+  if (sub === 'labels' && !/^5[Ll]/.test(c)) {
+    return 'Internal PM code must start with "5L" for Labels sub-category.';
   }
   return null;
 }
@@ -87,9 +87,13 @@ async function allocateNextPmInternalCode(b, { transaction }) {
   if (dialect === 'postgres') {
     await sequelize.query('SELECT pg_advisory_xact_lock(98273502, 2)', { transaction });
   }
+  const codeWhere =
+    sub === 'labels'
+      ? { [Op.or]: [{ code: { [Op.like]: '5L%' } }, { code: { [Op.like]: '5l%' } }] }
+      : { code: { [Op.like]: series.like } };
   const rows = await PackMaterial.findAll({
     attributes: ['code'],
-    where: { code: { [Op.like]: series.like } },
+    where: codeWhere,
     transaction,
   });
   let max = 0;
@@ -225,8 +229,8 @@ function bodyToPackMaterial(b) {
     description: b.description ?? b.name ?? null,
     type: b.type ?? b.itemCategory ?? null,
     level: b.level ?? null,
-    group: b.group ?? null,
-    material: b.material ?? b.matBody ?? null,
+    group: b.subCategory ?? b.group ?? null,
+    material: b.pmCategory ?? b.material ?? b.matBody ?? null,
     size_spec: b.size_spec ?? b.specNominal ?? null,
     price_per_pc: b.price_per_pc != null ? Number(b.price_per_pc) : (b.pricePerPc != null ? Number(b.pricePerPc) : null),
     moq: b.moq != null ? Number(b.moq) : null,

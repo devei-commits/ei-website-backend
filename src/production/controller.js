@@ -916,9 +916,9 @@ async function applyRmReservedToInventory(batchRow) {
     const unit = line.uom || 'KG';
     const existing = rmQuantities.get(rmId);
     if (existing) {
-      existing.quantity += quantity;
+      existing.quantity = roundPlanningMaterialQty(existing.quantity + quantity);
     } else {
-      rmQuantities.set(rmId, { quantity, unit, code });
+      rmQuantities.set(rmId, { quantity: roundPlanningMaterialQty(quantity), unit, code });
     }
   }
   const affectedRmIds = new Set(rmQuantities.keys());
@@ -928,7 +928,7 @@ async function applyRmReservedToInventory(batchRow) {
       production_batch_id: d.id,
       raw_material_id: rmId,
       pack_material_id: null,
-      quantity_reserved: quantity,
+      quantity_reserved: roundPlanningMaterialQty(quantity),
       unit,
     });
   }
@@ -1012,9 +1012,9 @@ async function applyPmReservedToInventory(batchRow) {
     const unit = line.uom || 'PCS';
     const existing = pmQuantities.get(pmId);
     if (existing) {
-      existing.quantity += quantity;
+      existing.quantity = roundPlanningMaterialQty(existing.quantity + quantity);
     } else {
-      pmQuantities.set(pmId, { quantity, unit, code });
+      pmQuantities.set(pmId, { quantity: roundPlanningMaterialQty(quantity), unit, code });
     }
   }
   const affectedPmIds = new Set(pmQuantities.keys());
@@ -1024,7 +1024,7 @@ async function applyPmReservedToInventory(batchRow) {
       production_batch_id: d.id,
       raw_material_id: null,
       pack_material_id: pmId,
-      quantity_reserved: quantity,
+      quantity_reserved: roundPlanningMaterialQty(quantity),
       unit,
     });
   }

@@ -18,9 +18,29 @@ const {
 } = require('./controller');
 
 const guard = [isAuthenticated, requireModule('items-master')];
+const {
+  uploadVendorPricingExcelSafe,
+  postVendorPricingExcelImport,
+} = require('../masterBulk/vendorPricingExcelImport');
+const {
+  uploadMasterCategoriesExcelSafe,
+  postMasterCategoriesExcelImport,
+} = require('../masterBulk/masterCategoriesExcelImport');
 
 router.get('/page', guard, pageItemsList);
 router.get('/', guard, listItemsList);
+router.post(
+  '/import-vendor-pricing-excel',
+  guard,
+  uploadVendorPricingExcelSafe,
+  postVendorPricingExcelImport
+);
+router.post(
+  '/import-master-categories-excel',
+  guard,
+  uploadMasterCategoriesExcelSafe,
+  postMasterCategoriesExcelImport
+);
 router.get('/:id/rates', guard, listRates);
 router.post('/:id/rates', guard, createRate);
 router.put('/:id/rates/:rateId', guard, updateRate);

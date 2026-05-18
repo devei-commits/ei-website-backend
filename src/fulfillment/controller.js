@@ -22,6 +22,14 @@ const {
 } = require('../planningExtracted/orderKgMath');
 const zohoEnv = require('../services/zohoEnv');
 
+function zohoInvoiceSyncRollbackMessage(zohoError) {
+  const zohoErr = String(zohoError || 'unknown_error');
+  const contactTypeHint = /contact type|customer\/vendor/i.test(zohoErr)
+    ? ' Link the SO customer to a Zoho customer contact (vendor_clients.type=client with zoho_id, or a customer user with zoho_contact_id), or set ZOHO_FALLBACK_CUSTOMER_ID. For local-only invoices set ZOHO_BOOKS_ENABLED=false.'
+    : '';
+  return `Invoice created locally but Zoho sync failed (${zohoErr}). Changes were rolled back.${contactTypeHint}`;
+}
+
 const INCLUDE_FULL = [
   {
     model: FulfillmentOrderItem,
@@ -593,7 +601,7 @@ async function createOrder(req, res) {
                 }
                 if (!rm) continue;
                 const qtyPerUnit = line.quantity != null ? Number(line.quantity) : (line.pct_w_w != null ? Number(line.pct_w_w) / 100 : 0);
-                const qtyReserved = qtyPerUnit * plannedQty;
+                const qtyReserved = roundPlanningMaterialQty(qtyPerUnit * plannedQty);
                 if (qtyReserved <= 0) continue;
                 await ReservedBatchItem.create({
                   production_batch_id: productionBatchId,
@@ -617,7 +625,7 @@ async function createOrder(req, res) {
                 }
                 if (!pm) continue;
                 const qtyPerUnit = line.qty_per_unit != null ? Number(line.qty_per_unit) : 1;
-                const qtyReserved = qtyPerUnit * plannedQty;
+                const qtyReserved = roundPlanningMaterialQty(qtyPerUnit * plannedQty);
                 if (qtyReserved <= 0) continue;
                 await ReservedBatchItem.create({
                   production_batch_id: productionBatchId,
@@ -823,7 +831,7 @@ async function invoiceSplits(req, res) {
     if (zohoEnv.booksEnabled && zohoEnv.syncInvoices && !zoho.synced) {
       const err = new Error(zoho.error || 'zoho_invoice_sync_failed');
       err.statusCode = 502;
-      err.clientMessage = `Invoice created locally but Zoho sync failed (${zoho.error || 'unknown_error'}). Changes were rolled back.`;
+      err.clientMessage = zohoInvoiceSyncRollbackMessage(zoho.error);
       throw err;
     }
     if (zoho.synced && zoho.invoiceId) {
@@ -1263,7 +1271,7 @@ async function createInvoice(req, res) {
     if (zohoEnv.booksEnabled && zohoEnv.syncInvoices && !zoho.synced) {
       const err = new Error(zoho.error || 'zoho_invoice_sync_failed');
       err.statusCode = 502;
-      err.clientMessage = `Invoice created locally but Zoho sync failed (${zoho.error || 'unknown_error'}). Changes were rolled back.`;
+      err.clientMessage = zohoInvoiceSyncRollbackMessage(zoho.error);
       throw err;
     }
     if (zoho.synced && zoho.invoiceId) {

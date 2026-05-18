@@ -1,0 +1,1442 @@
+Enum "enum_orders_fulfillment_stage" {
+  "pending"
+  "in_development"
+  "in_production"
+  "completed_production"
+  "packaged"
+  "invoiced"
+  "shipped"
+}
+Enum "enum_orders_order_status" {
+  "pending"
+  "processing"
+  "shipped"
+  "delivered"
+  "cancelled"
+  "refunded"
+}
+
+Enum "enum_orders_payment_status" {
+  "pending"
+  "paid"
+  "failed"
+  "refunded"
+}
+
+Enum "enum_payments_gateway" {
+  "razorpay"
+  "cheque"
+  "cod"
+  "wallet"
+}
+
+Enum "enum_payments_status" {
+  "pending"
+  "completed"
+  "failed"
+  "refunded"
+}
+
+Enum "enum_permissions_action" {
+  "view"
+  "create"
+  "edit"
+  "delete"
+}
+
+Enum "enum_production_equipment_category" {
+  "manufacturing"
+  "filling"
+  "packaging"
+}
+
+Enum "enum_production_team_members_department" {
+  "Manufacturing"
+  "Filling"
+  "Packaging"
+  "Quality"
+}
+
+Enum "enum_staff_profiles_department" {
+  "sales"
+  "rnd"
+  "quality_assurance"
+  "logistics"
+  "marketing"
+  "finance"
+}
+
+Table "addresses" {
+  "address_id" int4 [pk, not null, increment]
+  "user_id" int4 [not null]
+  "address_type" varchar(255)
+  "is_default_shipping" bool [default: false]
+  "is_default_billing" bool [default: false]
+  "first_name" varchar(255)
+  "last_name" varchar(255)
+  "address_line1" varchar(255) [not null]
+  "address_line2" varchar(255)
+  "landmark" varchar(255)
+  "city_text" varchar(255)
+  "state_text" varchar(255)
+  "country_text" varchar(255)
+  "pincode" varchar(255)
+  "updated_at" timestamptz
+  "phone" varchar(255)
+  "email" varchar(255)
+  "created_at" timestamptz [not null]
+  "deleted_at" timestamptz
+}
+
+Table "appointments" {
+  "appointmentid" int4 [pk, not null, increment]
+  "app_id" varchar(255)
+  "app_type" varchar(255)
+  "app_doc_name" varchar(255)
+  "app_doc_mobile" varchar(255)
+  "app_doc_email" varchar(255)
+  "app_clinic_name" varchar(255)
+  "app_address1" varchar(255)
+  "app_address2" varchar(255)
+  "app_state" varchar(255)
+  "app_city" varchar(255)
+  "app_other_address" varchar(255)
+  "app_pincode" varchar(255)
+  "app_date1" varchar(255)
+  "app_date1_time_slot1" varchar(255)
+  "app_date2" varchar(255)
+  "app_date2_time_slot2" varchar(255)
+  "app_status" varchar(255)
+  "app_remarks" varchar(255)
+  "app_userid" varchar(255)
+  "confirm_appointment" varchar(255)
+  "app_confirmation_status" varchar(255)
+  "meeting_status" varchar(255)
+  "mom" varchar(255)
+  "assign_to" varchar(255)
+  "pex_id" varchar(255)
+  "adedon" varchar(255)
+  "user_id" int4
+  "doctor_id" varchar(255)
+  "clinic_name" varchar(255)
+  "email" varchar(255)
+  "phone" varchar(255)
+  "address" text
+  "city" varchar(255)
+  "state" varchar(255)
+  "pincode" varchar(255)
+  "reason" text
+  "mode" varchar(255)
+  "status" varchar(255)
+  "lifecycle_status" varchar(255)
+  "slot1_date" date
+  "slot1_time" time
+  "slot2_date" date
+  "slot2_time" time
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "authentication" {
+  "id" int4 [pk, not null, increment]
+  "user_id" int4 [not null]
+  "phone" varchar(255) [not null]
+  "otp" varchar(255) [not null]
+  "expired" timestamptz [not null]
+  "created" timestamptz [not null]
+}
+
+Table "boms" {
+  "id" int4 [pk, not null, increment]
+  "bom_code" varchar(100) [not null]
+  "bom_sku" varchar(100)
+  "zoho_id" varchar(100)
+  "bom_category" varchar(100)
+  "bom_unit" varchar(20)
+  "bom_hsn" varchar(50)
+  "bom_tax_preference" varchar(50)
+  "bom_returnable" bool
+  "bom_associate_items" text
+  "bom_composite_item" bool [default: false]
+  "type" varchar(50)
+  "status" varchar(50)
+  "version" varchar(50)
+  "client" varchar(200)
+  "name" varchar(300)
+  "dosage" varchar(100)
+  "pack_size" varchar(50)
+  "site" varchar(100)
+  "category" varchar(100)
+  "claims" text
+  "project" varchar(200)
+  "market" varchar(200)
+  "created_by" varchar(100)
+  "reviewed_by" varchar(100)
+  "desc" text
+  "spec_bulk" text
+  "spec_process" text
+  "spec_fg" text
+  "spec_pack" text
+  "spec_tests" text
+  "spec_release" text
+  "batch" varchar(100)
+  "yield_pct" varchar(20)
+  "overage" varchar(20)
+  "line" varchar(100)
+  "notes" text
+  "regulatory" text
+  "ph_range" varchar(50)
+  "description" text
+  "rm_lines" json
+  "pm_lines" json
+  "process_steps" json
+  "stability_summary" text
+  "product_id" int4
+  "created_at" timestamptz
+  "updated_at" timestamptz
+  "sku_rm_lines" json
+  "sku_bom_limit_qty" numeric(18,6)
+  "sku_bom_limit_uom" varchar(20)
+}
+
+Table "client_appointments" {
+  "id" int4 [pk, not null, increment]
+  "client_id" int4 [not null]
+  "title" varchar(500) [not null]
+  "appointment_date" date
+  "appointment_time" varchar(20)
+  "type" varchar(100)
+  "with_person" varchar(500)
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "client_developments" {
+  "id" int4 [pk, not null, increment]
+  "client_id" int4 [not null]
+  "pr_code" varchar(100)
+  "name" varchar(500) [not null]
+  "stage" varchar(100)
+  "status" varchar(50) [default: 'new']
+  "due_date" date
+  "phase" varchar(100)
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "client_orders" {
+  "id" int4 [pk, not null, increment]
+  "client_id" int4 [not null]
+  "product_name" varchar(500) [not null]
+  "quantity" varchar(100)
+  "status" varchar(50) [default: 'pending']
+  "due_date" date
+  "batch_code" varchar(100)
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "client_queries" {
+  "id" int4 [pk, not null, increment]
+  "client_id" int4 [not null]
+  "title" varchar(500) [not null]
+  "status" varchar(50) [default: 'new']
+  "due_date" date
+  "category" varchar(100)
+  "notes" text
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "composite_items" {
+  "id" int4 [pk, not null, increment]
+  "composite_item_id" varchar(100)
+  "composite_item_name" varchar(500)
+  "sales_description" text
+}
+
+Table "contacts" {
+  "contact_id" varchar(100) [pk, not null]
+  "created_time" varchar(500)
+  "notes" text
+}
+
+Table "customization_packaging_options" {
+  "id" int4 [pk, not null, increment]
+  "option_id" varchar(80) [unique, not null]
+  "title" varchar(200) [not null, default: '']
+  "subtitle" varchar(400)
+  "review_label" varchar(400)
+  "sku_code" varchar(100)
+  "is_custom" bool [not null, default: false]
+  "sort_order" int4 [not null, default: 0]
+  "active" bool [not null, default: true]
+  "specs" json [not null, default: `{}`]
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "customizations" {
+  "custom_id" int4 [pk, not null, increment]
+  "name" varchar(255)
+  "concentration" varchar(100)
+  "description" text
+  "active_composition" text
+  "indications" text
+  "how_to_use" text
+  "specifications" text
+  "cautions" text
+  "frequently_asked_questions" text
+  "category" varchar(100)
+  "incredients" text
+  "care" text
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "departments" {
+  "id" int4 [pk, not null, increment]
+  "name" varchar(100) [unique, not null]
+  "code" varchar(30) [unique, not null]
+  "is_active" bool [not null, default: true]
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "doctor_profiles" {
+  "user_id" int4 [pk, not null]
+  "doctor_id" varchar(255)
+  "clinic_name" varchar(255)
+  "clinic_address" text
+  "city" varchar(255)
+  "state" varchar(255)
+  "country" varchar(255)
+  "pincode" varchar(255)
+  "created_at" timestamptz [not null]
+  "updated_at" timestamptz [not null]
+}
+
+Table "enquiries" {
+  "enquiry_id" int4 [pk, not null, increment]
+  "ticket_number" varchar(32) [unique]
+  "user_id" int4
+  "customer" json [note: '{ id?, name, email, phone?, company?, isRegistered }']
+  "subject" varchar(500)
+  "description" text
+  "category" varchar(80)
+  "priority" varchar(40) [default: 'medium']
+  "status" varchar(40) [default: 'new']
+  "source" varchar(40)
+  "ticket_scope" varchar(20) [default: 'customer']
+  "collaboration" json
+  "tags" json
+  "current_assignee" json [note: '{ staffId, staffName, staffEmail, department, assignedAt, assignedBy, isActive }']
+  "assignment_history" json
+  "linked_orders" json [note: '[{ orderId, orderNumber, orderDate, orderStatus, orderTotal, productName, linkedAt, linkedBy, relevance }]']
+  "messages" json [note: '[{ id, ticketId, senderId, senderName, senderType, content, sentAt, isInternal }]']
+  "activities" json [note: '[{ id, ticketId, type, description, performedBy, timestamp, previousValue?, newValue? }]']
+  "first_response_at" timestamptz
+  "sla_deadline" timestamptz
+  "resolved_at" timestamptz
+  "resolution_notes" text
+  "response_count" int4 [default: 0]
+  "created_at" timestamptz [not null]
+  "updated_at" timestamptz
+  "enquiry_type" varchar(255)
+  "details" json
+}
+
+Table "facility_areas" {
+  "id" int4 [pk, not null, increment]
+  "code" varchar(50) [unique, not null]
+  "name" varchar(200) [not null]
+  "area_type" varchar(30) [not null, default: 'warehouse']
+  "icon" varchar(20)
+  "description" varchar(500)
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "fulfillment_batch_splits" {
+  "id" int4 [pk, not null, increment]
+  "fulfillment_order_item_id" int4 [not null]
+  "fulfillment_order_id" int4 [not null]
+  "production_batch_id" int4
+  "bmr_no" varchar(50)
+  "bpr_no" varchar(50)
+  "planned_qty" int4 [not null, default: 0]
+  "fg_qty" int4 [default: 0]
+  "fg_location" varchar(50)
+  "ff_status" varchar(30) [not null, default: 'fg_pending']
+  "picked_qty" int4 [default: 0]
+  "picker_name" varchar(200)
+  "pick_date" date
+  "pick_slip_no" varchar(50)
+  "remarks" text
+  "invoice_no" varchar(100)
+  "awb_no" varchar(100)
+  "courier" varchar(200)
+  "dispatch_date" date
+  "eta_date" date
+  "delivery_date" date
+  "received_by" varchar(200)
+  "delivery_remarks" text
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "fulfillment_invoices" {
+  "id" int4 [pk, not null, increment]
+  "invoice_no" varchar(100) [unique, not null]
+  "fulfillment_order_id" int4 [not null]
+  "invoice_date" date
+  "due_date" date
+  "prepared_by" varchar(200)
+  "transporter_id" int4
+  "transporter_name" varchar(200)
+  "lr_awb_no" varchar(100)
+  "remarks" text
+  "subtotal" numeric(14,2) [default: 0]
+  "gst_percent" numeric(5,2) [default: 18]
+  "total_value" numeric(14,2) [default: 0]
+  "status" varchar(30) [not null, default: 'draft']
+  "line_items" json
+  "zoho_invoice_id" varchar(64)
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "fulfillment_order_items" {
+  "id" int4 [pk, not null, increment]
+  "fulfillment_order_id" int4 [not null]
+  "item_no" varchar(20)
+  "sku" varchar(50)
+  "product_name" varchar(300) [not null]
+  "pack" varchar(100)
+  "ordered_qty" int4 [not null, default: 0]
+  "rate" numeric(12,2) [default: 0]
+  "unit_price" numeric(12,2) [default: 0]
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "fulfillment_orders" {
+  "id" int4 [pk, not null, increment]
+  "so_no" varchar(50) [unique, not null]
+  "sales_order_id" int4
+  "customer_name" varchar(300) [not null]
+  "customer_city" varchar(200)
+  "order_date" date
+  "due_date" date
+  "priority" varchar(20) [not null, default: 'normal']
+  "so_status" varchar(30) [not null, default: 'planned']
+  "so_value" numeric(14,2) [default: 0]
+  "ship_address" text
+  "payment_terms" varchar(255)
+  "notes" text
+  "zoho_invoice_id" varchar(64)
+  "invoice_no" varchar(100)
+  "invoice_date" date
+  "awb_no" varchar(100)
+  "dispatch_date" date
+  "courier" varchar(200)
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "goods_received_notes" {
+  "id" int4 [pk, not null, increment]
+  "grn_no" varchar(100) [not null]
+  "purchase_order_id" int4
+  "po_no" varchar(100)
+  "vendor" varchar(300)
+  "type" varchar(10)
+  "items" int4 [default: 0]
+  "po_value" numeric(14,2)
+  "expected_date" date
+  "received_date" date
+  "assigned_to" varchar(200)
+  "qc_status" varchar(50)
+  "qc_by" varchar(200)
+  "status" varchar(50)
+  "line_items" json
+  "workflow_steps" json
+  "invoice_no" varchar(100)
+  "invoice_amount" numeric(14,2)
+  "grn_date" date
+  "no_of_boxes" int4
+  "units_per_box" int4
+  "last_box_units" int4
+  "location_prefix" varchar(50)
+  "location_zone" varchar(200)
+  "grn_batch_mfg" varchar(100)
+  "expiry" date
+  "mfg_batch" varchar(100)
+  "generated_labels" json
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "item_dedicated_facility_locations" {
+  "id" int4 [pk, not null, increment]
+  "item_key" varchar(80) [unique, not null]
+  "raw_material_id" int4
+  "pack_material_id" int4
+  "product_id" int4
+  "wh_location_id" int4
+  "wh_rack_id" int4
+  "prod_location_id" int4
+  "prod_rack_id" int4
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "item_groups" {
+  "id" int4 [pk, not null, increment]
+  "code" varchar(50) [not null]
+  "icon" varchar(20)
+  "type" varchar(10) [not null]
+  "name" varchar(255) [not null]
+  "description" text
+  "purpose" varchar(255)
+  "status" varchar(20) [default: 'Active']
+  "notes" text
+  "member_ids" json
+  "proposed_alternates" json
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "item_list_tiers" {
+  "id" int4 [pk, not null, increment]
+  "item_list_vendor_rate_id" int4 [not null]
+  "moq_min" int4 [not null]
+  "moq_max" int4
+  "price_per_unit" numeric(14,2) [not null]
+  "valid_till" date
+  "note" varchar(500)
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "item_list_vendor_rates" {
+  "id" int4 [pk, not null, increment]
+  "items_list_id" int4 [not null]
+  "vendor_id" int4 [not null]
+  "party_type" varchar(20) [not null, default: 'vendor']
+  "default_rate" numeric(14,2)
+  "default_moq" int4
+  "lead_time_days" int4
+  "currency" varchar(10) [default: 'INR']
+  "payment_terms" varchar(512)
+  "status" varchar(50) [default: 'active']
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "items" {
+  "item_id" varchar(100) [pk, not null]
+  "created_time" varchar(500)
+  "sales_description" text
+}
+
+Table "items_list" {
+  "id" int4 [pk, not null, increment]
+  "type" varchar(10) [not null]
+  "raw_material_id" int4
+  "pack_material_id" int4
+  "product_id" int4
+  "status" varchar(50) [default: 'Active']
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "items_master" {
+  "id" int4 [pk, not null, increment]
+  "code" varchar(100) [not null]
+  "name" varchar(300)
+  "type" varchar(50)
+  "status" varchar(50)
+  "bom_ids" json
+  "raw_material_ids" json
+  "pack_material_ids" json
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "logistics_schedules" {
+  "id" int4 [pk, not null, increment]
+  "tracking_no" varchar(200) [not null]
+  "transporter" varchar(200) [not null]
+  "dispatch_date" date [not null]
+  "eta_date" date [not null]
+  "vehicle_no" varchar(100) [not null]
+  "status" varchar(50) [not null, default: 'Active']
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "material_request_notes" {
+  "id" int4 [pk, not null, increment]
+  "mrn_no" varchar(100) [not null]
+  "requested_by" varchar(200)
+  "status" varchar(50) [default: 'Pending']
+  "assigned_picker" varchar(200)
+  "transfer_team" varchar(200)
+  "line_items" json
+  "line_transfer_status" json
+  "notes" text
+  "bmr_no" varchar(50)
+  "source" varchar(20)
+  "is_inbound_from_mu" bool [default: false]
+  "received_at_mu" timestamptz
+  "generated_labels" json
+  "no_of_boxes" int4
+  "units_per_box" int4
+  "location_prefix" varchar(100)
+  "grn_batch_mfg" varchar(100)
+  "expiry" date
+  "mfg_batch" varchar(100)
+  "wh_dispatch_zone" varchar(100)
+  "mu_receive_zone" varchar(100)
+  "mu_receive_rack" varchar(100)
+  "logistics_tracking_no" varchar(200)
+  "logistics_transporter" varchar(200)
+  "logistics_dispatch_date" date
+  "logistics_eta_date" date
+  "logistics_vehicle_no" varchar(100)
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "module_definitions" {
+  "id" int4 [pk, not null, increment]
+  "name" varchar(100) [not null, default: 'default']
+  "definition_json" json [not null, note: 'Full { modules: ModulePermission[], globalSettings: GlobalSettings }']
+  "created_at" timestamptz [not null]
+  "updated_at" timestamptz [not null]
+}
+
+Table "newdevelopments" {
+  "product_id" int4 [pk, not null, increment]
+  "user_id" int4 [not null]
+  "status" varchar(255)
+  "customization" varchar(255)
+  "sale" varchar(255)
+  "hsn_code" varchar(255)
+  "product_status" varchar(255)
+  "product_code" varchar(255)
+  "generic_name" varchar(255)
+  "brand_name" varchar(255)
+  "super_category" varchar(255)
+  "product_category" varchar(255)
+  "sub_category" varchar(255)
+  "sub_sub_category" varchar(255)
+  "product_sku" varchar(255)
+  "label_claims" text
+  "product_description_cust" text
+  "product_description" text
+  "product_price" numeric(12,2)
+  "tax_rate" numeric(6,2)
+  "gst_input" varchar(255)
+  "product_cover_image" varchar(255)
+  "product_cover_image_customization" varchar(255)
+  "product_ingrediants" text
+  "excepients" text
+  "indications" text
+  "usage" text
+  "cautions" text
+  "application_area" varchar(255)
+  "dosage_form_type" varchar(255)
+  "phrange" varchar(255)
+  "color" varchar(255)
+  "fragrance" varchar(255)
+  "vascosity" varchar(255)
+  "other_specs" text
+  "technology_used" text
+  "recomendedproducts" text
+  "packing_recommendations" text
+  "batch_no" varchar(255)
+  "sub_cat_char" varchar(255)
+  "grid_sub_cat" varchar(255)
+  "skin_type" varchar(255)
+  "product_specializations" text
+  "usage_time" varchar(255)
+  "application_specifications" text
+  "created_at" timestamptz [not null]
+  "updated_at" timestamptz
+}
+
+Table "order_items" {
+  "order_item_id" int4 [pk, not null, increment]
+  "order_id" int4 [not null]
+  "product_id" int4 [not null]
+  "sef_id" int4
+  "item_type" varchar(255)
+  "quantity" int4 [not null]
+  "unit_price" numeric(10,2) [not null]
+  "discount_amount" numeric(10,2) [not null, default: 0]
+  "tax_amount" numeric(10,2) [not null, default: 0]
+  "line_total" numeric(10,2) [not null]
+}
+
+Table "orders" {
+  "order_id" int4 [pk, not null, increment]
+  "user_id" int4 [not null]
+  "billing_address_id" int4 [not null]
+  "shipping_address_id" int4 [not null]
+  "order_status" enum_orders_order_status [not null, default: 'pending']
+  "payment_status" enum_orders_payment_status [not null, default: 'pending']
+  "so_no" varchar(255) [unique]
+  "fulfillment_stage" enum_orders_fulfillment_stage [not null, default: 'pending']
+  "subtotal" numeric(10,2) [not null]
+  "discount_total" numeric(10,2) [not null, default: 0]
+  "tax_total" numeric(10,2) [not null]
+  "shipping_total" numeric(10,2) [not null]
+  "grand_total" numeric(10,2) [not null]
+  "advance_amount_due" numeric(10,2) [not null, default: 0]
+  "created_at" timestamptz [not null]
+}
+
+Table "pack_materials" {
+  "id" int4 [pk, not null, increment]
+  "code" varchar(100) [not null]
+  "description" varchar(500)
+  "type" varchar(100)
+  "level" varchar(50)
+  "group" varchar(100)
+  "material" varchar(255)
+  "size_spec" varchar(255)
+  "price_per_pc" numeric(12,2)
+  "moq" int4
+  "lead_time_days" int4
+  "print_status" varchar(100)
+  "products" json
+  "zoho_id" varchar(100)
+  "zoho_sku_code" varchar(100) [unique]
+  "hsn_code" varchar(50)
+  "unit" varchar(20)
+  "tax_pref" varchar(50)
+  "pkg_returnable" bool
+  "pkg_associate_items" text
+  "sales_purchase_account" varchar(255)
+  "form_data" json
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "packaging" {
+  "id" int4 [pk, not null, increment]
+  "package_code" varchar(100)
+  "package_name" varchar(255)
+  "package_sku" varchar(100)
+  "bottom" varchar(50)
+  "cap_type" varchar(50)
+  "bottom_name" varchar(100)
+  "bottom_material" varchar(50)
+  "cap_name" varchar(100)
+  "cap_material" varchar(50)
+  "bottom_color" varchar(50)
+  "cap_color" varchar(50)
+  "bottom_weight" varchar(50)
+  "cap_weight" varchar(50)
+  "dispenser_volume" varchar(50)
+  "minimum_order_quantity" varchar(50)
+  "budget" varchar(50)
+  "comments" text
+  "status" varchar(20) [default: 'active']
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "payments" {
+  "id" int4 [pk, not null, increment]
+  "paymentId" varchar(255)
+  "razorpayOrderId" varchar(255)
+  "gateway" enum_payments_gateway [not null]
+  "gatewayReference" varchar(255)
+  "paidAmount" numeric(10,2) [not null, default: 0]
+  "remainingAmount" numeric(10,2) [not null, default: 0]
+  "currency" varchar(255) [not null, default: 'INR']
+  "status" enum_payments_status [not null, default: 'pending']
+  "createdAt" timestamptz [not null]
+  "updatedAt" timestamptz [not null]
+  "orderOrderId" int4
+  "UserUserid" int4
+}
+
+Table "permissions" {
+  "permission_id" int4 [pk, not null, increment]
+  "resource" varchar(100) [not null]
+  "action" enum_permissions_action [not null]
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "planning_batches" {
+  "id" int4 [pk, not null, increment]
+  "planning_extracted_id" int4 [not null]
+  "sequence" int4 [not null, default: 1]
+  "batch_code" varchar(64) [not null]
+  "size_kg" numeric(14,2)
+  "rm_lines" json
+  "pm_lines" json
+  "created_at" timestamptz
+  "updated_at" timestamptz
+
+  Indexes {
+    (planning_extracted_id, sequence) [type: btree, unique, name: "planning_batches_planning_extracted_id_sequence"]
+    planning_extracted_id [type: btree, name: "planning_batches_planning_extracted_id"]
+  }
+}
+
+Table "planning_bom_override" {
+  "id" int4 [pk, not null, increment]
+  "planning_extracted_id" int4 [unique, not null]
+  "rm_lines" json
+  "pm_lines" json
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "planning_extracted" {
+  "id" int4 [pk, not null, increment]
+  "sales_order_id" int4 [not null]
+  "product_id" int4 [not null]
+  "order_qty_display" varchar(100)
+  "total_kg_display" varchar(100)
+  "order_date" date
+  "due_date" date
+  "batch_size_display" varchar(100)
+  "batches_required" int4
+  "bom_status" varchar(80)
+  "approved_by" varchar(200)
+  "raw_materials" json
+  "packaging_materials" json
+  "color" varchar(50)
+  "batch_count" int4
+  "batch_size_kg" numeric(12,2)
+  "planned_start_date" date
+  "production_line" varchar(200)
+  "bom_confirmed_at" timestamptz
+  "bom_specific_gravity" numeric(5,3)
+  "custom_batches" json
+  "sent_batch_indices" json
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "po_tracking" {
+  "id" int4 [pk, not null, increment]
+  "purchase_order_id" int4 [unique, not null]
+  "po_released_at" date
+  "po_released_note" varchar(500)
+  "advance_paid_at" date
+  "advance_paid_note" varchar(500)
+  "vendor_confirmed_at" date
+  "vendor_confirmed_note" varchar(500)
+  "shipped_at" date
+  "shipped_note" varchar(500)
+  "order_tracking_ref" varchar(200)
+  "delivered_at" date
+  "delivered_note" varchar(500)
+  "under_grn_at" date
+  "under_grn_note" varchar(500)
+  "grn_complete_at" date
+  "grn_complete_note" varchar(500)
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "procurement_quotations" {
+  "id" int4 [pk, not null, increment]
+  "procurement_request_id" int4
+  "vendor_id" int4 [not null]
+  "quote_date" date
+  "quoted_by" varchar(200)
+  "attachment_ref" varchar(500)
+  "attachment_status" varchar(50) [default: 'pending']
+  "items" json [note: 'Array of { itemId, name, raw_material_id?, pack_material_id?, orderQty, pricePerUnit, uom, totalValue }']
+  "lead_time_days" int4
+  "payment_terms" text
+  "valid_till" date
+  "total_value" numeric(18,2)
+  "notes" text
+  "status" varchar(50) [default: 'pending']
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "procurement_requests" {
+  "id" int4 [pk, not null, increment]
+  "planning_extracted_id" int4 [not null]
+  "planning_batch_id" int4
+  "priority" varchar(50)
+  "required_by_date" date
+  "notes" text
+  "items" json [note: 'Array of { type, raw_material_id?, pack_material_id?, product_id?, quantity_requested, unit, line_notes?, moq_min?, planned_unit_price?, lead_time_days?, required?, sih?, shortage?, code?, name? }']
+  "status" varchar(50) [default: 'Pending']
+  "preferred_vendor" varchar(300)
+  "requested_by" varchar(200)
+  "stock_check_assigned_to" varchar(200)
+  "stock_check_status" varchar(50)
+  "stock_check_due_date" date
+  "stock_check_notes" text
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "product_customizations" {
+  "customization_id" int4 [pk, not null, increment]
+  "user_id" int4 [not null]
+  "product_id" int4
+  "category" varchar(255)
+  "formulation" json
+  "formulationSummary" text
+  "care" varchar(255)
+  "packagingType" varchar(255) [default: 'standard']
+  "packaging_image" varchar(255)
+  "userNotes" text
+  "packaging" text
+  "status" varchar(255) [default: 'Pending']
+  "assigned_bd_user_id" int4
+  "assigned_bd_name" varchar(255)
+  "assigned_bd_email" varchar(255)
+  "assigned_at" timestamptz
+  "internal_notes" text
+  "life_cycle_status" varchar(255) [default: 'active']
+  "created_at" timestamptz [not null]
+  "updated_at" timestamptz
+}
+
+Table "production_batches" {
+  "id" int4 [pk, not null, increment]
+  "bmr_no" varchar(50) [unique, not null]
+  "bpr_no" varchar(50) [unique, not null]
+  "product_name" varchar(300) [not null]
+  "sku" varchar(50) [not null]
+  "so_no" varchar(50)
+  "order_qty" int4
+  "batch_size" int4
+  "batch_no" varchar(20)
+  "batch_index" int4
+  "total_batches" int4
+  "planning_batch_id" int4
+  "bmr_status" varchar(30) [not null, default: 'draft']
+  "bpr_status" varchar(30) [not null, default: 'draft']
+  "color" varchar(30)
+  "process_type" varchar(10)
+  "homogenizer" bool [default: false]
+  "main_vessel" varchar(20)
+  "supporting_tanks" json
+  "filling_line" varchar(20)
+  "filling_type" varchar(20)
+  "packaging_line" varchar(20)
+  "monocarton" bool [default: false]
+  "shrink" bool [default: false]
+  "team_bmr" json
+  "team_bpr" json
+  "qc_officer_bmr" varchar(20)
+  "qc_officer_bpr" varchar(20)
+  "mfg_date" date
+  "fill_date" date
+  "pack_date" date
+  "fg_date" date
+  "rm_connect_date" date
+  "pm_connect_date" date
+  "rm_reserved" bool [default: false]
+  "pm_reserved" bool [default: false]
+  "rm_connected" bool [default: false]
+  "pm_connected" bool [default: false]
+  "dispensing_rm" json
+  "dispensing_pm" json
+  "mu_dispensing_bundle_id" varchar(80)
+  "mu_dispensing_bundles" json
+  "bulk_yield" numeric(10,2)
+  "fill_yield" numeric(10,2)
+  "fg_yield" numeric(10,2)
+  "bulk_batch_accepted" bool
+  "fill_batch_accepted" bool
+  "fg_batch_accepted" bool
+  "qc_specs" json
+  "remarks" text
+  "due_date" date
+  "compatible_vessels" json
+  "compatible_fill_lines" json
+  "compatible_pack_lines" json
+  "required_volume_liters" numeric(10,2)
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "production_equipment" {
+  "id" int4 [pk, not null, increment]
+  "equipment_id" varchar(20) [unique, not null]
+  "name" varchar(200) [not null]
+  "category" enum_production_equipment_category [not null]
+  "capacity" int4
+  "speed" int4
+  "type" varchar(50) [not null]
+  "homogenizer" bool [default: false]
+  "process_types" json
+  "compatible" json
+  "supports" json
+  "status" varchar(30) [not null, default: 'idle']
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "production_team_members" {
+  "id" int4 [pk, not null, increment]
+  "member_id" varchar(20) [unique, not null]
+  "user_id" int4
+  "name" varchar(200) [not null]
+  "role" varchar(100) [not null]
+  "department" enum_production_team_members_department [not null]
+  "available" bool [not null, default: true]
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "products" {
+  "product_id" int4 [pk, not null, increment]
+  "status" varchar(255)
+  "availability" varchar(255)
+  "deleted_at" timestamptz
+  "product_code" varchar(255)
+  "zoho_sku_code" varchar(255) [unique]
+  "generic_name" varchar(255)
+  "brand_name" varchar(255)
+  "tax_rate" numeric(5,2)
+  "product_description" text
+  "incredients" text
+  "how_to_use" text
+  "created_at" timestamptz
+  "updated_at" timestamptz
+  "mrp_price" numeric(10,2)
+  "buy_price" numeric(10,2)
+  "product_name" varchar(255)
+  "commercial_name" varchar(255)
+  "category" varchar(255)
+  "lifecycle_status" varchar(255)
+  "form" varchar(100)
+  "fill_size" varchar(50)
+  "batch_size_kg" int4
+  "lead_time_days" int4
+  "shelf_life_months" int4
+  "version" varchar(50)
+  "license_cml" varchar(100)
+  "theoretical_yield_pct" numeric(5,2)
+  "pao_months" int4
+  "manufacturing_location" varchar(255)
+  "equipment_vessel" varchar(255)
+  "storage_conditions" text
+  "approved_claims" text
+  "ph_range" varchar(50)
+  "viscosity_range" varchar(100)
+  "spf_pa_rating" varchar(50)
+  "appearance" varchar(255)
+  "odour" varchar(255)
+  "fill_weight_spec" varchar(100)
+  "stability_summary" text
+  "zoho_item_id" varchar(64)
+  "pr_record_type" varchar(20)
+}
+
+Table "purchase_orders" {
+  "id" int4 [pk, not null, increment]
+  "order_id" varchar(100) [not null]
+  "vendor_name" varchar(300)
+  "branch" varchar(100)
+  "order_date" date
+  "expected_shipment_date" date
+  "reference" varchar(200)
+  "payment_terms" varchar(100)
+  "status" varchar(50)
+  "order_status" json
+  "form_data" json
+  "items" json
+  "zoho_purchase_order_id" varchar(100)
+  "zoho_bill_id" varchar(100)
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "raw_materials" {
+  "id" int4 [pk, not null, increment]
+  "code" varchar(100) [not null]
+  "name" varchar(255)
+  "inci" varchar(255)
+  "category" varchar(100)
+  "rm_type" varchar(50)
+  "uom" varchar(20)
+  "price_per_kg" numeric(12,2)
+  "gst" numeric(5,2)
+  "shelf" varchar(20)
+  "specific_gravity" numeric(5,3)
+  "lead_time_days" int4
+  "status" varchar(50)
+  "products" json
+  "group" varchar(100)
+  "zoho_id" varchar(100)
+  "zoho_sku_code" varchar(100) [unique]
+  "hsn_code" varchar(50)
+  "tax_pref" varchar(50)
+  "sales_purchase_account" varchar(255)
+  "form_data" json
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "refreshTokens" {
+  "id" int4 [pk, not null, increment]
+  "email" varchar(255) [unique, not null]
+  "refreshToken" varchar(255) [not null]
+  "createdAt" timestamptz [not null]
+  "updatedAt" timestamptz [not null]
+}
+
+Table "reserved_batch_items" {
+  "id" int4 [pk, not null, increment]
+  "production_batch_id" int4
+  "fulfillment_order_item_id" int4
+  "planning_extracted_id" int4
+  "raw_material_id" int4
+  "pack_material_id" int4
+  "quantity_reserved" numeric(14,4) [not null, default: 0]
+  "unit" varchar(20) [default: 'KG']
+  "so_no" varchar(50)
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "role_permissions" {
+  "role_id" int4 [not null]
+  "permission_id" int4 [not null]
+
+  Indexes {
+    (role_id, permission_id) [pk, type: btree, name: "role_permissions_pkey"]
+  }
+}
+
+Table "roles" {
+  "role_id" int4 [pk, not null, increment]
+  "role_code" varchar(50) [unique, not null]
+  "role_name" varchar(100) [not null]
+  "description" text
+  "level" varchar(50) [not null, default: 'staff']
+  "status" varchar(20) [not null, default: 'active']
+  "permissions_json" json [note: 'Dashboard module/submodule permissions (option A)']
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "sales_orders" {
+  "id" int4 [pk, not null, increment]
+  "order_id" varchar(100) [not null]
+  "customer_name" varchar(300)
+  "branch" varchar(100)
+  "order_date" date
+  "expected_shipment_date" date
+  "reference" varchar(200)
+  "payment_terms" varchar(100)
+  "status" varchar(50)
+  "order_status" json
+  "form_data" json
+  "items" json
+  "created_by" varchar(200)
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "staff_profiles" {
+  "user_id" int4 [pk, not null]
+  "role_id" int4 [not null]
+  "department" enum_staff_profiles_department
+  "dep_level" varchar(255)
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "transporters" {
+  "id" int4 [pk, not null, increment]
+  "name" varchar(200) [not null]
+  "code" varchar(50) [unique]
+  "contact_phone" varchar(50)
+  "contact_email" varchar(255)
+  "tracking_url" varchar(500)
+  "status" varchar(20) [not null, default: 'active']
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "universal_swap_history" {
+  "id" int4 [pk, not null, increment]
+  "from_raw_material_id" int4 [not null]
+  "to_raw_material_id" int4 [not null]
+  "swap_ratio" numeric(10,4) [default: 1]
+  "reason" text
+  "approved_by" varchar(255)
+  "approved_by_user_id" int4
+  "affected_group_ids" json
+  "affected_bom_ids" json
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "users" {
+  "userid" int4 [pk, not null, increment]
+  "fname" varchar(255)
+  "lname" varchar(255)
+  "display_name" varchar(255)
+  "email" varchar(255) [unique, not null]
+  "mobile" varchar(255)
+  "password" varchar(255) [not null]
+  "usertype" varchar(255)
+  "portal_signup_role" varchar(64)
+  "department" varchar(255)
+  "status" varchar(255)
+  "doctor_id_legacy" varchar(255)
+  "verify_status" varchar(255)
+  "advance_payment" bool [default: false]
+  "advance_amount" numeric(10,2)
+  "zoho_contact_id" varchar(64)
+  "created_at" timestamptz
+  "updated_at" timestamptz
+  "deleted_at" timestamptz
+}
+
+Table "vendor_clients" {
+  "id" int4 [pk, not null, increment]
+  "entity_code" varchar(64) [unique, not null]
+  "type" varchar(20) [not null]
+  "zoho_id" varchar(100)
+  "name" varchar(300)
+  "email" varchar(255)
+  "phone" varchar(64)
+  "location" varchar(200)
+  "country" varchar(100)
+  "city" varchar(100)
+  "category" varchar(100)
+  "status" varchar(50)
+  "payment_terms" varchar(100)
+  "notes" text
+  "rating" int4
+  "moq" varchar(100)
+  "lead_time" varchar(100)
+  "data" jsonb
+  "priority" varchar(20)
+  "segment" varchar(200)
+  "since_year" int4
+  "revenue_value" numeric(15,2)
+  "avatar_color" varchar(50)
+  "account_manager_id" int4
+  "user_id" int4 [unique]
+  "contacts" jsonb
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "vendors" {
+  "contact_id" varchar(100) [pk, not null]
+  "created_time" varchar(500)
+  "notes" text
+}
+
+Table "warehouse_inventory" {
+  "id" int4 [pk, not null, increment]
+  "item_type" varchar(10) [not null]
+  "raw_material_id" int4 [unique]
+  "pack_material_id" int4 [unique]
+  "product_id" int4 [unique]
+  "zone" text
+  "rack" text
+  "wh_stock" numeric(14,2) [default: 0]
+  "wh_unit" varchar(20) [default: 'KG']
+  "ml1_stock" numeric(14,2) [default: 0]
+  "ml2_stock" numeric(14,2) [default: 0]
+  "stock_in_hand" numeric(14,2) [default: 0]
+  "reserved" numeric(14,2) [default: 0]
+  "in_transit" numeric(14,2) [default: 0]
+  "reorder_pt" numeric(14,2) [default: 0]
+  "avg_mo" numeric(14,2) [default: 0]
+  "qc_status" varchar(50) [default: 'In Stock']
+  "batch_number" varchar(50)
+  "expiry_date" date
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "warehouse_inventory_location_history" {
+  "id" int4 [pk, not null, increment]
+  "warehouse_inventory_id" int4 [not null]
+  "item_type" varchar(10) [not null]
+  "raw_material_id" int4
+  "pack_material_id" int4
+  "product_id" int4
+  "from_zone" varchar(100)
+  "from_rack" varchar(100)
+  "to_zone" varchar(100)
+  "to_rack" varchar(100)
+  "qty_delta" numeric(14,2)
+  "action_type" varchar(30)
+  "source_grn_id" int4
+  "source_mrn_id" int4
+  "moved_at" timestamptz [not null]
+  "reserved_delta" numeric(14,4)
+  "reserved_after" numeric(14,4)
+  "production_batch_id" int4
+  "batch_no" varchar(50)
+  "dispensing_bundle_id" varchar(80)
+  "changes_json" json
+  "note" text
+}
+
+Table "warehouse_locations" {
+  "id" int4 [pk, not null, increment]
+  "area_id" int4
+  "code" varchar(50) [unique, not null]
+  "name" varchar(200) [not null]
+  "location_type" varchar(30) [not null, default: 'warehouse']
+  "zone_label" varchar(50)
+  "icon" varchar(20)
+  "area_sqm" int4
+  "description" varchar(500)
+  "utilisation_pct" numeric(5,2)
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "warehouse_rack_items" {
+  "id" int4 [pk, not null, increment]
+  "rack_id" int4 [not null]
+  "warehouse_inventory_id" int4 [not null]
+  "qty_wh" numeric(14,2) [default: 0]
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Table "warehouse_racks" {
+  "id" int4 [pk, not null, increment]
+  "location_id" int4 [not null]
+  "code" varchar(50) [not null]
+  "name" varchar(100)
+  "description" varchar(300)
+  "levels" int4 [default: 4]
+  "slots_total" int4 [default: 16]
+  "utilisation_pct" numeric(5,2)
+  "created_at" timestamptz
+  "updated_at" timestamptz
+}
+
+Ref "addresses_user_id_fkey":"users"."userid" < "addresses"."user_id" [update: cascade, delete: cascade]
+
+Ref "appointments_user_id_fkey":"users"."userid" < "appointments"."user_id" [update: cascade, delete: set null]
+
+Ref "client_appointments_client_id_fkey":"vendor_clients"."id" < "client_appointments"."client_id" [update: cascade, delete: cascade]
+
+Ref "client_developments_client_id_fkey":"vendor_clients"."id" < "client_developments"."client_id" [update: cascade, delete: cascade]
+
+Ref "client_orders_client_id_fkey":"vendor_clients"."id" < "client_orders"."client_id" [update: cascade, delete: cascade]
+
+Ref "client_queries_client_id_fkey":"vendor_clients"."id" < "client_queries"."client_id" [update: cascade, delete: cascade]
+
+Ref "doctor_profiles_user_id_fkey":"users"."userid" < "doctor_profiles"."user_id" [update: cascade, delete: cascade]
+
+Ref "enquiries_user_id_fkey":"users"."userid" < "enquiries"."user_id" [update: cascade, delete: set null]
+
+Ref "fulfillment_batch_splits_fulfillment_order_id_fkey":"fulfillment_orders"."id" < "fulfillment_batch_splits"."fulfillment_order_id" [update: cascade, delete: cascade]
+
+Ref "fulfillment_batch_splits_fulfillment_order_item_id_fkey":"fulfillment_order_items"."id" < "fulfillment_batch_splits"."fulfillment_order_item_id" [update: cascade, delete: cascade]
+
+Ref "fulfillment_batch_splits_production_batch_id_fkey":"production_batches"."id" < "fulfillment_batch_splits"."production_batch_id" [delete: set null]
+
+Ref "fulfillment_invoices_fulfillment_order_id_fkey":"fulfillment_orders"."id" < "fulfillment_invoices"."fulfillment_order_id" [update: cascade, delete: cascade]
+
+Ref "fulfillment_invoices_transporter_id_fkey":"transporters"."id" < "fulfillment_invoices"."transporter_id" [update: cascade, delete: set null]
+
+Ref "fulfillment_order_items_fulfillment_order_id_fkey":"fulfillment_orders"."id" < "fulfillment_order_items"."fulfillment_order_id" [update: cascade, delete: cascade]
+
+Ref "fulfillment_orders_sales_order_id_fkey":"sales_orders"."id" < "fulfillment_orders"."sales_order_id" [delete: set null]
+
+Ref "goods_received_notes_purchase_order_id_fkey":"purchase_orders"."id" < "goods_received_notes"."purchase_order_id"
+
+Ref "item_list_tiers_item_list_vendor_rate_id_fkey":"item_list_vendor_rates"."id" < "item_list_tiers"."item_list_vendor_rate_id" [update: cascade, delete: cascade]
+
+Ref "item_list_vendor_rates_items_list_id_fkey":"items_list"."id" < "item_list_vendor_rates"."items_list_id" [update: cascade, delete: cascade]
+
+Ref "newdevelopments_user_id_fkey":"users"."userid" < "newdevelopments"."user_id" [update: cascade]
+
+Ref "order_items_order_id_fkey":"orders"."order_id" < "order_items"."order_id" [update: cascade, delete: cascade]
+
+Ref "order_items_product_id_fkey":"products"."product_id" < "order_items"."product_id" [update: cascade, delete: cascade]
+
+Ref "orders_billing_address_id_fkey":"addresses"."address_id" < "orders"."billing_address_id" [update: cascade]
+
+Ref "orders_shipping_address_id_fkey":"addresses"."address_id" < "orders"."shipping_address_id" [update: cascade]
+
+Ref "orders_user_id_fkey":"users"."userid" < "orders"."user_id" [update: cascade]
+
+Ref "payments_UserUserid_fkey":"users"."userid" < "payments"."UserUserid" [update: cascade, delete: set null]
+
+Ref "payments_orderOrderId_fkey":"orders"."order_id" < "payments"."orderOrderId" [update: cascade, delete: set null]
+
+Ref "planning_batches_planning_extracted_id_fkey":"planning_extracted"."id" < "planning_batches"."planning_extracted_id" [update: cascade, delete: cascade]
+
+Ref "planning_bom_override_planning_extracted_id_fkey":"planning_extracted"."id" < "planning_bom_override"."planning_extracted_id" [update: cascade, delete: cascade]
+
+Ref "planning_extracted_product_id_fkey":"products"."product_id" < "planning_extracted"."product_id" [update: cascade]
+
+Ref "planning_extracted_sales_order_id_fkey":"sales_orders"."id" < "planning_extracted"."sales_order_id" [update: cascade]
+
+Ref "po_tracking_purchase_order_id_fkey":"purchase_orders"."id" < "po_tracking"."purchase_order_id" [update: cascade, delete: cascade]
+
+Ref "procurement_quotations_procurement_request_id_fkey":"procurement_requests"."id" < "procurement_quotations"."procurement_request_id" [update: cascade, delete: set null]
+
+Ref "procurement_quotations_vendor_id_fkey":"vendor_clients"."id" < "procurement_quotations"."vendor_id" [update: cascade]
+
+Ref "procurement_requests_planning_batch_id_fkey":"planning_batches"."id" < "procurement_requests"."planning_batch_id" [update: cascade, delete: set null]
+
+Ref "procurement_requests_planning_extracted_id_fkey":"planning_extracted"."id" < "procurement_requests"."planning_extracted_id" [update: cascade]
+
+Ref "product_customizations_product_id_fkey":"products"."product_id" < "product_customizations"."product_id" [update: cascade, delete: set null]
+
+Ref "product_customizations_user_id_fkey":"users"."userid" < "product_customizations"."user_id" [update: cascade]
+
+Ref "production_batches_planning_batch_id_fkey":"planning_batches"."id" < "production_batches"."planning_batch_id" [delete: set null]
+
+Ref "production_team_members_user_id_fkey":"users"."userid" < "production_team_members"."user_id" [delete: set null]
+
+Ref "reserved_batch_items_fulfillment_order_item_id_fkey":"fulfillment_order_items"."id" < "reserved_batch_items"."fulfillment_order_item_id" [delete: cascade]
+
+Ref "reserved_batch_items_pack_material_id_fkey":"pack_materials"."id" < "reserved_batch_items"."pack_material_id" [delete: cascade]
+
+Ref "reserved_batch_items_planning_extracted_id_fkey":"planning_extracted"."id" < "reserved_batch_items"."planning_extracted_id" [delete: cascade]
+
+Ref "reserved_batch_items_production_batch_id_fkey":"production_batches"."id" < "reserved_batch_items"."production_batch_id" [delete: cascade]
+
+Ref "reserved_batch_items_raw_material_id_fkey":"raw_materials"."id" < "reserved_batch_items"."raw_material_id" [delete: cascade]
+
+Ref "staff_profiles_role_id_fkey":"roles"."role_id" < "staff_profiles"."role_id" [update: cascade]
+
+Ref "staff_profiles_user_id_fkey":"users"."userid" < "staff_profiles"."user_id" [update: cascade]
+
+Ref "vendor_clients_account_manager_id_fkey":"users"."userid" < "vendor_clients"."account_manager_id" [update: cascade, delete: set null]
+
+Ref "vendor_clients_user_id_fkey":"users"."userid" < "vendor_clients"."user_id" [update: cascade, delete: set null]
+
+Ref "warehouse_inventory_pack_material_id_fkey":"pack_materials"."id" < "warehouse_inventory"."pack_material_id"
+
+Ref "warehouse_inventory_product_id_fkey":"products"."product_id" < "warehouse_inventory"."product_id"
+
+Ref "warehouse_inventory_raw_material_id_fkey":"raw_materials"."id" < "warehouse_inventory"."raw_material_id"
+
+Ref "warehouse_inventory_location_histor_warehouse_inventory_id_fkey":"warehouse_inventory"."id" < "warehouse_inventory_location_history"."warehouse_inventory_id"
+
+Ref "warehouse_locations_area_id_fkey":"facility_areas"."id" < "warehouse_locations"."area_id" [update: cascade, delete: set null]
+
+Ref "warehouse_rack_items_rack_id_fkey":"warehouse_racks"."id" < "warehouse_rack_items"."rack_id" [update: cascade, delete: cascade]
+
+Ref "warehouse_rack_items_warehouse_inventory_id_fkey":"warehouse_inventory"."id" < "warehouse_rack_items"."warehouse_inventory_id" [delete: cascade]
+
+Ref "warehouse_racks_location_id_fkey":"warehouse_locations"."id" < "warehouse_racks"."location_id" [update: cascade, delete: cascade]

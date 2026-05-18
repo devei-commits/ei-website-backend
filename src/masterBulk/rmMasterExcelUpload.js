@@ -7,6 +7,7 @@
 const ExcelJS = require('exceljs');
 const multer = require('multer');
 const { executeItemReferenceBulkRows, userAllows } = require('./itemReferenceBulkChunk');
+const { detectWorksheetLayout, parseWorksheetDataRows, cellToText } = require('./masterExcelFlexibleParse');
 
 const ITEM_REFERENCE_SHEET = 'Item Reference';
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
@@ -24,6 +25,10 @@ const RM_IMPORT_SHEET_NAMES_NORMALIZED = new Set([
   'fragrances',
   'colors & pigments',
   'club items',
+  'bulk raw materials',
+  'solvents & carriers',
+  'pre-mixed based',
+  'pre-mixed bases',
 ]);
 
 function normalizeRmWorksheetTabName(name) {
@@ -34,26 +39,23 @@ function normalizeRmWorksheetTabName(name) {
 }
 
 function isRmCategoryImportSheet(name) {
-  return RM_IMPORT_SHEET_NAMES_NORMALIZED.has(normalizeRmWorksheetTabName(name));
-}
-
-function cellToText(cell) {
-  if (cell == null) return '';
-  const v = cell.value;
-  if (v == null) return '';
-  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
-    return String(v).trim();
+  const n = normalizeRmWorksheetTabName(name);
+  if (RM_IMPORT_SHEET_NAMES_NORMALIZED.has(n)) return true;
+  if (
+    n.includes('bulk raw') ||
+    n.includes('solvent') ||
+    n.includes('carrier') ||
+    n.includes('pre-mixed') ||
+    n.includes('premixed') ||
+    n.includes('fragrance') ||
+    n.includes('pigment') ||
+    (n.includes('color') && n.includes('pigment')) ||
+    n.includes('club item') ||
+    n.includes('raw material')
+  ) {
+    return true;
   }
-  if (v instanceof Date && !Number.isNaN(v.getTime())) {
-    return v.toISOString().slice(0, 10);
-  }
-  if (v.richText && Array.isArray(v.richText)) {
-    return v.richText.map((r) => r.text || '').join('').trim();
-  }
-  if (v.text) return String(v.text).trim();
-  if (v.result != null) return String(v.result).trim();
-  if (v.hyperlink && v.text) return String(v.text).trim();
-  return String(v).trim();
+  return false;
 }
 
 function workbookHasRmCategoryTabs(workbook) {
@@ -67,36 +69,11 @@ function parseRmMultiSheetWorkbook(workbook) {
   const rows = [];
   for (const worksheet of workbook.worksheets || []) {
     if (!isRmCategoryImportSheet(worksheet.name)) continue;
-    const sheetName = worksheet.name;
-    const lastRow = worksheet.actualRowCount || worksheet.rowCount || 0;
-    for (let r = 5; r <= lastRow; r += 1) {
-      const row = worksheet.getRow(r);
-      const sku = cellToText(row.getCell(2));
-      const itemName = cellToText(row.getCell(3));
-      const category = cellToText(row.getCell(4));
-      const subCategory = cellToText(row.getCell(5));
-      const uom = cellToText(row.getCell(6));
-      const hsn = cellToText(row.getCell(7));
-      const gstCell = row.getCell(8);
-      const purchaseCell = row.getCell(9);
-      const inci = cellToText(row.getCell(12));
-      if (!sku && !itemName) continue;
-      rows.push({
-        excel_row: r,
-        line_type: 'Raw Material',
-        import_profile: 'rm_multi_sheet',
-        zoho_sku_code: sku,
-        description: itemName,
-        sheet_name: sheetName,
-        category,
-        sub_category: subCategory,
-        uom,
-        hsn_code: hsn,
-        gst_pct: gstCell.value,
-        purchase_rate_inr: purchaseCell.value,
-        inci_name: inci,
-      });
-    }
+    const layout = detectWorksheetLayout(worksheet);
+    if (!layout) continue;
+    rows.push(
+      ...parseWorksheetDataRows(worksheet, worksheet.name, layout, 'Raw Material', 'rm_multi_sheet')
+    );
   }
   return rows;
 }

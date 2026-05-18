@@ -3,9 +3,8 @@
  * Used by planning_extracted sync and fulfillment SO → planning row creation.
  */
 
-/** RM kg, PM counts, and related snapshot qtys: store at 5 decimal places. */
-const PLANNING_MATERIAL_QTY_DECIMALS = 5;
-const PLANNING_MATERIAL_QTY_FACTOR = 10 ** PLANNING_MATERIAL_QTY_DECIMALS;
+/** RM kg, PM counts, and related snapshot qtys through SO lifecycle (planning → reserve). */
+const PLANNING_MATERIAL_QTY_DECIMALS = 16;
 
 /**
  * @param {unknown} q
@@ -14,7 +13,8 @@ const PLANNING_MATERIAL_QTY_FACTOR = 10 ** PLANNING_MATERIAL_QTY_DECIMALS;
 function roundPlanningMaterialQty(q) {
   const n = Number(q);
   if (!Number.isFinite(n)) return n;
-  return Math.round((n + Number.EPSILON) * PLANNING_MATERIAL_QTY_FACTOR) / PLANNING_MATERIAL_QTY_FACTOR;
+  // Avoid 10**16 integer scaling (unsafe for typical kg totals); toFixed is stable to 16 dp.
+  return Number(n.toFixed(PLANNING_MATERIAL_QTY_DECIMALS));
 }
 
 function parseOrderQtyNum(raw) {
