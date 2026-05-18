@@ -41,6 +41,11 @@ function formatArea(row) {
       areaSqm: z.area_sqm,
       description: z.description,
       utilisationPct: z.utilisation_pct != null ? Number(z.utilisation_pct) : 0,
+      zohoWarehouseId: z.zoho_warehouse_id || null,
+      zohoLocationId: z.zoho_location_id || null,
+      isActive: z.is_active !== false,
+      isZohoPrimary: z.is_zoho_primary === true,
+      zohoMeta: z.zoho_meta || null,
       racks,
     };
   });
@@ -51,6 +56,8 @@ function formatArea(row) {
     areaType: d.area_type,
     icon: d.icon,
     description: d.description,
+    zohoLocationId: d.zoho_location_id || null,
+    zohoMeta: d.zoho_meta || null,
     zones,
   };
 }

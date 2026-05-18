@@ -239,6 +239,53 @@ const PATCHES = [
     table: 'po_tracking',
     sql: 'ALTER TABLE "po_tracking" ADD COLUMN IF NOT EXISTS "payment_transaction_date" DATE',
   },
+
+  // facility_areas / warehouse_locations — Zoho Inventory location + warehouse sync (May 2026)
+  {
+    name: 'facility_areas.zoho_location_id',
+    table: 'facility_areas',
+    sql: 'ALTER TABLE "facility_areas" ADD COLUMN IF NOT EXISTS "zoho_location_id" VARCHAR(32)',
+  },
+  {
+    name: 'facility_areas.zoho_meta',
+    table: 'facility_areas',
+    sql: 'ALTER TABLE "facility_areas" ADD COLUMN IF NOT EXISTS "zoho_meta" JSONB',
+  },
+  {
+    name: 'facility_areas.zoho_location_id_uniq',
+    table: 'facility_areas',
+    sql: 'CREATE UNIQUE INDEX IF NOT EXISTS "facility_areas_zoho_location_id_uniq" ON "facility_areas" ("zoho_location_id") WHERE "zoho_location_id" IS NOT NULL',
+  },
+  {
+    name: 'warehouse_locations.zoho_warehouse_id',
+    table: 'warehouse_locations',
+    sql: 'ALTER TABLE "warehouse_locations" ADD COLUMN IF NOT EXISTS "zoho_warehouse_id" VARCHAR(32)',
+  },
+  {
+    name: 'warehouse_locations.zoho_location_id',
+    table: 'warehouse_locations',
+    sql: 'ALTER TABLE "warehouse_locations" ADD COLUMN IF NOT EXISTS "zoho_location_id" VARCHAR(32)',
+  },
+  {
+    name: 'warehouse_locations.is_active',
+    table: 'warehouse_locations',
+    sql: 'ALTER TABLE "warehouse_locations" ADD COLUMN IF NOT EXISTS "is_active" BOOLEAN DEFAULT true',
+  },
+  {
+    name: 'warehouse_locations.zoho_meta',
+    table: 'warehouse_locations',
+    sql: 'ALTER TABLE "warehouse_locations" ADD COLUMN IF NOT EXISTS "zoho_meta" JSONB',
+  },
+  {
+    name: 'warehouse_locations.zoho_warehouse_id_uniq',
+    table: 'warehouse_locations',
+    sql: 'CREATE UNIQUE INDEX IF NOT EXISTS "warehouse_locations_zoho_warehouse_id_uniq" ON "warehouse_locations" ("zoho_warehouse_id") WHERE "zoho_warehouse_id" IS NOT NULL',
+  },
+  {
+    name: 'warehouse_locations.is_zoho_primary',
+    table: 'warehouse_locations',
+    sql: 'ALTER TABLE "warehouse_locations" ADD COLUMN IF NOT EXISTS "is_zoho_primary" BOOLEAN DEFAULT false',
+  },
 ];
 
 async function tableExists(tableName) {

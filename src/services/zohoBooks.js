@@ -905,6 +905,165 @@ async function getPurchaseOrderById(purchaseorderId) {
   return po;
 }
 
+/**
+ * List Zoho Inventory locations (GET /locations) — single page.
+ * @param {{ page?: number, perPage?: number }} options
+ * @returns {Promise<{ raw: unknown, locations: Record<string, unknown>[], pageContext: Record<string, unknown> | null }>}
+ */
+async function listInventoryLocationsPage(options = {}) {
+  const orgId = getInventoryOrgId();
+  const token = await getAccessToken();
+  const page = options.page != null ? Math.max(1, Number(options.page)) : 1;
+  const perPage = Math.min(200, options.perPage != null ? Number(options.perPage) : 200);
+  const qs = new URLSearchParams({
+    organization_id: orgId,
+    page: String(page),
+    per_page: String(perPage),
+  });
+  const url = `${getInventoryBaseUrl()}/locations?${qs.toString()}`;
+
+  logZohoRequest('listInventoryLocationsPage', 'GET', url, null);
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Zoho-oauthtoken ${token}` },
+  });
+
+  const raw = await readBooksJsonResponse(res);
+  logZohoResponse('listInventoryLocationsPage', res.status, raw);
+
+  if (!res.ok) {
+    logZohoError('listInventoryLocationsPage', 'GET', url, res.status, raw);
+    const msg = raw.message || raw.error || res.statusText || 'list_inventory_locations_failed';
+    const err = new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    err.zohoRaw = raw;
+    err.statusCode = res.status;
+    throw err;
+  }
+
+  const code = raw && typeof raw.code === 'number' ? raw.code : undefined;
+  if (code !== undefined && code !== 0) {
+    const msg = raw.message || raw.error || 'list_inventory_locations_failed';
+    const err = new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    err.zohoRaw = raw;
+    err.statusCode = res.status;
+    throw err;
+  }
+
+  const locations = Array.isArray(raw.locations) ? raw.locations : [];
+  const pageContext =
+    raw.page_context && typeof raw.page_context === 'object' ? raw.page_context : null;
+  return { raw, locations, pageContext };
+}
+
+/**
+ * All Zoho Inventory locations across pages.
+ * @param {{ perPage?: number, maxPages?: number, limit?: number }} options
+ * @returns {Promise<Record<string, unknown>[]>}
+ */
+async function listAllInventoryLocations(options = {}) {
+  const perPage = options.perPage != null ? Math.min(200, Number(options.perPage)) : 200;
+  const maxPages = options.maxPages != null ? Math.max(1, Number(options.maxPages)) : 10000;
+  const lim =
+    options.limit != null && Number.isFinite(Number(options.limit)) && Number(options.limit) > 0
+      ? Math.floor(Number(options.limit))
+      : undefined;
+  const all = [];
+  let page = 1;
+  let hasMore = true;
+
+  while (hasMore && page <= maxPages) {
+    const { locations, pageContext } = await listInventoryLocationsPage({ page, perPage });
+    all.push(...locations);
+    if (lim != null && all.length >= lim) {
+      return all.slice(0, lim);
+    }
+    hasMore = !!(pageContext && pageContext.has_more_page === true);
+    page += 1;
+  }
+
+  return all;
+}
+
+/**
+ * List Zoho Inventory warehouses (GET /warehouses) — single page.
+ * Authoritative for branch_id, branch_name, is_primary, and warehouse address fields.
+ * @param {{ page?: number, perPage?: number }} options
+ * @returns {Promise<{ raw: unknown, warehouses: Record<string, unknown>[], pageContext: Record<string, unknown> | null }>}
+ */
+async function listInventoryWarehousesPage(options = {}) {
+  const orgId = getInventoryOrgId();
+  const token = await getAccessToken();
+  const page = options.page != null ? Math.max(1, Number(options.page)) : 1;
+  const perPage = Math.min(200, options.perPage != null ? Number(options.perPage) : 200);
+  const qs = new URLSearchParams({
+    organization_id: orgId,
+    page: String(page),
+    per_page: String(perPage),
+  });
+  const url = `${getInventoryBaseUrl()}/warehouses?${qs.toString()}`;
+
+  logZohoRequest('listInventoryWarehousesPage', 'GET', url, null);
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Zoho-oauthtoken ${token}` },
+  });
+
+  const raw = await readBooksJsonResponse(res);
+  logZohoResponse('listInventoryWarehousesPage', res.status, raw);
+
+  if (!res.ok) {
+    logZohoError('listInventoryWarehousesPage', 'GET', url, res.status, raw);
+    const msg = raw.message || raw.error || res.statusText || 'list_inventory_warehouses_failed';
+    const err = new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    err.zohoRaw = raw;
+    err.statusCode = res.status;
+    throw err;
+  }
+
+  const code = raw && typeof raw.code === 'number' ? raw.code : undefined;
+  if (code !== undefined && code !== 0) {
+    const msg = raw.message || raw.error || 'list_inventory_warehouses_failed';
+    const err = new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    err.zohoRaw = raw;
+    err.statusCode = res.status;
+    throw err;
+  }
+
+  const warehouses = Array.isArray(raw.warehouses) ? raw.warehouses : [];
+  const pageContext =
+    raw.page_context && typeof raw.page_context === 'object' ? raw.page_context : null;
+  return { raw, warehouses, pageContext };
+}
+
+/**
+ * All Zoho Inventory warehouses across pages.
+ * @param {{ perPage?: number, maxPages?: number, limit?: number }} options
+ * @returns {Promise<Record<string, unknown>[]>}
+ */
+async function listAllInventoryWarehouses(options = {}) {
+  const perPage = options.perPage != null ? Math.min(200, Number(options.perPage)) : 200;
+  const maxPages = options.maxPages != null ? Math.max(1, Number(options.maxPages)) : 10000;
+  const lim =
+    options.limit != null && Number.isFinite(Number(options.limit)) && Number(options.limit) > 0
+      ? Math.floor(Number(options.limit))
+      : undefined;
+  const all = [];
+  let page = 1;
+  let hasMore = true;
+
+  while (hasMore && page <= maxPages) {
+    const { warehouses, pageContext } = await listInventoryWarehousesPage({ page, perPage });
+    all.push(...warehouses);
+    if (lim != null && all.length >= lim) {
+      return all.slice(0, lim);
+    }
+    hasMore = !!(pageContext && pageContext.has_more_page === true);
+    page += 1;
+  }
+
+  return all;
+}
+
 async function listCurrencies() {
   const orgId = getOrgId();
   const token = await getAccessToken();
@@ -986,6 +1145,10 @@ module.exports = {
   getOrgId,
   getInventoryBaseUrl,
   getInventoryOrgId,
+  listInventoryLocationsPage,
+  listAllInventoryLocations,
+  listInventoryWarehousesPage,
+  listAllInventoryWarehouses,
   fetchCompositeItem,
   getAccessTokenCacheMeta,
   zohoDebugEnabled,

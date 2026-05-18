@@ -12,6 +12,8 @@ FacilityArea.init(
     area_type: { type: DataTypes.STRING(30), allowNull: false, defaultValue: 'warehouse' },
     icon: { type: DataTypes.STRING(20), allowNull: true },
     description: { type: DataTypes.STRING(500), allowNull: true },
+    zoho_location_id: { type: DataTypes.STRING(32), allowNull: true, unique: true },
+    zoho_meta: { type: DataTypes.JSONB, allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
   },
