@@ -7,6 +7,7 @@ const {
   listLocationHistory,
   listAllLocationHistory,
   getRackLocations,
+  getStockByLocation,
   listLowThresholdAlerts,
   listUsageStats,
 } = require('./controller');
@@ -33,6 +34,7 @@ router.get('/low-threshold-alerts', isAuthenticated, listLowThresholdAlerts);
 router.get('/usage-stats', isAuthenticated, listUsageStats);
 router.patch('/:id', isAuthenticated, updateStock);
 router.get('/:id/rack-locations', isAuthenticated, getRackLocations);
+router.get('/:id/stock-by-location', isAuthenticated, getStockByLocation);
 router.get('/:id/location-history', isAuthenticated, listLocationHistory);
 
 module.exports = router;

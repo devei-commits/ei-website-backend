@@ -134,6 +134,7 @@ async function executeMasterCategoryRows(rows, opts = {}) {
         await master.row.update({
           group: mapped.groupDb,
           material: mapped.materialDb,
+          ...(mapped.levelDb ? { level: mapped.levelDb } : {}),
           form_data: mergeFormData(master.row.form_data, mapped.formDataPatch),
         });
         summary.pm_updated += 1;

@@ -12,34 +12,45 @@ const WarehouseInventoryLocationHistory = require('../warehouseInventory/locatio
 const { ReservedBatchItem } = require('../fulfillment/models');
 const { resetPackMaterialsMasterData } = require('../masters/resetMaterialMasters');
 const redis = require('../cache/redis');
-const { nextNumericCode } = require('../lib/nextNumericMasterCode');
+const { nextNumericCode, nextNumericSuffixAfterMax } = require('../lib/nextNumericMasterCode');
+const {
+  normalizePmSubCategorySlug,
+  pmSkuSeriesKey,
+  pmLevelForSubCategorySlug,
+} = require('../lib/pmSubCategoryRules');
 
-/** Canonical PM sub-categories (EI-Admin). Internal code: Primary → 4…, Monocarton → 5M…, Labels → 5L… */
+/** Canonical PM sub-categories (PPM / SPM / TPM). Internal code: 4… / 5M… / 5L… */
 function getPmSubCategoryNormalized(b) {
   const fd =
     b.form_data != null && typeof b.form_data === 'object' && !Array.isArray(b.form_data) ? b.form_data : null;
-  const fromGroup = String(b.group ?? '').trim().toLowerCase();
-  if (fromGroup) return fromGroup;
-  return String(fd?.subCategory ?? b.subCategory ?? '').trim().toLowerCase();
+  const fromGroup = String(b.group ?? '').trim();
+  const slugFromGroup = normalizePmSubCategorySlug(fromGroup);
+  if (slugFromGroup) return slugFromGroup;
+  const fromPmSkuCategory = String(fd?.pmSkuCategory ?? '').trim();
+  const slugFromPm = normalizePmSubCategorySlug(fromPmSkuCategory);
+  if (slugFromPm) return slugFromPm;
+  const raw = String(fd?.subCategory ?? b.subCategory ?? '').trim();
+  return normalizePmSubCategorySlug(raw) || raw.toLowerCase();
 }
 
 /** @returns {{ regex: RegExp, like: string, build: (n: number) => string } | null} */
 function pmSkuSeriesForSubCategory(subLower) {
-  if (subLower === 'primary') {
+  const seriesKey = pmSkuSeriesKey(subLower);
+  if (seriesKey === 'primary') {
     return {
       regex: /^4(\d{5})$/,
       like: '4%',
       build: (n) => `4${String(n).padStart(5, '0')}`,
     };
   }
-  if (subLower === 'monocarton') {
+  if (seriesKey === 'monocarton') {
     return {
       regex: /^5M(\d{5})$/,
       like: '5M%',
       build: (n) => `5M${String(n).padStart(5, '0')}`,
     };
   }
-  if (subLower === 'labels') {
+  if (seriesKey === 'labels') {
     return {
       regex: /^5[Ll](\d{5})$/,
       like: '5L%',
@@ -55,16 +66,17 @@ function pmSkuSeriesForSubCategory(subLower) {
  */
 function validatePmCodeForSubCategory(code, b) {
   const sub = getPmSubCategoryNormalized(b);
+  const seriesKey = pmSkuSeriesKey(sub);
   if (!pmSkuSeriesForSubCategory(sub)) return null;
   const c = String(code || '').trim();
-  if (sub === 'primary' && !c.startsWith('4')) {
-    return 'Internal PM code must start with "4" for Primary sub-category.';
+  if (seriesKey === 'primary' && !c.startsWith('4')) {
+    return 'Internal PM code must start with "4" for PPM / TPM sub-category.';
   }
-  if (sub === 'monocarton' && !c.startsWith('5M')) {
-    return 'Internal PM code must start with "5M" for Monocarton sub-category.';
+  if (seriesKey === 'monocarton' && !c.startsWith('5M')) {
+    return 'Internal PM code must start with "5M" for SPM - Monocarton sub-category.';
   }
-  if (sub === 'labels' && !/^5[Ll]/.test(c)) {
-    return 'Internal PM code must start with "5L" for Labels sub-category.';
+  if (seriesKey === 'labels' && !/^5[Ll]/.test(c)) {
+    return 'Internal PM code must start with "5L" for SPM - Labels sub-category.';
   }
   return null;
 }
@@ -79,7 +91,7 @@ async function allocateNextPmInternalCode(b, { transaction }) {
   if (!series) {
     return {
       error:
-        'Select PM Sub-Category (Primary, Labels, or Monocarton) so an internal code can be assigned on save, or send an explicit code.',
+        'Select PM sub-category (PPM, SPM - Monocarton, SPM - Labels, or TPM - Other components) so an internal code can be assigned on save, or send an explicit code.',
     };
   }
   const sequelize = PackMaterial.sequelize;
@@ -87,8 +99,9 @@ async function allocateNextPmInternalCode(b, { transaction }) {
   if (dialect === 'postgres') {
     await sequelize.query('SELECT pg_advisory_xact_lock(98273502, 2)', { transaction });
   }
+  const seriesKey = pmSkuSeriesKey(sub);
   const codeWhere =
-    sub === 'labels'
+    seriesKey === 'labels'
       ? { [Op.or]: [{ code: { [Op.like]: '5L%' } }, { code: { [Op.like]: '5l%' } }] }
       : { code: { [Op.like]: series.like } };
   const rows = await PackMaterial.findAll({
@@ -105,7 +118,7 @@ async function allocateNextPmInternalCode(b, { transaction }) {
       if (Number.isFinite(n) && n > max) max = n;
     }
   }
-  const code = series.build(max + 1);
+  const code = series.build(nextNumericSuffixAfterMax(max));
   return { code, seriesKey: sub };
 }
 
@@ -224,13 +237,18 @@ async function getNextCode(req, res) {
 
 /** Map request body (camelCase or snake_case) to pack_materials columns. */
 function bodyToPackMaterial(b) {
+  const fd = b.form_data != null && typeof b.form_data === 'object' && !Array.isArray(b.form_data) ? b.form_data : {};
+  const subRaw = fd.subCategory ?? b.subCategory ?? b.group ?? fd.pmSkuCategory ?? '';
+  const subSlug = normalizePmSubCategorySlug(subRaw) || String(subRaw || '').trim().toLowerCase();
+  const levelFromSub = subSlug ? pmLevelForSubCategorySlug(subSlug) : null;
+  const levelExplicit = b.level ?? fd.level ?? null;
   return {
     code: b.code ?? b.itemCode ?? '',
     description: b.description ?? b.name ?? null,
     type: b.type ?? b.itemCategory ?? null,
-    level: b.level ?? null,
-    group: b.subCategory ?? b.group ?? null,
-    material: b.pmCategory ?? b.material ?? b.matBody ?? null,
+    level: levelExplicit || levelFromSub || null,
+    group: subSlug || subRaw || null,
+    material: b.pmCategory ?? b.material ?? b.matBody ?? b.subCategory ?? b.group ?? null,
     size_spec: b.size_spec ?? b.specNominal ?? null,
     price_per_pc: b.price_per_pc != null ? Number(b.price_per_pc) : (b.pricePerPc != null ? Number(b.pricePerPc) : null),
     moq: b.moq != null ? Number(b.moq) : null,

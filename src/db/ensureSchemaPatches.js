@@ -286,6 +286,17 @@ const PATCHES = [
     table: 'warehouse_locations',
     sql: 'ALTER TABLE "warehouse_locations" ADD COLUMN IF NOT EXISTS "is_zoho_primary" BOOLEAN DEFAULT false',
   },
+  {
+    name: 'warehouse_locations.is_default',
+    table: 'warehouse_locations',
+    sql: 'ALTER TABLE "warehouse_locations" ADD COLUMN IF NOT EXISTS "is_default" BOOLEAN DEFAULT false',
+  },
+  {
+    name: 'warehouse_locations.is_default_per_type_uniq',
+    table: 'warehouse_locations',
+    sql:
+      'CREATE UNIQUE INDEX IF NOT EXISTS "warehouse_locations_is_default_per_type_uniq" ON "warehouse_locations" ("location_type") WHERE "is_default" = true',
+  },
 ];
 
 async function tableExists(tableName) {

@@ -46,7 +46,7 @@ function getNamespacesToInvalidate(req) {
     products: ['warehouse-inventory', 'planning-extracted', 'fulfillment'],
     'raw-materials': ['warehouse-inventory', 'planning-extracted', 'fulfillment'],
     'pack-materials': ['warehouse-inventory', 'planning-extracted', 'fulfillment'],
-    'warehouse-locations': ['warehouse-inventory', 'planning-extracted', 'fulfillment'],
+    'warehouse-locations': ['warehouse-inventory', 'planning-extracted', 'fulfillment', 'facility-areas'],
     // Vendor master drives downstream purchasing/items list pages.
     'vendor-client': ['items-list', 'purchase-orders', 'procurement'],
   };

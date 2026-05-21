@@ -30,6 +30,8 @@ WarehouseLocation.init(
     zoho_location_id: { type: DataTypes.STRING(32), allowNull: true },
     is_active: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
     is_zoho_primary: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+    /** One default zone per location_type (warehouse | production) for inbound stock routing. */
+    is_default: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     zoho_meta: { type: DataTypes.JSONB, allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
@@ -107,9 +109,9 @@ WarehouseRackItem.init(
   }
 );
 
-WarehouseLocation.hasMany(WarehouseRack, { foreignKey: 'location_id' });
-WarehouseRack.belongsTo(WarehouseLocation, { foreignKey: 'location_id' });
-WarehouseRack.hasMany(WarehouseRackItem, { foreignKey: 'rack_id' });
-WarehouseRackItem.belongsTo(WarehouseRack, { foreignKey: 'rack_id' });
+WarehouseLocation.hasMany(WarehouseRack, { foreignKey: 'location_id', as: 'WarehouseRacks' });
+WarehouseRack.belongsTo(WarehouseLocation, { foreignKey: 'location_id', as: 'WarehouseLocation' });
+WarehouseRack.hasMany(WarehouseRackItem, { foreignKey: 'rack_id', as: 'WarehouseRackItems' });
+WarehouseRackItem.belongsTo(WarehouseRack, { foreignKey: 'rack_id', as: 'WarehouseRack' });
 
 module.exports = { WarehouseLocation, WarehouseRack, WarehouseRackItem };

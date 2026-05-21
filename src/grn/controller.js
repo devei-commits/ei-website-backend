@@ -48,6 +48,7 @@ const PurchaseOrder = require('../purchaseOrders/models');
 const WarehouseInventory = require('../warehouseInventory/models');
 const { mergeLocationTokens } = require('../warehouseInventory/locationTokensMerge');
 const { logLocationMovement } = require('../warehouseInventory/locationHistoryHelpers');
+const { applyWhInboundStock } = require('./applyWhInboundStock');
 const { quantityToKg } = require('../warehouseInventory/quantityToKg');
 const { WarehouseLocation, WarehouseRack } = require('../warehouseLocations/models');
 
@@ -814,63 +815,33 @@ async function applyGrnCompletionToInventory(grnRow, opts = {}) {
 
   for (const [rawMaterialId, qty] of toAddByRm) {
     let whRow = await WarehouseInventory.findOne({ where: { item_type: 'RM', raw_material_id: rawMaterialId }, ...(transaction ? { transaction } : {}) });
-    if (whRow) {
-      const wh = whRow.get ? whRow.get({ plain: true }) : whRow;
-      const whStockBefore = Number(wh.wh_stock) || 0;
-      const inTransitBefore = Number(wh.in_transit) || 0;
-      const ml1Before = Number(wh.ml1_stock) || 0;
-      const ml2Before = Number(wh.ml2_stock) || 0;
-      const whStock = (Number(wh.wh_stock) || 0) + qty;
-      const inTransit = Math.max(0, inTransitBefore - qty);
-      const ml1 = Number(wh.ml1_stock) || 0;
-      const ml2 = Number(wh.ml2_stock) || 0;
-      await whRow.update({
-        wh_stock: whStock,
-        in_transit: inTransit,
-        stock_in_hand: whStock + ml1 + ml2,
-        wh_unit: 'KG',
-      }, transaction ? { transaction } : {});
-      console.log('[grn] WH inventory RM wh_stock update', {
-        rawMaterialId,
-        qtyToAdd: qty,
-        whInventoryId: wh.id ?? null,
-        whStockBefore,
-        whStockAfter: whStock,
-        inTransitBefore,
-        inTransitAfter: inTransit,
-        stockInHandAfter: whStock + ml1 + ml2,
-        ml1Before,
-        ml1After: ml1,
-        ml2Before,
-        ml2After: ml2,
-      });
-      console.log('[grn] GRN Complete: added RM id=%d qty=%s -> wh_stock=%s', rawMaterialId, qty, whStock);
-    } else {
+    if (!whRow) {
       whRow = await WarehouseInventory.create({
         item_type: 'RM',
         raw_material_id: rawMaterialId,
         pack_material_id: null,
         product_id: null,
-        wh_stock: qty,
+        wh_stock: 0,
         wh_unit: 'KG',
         ml1_stock: 0,
         ml2_stock: 0,
-        stock_in_hand: qty,
+        stock_in_hand: 0,
         reserved: 0,
         in_transit: 0,
         reorder_pt: 0,
         avg_mo: 0,
         qc_status: 'In Stock',
       }, transaction ? { transaction } : {});
-      console.log('[grn] WH inventory RM created', {
-        rawMaterialId,
-        qtyToAdd: qty,
-        newWarehouseInventoryId: whRow.id ?? null,
-      });
-      console.log('[grn] GRN Complete: created RM warehouse_inventory id=%d wh_stock=%s', rawMaterialId, qty);
+      console.log('[grn] GRN Complete: created RM warehouse_inventory id=%d', rawMaterialId);
     }
+    whRow = await applyWhInboundStock(
+      whRow,
+      qty,
+      { rawMaterialId },
+      { transaction, grnId: d.id }
+    );
+    console.log('[grn] GRN Complete: added RM id=%d qty=%s', rawMaterialId, qty);
 
-    // Optional history entry – location may be null if not yet assigned.
     const plainWh = whRow.get ? whRow.get({ plain: true }) : whRow;
     await logLocationMovement({
       warehouseInventoryId: plainWh.id,
@@ -891,61 +862,32 @@ async function applyGrnCompletionToInventory(grnRow, opts = {}) {
 
   for (const [packMaterialId, qty] of toAddByPm) {
     let whRow = await WarehouseInventory.findOne({ where: { item_type: 'PM', pack_material_id: packMaterialId }, ...(transaction ? { transaction } : {}) });
-    if (whRow) {
-      const wh = whRow.get ? whRow.get({ plain: true }) : whRow;
-      const whStockBefore = Number(wh.wh_stock) || 0;
-      const inTransitBefore = Number(wh.in_transit) || 0;
-      const ml1Before = Number(wh.ml1_stock) || 0;
-      const ml2Before = Number(wh.ml2_stock) || 0;
-      const whStock = (Number(wh.wh_stock) || 0) + qty;
-      const inTransit = Math.max(0, inTransitBefore - qty);
-      const ml1 = Number(wh.ml1_stock) || 0;
-      const ml2 = Number(wh.ml2_stock) || 0;
-      await whRow.update({
-        wh_stock: whStock,
-        in_transit: inTransit,
-        stock_in_hand: whStock + ml1 + ml2,
-        wh_unit: 'KG',
-      }, transaction ? { transaction } : {});
-      console.log('[grn] WH inventory PM wh_stock update', {
-        packMaterialId,
-        qtyToAdd: qty,
-        whInventoryId: wh.id ?? null,
-        whStockBefore,
-        whStockAfter: whStock,
-        inTransitBefore,
-        inTransitAfter: inTransit,
-        stockInHandAfter: whStock + ml1 + ml2,
-        ml1Before,
-        ml1After: ml1,
-        ml2Before,
-        ml2After: ml2,
-      });
-      console.log('[grn] GRN Complete: added PM id=%d qty=%s -> wh_stock=%s', packMaterialId, qty, whStock);
-    } else {
+    if (!whRow) {
       whRow = await WarehouseInventory.create({
         item_type: 'PM',
         raw_material_id: null,
         pack_material_id: packMaterialId,
         product_id: null,
-        wh_stock: qty,
+        wh_stock: 0,
         wh_unit: 'KG',
         ml1_stock: 0,
         ml2_stock: 0,
-        stock_in_hand: qty,
+        stock_in_hand: 0,
         reserved: 0,
         in_transit: 0,
         reorder_pt: 0,
         avg_mo: 0,
         qc_status: 'In Stock',
       }, transaction ? { transaction } : {});
-      console.log('[grn] WH inventory PM created', {
-        packMaterialId,
-        qtyToAdd: qty,
-        newWarehouseInventoryId: whRow.id ?? null,
-      });
-      console.log('[grn] GRN Complete: created PM warehouse_inventory id=%d wh_stock=%s', packMaterialId, qty);
+      console.log('[grn] GRN Complete: created PM warehouse_inventory id=%d', packMaterialId);
     }
+    whRow = await applyWhInboundStock(
+      whRow,
+      qty,
+      { packMaterialId },
+      { transaction, grnId: d.id }
+    );
+    console.log('[grn] GRN Complete: added PM id=%d qty=%s', packMaterialId, qty);
 
     const plainWh = whRow.get ? whRow.get({ plain: true }) : whRow;
     await logLocationMovement({
@@ -967,61 +909,32 @@ async function applyGrnCompletionToInventory(grnRow, opts = {}) {
 
   for (const [productId, qty] of toAddByProduct) {
     let whRow = await WarehouseInventory.findOne({ where: { item_type: 'PR', product_id: productId }, ...(transaction ? { transaction } : {}) });
-    if (whRow) {
-      const wh = whRow.get ? whRow.get({ plain: true }) : whRow;
-      const whStockBefore = Number(wh.wh_stock) || 0;
-      const inTransitBefore = Number(wh.in_transit) || 0;
-      const ml1Before = Number(wh.ml1_stock) || 0;
-      const ml2Before = Number(wh.ml2_stock) || 0;
-      const whStock = (Number(wh.wh_stock) || 0) + qty;
-      const inTransit = Math.max(0, inTransitBefore - qty);
-      const ml1 = Number(wh.ml1_stock) || 0;
-      const ml2 = Number(wh.ml2_stock) || 0;
-      await whRow.update({
-        wh_stock: whStock,
-        in_transit: inTransit,
-        stock_in_hand: whStock + ml1 + ml2,
-        wh_unit: 'KG',
-      }, transaction ? { transaction } : {});
-      console.log('[grn] WH inventory PR wh_stock update', {
-        productId,
-        qtyToAdd: qty,
-        whInventoryId: wh.id ?? null,
-        whStockBefore,
-        whStockAfter: whStock,
-        inTransitBefore,
-        inTransitAfter: inTransit,
-        stockInHandAfter: whStock + ml1 + ml2,
-        ml1Before,
-        ml1After: ml1,
-        ml2Before,
-        ml2After: ml2,
-      });
-      console.log('[grn] GRN Complete: added PR product_id=%d qty=%s -> wh_stock=%s', productId, qty, whStock);
-    } else {
+    if (!whRow) {
       whRow = await WarehouseInventory.create({
         item_type: 'PR',
         raw_material_id: null,
         pack_material_id: null,
         product_id: productId,
-        wh_stock: qty,
+        wh_stock: 0,
         wh_unit: 'KG',
         ml1_stock: 0,
         ml2_stock: 0,
-        stock_in_hand: qty,
+        stock_in_hand: 0,
         reserved: 0,
         in_transit: 0,
         reorder_pt: 0,
         avg_mo: 0,
         qc_status: 'In Stock',
       }, transaction ? { transaction } : {});
-      console.log('[grn] WH inventory PR created', {
-        productId,
-        qtyToAdd: qty,
-        newWarehouseInventoryId: whRow.id ?? null,
-      });
-      console.log('[grn] GRN Complete: created PR warehouse_inventory product_id=%d wh_stock=%s', productId, qty);
+      console.log('[grn] GRN Complete: created PR warehouse_inventory product_id=%d', productId);
     }
+    whRow = await applyWhInboundStock(
+      whRow,
+      qty,
+      { productId },
+      { transaction, grnId: d.id }
+    );
+    console.log('[grn] GRN Complete: added PR product_id=%d qty=%s', productId, qty);
 
     const plainWh = whRow.get ? whRow.get({ plain: true }) : whRow;
     await logLocationMovement({

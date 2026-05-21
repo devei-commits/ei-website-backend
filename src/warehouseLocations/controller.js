@@ -9,6 +9,7 @@ const WarehouseInventory = require('../warehouseInventory/models');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const { Product } = require('../products/models');
+const { setDefaultLocation: setDefaultLocationService } = require('../facilityAreas/defaultLocationService');
 
 function toNum(x) {
   if (x == null) return 0;
@@ -206,6 +207,7 @@ async function list(req, res) {
         areaSqm: locPlain.area_sqm,
         description: locPlain.description,
         utilisationPct: locPlain.utilisation_pct != null ? toNum(locPlain.utilisation_pct) : locUtil,
+        isDefault: locPlain.is_default === true,
         racks,
       };
     });
@@ -529,12 +531,38 @@ async function removeRackItem(req, res) {
   }
 }
 
+/**
+ * POST /api/v1/warehouse-locations/:id/set-default
+ * Marks this zone as the default for its location_type (warehouse | production).
+ */
+async function setDefaultLocation(req, res) {
+  try {
+    const id = parseInt(String(req.params.id), 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid location id' });
+    const result = await setDefaultLocationService(id);
+    res.json({
+      id: result.location.id,
+      code: result.location.code,
+      name: result.location.name,
+      locationType: result.location.location_type,
+      isDefault: true,
+      defaultRackId: result.rack.id,
+      defaultRackCode: result.rack.code,
+    });
+  } catch (err) {
+    if (err.status === 404) return res.status(404).json({ error: err.message });
+    console.error('[warehouse-locations] setDefaultLocation error:', err);
+    res.status(500).json({ error: err.message || 'Failed to set default location' });
+  }
+}
+
 module.exports = {
   list,
   getLocationById,
   createLocation,
   updateLocation,
   deleteLocation,
+  setDefaultLocation,
   getRackById,
   createRack,
   updateRack,

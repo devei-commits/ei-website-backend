@@ -13,7 +13,11 @@ const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const { Product } = require('../products/models');
 const WarehouseInventory = require('../warehouseInventory/models');
-const { applyDeltaToRack, recalculateInventoryForItem, computeStockInHand } = require('../warehouseInventory/inventoryMath');
+const { applyDeltaToRack, recalculateInventoryForItem } = require('../warehouseInventory/inventoryMath');
+const {
+  resolveInboundWarehouseRack,
+  resolveProductionRackForTransfer,
+} = require('../facilityAreas/defaultLocationService');
 const { logLocationMovement } = require('../warehouseInventory/locationHistoryHelpers');
 const WarehouseInventoryLocationHistory = require('../warehouseInventory/locationHistoryModel');
 const { applyDedicatedDefaultsToNewMrn, resolveDedicatedProductionCodes, resolveProductionRackForMrn } = require('../itemDedicatedFacilityLocations/service');
@@ -954,37 +958,28 @@ async function applyMtrCompletionToProductionBatch(plainMrn) {
 }
 
 /**
- * Map MU receive zone code to which manufacturing location stock to credit.
- * LOC-MU01 -> ml1_stock, LOC-MU02 -> ml2_stock; default ml1.
- */
-function muZoneToMl(zone) {
-  if (!zone || typeof zone !== 'string') return 'ml1';
-  const z = String(zone).toUpperCase();
-  if (z.includes('MU02') || z === 'LOC-MU02') return 'ml2';
-  return 'ml1';
-}
-
-/**
- * When an MRN from MTR is marked Completed, move stock WH -> MU (or MU -> WH for inbound).
- * Updates warehouse_inventory: wh_stock, ml1_stock, ml2_stock, stock_in_hand so that
- * /warehouse/inventory shows correct WH Stock, ML1 Stock, ML2 Stock.
+ * When an MRN from MTR is marked Completed, move stock WH ↔ MU via rack rows.
+ * Warehouse rack qty decreases; manufacturing zone rack qty increases (ML1/ML2 derived on recalc).
  */
 async function applyMrnCompletionToInventory(plainMrn) {
   if (plainMrn.source !== 'MTR' || !plainMrn.bmr_no) return;
   const lineItems = Array.isArray(plainMrn.line_items) ? plainMrn.line_items : [];
   const isInbound = !!plainMrn.is_inbound_from_mu;
   const muZone = plainMrn.mu_receive_zone || null;
-  const targetMl = muZoneToMl(muZone);
+  const muRack = plainMrn.mu_receive_rack || null;
 
   for (const line of lineItems) {
     const qty = Number(line.quantity) || 0;
     if (qty <= 0) continue;
     let whRow = null;
+    const itemIds = {};
     if (line.raw_material_id != null) {
+      itemIds.rawMaterialId = line.raw_material_id;
       whRow = await WarehouseInventory.findOne({
         where: { item_type: 'RM', raw_material_id: line.raw_material_id },
       });
     } else if (line.pack_material_id != null) {
+      itemIds.packMaterialId = line.pack_material_id;
       whRow = await WarehouseInventory.findOne({
         where: { item_type: 'PM', pack_material_id: line.pack_material_id },
       });
@@ -992,60 +987,41 @@ async function applyMrnCompletionToInventory(plainMrn) {
     if (!whRow) continue;
     const plain = whRow.get ? whRow.get({ plain: true }) : whRow;
 
-    let whStock = Number(plain.wh_stock) || 0;
-    let ml1 = Number(plain.ml1_stock) || 0;
-    let ml2 = Number(plain.ml2_stock) || 0;
-    let reserved = Number(plain.reserved) || 0;
-
-    console.log('[mrn][MTR] before move', {
-      source: isInbound ? 'MU->WH' : 'WH->MU',
-      mrnId: plainMrn.id,
-      raw_material_id: line.raw_material_id,
-      pack_material_id: line.pack_material_id,
-      qty,
-      whStockBefore: whStock,
-      ml1Before: ml1,
-      ml2Before: ml2,
-      reservedBefore: reserved,
+    const whRackDest = await resolveInboundWarehouseRack(itemIds);
+    const prodRackDest = await resolveProductionRackForTransfer({
+      zoneCode: muZone,
+      rackCode: muRack,
+      lineItems: [line],
     });
 
-    if (isInbound) {
-      // MU -> WH: decrease ML (source), increase WH
-      if (targetMl === 'ml2') {
-        ml2 = Math.max(0, ml2 - qty);
+    if (whRackDest?.rackId && prodRackDest?.rackId) {
+      if (isInbound) {
+        await applyDeltaToRack(plain.id, prodRackDest.rackId, -qty);
+        await applyDeltaToRack(plain.id, whRackDest.rackId, qty);
       } else {
-        ml1 = Math.max(0, ml1 - qty);
+        await applyDeltaToRack(plain.id, whRackDest.rackId, -qty);
+        await applyDeltaToRack(plain.id, prodRackDest.rackId, qty);
       }
-      whStock += qty;
     } else {
-      // WH -> MU: decrease WH, increase ML (target)
-      whStock = Math.max(0, whStock - qty);
-      if (targetMl === 'ml2') {
-        ml2 += qty;
-      } else {
-        ml1 += qty;
-      }
+      console.warn('[mrn][MTR] rack resolve incomplete — skipping rack move', {
+        mrnId: plainMrn.id,
+        whRackDest: !!whRackDest,
+        prodRackDest: !!prodRackDest,
+      });
     }
 
-    // Reduce reserved by moved qty so RM/PM availability table reflects that this batch's need is now at MU
-    reserved = Math.max(0, reserved - qty);
+    const refreshed = await WarehouseInventory.findByPk(plain.id);
+    const after = refreshed?.get ? refreshed.get({ plain: true }) : refreshed;
+    const reserved = Math.max(0, (Number(after?.reserved ?? plain.reserved) || 0) - qty);
+    if (refreshed) await refreshed.update({ reserved });
 
-    const stockInHand = computeStockInHand(whStock, ml1, ml2);
-    await whRow.update({
-      wh_stock: whStock,
-      ml1_stock: ml1,
-      ml2_stock: ml2,
-      stock_in_hand: stockInHand,
-      reserved,
-    });
-    console.log('[mrn][MTR] after move', {
+    console.log('[mrn][MTR] completed rack move', {
       source: isInbound ? 'MU->WH' : 'WH->MU',
       whInventoryId: plain.id,
       qty,
-      whStock,
-      ml1,
-      ml2,
-      stockInHand,
+      whRack: whRackDest?.rackCode,
+      prodZone: prodRackDest?.locationCode,
+      prodRack: prodRackDest?.rackCode,
       reserved,
     });
   }

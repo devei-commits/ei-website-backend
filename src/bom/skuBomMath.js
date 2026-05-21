@@ -213,9 +213,139 @@ function validateSkuBomTotals({ lines, limitQty, limitUom }) {
   };
 }
 
+function countMeaningfulFormulaRmLines(lines) {
+  if (!Array.isArray(lines)) return 0;
+  return lines.filter((line) => {
+    const inci = String(line?.inci_name ?? line?.inciName ?? '').trim();
+    const code = String(line?.rm_code ?? line?.rmCode ?? '').trim();
+    const pctRaw = line?.pct_w_w ?? line?.pctWw ?? line?.pct;
+    const pct =
+      pctRaw != null && pctRaw !== ''
+        ? parseFloat(String(pctRaw).replace(/[^\d.-]/g, ''))
+        : NaN;
+    const hasPct = !Number.isNaN(pct) && pct > 0;
+    return Boolean(inci || code || hasPct);
+  }).length;
+}
+
+function skuLineUomForLimit(limitUom) {
+  const u = normUom(limitUom);
+  if (u === 'KG') return 'KG';
+  if (u === 'L') return 'L';
+  if (u === 'ML') return 'ML';
+  return 'GM';
+}
+
+function displayLimitUom(limitUom) {
+  const u = normUom(limitUom);
+  if (u === 'G') return 'GM';
+  if (u === 'KG') return 'KG';
+  if (u === 'ML') return 'ML';
+  if (u === 'L') return 'L';
+  return String(limitUom ?? '').trim().toUpperCase() || 'GM';
+}
+
+function collectMeaningfulFormulaLines(formulaLines) {
+  const arr = Array.isArray(formulaLines) ? formulaLines : [];
+  const out = [];
+  for (let i = 0; i < arr.length; i += 1) {
+    const line = arr[i] || {};
+    const inci = String(line.inci_name ?? line.inciName ?? '').trim();
+    const code = String(line.rm_code ?? line.rmCode ?? '').trim();
+    const pctRaw = line.pct_w_w ?? line.pctWw ?? line.pct;
+    const pct =
+      pctRaw != null && pctRaw !== ''
+        ? parseFloat(String(pctRaw).replace(/[^\d.-]/g, ''))
+        : NaN;
+    if (!Number.isNaN(pct) && pct > 0 && (inci || code)) {
+      const rid = line.raw_material_id ?? line.rawMaterialId;
+      out.push({
+        inciName: inci,
+        rmCode: code,
+        rawMaterialId: rid != null && String(rid).trim() !== '' ? String(rid) : undefined,
+        pct,
+      });
+    }
+  }
+  return out;
+}
+
+function flattenFormulaBomPhases(phases) {
+  if (!Array.isArray(phases)) return [];
+  const out = [];
+  for (const ph of phases) {
+    const phaseName = String(ph?.phase ?? '').trim();
+    const ings = Array.isArray(ph?.ingredients) ? ph.ingredients : [];
+    for (const ing of ings) {
+      out.push({
+        ...ing,
+        phase: (ing.phase != null && ing.phase !== '' ? ing.phase : phaseName) || undefined,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Convert Formula BOM (% w/w, total must be 100%) into SKU BOM per-unit quantities.
+ * @param {{ formulaLines: unknown[], limitQty: string|number, limitUom: string }}
+ */
+function formulaRowsToSkuBomLines({ formulaLines, limitQty, limitUom }) {
+  const collected = collectMeaningfulFormulaLines(formulaLines);
+  if (collected.length === 0) {
+    return { ok: false, error: 'No Formula BOM lines with % w/w and INCI/RM code to import.' };
+  }
+
+  const pctTotal = collected.reduce((s, x) => s + x.pct, 0);
+  if (Math.abs(pctTotal - 100) > 0.001) {
+    return {
+      ok: false,
+      error: `Formula BOM must total 100% w/w before import (current total ${pctTotal.toFixed(4)}%).`,
+    };
+  }
+
+  const limQ = parseLimitQty(limitQty);
+  const limU = limitUom != null && String(limitUom).trim() !== '' ? String(limitUom).trim() : null;
+  const dim = limU ? dimensionOfLimitUom(limU) : null;
+  if (!limQ || !limU || !dim) {
+    return {
+      ok: false,
+      error: 'Set net per-unit quantity and UOM (e.g. 50 GM or 50 ML) before importing from Formula BOM.',
+    };
+  }
+
+  try {
+    if (dim === 'mass') limitToMg(limQ, limU);
+    else limitToMicroL(limQ, limU);
+  } catch (e) {
+    return { ok: false, error: e.message || 'Invalid limit UOM' };
+  }
+
+  const lineUom = skuLineUomForLimit(limU);
+  const limitInDisplay = limQ;
+  const rawQtys = collected.map((row) => (row.pct / 100) * limitInDisplay);
+  const ROUND = 1e6;
+  const rounded = rawQtys.map((q) => Math.round(q * ROUND) / ROUND);
+  const drift = limitInDisplay - rounded.reduce((a, b) => a + b, 0);
+  rounded[rounded.length - 1] = Math.round((rounded[rounded.length - 1] + drift) * ROUND) / ROUND;
+
+  const rows = collected.map((row, i) => ({
+    inciName: row.inciName,
+    rmCode: row.rmCode,
+    rawMaterialId: row.rawMaterialId,
+    qtyPerUnit: rounded[i],
+    uom: lineUom,
+  }));
+
+  return { ok: true, rows, limitQty: limitInDisplay, limitUom: displayLimitUom(limU) };
+}
+
 module.exports = {
   normUom,
   countMeaningfulSkuRmLines,
+  countMeaningfulFormulaRmLines,
   parseLimitQty,
   validateSkuBomTotals,
+  flattenFormulaBomPhases,
+  formulaRowsToSkuBomLines,
 };

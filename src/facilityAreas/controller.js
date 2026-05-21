@@ -45,6 +45,7 @@ function formatArea(row) {
       zohoLocationId: z.zoho_location_id || null,
       isActive: z.is_active !== false,
       isZohoPrimary: z.is_zoho_primary === true,
+      isDefault: z.is_default === true,
       zohoMeta: z.zoho_meta || null,
       racks,
     };

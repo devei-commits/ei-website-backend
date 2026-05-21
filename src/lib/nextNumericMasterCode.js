@@ -3,6 +3,9 @@
  * Legacy alphanumeric codes are ignored when computing the max.
  */
 
+/** Gap after the highest used numeric suffix — room for manual correction SKUs. */
+const INTERNAL_MASTER_CODE_CORRECTION_MARGIN = 300;
+
 function maxPureNumericCode(values) {
   let max = 0;
   for (const raw of values) {
@@ -15,13 +18,28 @@ function maxPureNumericCode(values) {
 }
 
 /**
+ * Next numeric suffix after the highest existing value in a series.
+ * @param {number} maxExisting highest parsed suffix (0 when series is empty)
+ * @returns {number}
+ */
+function nextNumericSuffixAfterMax(maxExisting) {
+  const max = Number.isFinite(maxExisting) && maxExisting >= 0 ? maxExisting : 0;
+  return max + 1 + INTERNAL_MASTER_CODE_CORRECTION_MARGIN;
+}
+
+/**
  * @param {string[]} values - existing code strings from DB
  * @param {number} [padLength=5]
  * @returns {string}
  */
 function nextNumericCode(values, padLength = 5) {
-  const next = maxPureNumericCode(values) + 1;
+  const next = nextNumericSuffixAfterMax(maxPureNumericCode(values));
   return String(next).padStart(padLength, '0');
 }
 
-module.exports = { maxPureNumericCode, nextNumericCode };
+module.exports = {
+  INTERNAL_MASTER_CODE_CORRECTION_MARGIN,
+  maxPureNumericCode,
+  nextNumericSuffixAfterMax,
+  nextNumericCode,
+};

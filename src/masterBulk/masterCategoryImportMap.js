@@ -3,6 +3,8 @@
  * No mapping to fixed enums or EI-RM-* / EI-PM-* keys.
  */
 
+const { normalizePmSubCategorySlug, pmLevelForSubCategorySlug } = require('../lib/pmSubCategoryRules');
+
 function trim(s) {
   return String(s || '').trim();
 }
@@ -32,19 +34,24 @@ function mapRmImportCategories({ sheetName, categoryCol, subCategoryCol }) {
  */
 function mapPmImportCategories({ sheetName, categoryCol, subCategoryCol }) {
   const category = trim(categoryCol);
-  const subCategory = trim(subCategoryCol) || trim(sheetName);
+  const subCol = trim(subCategoryCol);
+  const skuSeriesRaw = category || subCol || trim(sheetName);
+  const slug = normalizePmSubCategorySlug(skuSeriesRaw) || skuSeriesRaw.toLowerCase();
+  const level = pmLevelForSubCategorySlug(slug);
+  const optionalSub =
+    subCol && category && subCol.toLowerCase() !== category.toLowerCase() ? subCol : '';
 
   return {
-    subCategory,
+    subCategory: slug,
     pmCategory: category,
-    groupDb: subCategory,
-    materialDb: category || null,
+    groupDb: slug,
+    materialDb: optionalSub || null,
+    levelDb: level || null,
     formDataPatch: {
-      subCategory,
-      pmCategory: category,
-      excelCategory: category,
-      excelSubCategory: subCategory,
-      matBody: category || '',
+      subCategory: slug,
+      pmSkuCategory: slug,
+      ...(level ? { level } : {}),
+      ...(optionalSub ? { optionalPmSubCategory: optionalSub } : {}),
     },
   };
 }

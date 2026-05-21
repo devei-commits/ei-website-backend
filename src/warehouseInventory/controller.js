@@ -13,6 +13,7 @@ const PackMaterial = require('../packMaterials/models');
 const { Product } = require('../products/models');
 const ItemGroup = require('../itemGroups/models');
 const { WarehouseRackItem, WarehouseRack, WarehouseLocation } = require('../warehouseLocations/models');
+const { buildStockByLocationPayload, setWarehouseRackQuantities } = require('./rackStockHelpers');
 const { Op } = require('sequelize');
 const GoodsReceivedNote = require('../grn/models');
 const PurchaseOrder = require('../purchaseOrders/models');
@@ -403,6 +404,22 @@ async function updateStock(req, res) {
     }
     if (body.reorder_pt != null) updates.reorder_pt = Number(body.reorder_pt);
     if (body.avg_mo != null) updates.avg_mo = Number(body.avg_mo);
+    const rackQtyRaw = body.rack_quantities ?? body.rackQuantities;
+    if (Array.isArray(rackQtyRaw) && rackQtyRaw.length > 0) {
+      await setWarehouseRackQuantities(id, rackQtyRaw);
+      const refreshed = await WarehouseInventory.findByPk(id);
+      if (refreshed) {
+        const r = refreshed.get ? refreshed.get({ plain: true }) : refreshed;
+        whStock = toNum(r.wh_stock);
+        ml1Stock = toNum(r.ml1_stock);
+        ml2Stock = toNum(r.ml2_stock);
+        updates.wh_stock = whStock;
+        updates.ml1_stock = ml1Stock;
+        updates.ml2_stock = ml2Stock;
+        if (r.zone != null) updates.zone = r.zone;
+        if (r.rack != null) updates.rack = r.rack;
+      }
+    }
     if (body.batch_number !== undefined) {
       const b = String(body.batch_number ?? '').trim().slice(0, 50);
       updates.batch_number = b || null;
@@ -721,18 +738,43 @@ async function getRackLocations(req, res) {
       const loc = rack && rack.WarehouseLocation ? rack.WarehouseLocation : null;
       const rPlain = rack && rack.get ? rack.get({ plain: true }) : rack;
       const locPlain = loc && loc.get ? loc.get({ plain: true }) : loc;
+      const itPlain = it.get ? it.get({ plain: true }) : it;
       return {
         locationId: locPlain && locPlain.id,
         locationCode: locPlain && locPlain.code,
         locationName: locPlain && locPlain.name,
+        locationType: locPlain && locPlain.location_type,
+        isDefaultLocation: locPlain && locPlain.is_default === true,
         rackId: rPlain && rPlain.id,
         rackCode: rPlain && rPlain.code,
+        qtyWh: toNum(itPlain.qty_wh),
       };
     });
     res.json({ locations });
   } catch (err) {
     console.error('[warehouse-inventory] GET rack-locations error:', err);
     res.status(500).json({ error: err.message || 'Failed to fetch rack locations' });
+  }
+}
+
+/**
+ * GET /api/v1/warehouse-inventory/:id/stock-by-location
+ * Per-zone/rack WH breakdown + ML1/ML2 manufacturing buckets.
+ */
+async function getStockByLocation(req, res) {
+  try {
+    const id = parseInt(String(req.params.id), 10);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid warehouse inventory id' });
+    }
+    const payload = await buildStockByLocationPayload(id);
+    if (!payload) {
+      return res.status(404).json({ error: 'Warehouse inventory row not found' });
+    }
+    res.json(payload);
+  } catch (err) {
+    console.error('[warehouse-inventory] GET stock-by-location error:', err);
+    res.status(500).json({ error: err.message || 'Failed to fetch stock by location' });
   }
 }
 
@@ -1040,4 +1082,14 @@ async function listUsageStats(req, res) {
   }
 }
 
-module.exports = { list, listPayload, updateStock, listLocationHistory, listAllLocationHistory, getRackLocations, listLowThresholdAlerts, listUsageStats };
+module.exports = {
+  list,
+  listPayload,
+  updateStock,
+  listLocationHistory,
+  listAllLocationHistory,
+  getRackLocations,
+  getStockByLocation,
+  listLowThresholdAlerts,
+  listUsageStats,
+};

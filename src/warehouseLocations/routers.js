@@ -6,6 +6,7 @@ const {
   createLocation,
   updateLocation,
   deleteLocation,
+  setDefaultLocation,
   getRackById,
   createRack,
   updateRack,
@@ -29,6 +30,7 @@ const cacheWarehouseLocationsOne = createCacheReadMiddleware({ namespace: 'wareh
 router.get('/', cacheWarehouseLocationsList, list);
 router.get('/:id', cacheWarehouseLocationsOne, getLocationById);
 router.post('/', createLocation);
+router.post('/:id/set-default', setDefaultLocation);
 router.patch('/:id', updateLocation);
 router.delete('/:id', deleteLocation);
 

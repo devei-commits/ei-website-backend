@@ -19,6 +19,7 @@ const {
   scrubProcurementJsonForDeletedProducts,
 } = require('./destroyProductWithDependents');
 const { linkMaterialMastersToProductCode } = require('./linkMaterialMastersToProduct');
+const { nextNumericSuffixAfterMax } = require('../lib/nextNumericMasterCode');
 
 /** @param {Record<string, unknown>} b @param {{ defaultPermanent?: boolean }} [opts] @returns {'temporary'|'permanent'|null} */
 function normalizePrRecordTypeFromBody(b, opts = {}) {
@@ -85,7 +86,8 @@ async function allocateNextPrProductCode(recordType, transaction) {
   };
   for (const row of bomRows) bump(row.get ? row.get('bom_code') : row.bom_code);
   for (const row of prodRows) bump(row.get ? row.get('product_code') : row.product_code);
-  return `${prefix}${String(max + 1).padStart(5, '0')}`;
+  const next = nextNumericSuffixAfterMax(max);
+  return `${prefix}${String(next).padStart(5, '0')}`;
 }
 
 function normSkuLimitQty(v) {

@@ -7,6 +7,7 @@ const { zohoSyncIsMandatoryFailure } = require('../services/zohoSyncHelpers');
 const { compensateZohoItemIfAny } = require('../lib/zohoDbTransaction');
 const { Op } = require('sequelize');
 const { findConflictingMasterRow } = require('../lib/itemCodeUniqueness');
+const { nextNumericSuffixAfterMax } = require('../lib/nextNumericMasterCode');
 const WarehouseInventory = require('../warehouseInventory/models');
 const WarehouseInventoryLocationHistory = require('../warehouseInventory/locationHistoryModel');
 const { ReservedBatchItem } = require('../fulfillment/models');
@@ -54,17 +55,27 @@ function formatRawMaterialFull(row) {
  * Search matches code, name, inci, category (case-insensitive).
  */
 
-/** Canonical RM sub-categories (must match EI-Admin). Internal SKU = one digit + 5 digits. */
+/** Canonical RM sub-categories (must match EI-Admin). Raw/Fragrance/Colors: digit + 5 digits; Club items: CLUB + 5 digits. */
 const RM_SUB_CATEGORY_TO_SKU_LEADING_DIGIT = new Map(
   Object.entries({
+    'bulk raw materials': '1',
     'raw material': '1',
     'raw materials': '1',
+    'solvents & carriers': '1',
+    'pre-mixed bases': '1',
+    'pre-mixed based': '1',
     fragrance: '2',
     fragrances: '2',
     'colors & pigments': '3',
-    'club items': '1',
   })
 );
+
+const CLUB_ITEMS_SKU_PREFIX = 'CLUB';
+
+function isClubItemsRmSubCategoryLabel(label) {
+  const k = String(label || '').trim().toLowerCase();
+  return k === 'club items' || k === 'club item';
+}
 
 function normalizeRmSubCategoryLabel(b) {
   const fd =
@@ -74,19 +85,28 @@ function normalizeRmSubCategoryLabel(b) {
   return String(fd.subCategory ?? b.subCategory ?? '').trim().toLowerCase();
 }
 
-/** Leading digit 1|2|3 when sub-category is canonical; otherwise null (legacy / unset). */
+/** Leading digit 1|2|3 for digit-series sub-categories only (not Club items). */
 function leadingDigitFromRmSubCategoryBody(b) {
-  return RM_SUB_CATEGORY_TO_SKU_LEADING_DIGIT.get(normalizeRmSubCategoryLabel(b)) || null;
+  const k = normalizeRmSubCategoryLabel(b);
+  if (isClubItemsRmSubCategoryLabel(k)) return null;
+  return RM_SUB_CATEGORY_TO_SKU_LEADING_DIGIT.get(k) || null;
 }
 
 /**
- * When sub-category is one of Raw material / Fragrance / Colors & Pigments, internal `code` must start with 1 / 2 / 3.
+ * When sub-category is canonical, internal `code` must start with 1/2/3 or CLUB (Club items).
  * @returns {string|null} error message or null if OK / rule does not apply
  */
 function validateInternalRmCodeForSubCategory(code, b) {
+  const c = String(code || '').trim();
+  const sub = normalizeRmSubCategoryLabel(b);
+  if (isClubItemsRmSubCategoryLabel(sub)) {
+    if (!c.toUpperCase().startsWith(CLUB_ITEMS_SKU_PREFIX)) {
+      return `Internal RM code (SKU) must start with "${CLUB_ITEMS_SKU_PREFIX}" for Club items.`;
+    }
+    return null;
+  }
   const digit = leadingDigitFromRmSubCategoryBody(b);
   if (!digit) return null;
-  const c = String(code || '').trim();
   if (!c.startsWith(digit)) {
     return `Internal RM code (SKU) must start with "${digit}" for the selected RM sub-category.`;
   }
@@ -94,15 +114,37 @@ function validateInternalRmCodeForSubCategory(code, b) {
 }
 
 /**
- * Allocate next internal RM code: `{digit}{NNNNN}` (e.g. `100001`) from RM sub-category.
+ * Allocate next internal RM code from RM sub-category.
  * @returns {Promise<{ code: string, seriesPrefix: string }|{ error: string }>}
  */
 async function allocateNextRmSkuCode(b, { transaction }) {
+  const sub = normalizeRmSubCategoryLabel(b);
+  if (isClubItemsRmSubCategoryLabel(sub)) {
+    const prefix = CLUB_ITEMS_SKU_PREFIX;
+    const rows = await RawMaterial.findAll({
+      attributes: ['code'],
+      where: { code: { [Op.iLike]: `${prefix}%` } },
+      transaction,
+    });
+    const re = new RegExp(`^${prefix}(\\d{5})$`, 'i');
+    let max = 0;
+    for (const row of rows) {
+      const codeStr = row.get ? row.get('code') : row.code;
+      const m = String(codeStr || '').match(re);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (Number.isFinite(n) && n > max) max = n;
+      }
+    }
+    const code = `${prefix}${String(nextNumericSuffixAfterMax(max)).padStart(5, '0')}`;
+    return { code, seriesPrefix: prefix };
+  }
+
   const digit = leadingDigitFromRmSubCategoryBody(b);
   if (!digit) {
     return {
       error:
-        'Select RM Sub-Category (Raw material, Raw materials, Fragrance(s), Colors & Pigments, or Club items) so an internal code can be assigned on save.',
+        'Select RM Sub-Category (Bulk raw materials, Fragrance(s), Colors & Pigments, or Club items) so an internal code can be assigned on save.',
     };
   }
   const like = `${digit}%`;
@@ -121,7 +163,7 @@ async function allocateNextRmSkuCode(b, { transaction }) {
       if (Number.isFinite(n) && n > max) max = n;
     }
   }
-  const code = `${digit}${String(max + 1).padStart(5, '0')}`;
+  const code = `${digit}${String(nextNumericSuffixAfterMax(max)).padStart(5, '0')}`;
   return { code, seriesPrefix: digit };
 }
 
@@ -211,7 +253,7 @@ function payloadToListFields(b, omitGroupIfUnset = false) {
     code: fd.rmSku ?? fd.code ?? '',
     name: fd.inciName ?? fd.tradeCommercialName ?? fd.name ?? '',
     inci: fd.inciName ?? fd.inci ?? '',
-    category: fd.rmCategory ?? fd.category ?? null,
+    category: fd.rmCategory ?? fd.category ?? fd.subCategory ?? fd.group ?? null,
     rm_type: fd.rmType ?? fd.rm_type ?? null,
     uom: fd.primaryUom ?? fd.uom ?? null,
     price_per_kg: fd.price_per_kg ?? (fd.pricePerKg != null ? Number(fd.pricePerKg) : null),
