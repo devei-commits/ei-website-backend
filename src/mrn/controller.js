@@ -21,6 +21,7 @@ const {
 const { logLocationMovement } = require('../warehouseInventory/locationHistoryHelpers');
 const WarehouseInventoryLocationHistory = require('../warehouseInventory/locationHistoryModel');
 const { applyDedicatedDefaultsToNewMrn, resolveDedicatedProductionCodes, resolveProductionRackForMrn } = require('../itemDedicatedFacilityLocations/service');
+const { validateOutboundMtrWarehouseStock } = require('./mtrWarehouseStock');
 
 /** Usertypes that can be assigned as Picker / Transfer Team (same as GRN). */
 const ASSIGNABLE_USERTYPES = ['super_admin', 'admin', 'bd_manager'];
@@ -418,6 +419,16 @@ async function create(req, res) {
         error:
           'Transfer To (manufacturing / ML zone) is required for MTR. Select it in Production → Send MTR, or set item dedicated production location in Masters.',
       });
+    }
+    if (sourceForMtr === 'MTR' && !inboundMu && lineItems.length > 0) {
+      const stockCheck = await validateOutboundMtrWarehouseStock(WarehouseInventory, lineItems);
+      if (!stockCheck.ok) {
+        return res.status(400).json({
+          error: stockCheck.error,
+          code: 'MTR_INSUFFICIENT_WH_STOCK',
+          details: stockCheck.details,
+        });
+      }
     }
     const payload = {
       mrn_no: mrnNo,

@@ -19,4 +19,9 @@ describe('quantityToKg', () => {
   test('RM empty unit defaults to kg scale', () => {
     expect(quantityToKg(20, '', { itemType: 'RM', masterUom: '' })).toBe(20);
   });
+
+  test('litres to kg via specific gravity', () => {
+    expect(quantityToKg(10, 'L', { itemType: 'RM', specificGravity: 1.2 })).toBeCloseTo(12, 6);
+    expect(quantityToKg(1000, 'ML', { itemType: 'RM', specificGravity: 1.0 })).toBeCloseTo(1, 6);
+  });
 });

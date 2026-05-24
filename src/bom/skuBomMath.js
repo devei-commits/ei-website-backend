@@ -340,6 +340,29 @@ function formulaRowsToSkuBomLines({ formulaLines, limitQty, limitUom }) {
   return { ok: true, rows, limitQty: limitInDisplay, limitUom: displayLimitUom(limU) };
 }
 
+const FORMULA_PCT_MAX = 100;
+const FORMULA_PCT_TOLERANCE = 0.001;
+
+/** Sum % w/w on meaningful formula lines (INCI or RM code + positive %). */
+function sumFormulaPctWw(rmLines) {
+  const collected = collectMeaningfulFormulaLines(rmLines);
+  return collected.reduce((s, row) => s + row.pct, 0);
+}
+
+/** Reject formula BOM when total % w/w exceeds 100. */
+function validateFormulaPctNotOver100(rmLines) {
+  const total = sumFormulaPctWw(rmLines);
+  if (total > FORMULA_PCT_MAX + FORMULA_PCT_TOLERANCE) {
+    return {
+      ok: false,
+      error: `Formula BOM % w/w total cannot exceed 100% (current ${total.toFixed(4)}%).`,
+      code: 'FORMULA_PCT_OVER_100',
+      total,
+    };
+  }
+  return { ok: true, total };
+}
+
 module.exports = {
   normUom,
   countMeaningfulSkuRmLines,
@@ -348,4 +371,6 @@ module.exports = {
   validateSkuBomTotals,
   flattenFormulaBomPhases,
   formulaRowsToSkuBomLines,
+  sumFormulaPctWw,
+  validateFormulaPctNotOver100,
 };

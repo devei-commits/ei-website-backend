@@ -5,6 +5,7 @@ const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const VendorClient = require('../vendorClient/models');
 const { Product } = require('../products/models');
+const { parseMoqQuantity } = require('../lib/moqQuantity');
 
 function toNum(x) {
   if (x == null) return null;
@@ -135,219 +136,44 @@ function resolveItemMasterFromMaps(d, r, p, prod) {
   return null;
 }
 
+const {
+  parsePageQuery,
+  buildPriceListPage,
+  buildPriceListPageStats,
+} = require('./pageItemsListPage');
+
 /**
- * GET /page?type=RM|PM — all RM or PM from masters with optional price list data (vendorRates + tiers).
- * Used by Price Lists UI: each item shows either list-price-only or full vendor/tier table.
+ * GET /page/stats — dashboard counts without loading full catalog.
+ */
+async function pageItemsStats(req, res) {
+  try {
+    const stats = await buildPriceListPageStats();
+    res.json(stats);
+  } catch (err) {
+    console.error('pageItemsStats error', err);
+    res.status(500).json({ error: 'Failed to load price list stats' });
+  }
+}
+
+/**
+ * GET /page?type=RM|PM|PR — price list rows for Items List UI.
+ * With limit/offset/search/party_id returns { rows, total, limit, offset } (paginated).
+ * Without limit returns all rows as a JSON array (legacy consumers).
  */
 async function pageItemsList(req, res) {
   try {
-    const type = req.query.type;
+    const { type, limit, offset, search, partyId, paginated } = parsePageQuery(req);
     if (type !== 'RM' && type !== 'PM' && type !== 'PR') {
       return res.status(400).json({ error: 'Query type must be RM, PM, or PR' });
     }
-    const items = [];
-    if (type === 'RM') {
-      const rms = await RawMaterial.findAll({ order: [['code', 'ASC']] });
-      const listRows = await ItemsList.findAll({ where: { type: 'RM' }, order: [['id']] });
-      const rmGroups = groupItemsListRowsByFk(listRows, 'raw_material_id');
-      const byRmId = new Map();
-      for (const [rmId, group] of rmGroups) {
-        const canonical = group.length === 1 ? group[0] : await pickCanonicalItemsListRow(group, 'RM');
-        byRmId.set(rmId, canonical);
-      }
-      const vendorIds = [
-        ...new Set(
-          (await ItemListVendorRate.findAll({
-            attributes: ['vendor_id'],
-            where: ratePartyWhereForPageType('RM'),
-          })).map((r) => r.vendor_id)
-        ),
-      ];
-      const vendors = vendorIds.length ? await VendorClient.findAll({ where: { id: vendorIds } }) : [];
-      const vendorById = new Map(vendors.map((v) => [v.id, v.get ? v.get({ plain: true }) : v]));
-
-      for (const rm of rms) {
-        const r = rm.get ? rm.get({ plain: true }) : rm;
-        const base = {
-          code: r.code,
-          name: r.name || r.code,
-          type: 'RM',
-          uom: r.uom || 'KG',
-          gst: toNum(r.gst) ?? 0,
-          pricePerUnit: toNum(r.price_per_kg) ?? 0,
-          raw_material_id: rm.id,
-          pack_material_id: null,
-        };
-        const listRow = byRmId.get(rm.id);
-        if (!listRow) {
-          items.push({ ...base, itemsListId: null, vendorRates: [] });
-          continue;
-        }
-        const rates = await ItemListVendorRate.findAll({
-          where: { items_list_id: listRow.id, ...ratePartyWhereForPageType('RM') },
-          order: [['id']],
-        });
-        const ratesWithTiers = [];
-        for (const rate of rates) {
-          const tiers = await ItemListTier.findAll({ where: { item_list_vendor_rate_id: rate.id }, order: [['moq_min', 'ASC']] });
-          const v = vendorById.get(rate.vendor_id);
-          ratesWithTiers.push({
-            id: rate.id,
-            party_type: partyTypeFromRateRow(rate),
-            vendor_id: rate.vendor_id,
-            vendor_name: v ? v.name : null,
-            vendor_code: v ? v.entity_code : null,
-            lead_time_days: rate.lead_time_days != null ? Number(rate.lead_time_days) : null,
-            currency: rate.currency || 'INR',
-            payment_terms: rate.payment_terms || null,
-            tiers: tiers.map((t) => ({
-              id: t.id,
-              moq_min: t.moq_min,
-              moq_max: t.moq_max,
-              price_per_unit: toNum(t.price_per_unit),
-              valid_till: t.valid_till || null,
-              note: t.note || null,
-            })),
-          });
-        }
-        items.push({ ...base, itemsListId: listRow.id, vendorRates: ratesWithTiers });
-      }
-    } else if (type === 'PM') {
-      const pms = await PackMaterial.findAll({ order: [['code', 'ASC']] });
-      const listRows = await ItemsList.findAll({ where: { type: 'PM' }, order: [['id']] });
-      const pmGroups = groupItemsListRowsByFk(listRows, 'pack_material_id');
-      const byPmId = new Map();
-      for (const [pmId, group] of pmGroups) {
-        const canonical = group.length === 1 ? group[0] : await pickCanonicalItemsListRow(group, 'PM');
-        byPmId.set(pmId, canonical);
-      }
-      const vendorIds = [
-        ...new Set(
-          (await ItemListVendorRate.findAll({
-            attributes: ['vendor_id'],
-            where: ratePartyWhereForPageType('PM'),
-          })).map((r) => r.vendor_id)
-        ),
-      ];
-      const vendors = vendorIds.length ? await VendorClient.findAll({ where: { id: vendorIds } }) : [];
-      const vendorById = new Map(vendors.map((v) => [v.id, v.get ? v.get({ plain: true }) : v]));
-
-      for (const pm of pms) {
-        const p = pm.get ? pm.get({ plain: true }) : pm;
-        const base = {
-          code: p.code,
-          name: p.description || p.code,
-          type: 'PM',
-          pack_type: p.type || '',
-          level: p.level || '',
-          pricePerUnit: toNum(p.price_per_pc) ?? 0,
-          moq: toNum(p.moq) ?? 0,
-          raw_material_id: null,
-          pack_material_id: pm.id,
-        };
-        const listRow = byPmId.get(pm.id);
-        if (!listRow) {
-          items.push({ ...base, itemsListId: null, vendorRates: [] });
-          continue;
-        }
-        const rates = await ItemListVendorRate.findAll({
-          where: { items_list_id: listRow.id, ...ratePartyWhereForPageType('PM') },
-          order: [['id']],
-        });
-        const ratesWithTiers = [];
-        for (const rate of rates) {
-          const tiers = await ItemListTier.findAll({ where: { item_list_vendor_rate_id: rate.id }, order: [['moq_min', 'ASC']] });
-          const v = vendorById.get(rate.vendor_id);
-          ratesWithTiers.push({
-            id: rate.id,
-            party_type: partyTypeFromRateRow(rate),
-            vendor_id: rate.vendor_id,
-            vendor_name: v ? v.name : null,
-            vendor_code: v ? v.entity_code : null,
-            lead_time_days: rate.lead_time_days != null ? Number(rate.lead_time_days) : null,
-            currency: rate.currency || 'INR',
-            payment_terms: rate.payment_terms || null,
-            tiers: tiers.map((t) => ({
-              id: t.id,
-              moq_min: t.moq_min,
-              moq_max: t.moq_max,
-              price_per_unit: toNum(t.price_per_unit),
-              valid_till: t.valid_till || null,
-              note: t.note || null,
-            })),
-          });
-        }
-        items.push({ ...base, itemsListId: listRow.id, vendorRates: ratesWithTiers });
-      }
-    } else {
-      const prods = await Product.findAll({ order: [['product_code', 'ASC']] });
-      const listRows = await ItemsList.findAll({ where: { type: 'PR' }, order: [['id']] });
-      const prGroups = groupItemsListRowsByFk(listRows, 'product_id');
-      const byProductId = new Map();
-      for (const [pid, group] of prGroups) {
-        const canonical = group.length === 1 ? group[0] : await pickCanonicalItemsListRow(group, 'PR');
-        byProductId.set(pid, canonical);
-      }
-      const clientIds = [
-        ...new Set(
-          (await ItemListVendorRate.findAll({
-            attributes: ['vendor_id'],
-            where: ratePartyWhereForPageType('PR'),
-          })).map((r) => r.vendor_id)
-        ),
-      ];
-      const clients = clientIds.length ? await VendorClient.findAll({ where: { id: clientIds } }) : [];
-      const clientById = new Map(clients.map((v) => [v.id, v.get ? v.get({ plain: true }) : v]));
-
-      for (const prod of prods) {
-        const p = prod.get ? prod.get({ plain: true }) : prod;
-        const base = {
-          code: p.product_code || String(p.product_id),
-          name: p.product_name || p.generic_name || p.brand_name || p.product_code || String(p.product_id),
-          type: 'PR',
-          uom: 'UNIT',
-          gst: toNum(p.tax_rate) ?? 0,
-          pricePerUnit: toNum(p.mrp_price) ?? 0,
-          raw_material_id: null,
-          pack_material_id: null,
-          product_id: prod.product_id,
-        };
-        const listRow = byProductId.get(prod.product_id);
-        if (!listRow) {
-          items.push({ ...base, itemsListId: null, vendorRates: [] });
-          continue;
-        }
-        const rates = await ItemListVendorRate.findAll({
-          where: { items_list_id: listRow.id, ...ratePartyWhereForPageType('PR') },
-          order: [['id']],
-        });
-        const ratesWithTiers = [];
-        for (const rate of rates) {
-          const tiers = await ItemListTier.findAll({ where: { item_list_vendor_rate_id: rate.id }, order: [['moq_min', 'ASC']] });
-          const v = clientById.get(rate.vendor_id);
-          ratesWithTiers.push({
-            id: rate.id,
-            party_type: partyTypeFromRateRow(rate),
-            vendor_id: rate.vendor_id,
-            vendor_name: v ? v.name : null,
-            vendor_code: v ? v.entity_code : null,
-            lead_time_days: rate.lead_time_days != null ? Number(rate.lead_time_days) : null,
-            currency: rate.currency || 'INR',
-            payment_terms: rate.payment_terms || null,
-            tiers: tiers.map((t) => ({
-              id: t.id,
-              moq_min: t.moq_min,
-              moq_max: t.moq_max,
-              price_per_unit: toNum(t.price_per_unit),
-              valid_till: t.valid_till || null,
-              note: t.note || null,
-            })),
-          });
-        }
-        items.push({ ...base, itemsListId: listRow.id, vendorRates: ratesWithTiers });
-      }
-    }
-    res.json(items);
+    const result = await buildPriceListPage(type, {
+      limit: paginated ? limit : null,
+      offset,
+      search,
+      partyId,
+    });
+    if (paginated) return res.json(result);
+    return res.json(result.rows);
   } catch (err) {
     console.error('pageItemsList error', err);
     res.status(500).json({ error: 'Failed to load price list page' });
@@ -689,7 +515,7 @@ async function createRate(req, res) {
       vendor_id: vendorId,
       party_type: partyType,
       default_rate: default_rate != null ? parseFloat(default_rate) : null,
-      default_moq: default_moq != null ? parseInt(default_moq, 10) : null,
+      default_moq: default_moq != null ? parseMoqQuantity(default_moq) : null,
       lead_time_days:
         lead_time_days != null
           ? parseInt(lead_time_days, 10)
@@ -729,7 +555,7 @@ async function updateRate(req, res) {
     if (!row) return res.status(404).json({ error: 'Rate not found' });
     const { default_rate, default_moq, currency, payment_terms, status, lead_time_days, leadTimeDays } = req.body;
     if (default_rate !== undefined) row.default_rate = default_rate;
-    if (default_moq !== undefined) row.default_moq = default_moq;
+    if (default_moq !== undefined) row.default_moq = default_moq == null ? null : parseMoqQuantity(default_moq);
     if (lead_time_days !== undefined) row.lead_time_days = lead_time_days == null ? null : parseInt(lead_time_days, 10);
     if (leadTimeDays !== undefined) row.lead_time_days = leadTimeDays == null ? null : parseInt(leadTimeDays, 10);
     if (currency !== undefined) row.currency = currency;
@@ -783,14 +609,14 @@ async function createTier(req, res) {
     const rate = await ItemListVendorRate.findByPk(rateId);
     if (!rate) return res.status(404).json({ error: 'Rate not found' });
     const { moq_min, moq_max, price_per_unit, valid_till, note } = req.body;
-    const moqMin = moq_min != null ? parseInt(moq_min, 10) : null;
-    if (moqMin == null || Number.isNaN(moqMin)) return res.status(400).json({ error: 'moq_min required' });
+    const moqMin = moq_min != null ? parseMoqQuantity(moq_min) : null;
+    if (moqMin == null) return res.status(400).json({ error: 'moq_min required' });
     const price = price_per_unit != null ? parseFloat(price_per_unit) : null;
     if (price == null || Number.isNaN(price)) return res.status(400).json({ error: 'price_per_unit required' });
     const row = await ItemListTier.create({
       item_list_vendor_rate_id: rateId,
       moq_min: moqMin,
-      moq_max: moq_max != null ? parseInt(moq_max, 10) : null,
+      moq_max: moq_max != null ? parseMoqQuantity(moq_max) : null,
       price_per_unit: price,
       valid_till: valid_till || null,
       note: note || null,
@@ -809,8 +635,12 @@ async function updateTier(req, res) {
     const row = await ItemListTier.findByPk(tierId);
     if (!row) return res.status(404).json({ error: 'Tier not found' });
     const { moq_min, moq_max, price_per_unit, valid_till, note } = req.body;
-    if (moq_min !== undefined) row.moq_min = parseInt(moq_min, 10);
-    if (moq_max !== undefined) row.moq_max = moq_max == null ? null : parseInt(moq_max, 10);
+    if (moq_min !== undefined) {
+      const parsed = parseMoqQuantity(moq_min);
+      if (parsed == null) return res.status(400).json({ error: 'moq_min required' });
+      row.moq_min = parsed;
+    }
+    if (moq_max !== undefined) row.moq_max = moq_max == null ? null : parseMoqQuantity(moq_max);
     if (price_per_unit !== undefined) row.price_per_unit = parseFloat(price_per_unit);
     if (valid_till !== undefined) row.valid_till = valid_till || null;
     if (note !== undefined) row.note = note || null;
@@ -819,6 +649,30 @@ async function updateTier(req, res) {
   } catch (err) {
     console.error('updateTier error', err);
     res.status(500).json({ error: 'Failed to update tier' });
+  }
+}
+
+async function resolveClientProductPriceHandler(req, res) {
+  try {
+    const { resolveClientProductPrice } = require('./resolveClientProductPrice');
+    const productId = parseInt(req.query.product_id, 10);
+    const clientId = parseInt(req.query.client_id, 10);
+    const quantity = req.query.quantity != null ? parseInt(req.query.quantity, 10) : 1;
+    if (Number.isNaN(productId) || productId <= 0) {
+      return res.status(400).json({ error: 'product_id is required' });
+    }
+    if (Number.isNaN(clientId) || clientId <= 0) {
+      return res.status(400).json({ error: 'client_id is required' });
+    }
+    const result = await resolveClientProductPrice({
+      productId,
+      clientId,
+      quantity: Number.isNaN(quantity) ? 1 : quantity,
+    });
+    res.json(result);
+  } catch (err) {
+    console.error('resolveClientProductPriceHandler error', err);
+    res.status(500).json({ error: 'Failed to resolve client product price' });
   }
 }
 
@@ -837,7 +691,9 @@ async function deleteTier(req, res) {
 }
 
 module.exports = {
+  resolveClientProductPriceHandler,
   pageItemsList,
+  pageItemsStats,
   listItemsList,
   getItemsListById,
   createItemsList,

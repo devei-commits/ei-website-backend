@@ -379,6 +379,20 @@ async function createOrder(req, res) {
       return res.status(400).json({ error: 'soNo and customer are required' });
     }
 
+    if (!items || !items.length) {
+      return res.status(400).json({ error: 'At least one order item is required' });
+    }
+
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i] || {};
+      const label = it.productName || it.sku || `item #${i + 1}`;
+      if (!normalizePackSizeForOrder(it.pack)) {
+        return res.status(400).json({
+          error: `Pack size is required for ${label}. Set fill size on the product record (PR) or enter it when creating the sale order.`,
+        });
+      }
+    }
+
     const clientMaster = await VendorClient.findOne({
       where: buildActiveClientWhereByName(customer),
       attributes: ['id', 'name', 'entity_code'],
@@ -418,7 +432,7 @@ async function createOrder(req, res) {
             product_id: it.productId || null,
             sku: it.sku || '',
             productName: it.productName || '',
-            pack: it.pack || '',
+            pack: normalizePackSizeForOrder(it.pack),
             quantity: it.orderedQty || 0,
             unitPrice: it.unitPrice || 0,
           })),
@@ -530,7 +544,7 @@ async function createOrder(req, res) {
           item_no: item.itemNo || '001',
           sku: item.sku || null,
           product_name: item.productName,
-          pack: item.pack || null,
+          pack: normalizePackSizeForOrder(item.pack) || null,
           ordered_qty: item.orderedQty || 0,
           rate: item.unitPrice || 0,
           unit_price: item.unitPrice || 0,
@@ -1105,6 +1119,14 @@ async function getCustomers(_req, res) {
 }
 
 /** Products lookup for Add SO modal: only Finished Goods (FG). RMs and PMs are materials used to build FGs. */
+function normalizePackSizeForOrder(pack) {
+  const p = String(pack || '').trim();
+  if (!p) return '';
+  const lower = p.toLowerCase();
+  if (lower === '—' || lower === '-' || lower === 'n/a' || lower === 'na') return '';
+  return p;
+}
+
 function derivePackSizeForFulfillmentRow(fillSize, productName) {
   const fromFill = String(fillSize || '').trim();
   if (fromFill) return fromFill;
@@ -1141,6 +1163,7 @@ async function getProducts(_req, res) {
         sku: d.zoho_sku_code || d.product_code || '',
         pack: derivePackSizeForFulfillmentRow(d.fill_size, d.product_name),
         category: d.category || '',
+        /** Reference only — SO unit price is resolved per client via GET /client-product-price */
         price: d.mrp_price != null ? Number(d.mrp_price) : 0,
       };
     });
@@ -1149,6 +1172,31 @@ async function getProducts(_req, res) {
   } catch (err) {
     console.error('getProducts error:', err);
     res.status(500).json({ error: 'Failed to fetch products' });
+  }
+}
+
+/** Client + product price from Items List (PR client rates); used when creating sale orders. */
+async function getClientProductPrice(req, res) {
+  try {
+    const { resolveClientProductPrice } = require('../itemsList/resolveClientProductPrice');
+    const productId = parseInt(req.query.product_id, 10);
+    const clientId = parseInt(req.query.client_id, 10);
+    const quantity = req.query.quantity != null ? parseInt(req.query.quantity, 10) : 1;
+    if (Number.isNaN(productId) || productId <= 0) {
+      return res.status(400).json({ error: 'product_id is required' });
+    }
+    if (Number.isNaN(clientId) || clientId <= 0) {
+      return res.status(400).json({ error: 'client_id is required' });
+    }
+    const result = await resolveClientProductPrice({
+      productId,
+      clientId,
+      quantity: Number.isNaN(quantity) ? 1 : quantity,
+    });
+    res.json(result);
+  } catch (err) {
+    console.error('getClientProductPrice error:', err);
+    res.status(500).json({ error: 'Failed to resolve client product price' });
   }
 }
 
@@ -1782,6 +1830,7 @@ module.exports = {
   getNextSoNo,
   getCustomers,
   getProducts,
+  getClientProductPrice,
   listTransporters,
   createInvoice,
   listInvoices,

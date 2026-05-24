@@ -55,11 +55,14 @@ async function loadRmPmMeta(rmIds, pmIds) {
     if (rmIds.size) {
       const rows = await RawMaterial.findAll({
         where: { id: [...rmIds] },
-        attributes: ['id', 'uom'],
+        attributes: ['id', 'uom', 'specific_gravity'],
       });
       for (const r of rows) {
         const x = r.get ? r.get({ plain: true }) : r;
-        rmMeta.set(Number(x.id), { uom: x.uom || '' });
+        rmMeta.set(Number(x.id), {
+          uom: x.uom || '',
+          specific_gravity: x.specific_gravity != null ? Number(x.specific_gravity) : null,
+        });
       }
     }
     if (pmIds.size) {
@@ -115,6 +118,7 @@ async function getGrnInTransitQtyByKey() {
           itemType,
           masterUom: itemType === 'RM' ? meta?.uom : meta?.unit,
           sizeSpec: itemType === 'PM' ? meta?.size_spec : null,
+          specificGravity: itemType === 'RM' ? meta?.specific_gravity : undefined,
         });
         map.set(key, (map.get(key) || 0) + kg);
       }
@@ -222,6 +226,7 @@ function addPoItemsToMapNetOfCompletedGrns(map, items, receivedByKeyForPo, rmMet
       itemType,
       masterUom: itemType === 'RM' ? meta?.uom : meta?.unit,
       sizeSpec: itemType === 'PM' ? meta?.size_spec : null,
+      specificGravity: itemType === 'RM' ? meta?.specific_gravity : undefined,
     };
     const poKg = quantityToKg(sum, unit, ctx);
     const recKg = quantityToKg(recNative, unit, ctx);
@@ -475,6 +480,7 @@ async function getCompletedGrnReceivedKgByKey() {
           itemType,
           masterUom: itemType === 'RM' ? meta?.uom : meta?.unit,
           sizeSpec: itemType === 'PM' ? meta?.size_spec : null,
+          specificGravity: itemType === 'RM' ? meta?.specific_gravity : undefined,
         });
         map.set(key, (map.get(key) || 0) + kg);
       }

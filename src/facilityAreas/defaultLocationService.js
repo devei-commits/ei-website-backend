@@ -2,6 +2,7 @@
  * Default warehouse / manufacturing zones and inbound stock routing.
  */
 const { Op } = require('sequelize');
+const db = require('../../db');
 const { WarehouseLocation, WarehouseRack } = require('../warehouseLocations/models');
 const ItemDedicatedFacilityLocation = require('../itemDedicatedFacilityLocations/models');
 const { resolveDedicatedProductionCodes } = require('../itemDedicatedFacilityLocations/service');
@@ -70,29 +71,33 @@ async function getDefaultLocationForType(locationType, opts = {}) {
  * Clear other defaults for the same location_type and mark this zone as default.
  */
 async function setDefaultLocation(locationId, opts = {}) {
-  const transaction = opts.transaction;
-  const loc = await WarehouseLocation.findByPk(locationId, transaction ? { transaction } : {});
-  if (!loc) {
-    const err = new Error('Location not found');
-    err.status = 404;
-    throw err;
-  }
-  const plain = loc.get ? loc.get({ plain: true }) : loc;
-  const type = plain.location_type;
-
-  await WarehouseLocation.update(
-    { is_default: false },
-    {
-      where: { location_type: type, is_default: true },
-      ...(transaction ? { transaction } : {}),
+  const run = async (transaction) => {
+    const loc = await WarehouseLocation.findByPk(locationId, { transaction });
+    if (!loc) {
+      const err = new Error('Location not found');
+      err.status = 404;
+      throw err;
     }
-  );
-  await loc.update({ is_default: true }, transaction ? { transaction } : {});
-  const rack = await ensureDefaultRackForLocation(loc.id, { transaction });
-  return {
-    location: loc.get ? loc.get({ plain: true }) : loc,
-    rack: rack.get ? rack.get({ plain: true }) : rack,
+    const plain = loc.get ? loc.get({ plain: true }) : loc;
+    const type = plain.location_type;
+
+    await WarehouseLocation.update(
+      { is_default: false },
+      {
+        where: { location_type: type, is_default: true },
+        transaction,
+      }
+    );
+    await loc.update({ is_default: true }, { transaction });
+    const rack = await ensureDefaultRackForLocation(loc.id, { transaction });
+    return {
+      location: loc.get ? loc.get({ plain: true }) : loc,
+      rack: rack.get ? rack.get({ plain: true }) : rack,
+    };
   };
+
+  if (opts.transaction) return run(opts.transaction);
+  return db.transaction(run);
 }
 
 async function findDedicatedWhRack({ rawMaterialId, packMaterialId, productId }, opts = {}) {

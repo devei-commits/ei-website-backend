@@ -1,7 +1,15 @@
 /**
  * Normalize procurement / GRN / PO quantities to kilograms for warehouse_inventory.
  * Count-based lines (PCS) convert when we can infer mass per piece from PM size_spec (e.g. "50g") or explicit kg_per_piece.
+ * RM volume (L, ML): kg = qty × specific_gravity (litres) or (ml/1000) × SG.
  */
+
+const {
+  normRmPrimaryUom,
+  rmPrimaryQtyToKg,
+  parseSpecificGravity,
+  isVolumePrimaryUom,
+} = require('../lib/rmUnitConversion');
 
 function normUom(s) {
   return String(s ?? '')
@@ -37,9 +45,25 @@ function quantityToKg(qty, unitRaw, ctx = {}) {
   if (!Number.isFinite(q) || q <= 0) return 0;
 
   const u = normUom(unitRaw);
-  const { itemType, masterUom, sizeSpec, kgPerPiece } = ctx;
+  const { itemType, masterUom, sizeSpec, kgPerPiece, specificGravity } = ctx;
   const kpp = Number(kgPerPiece);
   if (Number.isFinite(kpp) && kpp > 0) return q * kpp;
+
+  const sg = parseSpecificGravity(specificGravity);
+  if (
+    u === 'L' ||
+    u === 'LT' ||
+    u === 'LTR' ||
+    u === 'LITRE' ||
+    u === 'LITER' ||
+    u === 'LITRES' ||
+    u === 'LITERS'
+  ) {
+    return q * sg;
+  }
+  if (u === 'ML' || u === 'MILLILITRE' || u === 'MILLILITER' || u === 'MILLILITRES' || u === 'MILLILITERS') {
+    return (q / 1000) * sg;
+  }
 
   // Mass units
   if (u === 'KG' || u === 'KGS' || u === 'KILO' || u === 'KILOS' || u === 'KILOGRAM' || u === 'KILOGRAMS') return q;
@@ -81,7 +105,10 @@ function quantityToKg(qty, unitRaw, ctx = {}) {
     return q;
   }
 
-  const mu = normUom(masterUom);
+  const mu = normRmPrimaryUom(masterUom);
+  if (itemType === 'RM' && (isVolumePrimaryUom(mu) || mu === 'GM')) {
+    return rmPrimaryQtyToKg(q, mu, sg);
+  }
   if (mu === 'G' || mu === 'GM' || mu === 'GRAM') return q / 1000;
   if (mu === 'MG') return q / 1e6;
   if (itemType === 'RM' && !u) return q;

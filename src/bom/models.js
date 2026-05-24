@@ -17,7 +17,7 @@ BOM.init(
     bom_associate_items: { type: DataTypes.TEXT, allowNull: true },
     // Whether this PR / BOM represents a composite item (bundle / kit). Used by
     // the PR code generator to switch the series prefix from EI-PR-<CAT> to EI-CI-<CAT>.
-    bom_composite_item: { type: DataTypes.BOOLEAN, allowNull: true, defaultValue: false },
+    bom_composite_item: { type: DataTypes.BOOLEAN, allowNull: true, defaultValue: true },
     type: { type: DataTypes.STRING(50), allowNull: true },
     status: { type: DataTypes.STRING(50), allowNull: true },
     version: { type: DataTypes.STRING(50), allowNull: true },

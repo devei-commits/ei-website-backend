@@ -611,6 +611,7 @@ async function applyGrnCompletionToInventory(grnRow, opts = {}) {
   let validRmIds = new Set();
   let validPmIds = new Set();
   const rmUomById = new Map();
+  const rmSgById = new Map();
   const pmMetaById = new Map();
 
   const mergeRmMasterRows = (rms) => {
@@ -618,6 +619,10 @@ async function applyGrnCompletionToInventory(grnRow, opts = {}) {
       const x = r.get ? r.get({ plain: true }) : r;
       validRmIds.add(Number(x.id));
       rmUomById.set(Number(x.id), x.uom || '');
+      rmSgById.set(
+        Number(x.id),
+        x.specific_gravity != null && Number(x.specific_gravity) > 0 ? Number(x.specific_gravity) : null
+      );
       if (x.code) rmByCode[String(x.code).trim().toUpperCase()] = x.id;
       if (x.name) rmByName[String(x.name).trim().toLowerCase()] = x.id;
     }
@@ -654,7 +659,7 @@ async function applyGrnCompletionToInventory(grnRow, opts = {}) {
       explicitRmIdsFromLines.length > 0
         ? RawMaterial.findAll({
             where: { id: { [Op.in]: explicitRmIdsFromLines } },
-            attributes: ['id', 'code', 'name', 'uom'],
+            attributes: ['id', 'code', 'name', 'uom', 'specific_gravity'],
             ...(transaction ? { transaction } : {}),
           })
         : Promise.resolve([]),
@@ -674,7 +679,11 @@ async function applyGrnCompletionToInventory(grnRow, opts = {}) {
     const rmWhere = codes.length > 0 && names.length > 0 ? { [Op.or]: [{ code: { [Op.in]: codes } }, { name: { [Op.in]: names } }] } : (codes.length > 0 ? { code: { [Op.in]: codes } } : { name: { [Op.in]: names } });
     const pmWhere = codes.length > 0 && names.length > 0 ? { [Op.or]: [{ code: { [Op.in]: codes } }, { description: { [Op.in]: names } }] } : (codes.length > 0 ? { code: { [Op.in]: codes } } : { description: { [Op.in]: names } });
     const [rms, pms] = await Promise.all([
-      RawMaterial.findAll({ where: rmWhere, attributes: ['id', 'code', 'name', 'uom'], ...(transaction ? { transaction } : {}) }),
+      RawMaterial.findAll({
+        where: rmWhere,
+        attributes: ['id', 'code', 'name', 'uom', 'specific_gravity'],
+        ...(transaction ? { transaction } : {}),
+      }),
       PackMaterial.findAll({ where: pmWhere, attributes: ['id', 'code', 'description', 'unit', 'size_spec'], ...(transaction ? { transaction } : {}) }),
     ]);
     mergeRmMasterRows(rms);
@@ -768,11 +777,21 @@ async function applyGrnCompletionToInventory(grnRow, opts = {}) {
         toAddByPm.set(pmId, (toAddByPm.get(pmId) || 0) + kg);
       } else if (grnType === 'RM' && rmId != null) {
         const uom = rmUomById.get(Number(rmId)) || '';
-        const kg = quantityToKg(rcvdQty, lineUnit, { itemType: 'RM', masterUom: uom, sizeSpec: null });
+        const kg = quantityToKg(rcvdQty, lineUnit, {
+          itemType: 'RM',
+          masterUom: uom,
+          sizeSpec: null,
+          specificGravity: rmSgById.get(Number(rmId)),
+        });
         toAddByRm.set(rmId, (toAddByRm.get(rmId) || 0) + kg);
       } else if (rmId != null) {
         const uom = rmUomById.get(Number(rmId)) || '';
-        const kg = quantityToKg(rcvdQty, lineUnit, { itemType: 'RM', masterUom: uom, sizeSpec: null });
+        const kg = quantityToKg(rcvdQty, lineUnit, {
+          itemType: 'RM',
+          masterUom: uom,
+          sizeSpec: null,
+          specificGravity: rmSgById.get(Number(rmId)),
+        });
         toAddByRm.set(rmId, (toAddByRm.get(rmId) || 0) + kg);
       } else if (pmId != null) {
         const meta = pmMetaById.get(Number(pmId)) || { unit: '', size_spec: '' };

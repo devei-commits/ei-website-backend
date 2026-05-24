@@ -4,6 +4,7 @@ const {
   formulaRowsToSkuBomLines,
   flattenFormulaBomPhases,
   validateSkuBomTotals,
+  validateFormulaPctNotOver100,
 } = require(path.join(__dirname, '../../src/bom/skuBomMath'));
 
 describe('formulaRowsToSkuBomLines', () => {
@@ -123,5 +124,29 @@ describe('flattenFormulaBomPhases', () => {
     expect(flat).toHaveLength(1);
     expect(flat[0].phase).toBe('Main');
     expect(flat[0].pct_w_w).toBe(100);
+  });
+});
+
+describe('validateFormulaPctNotOver100', () => {
+  it('allows total at or below 100%', () => {
+    expect(
+      validateFormulaPctNotOver100([
+        { inci_name: 'A', rm_code: 'A', pct_w_w: 60 },
+        { inci_name: 'B', rm_code: 'B', pct_w_w: 40 },
+      ]).ok
+    ).toBe(true);
+    expect(
+      validateFormulaPctNotOver100([{ inci_name: 'A', rm_code: 'A', pct_w_w: 80 }]).ok
+    ).toBe(true);
+  });
+
+  it('rejects total over 100%', () => {
+    const res = validateFormulaPctNotOver100([
+      { inci_name: 'A', rm_code: 'A', pct_w_w: 60 },
+      { inci_name: 'B', rm_code: 'B', pct_w_w: 50 },
+    ]);
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.code).toBe('FORMULA_PCT_OVER_100');
   });
 });

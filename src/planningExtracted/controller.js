@@ -13,6 +13,7 @@ const BOM = require('../bom/models');
 const { ReservedBatchItem } = require('../fulfillment/models');
 const PurchaseOrder = require('../purchaseOrders/models');
 const ProcurementRequest = require('../procurementRequests/models');
+const { isPlanningQuotationOnlyProcurementRequest } = require('../lib/planningQuotationRequest');
 const {
   parseOrderQtyNum,
   parseFillSizeToKgPerUnit,
@@ -143,6 +144,7 @@ function sumProcurementReleaseQtyForItem(itemType, matId, matCode, matName, plan
   for (const pr of allPrs) {
     const plain = pr.get ? pr.get({ plain: true }) : pr;
     if (!prStatusCountsTowardReleaseToPlanning(plain.status)) continue;
+    if (isPlanningQuotationOnlyProcurementRequest(plain)) continue;
     const peId = Number(plain.planning_extracted_id);
     if (!idSet.has(peId)) continue;
     const items = Array.isArray(plain.items) ? plain.items : [];

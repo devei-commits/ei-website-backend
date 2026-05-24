@@ -18,7 +18,11 @@ function stableQueryString(query) {
 }
 
 function getAuthScope(req) {
-  // Optional auth scope: in practice we only vary by role/usertype for admin dashboard lists.
+  // Per-user scope when authenticated (e.g. client-specific product pricing on the website).
+  const uid = req?.user?.id ?? req?.user?.userid;
+  if (uid != null && String(uid).trim() !== '') {
+    return `u${uid}`;
+  }
   const role = req?.user?.role ?? req?.user?.roleName ?? 'anon';
   return String(role || 'anon');
 }

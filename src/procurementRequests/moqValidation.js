@@ -1,20 +1,22 @@
 const { ItemsList, ItemListVendorRate, ItemListTier } = require('../itemsList/models');
+const { normRmPrimaryUom, procurementMoqUnitLabel } = require('../lib/rmUnitConversion');
 const { partyWhereForItemsListRowType } = require('../itemsList/partyTypeWhere');
 
 const EPS_KG = 1e-4;
 
 function tierMinMoq(tiersPlain) {
-  if (!Array.isArray(tiersPlain) || !tiersPlain.length) return 1;
+  if (!Array.isArray(tiersPlain) || !tiersPlain.length) return null;
   const mins = tiersPlain.map((t) => Number(t.moq_min)).filter((n) => Number.isFinite(n) && n > 0);
-  return mins.length ? Math.min(...mins) : 1;
+  return mins.length ? Math.min(...mins) : null;
 }
 
 /**
  * Vendor MOQ for procurement: default_moq on the rate, else smallest tier moq_min (Items List).
  */
 function effectiveMoqForRate(ratePlain, tiersForRate) {
-  const moq = Number(ratePlain.default_moq) > 0 ? Number(ratePlain.default_moq) : tierMinMoq(tiersForRate);
-  return Math.max(1, Math.floor(moq));
+  const fromDefault = Number(ratePlain.default_moq);
+  const moq = fromDefault > 0 ? fromDefault : tierMinMoq(tiersForRate);
+  return moq != null && moq > 0 ? moq : null;
 }
 
 /**
@@ -76,10 +78,8 @@ async function findItemsListIdForLine(line) {
 }
 
 function lineIsKg(line) {
-  const u = String(line.unit || '').toUpperCase();
-  if (u === 'KG' || u === 'KGS') return true;
-  if (line.type === 'RM') return true;
-  return false;
+  const u = normRmPrimaryUom(line.unit);
+  return u === 'KG' || u === 'GM';
 }
 
 /**
@@ -120,7 +120,7 @@ async function validateProcurementItemsMoq(items) {
     const ok = isKg ? qty + EPS_KG >= requiredMoq : qty + 1e-6 >= requiredMoq;
     if (!ok) {
       const label = line.code || line.name || `Line ${index + 1}`;
-      const u = isKg ? 'kg' : 'units';
+      const u = procurementMoqUnitLabel(line);
       errors.push({
         index,
         message: `MOQ not met for ${label}: quantity ${qty} is below minimum ${requiredMoq} ${u} (Items List / vendor tier).`,

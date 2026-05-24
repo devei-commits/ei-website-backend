@@ -15,6 +15,8 @@
  */
 
 const db = require('../../db');
+const { removeLegacyParentManufacturingArea } = require('../facilityAreas/removeLegacyParentMuArea');
+const { ensureFacilityDefaultLocations } = require('../facilityAreas/ensureSingleDefaultLocationPerType');
 
 const PATCHES = [
   // boms — SKU BOM (per-unit RM lines + net-per-unit limit) added April 2026
@@ -38,6 +40,13 @@ const PATCHES = [
     name: 'boms.bom_composite_item',
     table: 'boms',
     sql: 'ALTER TABLE "boms" ADD COLUMN IF NOT EXISTS "bom_composite_item" BOOLEAN DEFAULT false',
+  },
+  {
+    name: 'boms.pr_masters_composite_item_data',
+    table: 'boms',
+    sql: `UPDATE "boms" SET "bom_composite_item" = true
+      WHERE "product_id" IS NOT NULL
+        AND COALESCE("bom_composite_item", false) IS NOT TRUE`,
   },
   // boms — pack lines + process steps + stability + linkage to products (long-running drift)
   {
@@ -297,6 +306,24 @@ const PATCHES = [
     sql:
       'CREATE UNIQUE INDEX IF NOT EXISTS "warehouse_locations_is_default_per_type_uniq" ON "warehouse_locations" ("location_type") WHERE "is_default" = true',
   },
+
+  // Items List — MOQ tiers may be fractional (e.g. 0.5 KG) from Procurement quotations
+  {
+    name: 'item_list_tiers.moq_min_decimal',
+    table: 'item_list_tiers',
+    sql: 'ALTER TABLE "item_list_tiers" ALTER COLUMN "moq_min" TYPE DECIMAL(14,4) USING "moq_min"::decimal',
+  },
+  {
+    name: 'item_list_tiers.moq_max_decimal',
+    table: 'item_list_tiers',
+    sql: 'ALTER TABLE "item_list_tiers" ALTER COLUMN "moq_max" TYPE DECIMAL(14,4) USING "moq_max"::decimal',
+  },
+  {
+    name: 'item_list_vendor_rates.default_moq_decimal',
+    table: 'item_list_vendor_rates',
+    sql:
+      'ALTER TABLE "item_list_vendor_rates" ALTER COLUMN "default_moq" TYPE DECIMAL(14,4) USING "default_moq"::decimal',
+  },
 ];
 
 async function tableExists(tableName) {
@@ -342,6 +369,34 @@ async function ensureSchemaPatches() {
         `[ensureSchemaPatches] Skipped ${patch.name}: ${err && err.message ? err.message : err}`
       );
     }
+  }
+
+  try {
+    await removeLegacyParentManufacturingArea();
+  } catch (err) {
+    console.warn(
+      `[ensureSchemaPatches] removeLegacyParentManufacturingArea: ${err && err.message ? err.message : err}`
+    );
+  }
+
+  try {
+    const defs = await ensureFacilityDefaultLocations();
+    if (defs.warehouse) {
+      const tag = defs.warehouse.changed ? 'set' : 'ok';
+      console.log(
+        `[ensureSchemaPatches] warehouse default (${tag}): ${defs.warehouse.code} (id=${defs.warehouse.id})`
+      );
+    }
+    if (defs.production) {
+      const tag = defs.production.changed ? 'set' : 'ok';
+      console.log(
+        `[ensureSchemaPatches] production default (${tag}): ${defs.production.code} (id=${defs.production.id})`
+      );
+    }
+  } catch (err) {
+    console.warn(
+      `[ensureSchemaPatches] ensureFacilityDefaultLocations: ${err && err.message ? err.message : err}`
+    );
   }
 }
 

@@ -4,6 +4,7 @@ const VendorClient = require('../vendorClient/models');
 const { ItemsList, ItemListVendorRate, ItemListTier } = require('../itemsList/models');
 const { vendorRatesPartyWhere } = require('../itemsList/partyTypeWhere');
 const db = require('../../db');
+const { parseMoqQuantity, moqValuesEqual } = require('../lib/moqQuantity');
 
 /**
  * Resolve price_per_unit from Items List for a vendor + RM or PM.
@@ -173,7 +174,7 @@ async function upsertItemsListRateFromQuotationLine(t, vendorId, line, paymentTe
   const rmId = line.raw_material_id != null ? parseInt(String(line.raw_material_id), 10) : null;
   const pmId = line.pack_material_id != null ? parseInt(String(line.pack_material_id), 10) : null;
   if ((rmId == null || Number.isNaN(rmId)) && (pmId == null || Number.isNaN(pmId))) return;
-  const qty = Number(line.orderQty ?? line.quantity_requested ?? 0) || 0;
+  const qty = parseMoqQuantity(line.orderQty ?? line.quantity_requested ?? 0) ?? 0;
   const price = Number(line.pricePerUnit ?? 0) || 0;
   if (qty <= 0 || price <= 0) return;
   const leadRaw = line.leadTimeDays ?? line.lead_time_days;
@@ -228,10 +229,11 @@ async function upsertItemsListRateFromQuotationLine(t, vendorId, line, paymentTe
     );
   }
 
-  const existingTier = await ItemListTier.findOne({
-    where: { item_list_vendor_rate_id: rateRow.id, moq_min: qty },
+  const tiersForRate = await ItemListTier.findAll({
+    where: { item_list_vendor_rate_id: rateRow.id },
     transaction: t,
   });
+  const existingTier = tiersForRate.find((tier) => moqValuesEqual(tier.moq_min, qty)) ?? null;
   if (existingTier) {
     await existingTier.update({ price_per_unit: price }, { transaction: t });
   } else {

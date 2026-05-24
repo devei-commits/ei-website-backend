@@ -12,6 +12,7 @@ const {
   enrichProcurementItemsWithResolvedLead,
 } = require('./procurementItemLead');
 const { roundPlanningMaterialQty } = require('../planningExtracted/orderKgMath');
+const { applyProcurementRmPrimaryUnits, normRmPrimaryUom } = require('../lib/rmUnitConversion');
 
 /**
  * Coerce item quantities to finite numbers (handles strings / comma-formatted values from clients).
@@ -68,8 +69,10 @@ function normalizeProcurementItems(items) {
  */
 async function finalizeItemsForPersistence(items, preferredVendor) {
   const n = normalizeProcurementItems(items);
-  const cache = await buildLeadResolutionCache(n);
-  return enrichProcurementItemsWithResolvedLead(n, preferredVendor, cache);
+  const { rmMap } = await loadMasterMapsForItems(n);
+  const withUnits = applyProcurementRmPrimaryUnits(n, rmMap);
+  const cache = await buildLeadResolutionCache(withUnits);
+  return enrichProcurementItemsWithResolvedLead(withUnits, preferredVendor, cache);
 }
 
 /**
@@ -86,7 +89,10 @@ async function loadMasterMapsForItems(itemsArray) {
   }
   const [rms, pms] = await Promise.all([
     rmIds.size
-      ? RawMaterial.findAll({ where: { id: [...rmIds] }, attributes: ['id', 'code', 'name'] })
+      ? RawMaterial.findAll({
+          where: { id: [...rmIds] },
+          attributes: ['id', 'code', 'name', 'uom', 'specific_gravity'],
+        })
       : Promise.resolve([]),
     pmIds.size
       ? PackMaterial.findAll({ where: { id: [...pmIds] }, attributes: ['id', 'code', 'description'] })
@@ -109,6 +115,9 @@ function enrichItemsWithMasters(items, rmMap, pmMap) {
       if (rm) {
         if (!out.name || !String(out.name).trim()) out.name = rm.name;
         if (!out.code || !String(out.code).trim()) out.code = rm.code;
+        if (out.type === 'RM' && (!out.unit || !String(out.unit).trim())) {
+          out.unit = normRmPrimaryUom(rm.uom);
+        }
       }
     }
     if (pmId != null && Number.isFinite(pmId) && pmId > 0 && pmMap.has(pmId)) {

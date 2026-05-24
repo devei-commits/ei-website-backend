@@ -1,6 +1,6 @@
 /**
  * Map Zoho Books purchase order payloads → local purchase_orders row shape.
- * Used by scripts/zoho-import-purchaseorders-from-zoho.js and unit tests.
+ * Shared PO line mapping helpers (unit tests + future imports).
  */
 
 const {

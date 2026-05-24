@@ -19,7 +19,7 @@ const {
   pmLevelForSubCategorySlug,
 } = require('../lib/pmSubCategoryRules');
 
-/** Canonical PM sub-categories (PPM / SPM / TPM). Internal code: 4… / 5M… / 5L… */
+/** Canonical PM categories (PPM / SPM / TPM). Internal code: 4… / 5L… / 5M… / 5O… / 6T… / 6A… */
 function getPmSubCategoryNormalized(b) {
   const fd =
     b.form_data != null && typeof b.form_data === 'object' && !Array.isArray(b.form_data) ? b.form_data : null;
@@ -57,11 +57,32 @@ function pmSkuSeriesForSubCategory(subLower) {
       build: (n) => `5L${String(n).padStart(5, '0')}`,
     };
   }
+  if (seriesKey === 'other-secondary') {
+    return {
+      regex: /^5O(\d{5})$/i,
+      like: '5O%',
+      build: (n) => `5O${String(n).padStart(5, '0')}`,
+    };
+  }
+  if (seriesKey === 'tertiary') {
+    return {
+      regex: /^6T(\d{5})$/i,
+      like: '6T%',
+      build: (n) => `6T${String(n).padStart(5, '0')}`,
+    };
+  }
+  if (seriesKey === 'ancillary') {
+    return {
+      regex: /^6A(\d{5})$/i,
+      like: '6A%',
+      build: (n) => `6A${String(n).padStart(5, '0')}`,
+    };
+  }
   return null;
 }
 
 /**
- * When sub-category is Primary / Monocarton / Labels, internal `code` must start with 4 / 5M / 5L respectively.
+ * Internal `code` must match the PM category SKU series prefix.
  * @returns {string|null} error message or null
  */
 function validatePmCodeForSubCategory(code, b) {
@@ -70,13 +91,22 @@ function validatePmCodeForSubCategory(code, b) {
   if (!pmSkuSeriesForSubCategory(sub)) return null;
   const c = String(code || '').trim();
   if (seriesKey === 'primary' && !c.startsWith('4')) {
-    return 'Internal PM code must start with "4" for PPM / TPM sub-category.';
+    return 'Internal PM code must start with "4" for PPM — Primary.';
   }
-  if (seriesKey === 'monocarton' && !c.startsWith('5M')) {
-    return 'Internal PM code must start with "5M" for SPM - Monocarton sub-category.';
+  if (seriesKey === 'monocarton' && !/^5M/i.test(c)) {
+    return 'Internal PM code must start with "5M" for SPM — Monocartons.';
   }
   if (seriesKey === 'labels' && !/^5[Ll]/.test(c)) {
-    return 'Internal PM code must start with "5L" for SPM - Labels sub-category.';
+    return 'Internal PM code must start with "5L" for SPM — Labels.';
+  }
+  if (seriesKey === 'other-secondary' && !/^5O/i.test(c)) {
+    return 'Internal PM code must start with "5O" for SPM — Other Secondary.';
+  }
+  if (seriesKey === 'tertiary' && !/^6T/i.test(c)) {
+    return 'Internal PM code must start with "6T" for TPM — Tertiary.';
+  }
+  if (seriesKey === 'ancillary' && !/^6A/i.test(c)) {
+    return 'Internal PM code must start with "6A" for TPM — Ancillary.';
   }
   return null;
 }
@@ -91,7 +121,7 @@ async function allocateNextPmInternalCode(b, { transaction }) {
   if (!series) {
     return {
       error:
-        'Select PM sub-category (PPM, SPM - Monocarton, SPM - Labels, or TPM - Other components) so an internal code can be assigned on save, or send an explicit code.',
+        'Select a PM category (PPM, SPM Labels/Monocartons/Other Secondary, or TPM Tertiary/Ancillary) so an internal code can be assigned on save, or send an explicit code.',
     };
   }
   const sequelize = PackMaterial.sequelize;

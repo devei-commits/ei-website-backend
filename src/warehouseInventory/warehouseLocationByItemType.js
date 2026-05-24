@@ -1,53 +1,29 @@
 /**
- * Map warehouse inventory item_type → allowed WH zone codes (LOC-RM / LOC-PM / LOC-FG).
+ * Warehouse zone visibility and rack edits for inventory (RM / PM / PR).
+ * All warehouse zones are shown for every item type; inbound GRN uses the facility
+ * default warehouse zone (warehouse_locations.is_default for location_type = warehouse).
  */
 
-/** @param {'RM'|'PM'|'PR'|string|null|undefined} itemType */
-function allowedWarehouseLocationCodes(itemType) {
-  const t = String(itemType || '')
-    .trim()
-    .toUpperCase();
-  if (t === 'RM') return ['LOC-RM'];
-  if (t === 'PM') return ['LOC-PM'];
-  if (t === 'PR') return ['LOC-FG'];
+/** @returns {null} null = no zone-code restriction */
+function allowedWarehouseLocationCodes(_itemType) {
   return null;
 }
 
-function isWarehouseLocationAllowedForItemType(locationCode, itemType) {
-  const allowed = allowedWarehouseLocationCodes(itemType);
-  if (!allowed) return true;
-  const code = String(locationCode || '')
-    .trim()
-    .toUpperCase();
-  return allowed.some((a) => a === code);
+function isWarehouseLocationAllowedForItemType(_locationCode, _itemType) {
+  return true;
 }
 
 /** Human label for UI hints. */
-function warehouseStoreLabelForItemType(itemType) {
-  const t = String(itemType || '')
-    .trim()
-    .toUpperCase();
-  if (t === 'RM') return 'RM Store (LOC-RM)';
-  if (t === 'PM') return 'Packaging / PM Store (LOC-PM)';
-  if (t === 'PR') return 'Finished goods store (LOC-FG)';
-  return 'Warehouse';
+function warehouseStoreLabelForItemType(_itemType) {
+  return 'Warehouse zones';
 }
 
 /**
  * @param {Array<{ locationCode?: string }>} warehouseZones
- * @param {'RM'|'PM'|'PR'|string} itemType
+ * @param {'RM'|'PM'|'PR'|string} [_itemType]
  */
-function filterWarehouseZonesForItemType(warehouseZones, itemType) {
-  const allowed = allowedWarehouseLocationCodes(itemType);
-  if (!allowed) return warehouseZones;
-  const set = new Set(allowed.map((c) => c.toUpperCase()));
-  return (warehouseZones || []).filter((loc) =>
-    set.has(
-      String(loc.locationCode || '')
-        .trim()
-        .toUpperCase()
-    )
-  );
+function filterWarehouseZonesForItemType(warehouseZones, _itemType) {
+  return warehouseZones || [];
 }
 
 module.exports = {

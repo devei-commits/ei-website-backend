@@ -6,7 +6,7 @@ const {
   listOrders, getOrderById, createOrder, updateOrder, deleteOrder,
   pickSplits, invoiceSplits, shipSplits, deliverSplits,
   listBatchSplits,
-  getNextSoNo, getCustomers, getProducts,
+  getNextSoNo, getCustomers, getProducts, getClientProductPrice,
   listTransporters, createInvoice, listInvoices,
   getSoPlanningAvailability,
 } = require('./controller');
@@ -19,6 +19,7 @@ router.get('/', guard, cacheFulfillment, listOrders);
 router.get('/next-so-no', guard, getNextSoNo);
 router.get('/customers', guard, getCustomers);
 router.get('/products', guard, getProducts);
+router.get('/client-product-price', guard, getClientProductPrice);
 router.get('/batch-splits', guard, listBatchSplits);
 router.get('/transporters', guard, listTransporters);
 router.get('/invoices', guard, cacheFulfillment, listInvoices);

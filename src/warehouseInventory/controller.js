@@ -169,6 +169,7 @@ async function getInTransitBreakdown() {
           itemType,
           masterUom: itemType === 'RM' ? meta?.uom : meta?.unit,
           sizeSpec: itemType === 'PM' ? meta?.size_spec : null,
+          specificGravity: itemType === 'RM' ? meta?.specific_gravity : undefined,
         });
         if (!map.has(key)) map.set(key, []);
         map.get(key).push({ vendor, poId, poNo, expectedDate, quantity: qtyKg });
@@ -217,6 +218,7 @@ async function getUnderGrnQuantityByItem() {
           itemType,
           masterUom: itemType === 'RM' ? meta?.uom : meta?.unit,
           sizeSpec: itemType === 'PM' ? meta?.size_spec : null,
+          specificGravity: itemType === 'RM' ? meta?.specific_gravity : undefined,
         });
         map.set(key, (map.get(key) || 0) + qtyKg);
       }
@@ -262,6 +264,7 @@ async function getPoQuantityByItem() {
           itemType,
           masterUom: itemType === 'RM' ? meta?.uom : meta?.unit,
           sizeSpec: itemType === 'PM' ? meta?.size_spec : null,
+          specificGravity: itemType === 'RM' ? meta?.specific_gravity : undefined,
         });
         map.set(key, (map.get(key) || 0) + qtyKg);
       }

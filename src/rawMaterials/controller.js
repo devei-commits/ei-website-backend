@@ -7,7 +7,13 @@ const { zohoSyncIsMandatoryFailure } = require('../services/zohoSyncHelpers');
 const { compensateZohoItemIfAny } = require('../lib/zohoDbTransaction');
 const { Op } = require('sequelize');
 const { findConflictingMasterRow } = require('../lib/itemCodeUniqueness');
-const { nextNumericSuffixAfterMax } = require('../lib/nextNumericMasterCode');
+const {
+  CLUB_ITEMS_SKU_PREFIX,
+  acquireRmCodeAllocationLock,
+  allocateUniqueCodeFromMax,
+  maxRmClubNumericSuffix,
+  maxRmDigitSeriesNumericSuffix,
+} = require('../lib/rmSkuCodeAllocation');
 const WarehouseInventory = require('../warehouseInventory/models');
 const WarehouseInventoryLocationHistory = require('../warehouseInventory/locationHistoryModel');
 const { ReservedBatchItem } = require('../fulfillment/models');
@@ -25,6 +31,7 @@ function formatRawMaterial(row) {
     category: d.category,
     rm_type: d.rm_type,
     uom: d.uom,
+    specific_gravity: d.specific_gravity != null ? Number(d.specific_gravity) : null,
     price_per_kg: d.price_per_kg != null ? Number(d.price_per_kg) : null,
     gst: d.gst != null ? Number(d.gst) : null,
     shelf: d.shelf,
@@ -55,7 +62,9 @@ function formatRawMaterialFull(row) {
  * Search matches code, name, inci, category (case-insensitive).
  */
 
-/** Canonical RM sub-categories (must match EI-Admin). Raw/Fragrance/Colors: digit + 5 digits; Club items: CLUB + 5 digits. */
+/** Canonical RM sub-categories (must match EI-Admin). Raw/Fragrance/Colors: digit + 6 digits (7 total); Club items: CLUB + 5 digits. */
+const RM_DIGIT_SERIES_NUMERIC_SUFFIX_LEN = 6;
+const RM_CLUB_NUMERIC_SUFFIX_LEN = 5;
 const RM_SUB_CATEGORY_TO_SKU_LEADING_DIGIT = new Map(
   Object.entries({
     'bulk raw materials': '1',
@@ -69,8 +78,6 @@ const RM_SUB_CATEGORY_TO_SKU_LEADING_DIGIT = new Map(
     'colors & pigments': '3',
   })
 );
-
-const CLUB_ITEMS_SKU_PREFIX = 'CLUB';
 
 function isClubItemsRmSubCategoryLabel(label) {
   const k = String(label || '').trim().toLowerCase();
@@ -118,26 +125,18 @@ function validateInternalRmCodeForSubCategory(code, b) {
  * @returns {Promise<{ code: string, seriesPrefix: string }|{ error: string }>}
  */
 async function allocateNextRmSkuCode(b, { transaction }) {
+  const sequelize = RawMaterial.sequelize;
+  await acquireRmCodeAllocationLock(sequelize, transaction);
+
   const sub = normalizeRmSubCategoryLabel(b);
   if (isClubItemsRmSubCategoryLabel(sub)) {
     const prefix = CLUB_ITEMS_SKU_PREFIX;
-    const rows = await RawMaterial.findAll({
-      attributes: ['code'],
-      where: { code: { [Op.iLike]: `${prefix}%` } },
-      transaction,
-    });
-    const re = new RegExp(`^${prefix}(\\d{5})$`, 'i');
-    let max = 0;
-    for (const row of rows) {
-      const codeStr = row.get ? row.get('code') : row.code;
-      const m = String(codeStr || '').match(re);
-      if (m) {
-        const n = parseInt(m[1], 10);
-        if (Number.isFinite(n) && n > max) max = n;
-      }
-    }
-    const code = `${prefix}${String(nextNumericSuffixAfterMax(max)).padStart(5, '0')}`;
-    return { code, seriesPrefix: prefix };
+    return allocateUniqueCodeFromMax(
+      (opts) => maxRmClubNumericSuffix(opts),
+      (suffix) => `${prefix}${String(suffix).padStart(RM_CLUB_NUMERIC_SUFFIX_LEN, '0')}`,
+      prefix,
+      { transaction }
+    );
   }
 
   const digit = leadingDigitFromRmSubCategoryBody(b);
@@ -147,24 +146,12 @@ async function allocateNextRmSkuCode(b, { transaction }) {
         'Select RM Sub-Category (Bulk raw materials, Fragrance(s), Colors & Pigments, or Club items) so an internal code can be assigned on save.',
     };
   }
-  const like = `${digit}%`;
-  const rows = await RawMaterial.findAll({
-    attributes: ['code'],
-    where: { code: { [Op.like]: like } },
-    transaction,
-  });
-  const re = new RegExp(`^${digit}(\\d{5})$`);
-  let max = 0;
-  for (const row of rows) {
-    const codeStr = row.get ? row.get('code') : row.code;
-    const m = String(codeStr || '').match(re);
-    if (m) {
-      const n = parseInt(m[1], 10);
-      if (Number.isFinite(n) && n > max) max = n;
-    }
-  }
-  const code = `${digit}${String(nextNumericSuffixAfterMax(max)).padStart(5, '0')}`;
-  return { code, seriesPrefix: digit };
+  return allocateUniqueCodeFromMax(
+    (opts) => maxRmDigitSeriesNumericSuffix(digit, opts),
+    (suffix) => `${digit}${String(suffix).padStart(RM_DIGIT_SERIES_NUMERIC_SUFFIX_LEN, '0')}`,
+    digit,
+    { transaction }
+  );
 }
 
 async function listRawMaterials(req, res) {

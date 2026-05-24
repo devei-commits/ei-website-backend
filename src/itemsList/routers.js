@@ -3,6 +3,7 @@ const router = express.Router();
 const { isAuthenticated, requireModule } = require('../middleware/security');
 const {
   pageItemsList,
+  pageItemsStats,
   listItemsList,
   getItemsListById,
   createItemsList,
@@ -15,6 +16,7 @@ const {
   createTier,
   updateTier,
   deleteTier,
+  resolveClientProductPriceHandler,
 } = require('./controller');
 
 const guard = [isAuthenticated, requireModule('items-master')];
@@ -27,7 +29,9 @@ const {
   postMasterCategoriesExcelImport,
 } = require('../masterBulk/masterCategoriesExcelImport');
 
+router.get('/page/stats', guard, pageItemsStats);
 router.get('/page', guard, pageItemsList);
+router.get('/resolve-client-price', guard, resolveClientProductPriceHandler);
 router.get('/', guard, listItemsList);
 router.post(
   '/import-vendor-pricing-excel',

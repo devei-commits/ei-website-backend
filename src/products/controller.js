@@ -13,13 +13,22 @@ const zohoEnv = require('../services/zohoEnv');
 const { deleteItem } = require('../services/zohoBooks');
 const { zohoSyncIsMandatoryFailure } = require('../services/zohoSyncHelpers');
 const { compensateZohoItemIfAny } = require('../lib/zohoDbTransaction');
-const { validateSkuBomTotals, countMeaningfulSkuRmLines } = require('../bom/skuBomMath');
+const {
+  validateSkuBomTotals,
+  countMeaningfulSkuRmLines,
+  validateFormulaPctNotOver100,
+} = require('../bom/skuBomMath');
 const {
   destroyProductWithDependents,
   scrubProcurementJsonForDeletedProducts,
 } = require('./destroyProductWithDependents');
 const { linkMaterialMastersToProductCode } = require('./linkMaterialMastersToProduct');
 const { nextNumericSuffixAfterMax } = require('../lib/nextNumericMasterCode');
+const {
+  resolveWebsiteClientId,
+  attachClientPricingToProducts,
+  attachClientPricingToProduct,
+} = require('./clientPricing');
 
 /** @param {Record<string, unknown>} b @param {{ defaultPermanent?: boolean }} [opts] @returns {'temporary'|'permanent'|null} */
 function normalizePrRecordTypeFromBody(b, opts = {}) {
@@ -512,6 +521,13 @@ const createPRRegistration = async (req, res) => {
         code: 'PR_MISSING_RM_LINES',
       });
     }
+    const formulaPctV = validateFormulaPctNotOver100(rm_lines);
+    if (!formulaPctV.ok) {
+      return res.status(400).json({
+        error: formulaPctV.error,
+        code: formulaPctV.code,
+      });
+    }
     if (countMeaningfulPmLines(pm_lines) < 1) {
       return res.status(400).json({
         error:
@@ -628,7 +644,7 @@ const createPRRegistration = async (req, res) => {
         bom_returnable: b.bom_returnable ?? b.bomReturnable ?? false,
         bom_associate_items: b.bom_associate_items ?? b.bomAssociateItems ?? null,
         bom_composite_item:
-          b.bom_composite_item ?? b.bomCompositeItem ?? false,
+          b.bom_composite_item ?? b.bomCompositeItem ?? true,
         type: b.type ?? productRow.form ?? null,
         status: 'Draft',
         client: b.client ?? null,
@@ -903,7 +919,7 @@ const getAllProducts = async (req, res) => {
       });
     });
 
-    const list = products.map((p) => {
+    let list = products.map((p) => {
     const plain = p.get ? p.get({ plain: true }) : p;
     const bom = bomsByProductId[p.product_id];
     const parsedNotes = bom ? parseBomNotes(bom.notes) : parseBomNotes(null);
@@ -921,6 +937,15 @@ const getAllProducts = async (req, res) => {
     };
     });
 
+    const catalogQtyRaw = req.query.quantity ?? req.query.qty;
+    const catalogQty =
+      catalogQtyRaw != null ? parseInt(String(catalogQtyRaw), 10) : 10;
+    const catalogQuantity = Number.isFinite(catalogQty) && catalogQty > 0 ? catalogQty : 10;
+    const websiteClientId = await resolveWebsiteClientId(req);
+    if (websiteClientId) {
+      list = await attachClientPricingToProducts(list, websiteClientId, catalogQuantity);
+    }
+
     if (wantsPagination) {
       return res.json({ rows: list, total, limit, offset });
     }
@@ -937,7 +962,15 @@ const getProductById = async (req, res) => {
     if (!product) {
       return res.status(404).json({ error: 'Product not found' });
     }
-    res.json(product);
+    let plain = product.get ? product.get({ plain: true }) : product;
+    const qtyRaw = req.query.quantity ?? req.query.qty;
+    const qtyParsed = qtyRaw != null ? parseInt(String(qtyRaw), 10) : 10;
+    const quantity = Number.isFinite(qtyParsed) && qtyParsed > 0 ? qtyParsed : 10;
+    const websiteClientId = await resolveWebsiteClientId(req);
+    if (websiteClientId) {
+      plain = await attachClientPricingToProduct(plain, websiteClientId, quantity);
+    }
+    res.json(plain);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1189,6 +1222,13 @@ const updateProduct = async (req, res) => {
             code: 'BOM_MISSING_LINES',
           });
         }
+        const formulaPctCreate = validateFormulaPctNotOver100(nextRm);
+        if (!formulaPctCreate.ok) {
+          return res.status(400).json({
+            error: formulaPctCreate.error,
+            code: formulaPctCreate.code,
+          });
+        }
         const nextSkuCreate = Array.isArray(bomPayload.sku_rm_lines) ? bomPayload.sku_rm_lines : [];
         const skuCreateV = validateSkuBomTotals({
           lines: nextSkuCreate,
@@ -1242,7 +1282,7 @@ const updateProduct = async (req, res) => {
             return parts.length ? parts.join(' | ') : null;
           })(),
           bom_composite_item:
-            bomPayload.bom_composite_item ?? bomPayload.bomCompositeItem ?? false,
+            bomPayload.bom_composite_item ?? bomPayload.bomCompositeItem ?? true,
           created_at: new Date(),
           updated_at: new Date(),
         });
@@ -1256,6 +1296,15 @@ const updateProduct = async (req, res) => {
                 'BOM must keep at least one formula (RM) line and one packaging (PM) line.',
               code: 'BOM_MISSING_LINES',
             });
+          }
+          if (rmFromPayload) {
+            const formulaPctUpd = validateFormulaPctNotOver100(mergedRm);
+            if (!formulaPctUpd.ok) {
+              return res.status(400).json({
+                error: formulaPctUpd.error,
+                code: formulaPctUpd.code,
+              });
+            }
           }
         }
         const payloadSkuRm = Array.isArray(bomPayload.sku_rm_lines) ? bomPayload.sku_rm_lines : null;

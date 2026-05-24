@@ -40,7 +40,7 @@ ItemListVendorRate.init(
     /** 'vendor' = procurement/vendor pricing (RM/PM); 'client' = customer pricing (finished products / PR). */
     party_type: { type: DataTypes.STRING(20), allowNull: false, defaultValue: 'vendor' },
     default_rate: { type: DataTypes.DECIMAL(14, 2), allowNull: true },
-    default_moq: { type: DataTypes.INTEGER, allowNull: true },
+    default_moq: { type: DataTypes.DECIMAL(14, 4), allowNull: true },
     lead_time_days: { type: DataTypes.INTEGER, allowNull: true },
     currency: { type: DataTypes.STRING(10), allowNull: true, defaultValue: 'INR' },
     payment_terms: { type: DataTypes.STRING(512), allowNull: true },
@@ -64,8 +64,8 @@ ItemListTier.init(
   {
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     item_list_vendor_rate_id: { type: DataTypes.INTEGER, allowNull: false },
-    moq_min: { type: DataTypes.INTEGER, allowNull: false },
-    moq_max: { type: DataTypes.INTEGER, allowNull: true },
+    moq_min: { type: DataTypes.DECIMAL(14, 4), allowNull: false },
+    moq_max: { type: DataTypes.DECIMAL(14, 4), allowNull: true },
     price_per_unit: { type: DataTypes.DECIMAL(14, 2), allowNull: false },
     valid_till: { type: DataTypes.DATEONLY, allowNull: true },
     note: { type: DataTypes.STRING(500), allowNull: true },

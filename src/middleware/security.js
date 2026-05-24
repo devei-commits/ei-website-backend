@@ -22,14 +22,44 @@ function getAllowedModules(usertype) {
   return USERTYPE_ALLOWED_MODULES[usertype] || [];
 }
 
+/** JSON error body — avoids bare `sendStatus` "Forbidden" on the admin UI. */
+function sendError(res, status, { code, message }) {
+  return res.status(status).json({ error: message, message, code });
+}
+
+function sendSessionExpired(res) {
+  return sendError(res, 401, {
+    code: 'SESSION_EXPIRED',
+    message: 'Session expired. Please log in again.',
+  });
+}
+
+function sendUnauthorized(res) {
+  return sendError(res, 401, {
+    code: 'UNAUTHORIZED',
+    message: 'Please log in to continue.',
+  });
+}
+
+function sendForbidden(res) {
+  return sendError(res, 403, {
+    code: 'FORBIDDEN',
+    message: 'You do not have permission to perform this action.',
+  });
+}
+
+function isJwtExpiredError(err) {
+  return err && (err.name === 'TokenExpiredError' || err.message === 'jwt expired');
+}
+
 /** Middleware: require one of the given module IDs. Use after isAuthenticated. req.user.allowedModules set in isAuthenticated. */
 function requireModule(...moduleIds) {
   return (req, res, next) => {
-    if (!req.user) return res.sendStatus(401);
+    if (!req.user) return sendUnauthorized(res);
     const allowed = req.user.allowedModules || [];
     if (allowed.includes('*')) return next();
     const hasAccess = moduleIds.some(m => allowed.includes(m));
-    if (!hasAccess) return res.sendStatus(403);
+    if (!hasAccess) return sendForbidden(res);
     next();
   };
 }
@@ -86,24 +116,25 @@ const isAuthenticated = async (req, res, next) => {
     try {
         const auth = req.headers['authorization'];
         if (!auth || auth.split(' ').length < 2) {
-            return res.sendStatus(401);
+            return sendUnauthorized(res);
         }
         const token = auth.split(' ')[1];
         const unverified = jwt.decode(token, { complete: false });
         if (!unverified || typeof unverified !== 'object') {
-            return res.sendStatus(401);
+            return sendUnauthorized(res);
         }
         const tokenUserId = unverified.sub != null ? unverified.sub : unverified.id;
         let decoded;
         try {
             if (useCompositeAccess()) {
-                if (tokenUserId == null) return res.sendStatus(403);
+                if (tokenUserId == null) return sendUnauthorized(res);
                 decoded = jwt.verify(token, accessSigningSecret(tokenUserId));
             } else {
                 decoded = jwt.verify(token, accessSigningSecret());
             }
-        } catch {
-            return res.sendStatus(403);
+        } catch (err) {
+            if (isJwtExpiredError(err)) return sendSessionExpired(res);
+            return sendUnauthorized(res);
         }
 
         // Attach user info to request for downstream authorization
@@ -117,7 +148,7 @@ const isAuthenticated = async (req, res, next) => {
             user = await User.findOne({ where: { email: String(decoded.email).trim().toLowerCase() } });
         }
         if (!user) {
-            return res.sendStatus(401);
+            return sendUnauthorized(res);
         }
         req.user = {
             id: user.userid,
@@ -153,7 +184,8 @@ const isAuthenticated = async (req, res, next) => {
         }
         next();
     } catch (err) {
-        return res.sendStatus(403);
+        if (isJwtExpiredError(err)) return sendSessionExpired(res);
+        return sendUnauthorized(res);
     }
 };
 
@@ -161,7 +193,7 @@ const isAuthenticated = async (req, res, next) => {
 const authorizeRoles = (...allowedRoles) => {
     return (req, res, next) => {
         if (!req.user || !allowedRoles.includes(req.user.role)) {
-            return res.sendStatus(403);
+            return sendForbidden(res);
         }
         next();
     };
@@ -265,9 +297,9 @@ async function hasGranularAccess(req, resource, action = 'view') {
 const requireAnyGranularAccess = (requirements = []) => {
     const reqs = Array.isArray(requirements) ? requirements : [];
     return async (req, res, next) => {
-        if (!req.user) return res.sendStatus(403);
+        if (!req.user) return sendUnauthorized(res);
         if (isPrivilegedRole(req.user)) return next();
-        if (reqs.length === 0) return res.sendStatus(403);
+        if (reqs.length === 0) return sendForbidden(res);
         try {
             for (const rule of reqs) {
                 const resource = rule && rule.resource ? String(rule.resource) : '';
@@ -275,7 +307,7 @@ const requireAnyGranularAccess = (requirements = []) => {
                 const ok = await hasGranularAccess(req, resource, action);
                 if (ok) return next();
             }
-            return res.sendStatus(403);
+            return sendForbidden(res);
         } catch {
             return res.sendStatus(500);
         }
@@ -289,18 +321,18 @@ const requireAnyGranularAccess = (requirements = []) => {
  */
 const requirePermission = (resource, action) => {
     return async (req, res, next) => {
-        if (!req.user) return res.sendStatus(403);
+        if (!req.user) return sendUnauthorized(res);
         if (req.user.role === 'super_admin' || req.user.role === 'admin' || req.user.roleName === 'Super Admin' || req.user.roleName === 'Admin') {
             return next();
         }
-        if (!req.user.roleId) return res.sendStatus(403);
+        if (!req.user.roleId) return sendForbidden(res);
         try {
             const perm = await Permission.findOne({ where: { resource, action } });
-            if (!perm) return res.sendStatus(403);
+            if (!perm) return sendForbidden(res);
             const has = await RolePermission.findOne({
                 where: { role_id: req.user.roleId, permission_id: perm.permission_id }
             });
-            if (!has) return res.sendStatus(403);
+            if (!has) return sendForbidden(res);
             next();
         } catch (err) {
             return res.sendStatus(500);
@@ -325,22 +357,22 @@ function verifyRefreshToken(token) {
 }
 const token = async (req, res) => {
     if (!req.cookies || !req.cookies.refreshToken || req.cookies.refeshToken === '{}') {
-        return res.sendStatus(401);
+        return sendUnauthorized(res);
     }
     const decodedToken = verifyRefreshToken(req.cookies.refreshToken);
     if (!decodedToken) {
-        return res.sendStatus(403);
+        return sendSessionExpired(res);
     }
     const refeshTokenObject = await RefreshToken.findOne({ where: { email: decodedToken.email } });
 
     if (!refeshTokenObject || !bycrypt.compare(req.cookies.refreshToken, refeshTokenObject.refreshToken)) {
-        return res.sendStatus(403);
+        return sendSessionExpired(res);
     }
     const user = await User.findOne({
         where: { email: String(decodedToken.email).trim().toLowerCase() },
         attributes: ['userid', 'email', 'usertype'],
     });
-    if (!user) return res.sendStatus(403);
+    if (!user) return sendSessionExpired(res);
     const refreshToken = await generateRefreshToken(user);
     res.cookie('refreshToken', refreshToken, { httpOnly: true });
     res.status(200).json({ token: generateToken(user) });

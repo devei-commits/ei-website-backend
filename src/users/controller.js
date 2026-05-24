@@ -402,6 +402,7 @@ const getMe = async (req, res) => {
         "zoho_contact_id",
       ],
       include: [
+        LINKED_VC_INCLUDE,
         {
           model: Address,
           as: "addresses",
@@ -438,6 +439,12 @@ const getMe = async (req, res) => {
 
     const payload = user.toJSON ? user.toJSON() : { ...user.get() };
     payload.allowedModules = getAllowedModules(user.usertype);
+    const vcRaw = payload.linkedVendorClient;
+    const vc = vcRaw && (vcRaw.id != null ? vcRaw : null);
+    payload.vendor_client_id = vc?.id ?? null;
+    payload.vendor_client_code = vc?.entity_code ?? null;
+    payload.vendor_client_type = vc?.type ?? null;
+    delete payload.linkedVendorClient;
     return res.status(200).json({ success: true, data: payload });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
