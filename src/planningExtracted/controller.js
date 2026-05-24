@@ -18,9 +18,7 @@ const {
   parseOrderQtyNum,
   parseFillSizeToKgPerUnit,
   inferBlendSpecificGravity,
-  estimateTotalKgFromRmLines,
-  estimateOrderTotalKg,
-  batchesRequiredForOrderKg,
+  buildPlanningKgFromSoLine,
   roundPlanningMaterialQty,
 } = require('./orderKgMath');
 
@@ -763,27 +761,20 @@ async function syncPlanningExtractedFromSalesOrders() {
 
       const prodPlain = product.get ? product.get({ plain: true }) : product;
       const orderQty = parseOrderQtyNum(item.quantity || item.orderedQty || 0);
-      const batchSizeKg = Number(prodPlain.batch_size_kg) || 100;
-      const estimatedTotalKg = estimateOrderTotalKg({
+      const packFromSo = String(item.pack || item.packSize || '').trim();
+      const {
+        safeTotalKg,
+        batchSizeKg,
+        batchesRequired,
+        raw_materials: snapshotRm,
+        packaging_materials: snapshotPm,
+      } = buildPlanningKgFromSoLine({
         orderQty,
         product: prodPlain,
         rmLines: rawMaterials,
-        batchSizeKg,
-        batchesRequired: 1,
+        pmLines: packagingMaterials,
+        fillSizeOverride: packFromSo,
       });
-      let safeTotalKg = estimatedTotalKg > 0 ? estimatedTotalKg : 0;
-      if (safeTotalKg <= 0) {
-        safeTotalKg = estimateTotalKgFromRmLines({
-          rmLines: rawMaterials,
-          orderQty,
-          batchSizeKg,
-          batchesRequired: 1,
-        });
-      }
-      if (safeTotalKg <= 0) {
-        safeTotalKg = roundPlanningMaterialQty(batchSizeKg);
-      }
-      const batchesRequired = batchesRequiredForOrderKg(safeTotalKg, batchSizeKg);
 
       let targetPlanRow = existing;
       if (existing) {
@@ -795,8 +786,8 @@ async function syncPlanningExtractedFromSalesOrders() {
           batch_size_display: batchSizeKg ? `${batchSizeKg} KG` : null,
           batches_required: batchesRequired,
           batch_size_kg: batchSizeKg,
-          raw_materials: rawMaterials,
-          packaging_materials: packagingMaterials,
+          raw_materials: snapshotRm,
+          packaging_materials: snapshotPm,
           approved_by: so.created_by || null,
         });
       } else {
@@ -815,8 +806,8 @@ async function syncPlanningExtractedFromSalesOrders() {
           // BOM is never auto-confirmed on SO creation: planner must confirm BOM + SG on first-batch flow.
           bom_confirmed_at: null,
           approved_by: so.created_by || null,
-          raw_materials: rawMaterials,
-          packaging_materials: packagingMaterials,
+          raw_materials: snapshotRm,
+          packaging_materials: snapshotPm,
         });
         created++;
       }

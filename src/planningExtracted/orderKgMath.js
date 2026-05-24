@@ -50,6 +50,18 @@ function parseFillSizeToKgPerUnit(fillSizeRaw, sg = 1) {
   return null;
 }
 
+/** SO line pack / fill size: prefer value from order form, then product master. */
+function resolveOrderLineFillSize(fillSizeOverride, productFillSize) {
+  const override = String(fillSizeOverride ?? '').trim();
+  if (override) {
+    const lower = override.toLowerCase();
+    if (lower !== '—' && lower !== '-' && lower !== 'n/a' && lower !== 'na') {
+      return override;
+    }
+  }
+  return String(productFillSize ?? '').trim();
+}
+
 function inferBlendSpecificGravity(rmLines) {
   const lines = Array.isArray(rmLines) ? rmLines : [];
   let weighted = 0;
@@ -96,15 +108,70 @@ function estimateTotalKgFromRmLines({ rmLines, orderQty, batchSizeKg, batchesReq
 /**
  * Total kg of finished product for the sales order line (units × fill → kg, or BOM fallback).
  */
-function estimateOrderTotalKg({ orderQty, product, rmLines, batchSizeKg, batchesRequired }) {
+function estimateOrderTotalKg({
+  orderQty,
+  product,
+  rmLines,
+  batchSizeKg,
+  batchesRequired,
+  /** Pack/fill from SO create form — overrides product.fill_size when PR has no fill size. */
+  fillSizeOverride,
+}) {
   const qty = Number(orderQty) || 0;
   if (qty <= 0) return 0;
   const blendSg = inferBlendSpecificGravity(rmLines);
-  const kgPerUnit = parseFillSizeToKgPerUnit(product?.fill_size, blendSg);
+  const fillRaw = resolveOrderLineFillSize(fillSizeOverride, product?.fill_size);
+  const kgPerUnit = parseFillSizeToKgPerUnit(fillRaw, blendSg);
   if (kgPerUnit != null && kgPerUnit > 0) {
     return roundPlanningMaterialQty(qty * kgPerUnit);
   }
   return estimateTotalKgFromRmLines({ rmLines, orderQty: qty, batchSizeKg, batchesRequired });
+}
+
+/**
+ * FG kg, batch count, and RM/PM snapshot for a new planning_extracted row from an SO line.
+ */
+function buildPlanningKgFromSoLine({ orderQty, product, rmLines, pmLines, fillSizeOverride }) {
+  const batchSizeKg = Number(product?.batch_size_kg) || 100;
+  const oq = Number(orderQty) || 0;
+  const rm = Array.isArray(rmLines) ? rmLines : [];
+  const pm = Array.isArray(pmLines) ? pmLines : [];
+
+  const estimatedTotalKg = estimateOrderTotalKg({
+    orderQty: oq,
+    product,
+    rmLines: rm,
+    batchSizeKg,
+    batchesRequired: 1,
+    fillSizeOverride,
+  });
+  let safeTotalKg = estimatedTotalKg > 0 ? estimatedTotalKg : 0;
+  if (safeTotalKg <= 0) {
+    safeTotalKg = estimateTotalKgFromRmLines({
+      rmLines: rm,
+      orderQty: oq,
+      batchSizeKg,
+      batchesRequired: 1,
+    });
+  }
+  if (safeTotalKg <= 0) {
+    safeTotalKg = roundPlanningMaterialQty(batchSizeKg);
+  }
+  const batchesRequired = batchesRequiredForOrderKg(safeTotalKg, batchSizeKg);
+  const { raw_materials, packaging_materials } = buildPlanningSnapshotFromBom(
+    rm,
+    pm,
+    oq,
+    safeTotalKg,
+    batchSizeKg
+  );
+  return {
+    safeTotalKg,
+    batchSizeKg,
+    batchesRequired,
+    raw_materials,
+    packaging_materials,
+  };
 }
 
 /**
@@ -155,9 +222,11 @@ module.exports = {
   roundPlanningMaterialQty,
   parseOrderQtyNum,
   parseFillSizeToKgPerUnit,
+  resolveOrderLineFillSize,
   inferBlendSpecificGravity,
   estimateTotalKgFromRmLines,
   estimateOrderTotalKg,
   batchesRequiredForOrderKg,
   buildPlanningSnapshotFromBom,
+  buildPlanningKgFromSoLine,
 };

@@ -5,7 +5,7 @@ const { createCacheReadMiddleware } = require('../cache/cacheReadMiddleware');
 const {
   listEquipment, getEquipmentById, createEquipment, updateEquipment, deleteEquipment,
   listTeam, getTeamMemberById, createTeamMember, updateTeamMember, deleteTeamMember,
-  listBatches, getBatchById, createBatch, createRworkBatch, updateBatch, deleteBatch, getBatchBom, syncBatchesFromPlanning,
+  listBatches, getBatchById, createBatch, createRworkBatch, updateBatch, deleteBatch, getBatchBom, getBatchMtrReserved, syncBatchesFromPlanning,
 } = require('./controller');
 
 const guard = [isAuthenticated, requireModule('order-management')];
@@ -75,6 +75,7 @@ router.get('/batches', productionReadGuard, cacheProduction, listBatches);
 router.post('/batches/sync-from-planning', productionWriteGuard, syncBatchesFromPlanning);
 router.post('/batches/create-rework', productionWriteGuard, createRworkBatch);
 router.get('/batches/:id/bom', productionReadGuard, cacheProduction, getBatchBom);
+router.get('/batches/:id/mtr-reserved', productionReadGuard, getBatchMtrReserved);
 router.get('/batches/:id', productionReadGuard, cacheProduction, getBatchById);
 router.post('/batches', productionWriteGuard, createBatch);
 router.patch('/batches/:id', ...guard, requireBatchGranularEdit, updateBatch);

@@ -6,6 +6,7 @@ const {
   parseFillSizeToKgPerUnit,
   estimateOrderTotalKg,
   buildPlanningSnapshotFromBom,
+  buildPlanningKgFromSoLine,
   batchesRequiredForOrderKg,
   roundPlanningMaterialQty,
   PLANNING_MATERIAL_QTY_DECIMALS,
@@ -48,5 +49,33 @@ describe('orderKgMath', () => {
   it('batchesRequiredForOrderKg rounds up FG kg to manufacturing batch size', () => {
     expect(batchesRequiredForOrderKg(50, 100)).toBe(1);
     expect(batchesRequiredForOrderKg(150, 100)).toBe(2);
+  });
+
+  it('SO form pack overrides empty product fill_size (avoids RM-line fallback)', () => {
+    const { safeTotalKg, raw_materials } = buildPlanningKgFromSoLine({
+      orderQty: 1000,
+      product: { fill_size: '', batch_size_kg: 100 },
+      rmLines: [
+        { pct_w_w: 30, rm_code: 'A', inci_name: 'RM A' },
+        { pct_w_w: 70, rm_code: 'B', inci_name: 'RM B' },
+      ],
+      pmLines: [],
+      fillSizeOverride: '50 ml',
+    });
+    expect(safeTotalKg).toBeCloseTo(50, 3);
+    expect(raw_materials[0].quantity).toBe(15);
+    expect(raw_materials[1].quantity).toBe(35);
+  });
+
+  it('SO form pack takes precedence over product fill_size when both set', () => {
+    const total = estimateOrderTotalKg({
+      orderQty: 100,
+      product: { fill_size: '100g' },
+      rmLines: [],
+      batchSizeKg: 100,
+      batchesRequired: 1,
+      fillSizeOverride: '50 ml',
+    });
+    expect(total).toBeCloseTo(5, 3);
   });
 });

@@ -1,5 +1,6 @@
 /**
- * Outbound MTR (WH → MU): available to transfer = wh_stock − reserved (matches Production MTR modal).
+ * Outbound MTR (WH → MU): transfer from production-reserved qty at warehouse,
+ * capped by physical WH stock (matches Production MTR modal).
  */
 
 function toNum(x) {
@@ -8,8 +9,50 @@ function toNum(x) {
   return Number.isNaN(n) ? 0 : n;
 }
 
+/** Free stock — used for reserve flows, not outbound MTR. */
 function qtyAvailableWh(whStock, reserved) {
   return Math.max(0, toNum(whStock) - toNum(reserved));
+}
+
+/**
+ * MTR pool = batch/production reserved qty transferable from WH now (capped by physical WH stock).
+ * Prefer batchReserved (reserved_batch_items for this BMR/BPR) when provided; else warehouse_inventory.reserved.
+ */
+function qtyMtrFromReserved(whStock, reservedGlobal, batchReserved) {
+  const wh = toNum(whStock);
+  const alloc =
+    batchReserved !== undefined && batchReserved !== null
+      ? toNum(batchReserved)
+      : toNum(reservedGlobal);
+  return Math.max(0, Math.min(alloc, wh));
+}
+
+/**
+ * @param {number} productionBatchId
+ * @returns {Promise<{ rm: Map<number, number>, pm: Map<number, number> }>}
+ */
+async function loadBatchReservedQtyMaps(productionBatchId) {
+  const { ReservedBatchItem } = require('../fulfillment/models');
+  const rm = new Map();
+  const pm = new Map();
+  if (!productionBatchId) return { rm, pm };
+  const rows = await ReservedBatchItem.findAll({
+    where: { production_batch_id: productionBatchId },
+    attributes: ['raw_material_id', 'pack_material_id', 'quantity_reserved'],
+  });
+  for (const row of rows) {
+    const plain = row.get ? row.get({ plain: true }) : row;
+    const qty = toNum(plain.quantity_reserved);
+    if (qty <= 0) continue;
+    if (plain.raw_material_id != null) {
+      const id = Number(plain.raw_material_id);
+      rm.set(id, (rm.get(id) || 0) + qty);
+    } else if (plain.pack_material_id != null) {
+      const id = Number(plain.pack_material_id);
+      pm.set(id, (pm.get(id) || 0) + qty);
+    }
+  }
+  return { rm, pm };
 }
 
 function isQtyShort(available, required) {
@@ -52,10 +95,14 @@ function aggregateMtrLineQuantities(lineItems) {
 /**
  * @param {import('sequelize').ModelStatic} WarehouseInventory
  * @param {Array<object>} lineItems — after resolveLineItemCodes
+ * @param {{ productionBatchId?: number }} [opts]
  * @returns {Promise<{ ok: true } | { ok: false, error: string, details?: Array<object> }>}
  */
-async function validateOutboundMtrWarehouseStock(WarehouseInventory, lineItems) {
+async function validateOutboundMtrWarehouseStock(WarehouseInventory, lineItems, opts = {}) {
   const { rm, pm, unresolved } = aggregateMtrLineQuantities(lineItems);
+  const batchId = opts.productionBatchId != null ? Number(opts.productionBatchId) : null;
+  const batchMaps =
+    batchId && !Number.isNaN(batchId) ? await loadBatchReservedQtyMaps(batchId) : { rm: new Map(), pm: new Map() };
 
   if (unresolved.length > 0) {
     const codes = unresolved.map((u) => u.code).join(', ');
@@ -73,13 +120,16 @@ async function validateOutboundMtrWarehouseStock(WarehouseInventory, lineItems) 
       attributes: ['wh_stock', 'reserved'],
     });
     const plain = inv && inv.get ? inv.get({ plain: true }) : inv;
-    const available = qtyAvailableWh(plain?.wh_stock, plain?.reserved);
-    if (isQtyShort(available, agg.qty)) {
+    const batchReserved = batchMaps.rm.get(rmId);
+    const mtrPool = qtyMtrFromReserved(plain?.wh_stock, plain?.reserved, batchReserved);
+    if (isQtyShort(mtrPool, agg.qty)) {
       shortages.push({
         type: 'RM',
         code: agg.code || `RM#${rmId}`,
         requested: agg.qty,
-        available,
+        available: mtrPool,
+        reserved: batchReserved !== undefined ? toNum(batchReserved) : toNum(plain?.reserved),
+        wh_stock: toNum(plain?.wh_stock),
       });
     }
   }
@@ -90,13 +140,16 @@ async function validateOutboundMtrWarehouseStock(WarehouseInventory, lineItems) 
       attributes: ['wh_stock', 'reserved'],
     });
     const plain = inv && inv.get ? inv.get({ plain: true }) : inv;
-    const available = qtyAvailableWh(plain?.wh_stock, plain?.reserved);
-    if (isQtyShort(available, agg.qty)) {
+    const batchReserved = batchMaps.pm.get(pmId);
+    const mtrPool = qtyMtrFromReserved(plain?.wh_stock, plain?.reserved, batchReserved);
+    if (isQtyShort(mtrPool, agg.qty)) {
       shortages.push({
         type: 'PM',
         code: agg.code || `PM#${pmId}`,
         requested: agg.qty,
-        available,
+        available: mtrPool,
+        reserved: batchReserved !== undefined ? toNum(batchReserved) : toNum(plain?.reserved),
+        wh_stock: toNum(plain?.wh_stock),
       });
     }
   }
@@ -107,13 +160,16 @@ async function validateOutboundMtrWarehouseStock(WarehouseInventory, lineItems) 
   const unitHint = first.type === 'RM' ? 'KG' : 'PCS';
   const summary = shortages
     .slice(0, 3)
-    .map((s) => `${s.code} (need ${s.requested} ${unitHint}, WH available ${s.available} ${unitHint})`)
+    .map(
+      (s) =>
+        `${s.code} (need ${s.requested} ${unitHint}, reserved at WH ${s.reserved} ${unitHint}${s.wh_stock < s.reserved ? `, WH stock ${s.wh_stock}` : ''})`
+    )
     .join('; ');
   const more = shortages.length > 3 ? ` (+${shortages.length - 3} more)` : '';
 
   return {
     ok: false,
-    error: `Insufficient warehouse stock for MTR: ${summary}${more}. Reduce "To transfer" or receive stock at warehouse (available = WH stock − reserved).`,
+    error: `Insufficient reserved stock for MTR: ${summary}${more}. Reserve material for production first, or reduce "To transfer".`,
     details: shortages,
   };
 }
@@ -121,5 +177,7 @@ async function validateOutboundMtrWarehouseStock(WarehouseInventory, lineItems) 
 module.exports = {
   aggregateMtrLineQuantities,
   qtyAvailableWh,
+  qtyMtrFromReserved,
+  loadBatchReservedQtyMaps,
   validateOutboundMtrWarehouseStock,
 };

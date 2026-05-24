@@ -2360,10 +2360,54 @@ async function getBatchBom(req, res) {
   }
 }
 
+/**
+ * GET /batches/:id/mtr-reserved — per-code reserved qty for this batch (reserved_batch_items).
+ * Re-syncs warehouse_inventory.reserved from RBI sums so MTR modal matches DB.
+ */
+async function getBatchMtrReserved(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const batch = await ProductionBatch.findByPk(id);
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+
+    const rows = await ReservedBatchItem.findAll({
+      where: { production_batch_id: id },
+      attributes: ['raw_material_id', 'pack_material_id', 'quantity_reserved'],
+    });
+    const rmIds = new Set();
+    const pmIds = new Set();
+    const byCode = {};
+    for (const row of rows) {
+      const plain = row.get ? row.get({ plain: true }) : row;
+      const qty = Number(plain.quantity_reserved) || 0;
+      if (qty <= 0) continue;
+      if (plain.raw_material_id != null) {
+        rmIds.add(plain.raw_material_id);
+        const rm = await RawMaterial.findByPk(plain.raw_material_id, { attributes: ['code'] });
+        const code = String(rm?.code || '').trim();
+        if (code) byCode[code] = (byCode[code] ?? 0) + qty;
+      } else if (plain.pack_material_id != null) {
+        pmIds.add(plain.pack_material_id);
+        const pm = await PackMaterial.findByPk(plain.pack_material_id, { attributes: ['code'] });
+        const code = String(pm?.code || '').trim();
+        if (code) byCode[code] = (byCode[code] ?? 0) + qty;
+      }
+    }
+    if (rmIds.size > 0 || pmIds.size > 0) {
+      await syncWarehouseReserved([...rmIds], [...pmIds]);
+    }
+    res.json({ success: true, byCode });
+  } catch (err) {
+    console.error('getBatchMtrReserved error:', err);
+    res.status(500).json({ success: false, error: 'Failed to fetch batch reserved qty' });
+  }
+}
+
 module.exports = {
   listEquipment, getEquipmentById, createEquipment, updateEquipment, deleteEquipment,
   listTeam, getTeamMemberById, createTeamMember, updateTeamMember, deleteTeamMember,
-  listBatches, getBatchById, createBatch, createRworkBatch, updateBatch, deleteBatch, getBatchBom, syncBatchesFromPlanning,
+  listBatches, getBatchById, createBatch, createRworkBatch, updateBatch, deleteBatch, getBatchBom, getBatchMtrReserved, syncBatchesFromPlanning,
   computeRequiredVolumeLiters,
   applyRmReservedToInventory,
   applyPmReservedToInventory,

@@ -22,6 +22,9 @@ const { logLocationMovement } = require('../warehouseInventory/locationHistoryHe
 const WarehouseInventoryLocationHistory = require('../warehouseInventory/locationHistoryModel');
 const { applyDedicatedDefaultsToNewMrn, resolveDedicatedProductionCodes, resolveProductionRackForMrn } = require('../itemDedicatedFacilityLocations/service');
 const { validateOutboundMtrWarehouseStock } = require('./mtrWarehouseStock');
+const { ReservedBatchItem } = require('../fulfillment/models');
+const { ProductionBatch } = require('../production/models');
+const { syncWarehouseReserved } = require('../planningExtracted/controller');
 
 /** Usertypes that can be assigned as Picker / Transfer Team (same as GRN). */
 const ASSIGNABLE_USERTYPES = ['super_admin', 'admin', 'bd_manager'];
@@ -421,7 +424,17 @@ async function create(req, res) {
       });
     }
     if (sourceForMtr === 'MTR' && !inboundMu && lineItems.length > 0) {
-      const stockCheck = await validateOutboundMtrWarehouseStock(WarehouseInventory, lineItems);
+      let productionBatchId = null;
+      if (bmrNoForMtr) {
+        const batchRow = await ProductionBatch.findOne({
+          where: { bmr_no: bmrNoForMtr },
+          attributes: ['id'],
+        });
+        productionBatchId = batchRow?.id ?? null;
+      }
+      const stockCheck = await validateOutboundMtrWarehouseStock(WarehouseInventory, lineItems, {
+        productionBatchId,
+      });
       if (!stockCheck.ok) {
         return res.status(400).json({
           error: stockCheck.error,
@@ -969,6 +982,42 @@ async function applyMtrCompletionToProductionBatch(plainMrn) {
 }
 
 /**
+ * Outbound MTR (WH→MU): material left WH allocation — reduce this batch's reserved_batch_items
+ * then re-sync warehouse_inventory.reserved from sums (avoids desync with manual reserved -= qty).
+ */
+async function reduceReservedBatchAfterOutboundMtr(bmrNo, line, qty) {
+  if (!bmrNo || qty <= 0) return { rmId: null, pmId: null };
+  const batch = await ProductionBatch.findOne({
+    where: { bmr_no: bmrNo },
+    attributes: ['id'],
+  });
+  if (!batch) return { rmId: null, pmId: null };
+  const batchId = batch.id;
+  let rmId = null;
+  let pmId = null;
+  if (line.raw_material_id != null) {
+    rmId = Number(line.raw_material_id);
+    const where = { production_batch_id: batchId, raw_material_id: rmId, pack_material_id: null };
+    const rbi = await ReservedBatchItem.findOne({ where });
+    if (rbi) {
+      const cur = Number(rbi.quantity_reserved) || 0;
+      const next = Math.max(0, cur - qty);
+      if (Math.abs(next - cur) >= 1e-9) await rbi.update({ quantity_reserved: next });
+    }
+  } else if (line.pack_material_id != null) {
+    pmId = Number(line.pack_material_id);
+    const where = { production_batch_id: batchId, pack_material_id: pmId, raw_material_id: null };
+    const rbi = await ReservedBatchItem.findOne({ where });
+    if (rbi) {
+      const cur = Number(rbi.quantity_reserved) || 0;
+      const next = Math.max(0, cur - qty);
+      if (Math.abs(next - cur) >= 1e-9) await rbi.update({ quantity_reserved: next });
+    }
+  }
+  return { rmId, pmId };
+}
+
+/**
  * When an MRN from MTR is marked Completed, move stock WH ↔ MU via rack rows.
  * Warehouse rack qty decreases; manufacturing zone rack qty increases (ML1/ML2 derived on recalc).
  */
@@ -978,6 +1027,8 @@ async function applyMrnCompletionToInventory(plainMrn) {
   const isInbound = !!plainMrn.is_inbound_from_mu;
   const muZone = plainMrn.mu_receive_zone || null;
   const muRack = plainMrn.mu_receive_rack || null;
+  const affectedRmIds = new Set();
+  const affectedPmIds = new Set();
 
   for (const line of lineItems) {
     const qty = Number(line.quantity) || 0;
@@ -1021,10 +1072,14 @@ async function applyMrnCompletionToInventory(plainMrn) {
       });
     }
 
+    if (!isInbound) {
+      const { rmId, pmId } = await reduceReservedBatchAfterOutboundMtr(plainMrn.bmr_no, line, qty);
+      if (rmId != null) affectedRmIds.add(rmId);
+      if (pmId != null) affectedPmIds.add(pmId);
+    }
+
     const refreshed = await WarehouseInventory.findByPk(plain.id);
     const after = refreshed?.get ? refreshed.get({ plain: true }) : refreshed;
-    const reserved = Math.max(0, (Number(after?.reserved ?? plain.reserved) || 0) - qty);
-    if (refreshed) await refreshed.update({ reserved });
 
     console.log('[mrn][MTR] completed rack move', {
       source: isInbound ? 'MU->WH' : 'WH->MU',
@@ -1033,8 +1088,12 @@ async function applyMrnCompletionToInventory(plainMrn) {
       whRack: whRackDest?.rackCode,
       prodZone: prodRackDest?.locationCode,
       prodRack: prodRackDest?.rackCode,
-      reserved,
+      reserved: after?.reserved ?? plain.reserved,
     });
+  }
+
+  if (!isInbound && (affectedRmIds.size > 0 || affectedPmIds.size > 0)) {
+    await syncWarehouseReserved([...affectedRmIds], [...affectedPmIds]);
   }
 }
 

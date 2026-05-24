@@ -156,6 +156,7 @@ async function createPlanningExtractedRowsForSalesOrder(salesOrderId, payload) {
   const PlanningExtracted = require('../planningExtracted/models');
   const BOM = require('../bom/models');
   const { Product } = require('../products/models');
+  const { buildPlanningKgFromSoLine } = require('../planningExtracted/orderKgMath');
 
   for (const item of payload.items) {
     const productId = item.product_id || item.productId;
@@ -163,24 +164,38 @@ async function createPlanningExtractedRowsForSalesOrder(salesOrderId, payload) {
 
     const product = await Product.findByPk(productId);
     if (!product) continue;
+    const prodPlain = product.get ? product.get({ plain: true }) : product;
 
-    let rawMaterials = [];
-    let packagingMaterials = [];
+    let rmLines = [];
+    let pmLines = [];
     const bom = await BOM.findOne({ where: { product_id: productId } });
     if (bom) {
-      rawMaterials = Array.isArray(bom.rm_lines) ? bom.rm_lines : [];
-      packagingMaterials = Array.isArray(bom.pm_lines) ? bom.pm_lines : [];
+      const b = bom.get ? bom.get({ plain: true }) : bom;
+      rmLines = Array.isArray(b.rm_lines) ? b.rm_lines : [];
+      pmLines = Array.isArray(b.pm_lines) ? b.pm_lines : [];
     }
 
     const orderQty = item.quantity || item.orderedQty || 0;
-    const batchSizeKg = product.batch_size_kg || 100;
-    const batchesRequired = batchSizeKg > 0 ? Math.ceil(orderQty / batchSizeKg) : 1;
+    const packFromSo = String(item.pack || item.packSize || '').trim();
+    const {
+      safeTotalKg,
+      batchSizeKg,
+      batchesRequired,
+      raw_materials,
+      packaging_materials,
+    } = buildPlanningKgFromSoLine({
+      orderQty,
+      product: prodPlain,
+      rmLines,
+      pmLines,
+      fillSizeOverride: packFromSo,
+    });
 
     await PlanningExtracted.create({
       sales_order_id: salesOrderId,
       product_id: productId,
       order_qty_display: `${orderQty} units`,
-      total_kg_display: batchSizeKg ? `${orderQty} KG` : null,
+      total_kg_display: safeTotalKg ? `${safeTotalKg} KG` : null,
       order_date: payload.order_date || null,
       due_date: payload.expected_shipment_date || null,
       batch_size_display: batchSizeKg ? `${batchSizeKg} KG` : null,
@@ -191,8 +206,8 @@ async function createPlanningExtractedRowsForSalesOrder(salesOrderId, payload) {
       // BOM is never auto-confirmed on SO creation: planner must confirm BOM + SG on first-batch flow.
       bom_confirmed_at: null,
       approved_by: payload.created_by,
-      raw_materials: rawMaterials,
-      packaging_materials: packagingMaterials,
+      raw_materials,
+      packaging_materials,
     });
   }
 }
