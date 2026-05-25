@@ -925,8 +925,8 @@ async function updatePlanningExtracted(req, res) {
 
     await row.save();
 
-    // When BOM is confirmed together with a BOM-level SG, fan the SG value into every rm_lines[].specific_gravity
-    // of the BOM override so downstream production vessel-volume math (which still reads per-line SG) keeps working.
+    // When BOM is confirmed, ensure each rm_lines[].specific_gravity is set for vessel-volume math.
+    // Preserve per-line SG when already present; only fill missing lines from BOM-level SG.
     const bomSgNumeric = Number(nowBomSg);
     const isConfirming = prevBomConfirmedAt == null && nowBomConfirmedAt != null;
     const wroteSg = body.bomSpecificGravity !== undefined || body.bom_specific_gravity !== undefined;
@@ -935,7 +935,11 @@ async function updatePlanningExtracted(req, res) {
         const override = await PlanningBomOverride.findOne({ where: { planning_extracted_id: id } });
         if (override) {
           const rmLinesRaw = Array.isArray(override.rm_lines) ? override.rm_lines : [];
-          const fanned = rmLinesRaw.map((line) => ({ ...line, specific_gravity: bomSgNumeric }));
+          const fanned = rmLinesRaw.map((line) => {
+            const lineSg = Number(line.specific_gravity);
+            const hasLineSg = Number.isFinite(lineSg) && lineSg > 0;
+            return { ...line, specific_gravity: hasLineSg ? lineSg : bomSgNumeric };
+          });
           override.rm_lines = fanned;
           await override.save();
         }

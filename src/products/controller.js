@@ -1003,12 +1003,14 @@ const getProductDetail = async (req, res) => {
     rmLines.forEach((line) => {
       const phase = line.phase || 'Other';
       if (!phases[phase]) phases[phase] = [];
+      const lineSg = Number(line.specific_gravity ?? line.specificGravity);
       phases[phase].push({
         inci_name: line.inci_name || line.inciName || line.name,
         rm_code: line.rm_code || line.rmCode,
         raw_material_id: line.raw_material_id ?? line.rawMaterialId ?? null,
         pct_w_w: line.pct_w_w != null ? line.pct_w_w : (line.pctWw != null ? line.pctWw : line.pct),
         uom: line.uom || 'kg',
+        ...(Number.isFinite(lineSg) && lineSg > 0 ? { specific_gravity: lineSg } : {}),
       });
     });
     const formulaBom = Object.entries(phases).map(([phaseName, ingredients]) => ({

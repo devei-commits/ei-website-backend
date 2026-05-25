@@ -350,8 +350,7 @@ async function processRmGroupForComposite(compositeSku, groupRows, applySg) {
         uom: lineUom,
       });
 
-      if (applySg && Number.isFinite(gr.sg) && rm.id != null) {
-        await RawMaterial.update({ specific_gravity: gr.sg }, { where: { id: rm.id } });
+      if (applySg && Number.isFinite(gr.sg) && gr.sg > 0) {
         sgUpdated += 1;
       }
     } else {
@@ -379,15 +378,21 @@ async function processRmGroupForComposite(compositeSku, groupRows, applySg) {
   const computedAquaQty = aquaPresent ? 0 : Math.max(0, 1 - baseTotal);
   const denominator = baseTotal + computedAquaQty;
   const safeDenominator = denominator > 0 ? denominator : 1;
-  const formulaRmLines = formulaLinesRaw.map((line) => ({
-    phase: line.phase || 'Main',
-    inci_name: line.inci_name,
-    rm_code: line.rm_code,
-    zoho_sku_code: line.zoho_sku_code || null,
-    raw_material_id: line.raw_material_id,
-    pct_w_w: toFixedNumber((Number(line.qty_per_unit) || 0) / safeDenominator)*100,
-    uom: line.uom,
-  }));
+  const formulaRmLines = formulaLinesRaw.map((line, idx) => {
+    const gr = groupRows[idx];
+    const sg =
+      applySg && gr && Number.isFinite(Number(gr.sg)) && Number(gr.sg) > 0 ? Number(gr.sg) : null;
+    return {
+      phase: line.phase || 'Main',
+      inci_name: line.inci_name,
+      rm_code: line.rm_code,
+      zoho_sku_code: line.zoho_sku_code || null,
+      raw_material_id: line.raw_material_id,
+      pct_w_w: toFixedNumber((Number(line.qty_per_unit) || 0) / safeDenominator) * 100,
+      uom: line.uom,
+      ...(sg != null ? { specific_gravity: sg } : {}),
+    };
+  });
 
   if (computedAquaQty > 0) {
     const aquaRm = await findRawMaterialByName('Aqua');

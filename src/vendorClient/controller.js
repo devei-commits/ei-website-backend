@@ -83,6 +83,43 @@ function attachPriceListSync(out, priceSync) {
   };
 }
 
+/** Vendor create/update must sync to Zoho Books before commit when integration is enabled. */
+function isZohoVendorSyncRequired(type) {
+  return type === 'vendor' && zohoEnv.booksEnabled && zohoEnv.syncVendorContacts;
+}
+
+/**
+ * Create Zoho Books contact and persist zoho_id on the row inside the caller's transaction.
+ * Throws when sync is required and Zoho returns no contact id.
+ * @param {*} row - Sequelize VendorClient instance
+ * @param {import('sequelize').Transaction} transaction
+ */
+async function applyZohoContactSyncInTransaction(row, transaction) {
+  if (row.zoho_id) {
+    return { synced: true, contactId: row.zoho_id, skipped: false };
+  }
+  const zohoResult = await syncZohoContactForVendorClient(row);
+  if (zohoResult.synced && zohoResult.contactId) {
+    await row.update({ zoho_id: zohoResult.contactId }, { transaction });
+    return { ...zohoResult, skipped: false };
+  }
+  if (
+    zohoResult.error === 'zoho_disabled' ||
+    zohoResult.error === 'vendor_contact_sync_disabled' ||
+    zohoResult.error === 'client_contact_sync_disabled'
+  ) {
+    return { ...zohoResult, skipped: true };
+  }
+  const msg =
+    zohoResult.error === 'zoho_missing_contact_id'
+      ? 'Zoho did not return a contact id'
+      : zohoResult.error || 'Zoho contact sync failed';
+  const err = new Error(msg);
+  err.status = 502;
+  err.code = 'ZOHO_SYNC_FAILED';
+  throw err;
+}
+
 function formatRow(row) {
   if (!row) return null;
   const d = row.get ? row.get({ plain: true }) : row;
@@ -344,6 +381,7 @@ async function createVendorClient(req, res) {
     }
 
     let priceSync = null;
+    let zohoResult = null;
     let row;
     const t = await db.transaction();
     try {
@@ -378,19 +416,23 @@ async function createVendorClient(req, res) {
           transaction: t,
         });
       }
+      if (row.type === 'vendor' && isZohoVendorSyncRequired(row.type)) {
+        zohoResult = await applyZohoContactSyncInTransaction(row, t);
+      }
       await t.commit();
     } catch (txErr) {
       await t.rollback();
       throw txErr;
     }
 
+    await row.reload();
+
     if (linkedUserId) {
       const u = await User.findByPk(linkedUserId);
       if (u) await syncLinkedVendorClientFromUser(u).catch(() => {});
     }
     console.log('[vendor-client] Created', type, 'id=', row.id, 'entity_code=', row.entity_code);
-    let zohoResult = null;
-    if (!row.zoho_id) {
+    if (row.type === 'client' && !row.zoho_id) {
       zohoResult = await syncZohoContactForVendorClient(row);
       if (zohoResult.synced && zohoResult.contactId) {
         await row.update({ zoho_id: zohoResult.contactId });
@@ -413,6 +455,12 @@ async function createVendorClient(req, res) {
     res.status(201).json(out);
   } catch (err) {
     console.error('createVendorClient error', err);
+    if (err && err.code === 'ZOHO_SYNC_FAILED') {
+      return res.status(err.status || 502).json({
+        error: err.message || 'Zoho contact sync failed',
+        code: err.code,
+      });
+    }
     res.status(500).json({ error: 'Failed to create vendor/client' });
   }
 }
@@ -467,6 +515,7 @@ async function updateVendorClient(req, res) {
     }
 
     let priceSync = null;
+    let zohoResult = null;
     const t = await db.transaction();
     try {
       await row.save({ transaction: t });
@@ -478,11 +527,16 @@ async function updateVendorClient(req, res) {
           transaction: t,
         });
       }
+      if (row.type === 'vendor' && isZohoVendorSyncRequired(row.type) && !row.zoho_id) {
+        zohoResult = await applyZohoContactSyncInTransaction(row, t);
+      }
       await t.commit();
     } catch (txErr) {
       await t.rollback();
       throw txErr;
     }
+
+    await row.reload();
 
     if (row.user_id) {
       const u = await User.findByPk(row.user_id);
@@ -498,9 +552,7 @@ async function updateVendorClient(req, res) {
         await syncClientAddressesFromVendorData(row.user_id, d);
       }
     }
-    let zohoResult = null;
-    if (!row.zoho_id) {
-      await row.reload();
+    if (row.type === 'client' && !row.zoho_id) {
       zohoResult = await syncZohoContactForVendorClient(row);
       if (zohoResult.synced && zohoResult.contactId) {
         await row.update({ zoho_id: zohoResult.contactId });
@@ -513,6 +565,12 @@ async function updateVendorClient(req, res) {
     res.json(out);
   } catch (err) {
     console.error('updateVendorClient error', err);
+    if (err && err.code === 'ZOHO_SYNC_FAILED') {
+      return res.status(err.status || 502).json({
+        error: err.message || 'Zoho contact sync failed',
+        code: err.code,
+      });
+    }
     res.status(500).json({ error: 'Failed to update vendor/client' });
   }
 }

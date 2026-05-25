@@ -31,6 +31,7 @@ require('./src/purchaseOrders/models');
 require('./src/planningExtracted/models');
 require('./src/procurementRequests/models');
 require('./src/procurementQuotations/models');
+require('./src/planningQuotationAsks/models');
 require('./src/poTracking/models');
 require('./src/universalSwap/models');
 require('./src/itemGroups/models');

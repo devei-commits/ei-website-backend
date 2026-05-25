@@ -27,4 +27,7 @@ const db = new Sequelize(process.env.DATABASE_URL, {
   }
 });
 
+const { registerSequelizeTimestampHooks } = require('./src/lib/backendTimestamps');
+registerSequelizeTimestampHooks(db);
+
 module.exports = db;

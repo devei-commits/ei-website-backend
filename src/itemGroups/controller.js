@@ -106,7 +106,8 @@ async function syncGroupIdToMembers(type, groupIdStr, memberIds, prevMemberIds =
   const toRemove = prev.filter((id) => !ids.includes(id));
   const toSet = ids;
   const table = type === 'RM' ? 'raw_materials' : 'pack_materials';
-  const now = new Date();
+  const { backendNow } = require('../lib/backendTimestamps');
+  const now = backendNow();
   if (toRemove.length > 0) {
     const inList = toRemove.map((_, i) => `:r${i}`).join(',');
     await db.query(`UPDATE "${table}" SET "group" = NULL, "updated_at" = :now WHERE id IN (${inList})`, {

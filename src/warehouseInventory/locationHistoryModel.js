@@ -39,7 +39,7 @@ WarehouseInventoryLocationHistory.init(
     moved_at: {
       type: DataTypes.DATE,
       allowNull: false,
-      defaultValue: DataTypes.NOW,
+      // Set in app layer via backendNow() (global Sequelize beforeCreate hook).
     },
     // Reserved change from BMR/BPR — only set when action_type is BMR_RESERVED or BPR_RESERVED
     reserved_delta: { type: DataTypes.DECIMAL(14, 4), allowNull: true },

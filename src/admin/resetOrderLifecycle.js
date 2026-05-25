@@ -92,6 +92,8 @@ async function resetOrderLifecycle(opts = {}) {
     }
 
     if (!dryRun) {
+      const { backendNow } = require('../lib/backendTimestamps');
+      const now = backendNow();
       const [whUpdated] = await db.query(
         `UPDATE warehouse_inventory
          SET wh_stock = 0,
@@ -100,8 +102,8 @@ async function resetOrderLifecycle(opts = {}) {
              stock_in_hand = 0,
              reserved = 0,
              in_transit = 0,
-             updated_at = NOW()`,
-        { transaction: t }
+             updated_at = :now`,
+        { replacements: { now }, transaction: t }
       );
       stats.push({
         table: 'warehouse_inventory (zeroed counters)',
