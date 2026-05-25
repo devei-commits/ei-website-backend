@@ -274,7 +274,7 @@ function bodyToPackMaterial(b) {
   const levelExplicit = b.level ?? fd.level ?? null;
   return {
     code: b.code ?? b.itemCode ?? '',
-    description: b.description ?? b.name ?? null,
+    description: fd.tradeCommercialName ?? b.description ?? b.name ?? null,
     type: b.type ?? b.itemCategory ?? null,
     level: levelExplicit || levelFromSub || null,
     group: subSlug || subRaw || null,

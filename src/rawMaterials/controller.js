@@ -238,7 +238,7 @@ function payloadToListFields(b, omitGroupIfUnset = false) {
   const hasGroup = fd.group !== undefined || b.group !== undefined;
   const listFields = {
     code: fd.rmSku ?? fd.code ?? '',
-    name: fd.inciName ?? fd.tradeCommercialName ?? fd.name ?? '',
+    name: fd.tradeCommercialName ?? fd.name ?? '',
     inci: fd.inciName ?? fd.inci ?? '',
     category: fd.rmCategory ?? fd.category ?? fd.subCategory ?? fd.group ?? null,
     rm_type: fd.rmType ?? fd.rm_type ?? null,

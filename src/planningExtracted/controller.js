@@ -914,10 +914,32 @@ async function updatePlanningExtracted(req, res) {
       'bom_specific_gravity',
       'custom_batches', 'sent_batch_indices',
     ];
+    const applyBomConfirmedAt = (incoming) => {
+      if (incoming === undefined) return;
+      if (incoming === null || incoming === '') {
+        row.set('bom_confirmed_at', null);
+        return;
+      }
+      if (prevBomConfirmedAt == null) {
+        row.set('bom_confirmed_at', new Date());
+        return;
+      }
+      const d = incoming instanceof Date ? incoming : new Date(incoming);
+      row.set('bom_confirmed_at', Number.isNaN(d.getTime()) ? new Date() : d);
+    };
+
     for (const key of allowed) {
+      if (key === 'bom_confirmed_at') {
+        if (body[key] !== undefined) applyBomConfirmedAt(body[key]);
+        continue;
+      }
       if (body[key] !== undefined) row.set(key, body[key]);
     }
     for (const [camel, snake] of Object.entries(camelToSnake)) {
+      if (camel === 'bomConfirmedAt') {
+        if (body[camel] !== undefined) applyBomConfirmedAt(body[camel]);
+        continue;
+      }
       if (body[camel] !== undefined) row.set(snake, body[camel]);
     }
 
