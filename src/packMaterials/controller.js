@@ -678,45 +678,12 @@ async function updatePackMaterial(req, res) {
     if (!row) return res.status(404).json({ error: 'Pack material not found' });
     const b = req.body || {};
     const fields = bodyToPackMaterial(b);
-    const nextCode =
-      fields.code !== undefined && String(fields.code).trim() !== ''
-        ? String(fields.code).trim()
-        : String(row.code || '').trim();
+    const nextCode = String(row.code || '').trim();
     if (!nextCode) {
-      return res.status(400).json({ error: 'code or itemCode is required' });
-    }
-    let nextSku;
-    if (fields.zoho_sku_code !== undefined) {
-      nextSku =
-        fields.zoho_sku_code == null || String(fields.zoho_sku_code).trim() === ''
-          ? null
-          : String(fields.zoho_sku_code).trim();
-      fields.zoho_sku_code = nextSku;
-    } else {
-      nextSku = row.zoho_sku_code == null ? null : String(row.zoho_sku_code).trim() || null;
-    }
-    const dup = await findConflictingMasterRow(PackMaterial, nextCode, nextSku, row.id);
-    if (dup) {
-      return res.status(409).json({ error: 'A pack material with this code or SKU already exists' });
-    }
-    const plain = row.get({ plain: true });
-    const rowFd =
-      plain.form_data != null && typeof plain.form_data === 'object' && !Array.isArray(plain.form_data)
-        ? plain.form_data
-        : {};
-    const bodyFd = b.form_data != null && typeof b.form_data === 'object' && !Array.isArray(b.form_data) ? b.form_data : {};
-    const mergedForRule = {
-      ...b,
-      group: fields.group !== undefined && fields.group != null && String(fields.group).trim() !== ''
-        ? fields.group
-        : plain.group,
-      form_data: { ...rowFd, ...bodyFd },
-    };
-    const pmSkuErr = validatePmCodeForSubCategory(nextCode, mergedForRule);
-    if (pmSkuErr) {
-      return res.status(400).json({ error: pmSkuErr });
+      return res.status(400).json({ error: 'Existing pack material has no internal code' });
     }
     fields.code = nextCode;
+    delete fields.zoho_sku_code;
     Object.keys(fields).forEach((key) => {
       if (fields[key] !== undefined) row.set(key, fields[key]);
     });

@@ -115,15 +115,43 @@ function derivePackSizeFromFormulaRow(row) {
   return null;
 }
 
-async function applyPackSizeToProductAndBom({ product, bom, groupFirstRow, now = new Date() }) {
-  const packSize = derivePackSizeFromFormulaRow(groupFirstRow);
-  if (!packSize) return { pack_size: null, applied: false };
-
-  if (String(product.fill_size || '').trim() !== packSize) {
-    await product.update({ fill_size: packSize, updated_at: now });
+/** Map formula Excel volume/UoM → BOM sku_bom_limit_* (pack size for sale orders). */
+function skuBomLimitFromFormulaRow(row) {
+  const vol =
+    row?.limit_qty_volume != null && Number.isFinite(Number(row.limit_qty_volume))
+      ? Number(row.limit_qty_volume)
+      : row?.limit_qty_vol_kg_ltr != null && Number.isFinite(Number(row.limit_qty_vol_kg_ltr))
+        ? Number(row.limit_qty_vol_kg_ltr)
+        : null;
+  const uomNorm = normalizePackSizeUom(row?.uom_raw);
+  if (vol != null && vol > 0 && uomNorm) {
+    const skuUom = uomNorm === 'G' ? 'GM' : uomNorm;
+    return { qty: vol, uom: skuUom };
   }
-  if (bom && String(bom.pack_size || '').trim() !== packSize) {
-    await bom.update({ pack_size: packSize, updated_at: now });
+  const packSize = derivePackSizeFromFormulaRow(row);
+  if (!packSize) return null;
+  const m = String(packSize).trim().match(/^(\d+(?:\.\d+)?)\s*(G|ML|KG|L)$/i);
+  if (!m) return null;
+  const qty = Number(m[1]);
+  if (!Number.isFinite(qty) || qty <= 0) return null;
+  const u = normalizePackSizeUom(m[2]);
+  if (!u) return null;
+  return { qty, uom: u === 'G' ? 'GM' : u };
+}
+
+async function applyPackSizeToProductAndBom({ product, bom, groupFirstRow, now = new Date() }) {
+  const lim = skuBomLimitFromFormulaRow(groupFirstRow);
+  if (!lim) return { pack_size: null, applied: false };
+
+  const { formatSkuBomLimitAsPack } = require('../lib/skuBomPackSize');
+  const packSize = formatSkuBomLimitAsPack(lim.qty, lim.uom);
+  if (bom) {
+    await bom.update({
+      sku_bom_limit_qty: lim.qty,
+      sku_bom_limit_uom: lim.uom,
+      pack_size: packSize,
+      updated_at: now,
+    });
   }
   return { pack_size: packSize, applied: true };
 }

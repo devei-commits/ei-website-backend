@@ -17,6 +17,7 @@ const {
   buildPlanningKgFromSoLine,
   roundPlanningMaterialQty,
 } = require('../planningExtracted/orderKgMath');
+const { packSizeFromBomRow } = require('../lib/skuBomPackSize');
 const zohoEnv = require('../services/zohoEnv');
 
 function zohoInvoiceSyncRollbackMessage(zohoError) {
@@ -400,6 +401,47 @@ async function createOrder(req, res) {
       });
     }
 
+    const {
+      resolveClientProductPrice,
+      syncClientPriceTierFromSaleOrder,
+    } = require('../itemsList/resolveClientProductPrice');
+
+    const resolveProductIdFromSoItem = async (item) => {
+      if (item.productId != null) {
+        const pid = parseInt(item.productId, 10);
+        if (Number.isFinite(pid) && pid > 0) return pid;
+      }
+      if (item.sku) {
+        const prod = await Product.findOne({ where: { zoho_sku_code: item.sku } });
+        if (prod) return prod.product_id;
+      }
+      if (item.productName) {
+        const prod = await Product.findOne({ where: { product_name: item.productName } });
+        if (prod) return prod.product_id;
+      }
+      return null;
+    };
+
+    for (const item of items) {
+      const productId = await resolveProductIdFromSoItem(item);
+      if (!productId) continue;
+      const qty = item.orderedQty || 0;
+      const unitPrice = Number(item.unitPrice) || 0;
+      if (unitPrice <= 0) continue;
+      const resolved = await resolveClientProductPrice({
+        productId,
+        clientId: clientMaster.id,
+        quantity: qty,
+      });
+      if (resolved.source === 'client_price_list_tier') continue;
+      await syncClientPriceTierFromSaleOrder({
+        productId,
+        clientId: clientMaster.id,
+        quantity: qty,
+        pricePerUnit: unitPrice,
+      });
+    }
+
     const ptErr = validateStagedPaymentTermsJson(paymentTerms);
     if (ptErr) {
       return res.status(400).json({ error: ptErr });
@@ -476,6 +518,7 @@ async function createOrder(req, res) {
             rmLines,
             pmLines,
             fillSizeOverride: packFromSo,
+            bom: bom ? (bom.get ? bom.get({ plain: true }) : bom) : null,
           });
 
           await PlanningExtracted.create({
@@ -1109,41 +1152,34 @@ function normalizePackSizeForOrder(pack) {
   return p;
 }
 
-function derivePackSizeForFulfillmentRow(fillSize, productName) {
-  const fromFill = String(fillSize || '').trim();
-  if (fromFill) return fromFill;
-  const n = String(productName || '').trim();
-  if (!n) return '';
-  const m = n.match(/(\d+(?:\.\d+)?)\s*(ML|MILLILIT(?:ER|RE)S?|L|LTR|LT|LIT(?:ER|RE)S?|G|GM|GRAMS?|KG|KGS|KILOGRAMS?)\b/i);
-  if (!m) return '';
-  const qty = Number(m[1]);
-  if (!Number.isFinite(qty) || qty <= 0) return '';
-  const uRaw = String(m[2] || '').trim().toUpperCase();
-  const uom =
-    uRaw === 'ML' || uRaw.startsWith('MILLI') ? 'ML'
-      : (uRaw === 'L' || uRaw === 'LTR' || uRaw === 'LT' || uRaw.startsWith('LIT')) ? 'L'
-        : (uRaw === 'G' || uRaw === 'GM' || uRaw.startsWith('GRAM')) ? 'G'
-          : (uRaw === 'KG' || uRaw === 'KGS' || uRaw.startsWith('KILO')) ? 'KG'
-            : '';
-  if (!uom) return '';
-  return `${qty % 1 === 0 ? String(Math.trunc(qty)) : String(qty)} ${uom}`;
-}
-
 async function getProducts(_req, res) {
   try {
     const products = await Product.findAll({
-      attributes: ['product_id', 'product_code', 'product_name', 'zoho_sku_code', 'fill_size', 'form', 'category', 'mrp_price'],
+      attributes: ['product_id', 'product_code', 'product_name', 'zoho_sku_code', 'form', 'category', 'mrp_price'],
       order: [['product_name', 'ASC']],
     });
+    const productIds = products.map((p) => p.product_id).filter((id) => id != null);
+    const bomByProductId = new Map();
+    if (productIds.length > 0) {
+      const boms = await BOM.findAll({
+        where: { product_id: { [Op.in]: productIds } },
+        attributes: ['product_id', 'sku_bom_limit_qty', 'sku_bom_limit_uom'],
+      });
+      for (const b of boms) {
+        const plain = b.get({ plain: true });
+        if (plain.product_id != null) bomByProductId.set(plain.product_id, plain);
+      }
+    }
 
     const items = products.map(p => {
       const d = p.get({ plain: true });
+      const bom = bomByProductId.get(d.product_id);
       return {
         id: `PR-${d.product_id}`,
         type: 'product',
         name: d.product_name || d.product_code,
         sku: d.zoho_sku_code || d.product_code || '',
-        pack: derivePackSizeForFulfillmentRow(d.fill_size, d.product_name),
+        pack: packSizeFromBomRow(bom),
         category: d.category || '',
         /** Reference only — SO unit price is resolved per client via GET /client-product-price */
         price: d.mrp_price != null ? Number(d.mrp_price) : 0,

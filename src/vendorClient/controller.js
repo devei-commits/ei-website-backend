@@ -12,6 +12,7 @@ const {
   assertUserAvailableForVendorClientLink,
   syncLinkedVendorClientFromUser,
   linkOrCreateUserForClientVendorRow,
+  allocateNextEntityCode,
 } = require('./userLink');
 const { User } = require('../users/models');
 const {
@@ -127,6 +128,7 @@ function formatRow(row) {
   return {
     id: String(d.id),
     type: d.type,
+    entityCode: d.entity_code || '',
     zohoId: d.zoho_id ?? '',
     name: d.name || '',
     email: d.email || '',
@@ -240,7 +242,7 @@ async function syncZohoVendorDraft(req, res) {
 
     const payload = bodyToPayload(body, 'vendor');
     if (!payload.entity_code || !String(payload.entity_code).trim()) {
-      return res.status(400).json({ error: 'entityCode is required' });
+      payload.entity_code = await allocateNextEntityCode('vendor');
     }
     if (!payload.email || !String(payload.email).trim()) {
       return res.status(400).json({ error: 'email is required' });
@@ -295,23 +297,8 @@ async function syncZohoVendorDraft(req, res) {
 
 async function getNextCode(req, res) {
   try {
-    const type = (req.query.type || '').toLowerCase();
-    const prefix = type === 'client' ? 'EI-CLI-' : 'EI-VEN-';
-    const rows = await VendorClient.findAll({
-      where: { entity_code: { [Op.like]: `${prefix}%` } },
-      attributes: ['entity_code'],
-      order: [['entity_code', 'DESC']],
-    });
-    let nextNum = 1;
-    const numericPart = rows
-      .map((r) => {
-        const code = r.entity_code || r.get?.('entity_code');
-        const match = String(code).replace(prefix, '').match(/^(\d+)/);
-        return match ? parseInt(match[1], 10) : 0;
-      })
-      .filter((n) => !Number.isNaN(n));
-    if (numericPart.length > 0) nextNum = Math.max(...numericPart) + 1;
-    const nextCode = `${prefix}${String(nextNum).padStart(5, '0')}`;
+    const type = (req.query.type || '').toLowerCase() === 'client' ? 'client' : 'vendor';
+    const nextCode = await allocateNextEntityCode(type);
     res.json({ nextCode });
   } catch (err) {
     console.error('getNextCode error', err);
@@ -357,15 +344,6 @@ async function createVendorClient(req, res) {
     const body = req.body || {};
     const type = (body.type || 'vendor').toLowerCase() === 'client' ? 'client' : 'vendor';
     const payload = bodyToPayload(body, type);
-    if (!payload.entity_code || !String(payload.entity_code).trim()) {
-      return res.status(400).json({ error: 'entityCode is required' });
-    }
-    const existing = await VendorClient.findOne({
-      where: { entity_code: payload.entity_code },
-    });
-    if (existing) {
-      return res.status(400).json({ error: 'An entry with this code already exists' });
-    }
 
     let linkedUserId = null;
     if (payload.user_id !== undefined && payload.user_id != null && !Number.isNaN(payload.user_id)) {
@@ -385,9 +363,26 @@ async function createVendorClient(req, res) {
     let row;
     const t = await db.transaction();
     try {
+      let entityCode =
+        payload.entity_code && String(payload.entity_code).trim()
+          ? String(payload.entity_code).trim()
+          : '';
+      if (!entityCode) {
+        entityCode = await allocateNextEntityCode(type, t);
+      }
+      const existing = await VendorClient.findOne({
+        where: { entity_code: entityCode },
+        transaction: t,
+      });
+      if (existing) {
+        const err = new Error('An entry with this code already exists');
+        err.status = 400;
+        throw err;
+      }
+
       row = await VendorClient.create(
         {
-          entity_code: String(payload.entity_code).trim(),
+          entity_code: entityCode,
           type: payload.type,
           zoho_id: payload.zoho_id || null,
           user_id: linkedUserId,
@@ -455,6 +450,9 @@ async function createVendorClient(req, res) {
     res.status(201).json(out);
   } catch (err) {
     console.error('createVendorClient error', err);
+    if (err && err.status === 400) {
+      return res.status(400).json({ error: err.message || 'Invalid request' });
+    }
     if (err && err.code === 'ZOHO_SYNC_FAILED') {
       return res.status(err.status || 502).json({
         error: err.message || 'Zoho contact sync failed',

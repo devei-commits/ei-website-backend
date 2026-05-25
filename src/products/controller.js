@@ -299,7 +299,6 @@ const syncPrProductZoho = async (req, res) => {
       status: b.status ?? 'Draft',
       lifecycle_status: b.lifecycle_status ?? b.status ?? 'Draft',
       form: b.form ?? b.type ?? null,
-      fill_size: b.fill_size ?? b.packSize ?? null,
       product_description: b.product_description ?? b.description ?? null,
       storage_conditions: b.storage_conditions ?? null,
       mrp_price,
@@ -568,7 +567,6 @@ const createPRRegistration = async (req, res) => {
       status: b.status ?? 'Draft',
       lifecycle_status: b.lifecycle_status ?? b.status ?? 'Draft',
       form: b.form ?? b.type ?? null,
-      fill_size: b.fill_size ?? b.packSize ?? null,
       product_description: b.product_description ?? b.description ?? null,
       storage_conditions: b.storage_conditions ?? null,
       mrp_price,
@@ -649,7 +647,18 @@ const createPRRegistration = async (req, res) => {
         status: 'Draft',
         client: b.client ?? null,
         name: product_name,
-        pack_size: productRow.fill_size,
+        pack_size: (() => {
+          const { formatSkuBomLimitAsPack } = require('../lib/skuBomPackSize');
+          const lq =
+            b.sku_bom_limit_qty != null && b.sku_bom_limit_qty !== ''
+              ? b.sku_bom_limit_qty
+              : b.skuBomLimitQty != null && b.skuBomLimitQty !== ''
+                ? b.skuBomLimitQty
+                : null;
+          const lu = b.sku_bom_limit_uom ?? b.skuBomLimitUom ?? null;
+          const pack = formatSkuBomLimitAsPack(lq, lu);
+          return pack !== '0' ? pack : null;
+        })(),
         site: b.site ?? null,
         category: productRow.category,
         ph_range: productRow.ph_range,
@@ -931,6 +940,8 @@ const getAllProducts = async (req, res) => {
       internal_sku_code: plain.product_code ?? null,
       zoho_sku_code: plain.zoho_sku_code ?? null,
       pr_sub_category: parsedNotes.pr_sub_category || null,
+      skuBomLimitQty: bom && bom.sku_bom_limit_qty != null ? Number(bom.sku_bom_limit_qty) : null,
+      skuBomLimitUom: bom && bom.sku_bom_limit_uom ? String(bom.sku_bom_limit_uom) : null,
       rm_ingredients_count: rmCount,
       pack_items_count: packList.length,
       open_sos_count: openSos,
@@ -1363,6 +1374,18 @@ const updateProduct = async (req, res) => {
         ) {
           bomUpdate.sku_bom_limit_uom = bomPayload.sku_bom_limit_uom ?? bomPayload.skuBomLimitUom ?? null;
         }
+        if (
+          Object.prototype.hasOwnProperty.call(bomPayload, 'sku_bom_limit_qty') ||
+          Object.prototype.hasOwnProperty.call(bomPayload, 'skuBomLimitQty') ||
+          Object.prototype.hasOwnProperty.call(bomPayload, 'sku_bom_limit_uom') ||
+          Object.prototype.hasOwnProperty.call(bomPayload, 'skuBomLimitUom')
+        ) {
+          const { formatSkuBomLimitAsPack } = require('../lib/skuBomPackSize');
+          const lq = bomUpdate.sku_bom_limit_qty ?? bom.sku_bom_limit_qty;
+          const lu = bomUpdate.sku_bom_limit_uom ?? bom.sku_bom_limit_uom;
+          const pack = formatSkuBomLimitAsPack(lq, lu);
+          bomUpdate.pack_size = pack !== '0' ? pack : null;
+        }
         if (Array.isArray(bomPayload.process_steps)) bomUpdate.process_steps = bomPayload.process_steps;
         if (bomPayload.ph_range !== undefined) bomUpdate.ph_range = bomPayload.ph_range;
         if (bomPayload.brand_client !== undefined || bomPayload.brandClient !== undefined) {
@@ -1432,6 +1455,8 @@ const updateProduct = async (req, res) => {
     delete body.pr_sub_category;
     delete body.pr_qc_group;
     delete body.pack_configuration;
+    delete body.fill_size;
+    delete body.packSize;
     delete body.specific_gravity;
     delete body.microbial_limits;
     delete body.spf_pa_rating;

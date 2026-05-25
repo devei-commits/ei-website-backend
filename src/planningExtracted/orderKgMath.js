@@ -50,16 +50,28 @@ function parseFillSizeToKgPerUnit(fillSizeRaw, sg = 1) {
   return null;
 }
 
-/** SO line pack / fill size: prefer value from order form, then product master. */
-function resolveOrderLineFillSize(fillSizeOverride, productFillSize) {
+const { formatSkuBomLimitAsPack } = require('../lib/skuBomPackSize');
+
+/** SO line pack: order form value, else PR SKU BOM net per unit. */
+function resolveOrderLineFillSize(fillSizeOverride, productOrBomPack) {
   const override = String(fillSizeOverride ?? '').trim();
   if (override) {
     const lower = override.toLowerCase();
-    if (lower !== '—' && lower !== '-' && lower !== 'n/a' && lower !== 'na') {
+    if (lower !== '—' && lower !== '-' && lower !== 'n/a' && lower !== 'na' && lower !== '0') {
       return override;
     }
   }
-  return String(productFillSize ?? '').trim();
+  const fromSku = String(productOrBomPack ?? '').trim();
+  return fromSku && fromSku !== '0' ? fromSku : '';
+}
+
+function resolveProductPackFromSkuBom(product, bom) {
+  const b = bom?.get ? bom.get({ plain: true }) : bom;
+  const p = product?.get ? product.get({ plain: true }) : product;
+  const qty = b?.sku_bom_limit_qty ?? p?.sku_bom_limit_qty;
+  const uom = b?.sku_bom_limit_uom ?? p?.sku_bom_limit_uom;
+  const pack = formatSkuBomLimitAsPack(qty, uom);
+  return pack && pack !== '0' ? pack : '';
 }
 
 function inferBlendSpecificGravity(rmLines) {
@@ -114,13 +126,15 @@ function estimateOrderTotalKg({
   rmLines,
   batchSizeKg,
   batchesRequired,
-  /** Pack/fill from SO create form — overrides product.fill_size when PR has no fill size. */
+  /** Pack from SO create form (from PR SKU BOM). */
   fillSizeOverride,
+  /** Optional BOM row — used for sku_bom_limit when product has no fill_size. */
+  bom,
 }) {
   const qty = Number(orderQty) || 0;
   if (qty <= 0) return 0;
   const blendSg = inferBlendSpecificGravity(rmLines);
-  const fillRaw = resolveOrderLineFillSize(fillSizeOverride, product?.fill_size);
+  const fillRaw = resolveOrderLineFillSize(fillSizeOverride, resolveProductPackFromSkuBom(product, bom));
   const kgPerUnit = parseFillSizeToKgPerUnit(fillRaw, blendSg);
   if (kgPerUnit != null && kgPerUnit > 0) {
     return roundPlanningMaterialQty(qty * kgPerUnit);
@@ -131,7 +145,7 @@ function estimateOrderTotalKg({
 /**
  * FG kg, batch count, and RM/PM snapshot for a new planning_extracted row from an SO line.
  */
-function buildPlanningKgFromSoLine({ orderQty, product, rmLines, pmLines, fillSizeOverride }) {
+function buildPlanningKgFromSoLine({ orderQty, product, rmLines, pmLines, fillSizeOverride, bom }) {
   const batchSizeKg = Number(product?.batch_size_kg) || 100;
   const oq = Number(orderQty) || 0;
   const rm = Array.isArray(rmLines) ? rmLines : [];
@@ -144,6 +158,7 @@ function buildPlanningKgFromSoLine({ orderQty, product, rmLines, pmLines, fillSi
     batchSizeKg,
     batchesRequired: 1,
     fillSizeOverride,
+    bom,
   });
   let safeTotalKg = estimatedTotalKg > 0 ? estimatedTotalKg : 0;
   if (safeTotalKg <= 0) {

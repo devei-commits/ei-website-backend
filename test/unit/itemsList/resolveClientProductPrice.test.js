@@ -18,4 +18,16 @@ describe('pickTierForQty', () => {
   it('defaults quantity to at least 1', () => {
     expect(pickTierForQty(tiers, 0)?.id).toBe(1);
   });
+
+  it('picks highest MOQ breakpoint when multiple open-ended tiers exist', () => {
+    const saleTiers = [
+      { id: 10, moq_min: 1000, moq_max: null, price_per_unit: 20 },
+      { id: 11, moq_min: 1100, moq_max: null, price_per_unit: 18 },
+    ];
+    expect(pickTierForQty(saleTiers, 999)).toBeNull();
+    expect(pickTierForQty(saleTiers, 1000)?.price_per_unit).toBe(20);
+    expect(pickTierForQty(saleTiers, 1099)?.price_per_unit).toBe(20);
+    expect(pickTierForQty(saleTiers, 1100)?.price_per_unit).toBe(18);
+    expect(pickTierForQty(saleTiers, 5000)?.price_per_unit).toBe(18);
+  });
 });

@@ -15,6 +15,12 @@ const {
   uploadInventorySummaryExcelSafe,
   postInventorySummaryExcelImport,
 } = require('./inventorySummaryExcelImport');
+const {
+  uploadSihExcelSafe,
+  postWarehouseSihExcelImport,
+  postMl1SihExcelImport,
+  postMl2SihExcelImport,
+} = require('./warehouseSihBucketExcelImport');
 const { createCacheReadMiddleware } = require('../cache/cacheReadMiddleware');
 
 const cacheWarehouseInventoryList = createCacheReadMiddleware({
@@ -27,6 +33,24 @@ router.post(
   isAuthenticated,
   uploadInventorySummaryExcelSafe,
   postInventorySummaryExcelImport
+);
+router.post(
+  '/import-sih-excel/warehouse',
+  isAuthenticated,
+  uploadSihExcelSafe,
+  postWarehouseSihExcelImport
+);
+router.post(
+  '/import-sih-excel/ml1',
+  isAuthenticated,
+  uploadSihExcelSafe,
+  postMl1SihExcelImport
+);
+router.post(
+  '/import-sih-excel/ml2',
+  isAuthenticated,
+  uploadSihExcelSafe,
+  postMl2SihExcelImport
 );
 router.get('/', isAuthenticated, cacheWarehouseInventoryList, list);
 router.get('/location-history', isAuthenticated, listAllLocationHistory);

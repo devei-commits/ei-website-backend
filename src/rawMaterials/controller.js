@@ -629,33 +629,12 @@ async function updateRawMaterial(req, res) {
     if (!row) return res.status(404).json({ error: 'Raw material not found' });
     const b = req.body || {};
     const fields = payloadToListFields(b, true);
-    const nextCode =
-      fields.code != null && String(fields.code).trim() !== ''
-        ? String(fields.code).trim()
-        : String(row.code || '').trim();
+    const nextCode = String(row.code || '').trim();
     if (!nextCode) {
-      return res.status(400).json({ error: 'code or rmSku is required' });
+      return res.status(400).json({ error: 'Existing raw material has no internal code' });
     }
     fields.code = nextCode;
-    if (fields.zoho_sku_code !== undefined) {
-      fields.zoho_sku_code =
-        fields.zoho_sku_code == null || String(fields.zoho_sku_code).trim() === ''
-          ? null
-          : String(fields.zoho_sku_code).trim();
-    }
-    const nextSku = fields.zoho_sku_code !== undefined ? fields.zoho_sku_code : row.zoho_sku_code;
-    const dup = await findConflictingMasterRow(RawMaterial, nextCode, nextSku, row.id);
-    if (dup) {
-      return res.status(409).json({ error: 'A raw material with this code or SKU already exists' });
-    }
-    const rowFd =
-      row.form_data != null && typeof row.form_data === 'object' && !Array.isArray(row.form_data) ? row.form_data : {};
-    const bodyFd = b.form_data != null && typeof b.form_data === 'object' && !Array.isArray(b.form_data) ? b.form_data : {};
-    const mergedForSkuRule = { ...b, form_data: { ...rowFd, ...bodyFd } };
-    const skuRuleErr = validateInternalRmCodeForSubCategory(nextCode, mergedForSkuRule);
-    if (skuRuleErr) {
-      return res.status(400).json({ error: skuRuleErr });
-    }
+    delete fields.zoho_sku_code;
     await row.update(fields);
     res.json(formatRawMaterialFull(row));
   } catch (err) {

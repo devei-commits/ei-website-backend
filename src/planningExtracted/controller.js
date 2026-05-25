@@ -774,6 +774,7 @@ async function syncPlanningExtractedFromSalesOrders() {
         rmLines: rawMaterials,
         pmLines: packagingMaterials,
         fillSizeOverride: packFromSo,
+        bom: bom ? (bom.get ? bom.get({ plain: true }) : bom) : null,
       });
 
       let targetPlanRow = existing;

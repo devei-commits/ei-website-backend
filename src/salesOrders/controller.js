@@ -189,6 +189,7 @@ async function createPlanningExtractedRowsForSalesOrder(salesOrderId, payload) {
       rmLines,
       pmLines,
       fillSizeOverride: packFromSo,
+      bom: bom ? (bom.get ? bom.get({ plain: true }) : bom) : null,
     });
 
     await PlanningExtracted.create({
