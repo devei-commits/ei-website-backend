@@ -51,6 +51,38 @@ const { logLocationMovement } = require('../warehouseInventory/locationHistoryHe
 const { applyWhInboundStock } = require('./applyWhInboundStock');
 const { quantityToKg } = require('../warehouseInventory/quantityToKg');
 const { WarehouseLocation, WarehouseRack } = require('../warehouseLocations/models');
+const { ensureWarehouseZoneAndRack } = require('../facilityAreas/ensureWarehouseCustomLocation');
+
+function isCustomGrnLocationSource(body) {
+  const v = String((body && (body.locationSource ?? body.location_source)) || '')
+    .toLowerCase()
+    .trim();
+  return v === 'custom';
+}
+
+/** Custom GRN put-away → find or create zone/rack under main warehouse. */
+async function normalizeCustomGrnPutawayOnUpdates(body, updates) {
+  if (!isCustomGrnLocationSource(body)) return;
+  const zoneText = String(
+    body.locationZone ?? body.location_zone ?? updates.location_zone ?? ''
+  ).trim();
+  const rackText = String(
+    body.locationPrefix ?? body.location_prefix ?? updates.location_prefix ?? ''
+  ).trim();
+  if (!zoneText || !rackText) {
+    const err = new Error('Custom put-away requires both zone and rack.');
+    err.status = 400;
+    throw err;
+  }
+  const putaway = await ensureWarehouseZoneAndRack(zoneText, rackText);
+  if (!putaway || !putaway.rackCode) {
+    const err = new Error('Could not resolve custom warehouse put-away location.');
+    err.status = 400;
+    throw err;
+  }
+  updates.location_prefix = putaway.locationPrefix;
+  updates.location_zone = putaway.locationZone;
+}
 
 /** Usertypes that have order-management (warehouse/GRN) access — can be assigned to GRN. */
 const ASSIGNABLE_USERTYPES = ['super_admin', 'admin', 'bd_manager'];
@@ -857,7 +889,7 @@ async function applyGrnCompletionToInventory(grnRow, opts = {}) {
       whRow,
       qty,
       { rawMaterialId },
-      { transaction, grnId: d.id }
+      { transaction, grnId: d.id, grnPlain: d }
     );
     console.log('[grn] GRN Complete: added RM id=%d qty=%s', rawMaterialId, qty);
 
@@ -904,7 +936,7 @@ async function applyGrnCompletionToInventory(grnRow, opts = {}) {
       whRow,
       qty,
       { packMaterialId },
-      { transaction, grnId: d.id }
+      { transaction, grnId: d.id, grnPlain: d }
     );
     console.log('[grn] GRN Complete: added PM id=%d qty=%s', packMaterialId, qty);
 
@@ -951,7 +983,7 @@ async function applyGrnCompletionToInventory(grnRow, opts = {}) {
       whRow,
       qty,
       { productId },
-      { transaction, grnId: d.id }
+      { transaction, grnId: d.id, grnPlain: d }
     );
     console.log('[grn] GRN Complete: added PR product_id=%d qty=%s', productId, qty);
 
@@ -1031,6 +1063,9 @@ async function update(req, res) {
     if (body.expiry !== undefined) updates.expiry = body.expiry;
     if (body.mfgBatch !== undefined) updates.mfg_batch = body.mfgBatch;
     if (body.mfg_batch !== undefined) updates.mfg_batch = body.mfg_batch;
+    if (isCustomGrnLocationSource(body)) {
+      await normalizeCustomGrnPutawayOnUpdates(body, updates);
+    }
     const rowPlain = row.get ? row.get({ plain: true }) : row;
     const nextStatus = updates.status !== undefined ? updates.status : rowPlain.status;
     const nextQcStatus = updates.qc_status !== undefined ? updates.qc_status : rowPlain.qc_status;
@@ -1116,7 +1151,8 @@ async function update(req, res) {
     res.json(formatRow(refreshed, enriched));
   } catch (err) {
     console.error('[grn] update error:', err);
-    res.status(500).json({ error: err.message || 'Failed to update GRN' });
+    const status = err && err.status ? Number(err.status) : 500;
+    res.status(status >= 400 && status < 600 ? status : 500).json({ error: err.message || 'Failed to update GRN' });
   }
 }
 
@@ -1147,12 +1183,20 @@ async function remove(req, res) {
  * so Warehouse → Inventory shows the same location as the GRN QR payload.
  * Creates a zero-qty inventory stub if none exists yet (before GRN Complete).
  */
-async function applyLabelGenerationToWarehouseInventory(grnPlain, selectedItemCode, toRack, toZone, locationPrefixRaw) {
+async function applyLabelGenerationToWarehouseInventory(
+  grnPlain,
+  selectedItemCode,
+  toRack,
+  toZone,
+  locationPrefixRaw,
+  opts = {}
+) {
   await ensureWarehouseInventoryZoneRackTextColumns();
 
   const codeU = String(selectedItemCode || '').trim().toUpperCase();
-  const rackStr = String(toRack || '').trim() || String(locationPrefixRaw || '').trim() || null;
-  const zoneStr = String(toZone || '').trim() || null;
+  let rackStr = String(toRack || '').trim() || String(locationPrefixRaw || '').trim() || null;
+  let zoneStr = String(toZone || '').trim() || null;
+
   if (!rackStr && !zoneStr) return;
 
   const lineItems = Array.isArray(grnPlain.line_items) ? grnPlain.line_items : [];
@@ -1311,8 +1355,25 @@ async function generateLabels(req, res) {
       : Array.isArray(body.units_per_box_list)
         ? body.units_per_box_list
         : null;
-    const locationPrefix = body.locationPrefix ?? body.location_prefix ?? d.location_prefix ?? '';
+    const locationPrefixRaw = body.locationPrefix ?? body.location_prefix ?? d.location_prefix ?? '';
+    let locationPrefix = locationPrefixRaw;
     const grnBatchMfg = body.grnBatchMfg ?? body.grn_batch_mfg ?? d.grn_batch_mfg ?? '';
+    const useCustomWarehousePutaway = isCustomGrnLocationSource(body);
+    let normalizedZoneForGrn = body.locationZone ?? body.location_zone ?? d.location_zone ?? '';
+    let customPutaway = null;
+    if (useCustomWarehousePutaway) {
+      const zoneText = String(normalizedZoneForGrn || d.location_zone || '').trim();
+      const rackText = String(locationPrefixRaw || d.location_prefix || '').trim();
+      if (!zoneText || !rackText) {
+        return res.status(400).json({ error: 'Custom put-away requires both zone and rack.' });
+      }
+      customPutaway = await ensureWarehouseZoneAndRack(zoneText, rackText);
+      if (!customPutaway || !customPutaway.rackCode) {
+        return res.status(400).json({ error: 'Could not resolve custom warehouse put-away location.' });
+      }
+      locationPrefix = customPutaway.locationPrefix;
+      normalizedZoneForGrn = customPutaway.locationZone;
+    }
     const expiry = body.expiry ?? d.expiry ?? '';
     const mfgBatch = body.mfgBatch ?? body.mfg_batch ?? d.mfg_batch ?? '';
     const productName = String(body.productName ?? '').trim();
@@ -1328,7 +1389,10 @@ async function generateLabels(req, res) {
     const desiredRackCode = String(locationPrefix || '').trim();
     let toRack = null;
     let toZone = null;
-    if (desiredRackCode) {
+    if (customPutaway) {
+      toRack = customPutaway.rackCode;
+      toZone = customPutaway.zoneName;
+    } else if (desiredRackCode) {
       const rack = await WarehouseRack.findOne({
         where: { code: desiredRackCode },
         include: [{ model: WarehouseLocation, as: 'WarehouseLocation' }],
@@ -1373,9 +1437,7 @@ async function generateLabels(req, res) {
       }
     }
 
-    const explicitZone = String(
-      body.locationZone ?? body.location_zone ?? d.location_zone ?? ''
-    ).trim();
+    const explicitZone = String(normalizedZoneForGrn).trim();
     if (explicitZone) {
       toZone = explicitZone;
     }
@@ -1384,9 +1446,12 @@ async function generateLabels(req, res) {
     if (body.noOfBoxes !== undefined) updates.no_of_boxes = body.noOfBoxes;
     if (body.unitsPerBox !== undefined) updates.units_per_box = body.unitsPerBox;
     updates.last_box_units = null;
-    if (body.locationPrefix !== undefined) updates.location_prefix = body.locationPrefix;
-    if (body.locationZone !== undefined) updates.location_zone = body.locationZone;
-    if (body.location_zone !== undefined) updates.location_zone = body.location_zone;
+    if (body.locationPrefix !== undefined || useCustomWarehousePutaway) {
+      updates.location_prefix = locationPrefix;
+    }
+    if (body.locationZone !== undefined || body.location_zone !== undefined || useCustomWarehousePutaway) {
+      updates.location_zone = normalizedZoneForGrn;
+    }
     if (body.grnBatchMfg !== undefined) updates.grn_batch_mfg = body.grnBatchMfg;
     if (body.expiry !== undefined) updates.expiry = body.expiry;
     if (body.mfgBatch !== undefined) updates.mfg_batch = body.mfgBatch;
@@ -1446,7 +1511,7 @@ async function generateLabels(req, res) {
     await row.update({ generated_labels: labels, workflow_steps: updatedSteps });
 
     try {
-      await applyLabelGenerationToWarehouseInventory(d, itemCode, toRack, toZone, locationPrefix);
+      await applyLabelGenerationToWarehouseInventory(d, itemCode, toRack, toZone, locationPrefix, {});
     } catch (syncErr) {
       console.warn(
         '[grn] generateLabels: warehouse_inventory zone/rack sync failed:',

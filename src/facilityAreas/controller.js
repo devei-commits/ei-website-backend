@@ -1,5 +1,6 @@
 const FacilityArea = require('./models');
 const { WarehouseLocation, WarehouseRack } = require('../warehouseLocations/models');
+const { ensureWarehouseZoneAndRack } = require('./ensureWarehouseCustomLocation');
 
 /**
  * Slugify a free-text zone label into a compact, URL-safe zone code.
@@ -179,16 +180,10 @@ async function deleteArea(req, res) {
  * POST /api/v1/facility-areas/ensure-custom
  * Body: { areaType: 'warehouse' | 'production', zoneText: string, rackText: string }
  *
- * Find-or-create flow (idempotent) for custom zones/racks entered on GRN / Production MU:
- *   1. Ensure a catch-all "CUSTOM" FacilityArea exists for the given area type
- *      (code: WH-CUSTOM or PROD-CUSTOM).
- *   2. Ensure a WarehouseLocation (zone) exists with that text. Match case-insensitively
- *      by slug-code or by display name, scoped to the same location_type, so a zone that
- *      was originally created by a Facility Management admin is reused rather than
- *      duplicated. If truly new, create it under the CUSTOM area.
- *   3. Ensure a WarehouseRack with that text exists under the zone (case-insensitive code
- *      match, scoped to the zone's location_id — rack codes are only unique per zone).
- * Returns { areaId, zoneId, rackId }.
+ * Warehouse: find or create zone under the main warehouse area, then rack in that zone.
+ * Does not use WH-CUSTOM.
+ *
+ * Production: find-or-create under PROD-CUSTOM (unchanged).
  */
 async function ensureCustomLocation(req, res) {
   try {
@@ -200,6 +195,24 @@ async function ensureCustomLocation(req, res) {
     const rackText = String((req.body && req.body.rackText) || '').trim();
     if (!zoneText || !rackText) {
       return res.status(400).json({ error: 'zoneText and rackText are required' });
+    }
+
+    if (type === 'warehouse') {
+      const putaway = await ensureWarehouseZoneAndRack(zoneText, rackText);
+      if (!putaway || !putaway.rackId) {
+        return res.status(400).json({ error: 'zoneText and rackText are required for warehouse put-away.' });
+      }
+      return res.status(200).json({
+        areaId: putaway.areaId,
+        zoneId: putaway.zoneId,
+        rackId: putaway.rackId,
+        zoneCode: putaway.zoneCode,
+        zoneName: putaway.zoneName,
+        rackCode: putaway.rackCode,
+        areaType: type,
+        createdZone: putaway.createdZone,
+        createdRack: putaway.createdRack,
+      });
     }
 
     // 1) CUSTOM parent area (one per area type; reused across all custom entries).

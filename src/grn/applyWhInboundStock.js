@@ -6,10 +6,37 @@ const { WarehouseRackItem } = require('../warehouseLocations/models');
 const { mergeLocationTokens } = require('../warehouseInventory/locationTokensMerge');
 const { applyDeltaToRack, computeStockInHand } = require('../warehouseInventory/inventoryMath');
 const { resolveInboundWarehouseRack } = require('../facilityAreas/defaultLocationService');
+const { ensureWarehouseZoneAndRack } = require('../facilityAreas/ensureWarehouseCustomLocation');
 
 function toNum(x) {
   const n = Number(x);
   return Number.isNaN(n) ? 0 : n;
+}
+
+/**
+ * @param {object} [grnPlain]
+ * @param {object} itemIds
+ * @param {object} [opts]
+ */
+async function resolveGrnWarehousePutawayDest(grnPlain, itemIds, opts = {}) {
+  const zoneText = String(grnPlain?.location_zone || '').trim();
+  const rackText = String(grnPlain?.location_prefix || '').trim();
+
+  if (zoneText && rackText) {
+    const putaway = await ensureWarehouseZoneAndRack(zoneText, rackText, opts);
+    if (putaway && putaway.rackId) {
+      return {
+        locationId: putaway.zoneId,
+        locationCode: putaway.zoneCode,
+        locationName: putaway.zoneName,
+        rackId: putaway.rackId,
+        rackCode: putaway.rackCode,
+        source: 'grn_putaway',
+      };
+    }
+  }
+
+  return resolveInboundWarehouseRack(itemIds, opts);
 }
 
 /**
@@ -18,7 +45,9 @@ function toNum(x) {
 async function applyWhInboundStock(whRow, qty, itemIds, opts = {}) {
   const transaction = opts.transaction;
   const grnId = opts.grnId;
-  const dest = await resolveInboundWarehouseRack(itemIds, { transaction });
+  const dest = opts.grnPlain
+    ? await resolveGrnWarehousePutawayDest(opts.grnPlain, itemIds, { transaction })
+    : await resolveInboundWarehouseRack(itemIds, { transaction });
 
   let row = whRow;
   const plain = row.get ? row.get({ plain: true }) : row;
@@ -78,4 +107,4 @@ async function applyWhInboundStock(whRow, qty, itemIds, opts = {}) {
   return row;
 }
 
-module.exports = { applyWhInboundStock };
+module.exports = { applyWhInboundStock, resolveGrnWarehousePutawayDest };

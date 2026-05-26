@@ -10,7 +10,6 @@
     "dev": "nodemon -L app.js",
     "seed": "node seed.js",
     "seed:admins": "node scripts/seed-admin-users.js",
-    "seed:facility": "node scripts/seed-facility-structure.js",
     "clean-data": "node cleanData.js --yes",
     "reset-order-lifecycle": "node scripts/reset-order-lifecycle.js",
     "reset-order-lifecycle:yes": "node scripts/reset-order-lifecycle.js --yes",
