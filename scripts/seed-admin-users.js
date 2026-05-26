@@ -11,7 +11,42 @@ const ROLE_SEED = [
   { role_code: 'admin', role_name: 'Admin', level: 'admin' },
 ];
 
+/** EI team — password pattern EI@<local-part>, role super_admin */
+const EI_SUPER_ADMIN_EMAILS = [
+  'sweytha@estheticinsights.com',
+  'sandeep@estheticinsights.com',
+  'bindusree@estheticinsights.com',
+  'bhaskar@estheticinsights.com',
+  'shivavijayagiri@estheticinsights.com',
+  'shivampathak@estheticinsights.com',
+  'sravan@estheticinsights.com',
+  'pavankalyan@estheticinsights.com',
+];
+
+function capitalizeLocalPart(local) {
+  const s = String(local || '').trim();
+  if (!s) return '';
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+}
+
+function userFromEiEmail(email) {
+  const normalized = String(email).trim().toLowerCase();
+  const local = normalized.split('@')[0];
+  const display = capitalizeLocalPart(local);
+  return {
+    email: normalized,
+    password: `EI@${local}`,
+    fname: display,
+    lname: '',
+    display_name: display,
+    mobile: null,
+    usertype: 'super_admin',
+    department: 'Administration',
+  };
+}
+
 const ADMIN_USERS = [
+  ...EI_SUPER_ADMIN_EMAILS.map(userFromEiEmail),
   {
     email: 'superadmin@example.com',
     password: 'SuperAdmin@123',

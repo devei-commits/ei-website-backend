@@ -1203,13 +1203,26 @@ async function seed() {
     await FacilityArea.destroy({ where: {} });
 
     const areaSeed = [
-      { code: 'AREA-WH', name: 'Main Warehouse', area_type: 'warehouse', icon: '', description: 'Central warehouse storage' },
       {
-        code: 'AREA-MU',
-        name: 'Manufacturing unit',
+        code: 'AREA-WH',
+        name: 'Main Warehouse',
+        area_type: 'warehouse',
+        icon: '🏭',
+        description: 'Single main warehouse — RM, PM, and FG stored in separate zones',
+      },
+      {
+        code: 'AREA-MU-01',
+        name: 'Manufacturing Unit 1',
         area_type: 'production',
-        icon: '',
-        description: 'Production facility — ML1 / ML2 zones for MU stock routing and outbound transfer destination',
+        icon: '⚙️',
+        description: 'Manufacturing unit 1 (ML1) — MU stock / bulk staging',
+      },
+      {
+        code: 'AREA-MU-02',
+        name: 'Manufacturing Unit 2',
+        area_type: 'production',
+        icon: '⚙️',
+        description: 'Manufacturing unit 2 (ML2) — MU stock / bulk staging',
       },
     ];
     const createdAreas = await FacilityArea.bulkCreate(
@@ -1237,31 +1250,69 @@ async function seed() {
     };
 
     const WH = areaByCode.get('AREA-WH');
-    const MU = areaByCode.get('AREA-MU');
+    const MU1 = areaByCode.get('AREA-MU-01');
+    const MU2 = areaByCode.get('AREA-MU-02');
 
     const locationSeed = [
-      { code: 'LOC-RM', name: 'RM Store', area_id: WH, location_type: 'warehouse', zone_label: 'Zone A', icon: '', area_sqm: 380, description: 'Main warehouse storage', utilisation_pct: 50 },
+      {
+        code: 'LOC-RM',
+        name: 'RM Store',
+        area_id: WH,
+        location_type: 'warehouse',
+        zone_label: 'RM',
+        icon: '',
+        area_sqm: 380,
+        description: 'Raw materials zone (main warehouse)',
+        utilisation_pct: 50,
+        is_default: true,
+      },
+      {
+        code: 'LOC-PM',
+        name: 'PM Store',
+        area_id: WH,
+        location_type: 'warehouse',
+        zone_label: 'PM',
+        icon: '',
+        area_sqm: 280,
+        description: 'Packaging materials zone (main warehouse)',
+        utilisation_pct: 0,
+        is_default: false,
+      },
+      {
+        code: 'LOC-FG',
+        name: 'Finished Goods Store',
+        area_id: WH,
+        location_type: 'warehouse',
+        zone_label: 'FG',
+        icon: '',
+        area_sqm: 200,
+        description: 'Finished goods / PR zone (main warehouse)',
+        utilisation_pct: 0,
+        is_default: false,
+      },
       {
         code: 'LOC-ML1',
-        name: 'ML1 — Manufacturing line 1',
-        area_id: MU,
+        name: 'ML1 — Line 1',
+        area_id: MU1,
         location_type: 'production',
         zone_label: 'ML1',
         icon: '',
         area_sqm: 120,
-        description: 'Primary manufacturing line (ML1) — MU tank / bulk staging',
+        description: 'Manufacturing Unit 1 — default production zone (ML1)',
         utilisation_pct: 0,
+        is_default: true,
       },
       {
         code: 'LOC-ML2',
-        name: 'ML2 — Manufacturing line 2',
-        area_id: MU,
+        name: 'ML2 — Line 2',
+        area_id: MU2,
         location_type: 'production',
         zone_label: 'ML2',
         icon: '',
         area_sqm: 120,
-        description: 'Secondary manufacturing line (ML2) — MU tank / bulk staging',
+        description: 'Manufacturing Unit 2 — production zone (ML2)',
         utilisation_pct: 0,
+        is_default: false,
       },
     ];
     const createdLocations = await WarehouseLocation.bulkCreate(
@@ -1270,9 +1321,11 @@ async function seed() {
     const locByCode = new Map(createdLocations.map((c) => [c.code, c.id]));
 
     const rackSeed = [
-      { locCode: 'LOC-RM', code: 'A1', name: 'A1', description: 'Ambient Row 1', levels: 4, slots_total: 16, tags: ['001'] },
-      { locCode: 'LOC-ML1', code: 'ML1-R1', name: 'ML1 rack 1', description: 'Default put-away for ML1', levels: 2, slots_total: 8, tags: [] },
-      { locCode: 'LOC-ML2', code: 'ML2-R1', name: 'ML2 rack 1', description: 'Default put-away for ML2', levels: 2, slots_total: 8, tags: [] },
+      { locCode: 'LOC-RM', code: 'A1', name: 'RM Rack A1', description: 'RM ambient row', levels: 4, slots_total: 16, tags: ['001'] },
+      { locCode: 'LOC-PM', code: 'PM-R1', name: 'PM Rack 1', description: 'PM storage rack', levels: 4, slots_total: 16, tags: [] },
+      { locCode: 'LOC-FG', code: 'FG-R1', name: 'FG Rack 1', description: 'Finished goods rack', levels: 4, slots_total: 16, tags: [] },
+      { locCode: 'LOC-ML1', code: 'ML1-R1', name: 'ML1 rack 1', description: 'Default put-away for Manufacturing Unit 1', levels: 2, slots_total: 8, tags: [] },
+      { locCode: 'LOC-ML2', code: 'ML2-R1', name: 'ML2 rack 1', description: 'Default put-away for Manufacturing Unit 2', levels: 2, slots_total: 8, tags: [] },
     ];
 
     const createdRacks = [];
