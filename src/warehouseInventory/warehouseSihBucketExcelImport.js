@@ -20,6 +20,7 @@ const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const { Product } = require('../products/models');
 const redis = require('../cache/redis');
+const { allocateUnallocatedToDefaultRack } = require('./allocateUnallocatedStock');
 
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
 const MAX_DATA_ROWS = 50000;
@@ -368,6 +369,7 @@ async function executeSihBucketRows(rows, bucketKey, opts = {}) {
     created: 0,
     skipped: 0,
     errors: 0,
+    rack_allocated: 0,
     row_log: [],
   };
 
@@ -437,6 +439,9 @@ async function executeSihBucketRows(rows, bucketKey, opts = {}) {
       if (whUnit) updates.wh_unit = whUnit.slice(0, 20);
 
       await whRow.update(updates);
+      await whRow.reload();
+      const alloc = await allocateUnallocatedToDefaultRack(whRow, bucketKey);
+      if (alloc.allocated > 0) summary.rack_allocated += 1;
       const afterSnap = inventoryAuditSnapshot(whRow);
 
       await logLocationMovement({
@@ -531,6 +536,7 @@ function makePostHandler(bucketKey) {
         created: 0,
         skipped: 0,
         errors: 0,
+        rack_allocated: 0,
         row_log: [],
       };
 
@@ -543,6 +549,7 @@ function makePostHandler(bucketKey) {
         aggregated.created += part.created;
         aggregated.skipped += part.skipped;
         aggregated.errors += part.errors;
+        aggregated.rack_allocated += part.rack_allocated || 0;
         if (details && part.row_log?.length) aggregated.row_log.push(...part.row_log);
       }
 
@@ -561,6 +568,7 @@ function makePostHandler(bucketKey) {
           created: aggregated.created,
           skipped: aggregated.skipped,
           errors: aggregated.errors,
+          rack_allocated: aggregated.rack_allocated,
         },
         ...(details ? { row_log: aggregated.row_log } : {}),
       });
