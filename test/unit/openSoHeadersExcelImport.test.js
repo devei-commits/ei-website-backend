@@ -2,8 +2,12 @@ const ExcelJS = require('exceljs');
 const {
   normalizeSheetName,
   findOpenSoHeadersWorksheet,
+  findOpenSoLinesWorksheet,
   excelFieldsToSalesOrderPayload,
+  excelLineFieldsToItem,
   parseOpenSoHeadersWorkbook,
+  parseOpenSoLinesWorkbook,
+  groupItemsBySoKey,
 } = require('../../src/salesOrders/openSoHeadersExcelImport');
 
 describe('openSoHeadersExcelImport', () => {
@@ -16,6 +20,13 @@ describe('openSoHeadersExcelImport', () => {
     wb.addWorksheet('Summary');
     const headers = wb.addWorksheet('Open SO Headers');
     expect(findOpenSoHeadersWorksheet(wb)).toBe(headers);
+  });
+
+  test('findOpenSoLinesWorksheet finds sheet by name', () => {
+    const wb = new ExcelJS.Workbook();
+    wb.addWorksheet('Summary');
+    const lines = wb.addWorksheet('Open SO Lines');
+    expect(findOpenSoLinesWorksheet(wb)).toBe(lines);
   });
 
   test('excelFieldsToSalesOrderPayload maps header columns', () => {
@@ -85,6 +96,16 @@ describe('openSoHeadersExcelImport', () => {
     expect(payload.form_data.zohoSalesorderNumber).toBe('SO-03611');
   });
 
+  test('excelFieldsToSalesOrderPayload treats SO number text as display number, not zoho id', () => {
+    const payload = excelFieldsToSalesOrderPayload({
+      zohoSoNumber: 'SO-03611',
+      customerName: 'Acme',
+    });
+    expect(payload.order_id).toBe('SO-03611');
+    expect(payload.form_data.zohoSalesorderNumber).toBe('SO-03611');
+    expect(payload.form_data.zohoSalesorderId).toBeUndefined();
+  });
+
   test('parseOpenSoHeadersWorkbook reads data rows', async () => {
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Open SO Headers');
@@ -119,4 +140,79 @@ describe('openSoHeadersExcelImport', () => {
     expect(parsed.rows[0].payload.form_data.zohoSalesorderId).toBe('1252231000040833999');
     expect(parsed.rows[0].payload.payment_terms).toBe('Net 45');
   });
+
+  test('excelLineFieldsToItem maps line columns', () => {
+    const item = excelLineFieldsToItem({
+      productName: 'Serum',
+      sku: 'FG-SERUM-10ML',
+      packSize: '10 ml',
+      qtyOrdered: '100',
+      qtyInvoiced: '20',
+      qtyCancelled: '5',
+      openQtyRemaining: '75',
+      uom: 'Nos',
+      unitPrice: '99.5',
+      itemTotal: '9950',
+      taxPercent: '18',
+      taxAmount: '1791',
+      cgstRatePercent: '9',
+      sgstRatePercent: '9',
+      igstRatePercent: '0',
+      cgstAmount: '895.5',
+      sgstAmount: '895.5',
+      igstAmount: '0',
+      zohoProductId: '1252231000040001000',
+      hsnSac: '3304',
+    });
+    expect(item.productName).toBe('Serum');
+    expect(item.quantity).toBe(100);
+    expect(item.unitPrice).toBe(99.5);
+    expect(item.taxPercent).toBe(18);
+    expect(item.zohoItemId).toBe('1252231000040001000');
+    expect(item.hsnCode).toBe('3304');
+  });
+
+  test('parseOpenSoLinesWorkbook reads rows and groups by SO key', () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Open SO Lines');
+    ws.getRow(1).values = [
+      null,
+      'Zoho SO Number',
+      'Zoho SO ID',
+      'Product(Item Name)',
+      'SKU',
+      'Qty Ordered',
+      'Unit Price (₹)',
+      'Tax %',
+    ];
+    ws.getRow(2).values = [
+      null,
+      'SO-03611',
+      '1252231000040833999',
+      'Face Wash',
+      'FG-FW-100',
+      '10',
+      '120',
+      '18',
+    ];
+
+    const parsed = parseOpenSoLinesWorkbook(wb);
+    expect(parsed.rows.length).toBe(1);
+    expect(parsed.rows[0].item.productName).toBe('Face Wash');
+    const grouped = groupItemsBySoKey(parsed.rows);
+    expect(grouped.get('1252231000040833999')).toHaveLength(1);
+  });
+
+  test('parseOpenSoHeadersWorkbook includes late sparse rows', () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Open SO Headers');
+    ws.getRow(1).values = [null, 'Zoho SO Number', 'Customer Name', 'Order Date'];
+    ws.getRow(2).values = [null, '1252231000040833001', 'Client A', '2026-04-01'];
+    ws.getRow(60).values = [null, '1252231000040833002', 'Client B', '2026-04-02'];
+
+    const parsed = parseOpenSoHeadersWorkbook(wb);
+    expect(parsed.rows.length).toBe(2);
+    expect(parsed.rows[1].payload.form_data.zohoSalesorderId).toBe('1252231000040833002');
+  });
+
 });

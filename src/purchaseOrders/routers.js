@@ -8,10 +8,15 @@ const {
   updatePurchaseOrder,
   deletePurchaseOrder,
 } = require('./controller');
+const {
+  uploadPrRowsExcelSafe,
+  postPrRowsExcelImport,
+} = require('./prRowsExcelImport');
 
 const guard = [isAuthenticated, requireModule('sales-purchase')];
 
 router.get('/', guard, listPurchaseOrders);
+router.post('/import-excel', guard, uploadPrRowsExcelSafe, postPrRowsExcelImport);
 router.get('/:id', guard, getPurchaseOrderById);
 router.post('/', guard, createPurchaseOrder);
 router.put('/:id', guard, updatePurchaseOrder);

@@ -1,7 +1,8 @@
 /**
  * POST /api/v1/sales-orders/import-excel
- * Workbook sheet "Open SO Headers" — header-level sales order fields from Zoho export.
- * Line items are not on this sheet; items stay [] until a lines sheet is added later.
+ * Workbook sheets:
+ * - "Open SO Headers": header-level sales order fields.
+ * - "Open SO Lines": item-level rows linked by Zoho SO id / number.
  */
 const ExcelJS = require('exceljs');
 const multer = require('multer');
@@ -9,9 +10,9 @@ const { Op } = require('sequelize');
 const db = require('../../db');
 const SalesOrder = require('./models');
 const VendorClient = require('../vendorClient/models');
+const { FulfillmentOrder, FulfillmentOrderItem } = require('../fulfillment/models');
 const { cellToText } = require('../masterBulk/masterExcelFlexibleParse');
 const {
-  findLastDataRow,
   readRowFields,
   readZohoContactIdMetaFromCell,
   buildZohoColumnOverlayFromXlsx,
@@ -22,8 +23,9 @@ const {
 } = require('../../scripts/lib/zoho-sales-order-import');
 
 const OPEN_SO_HEADERS_SHEET = 'open so headers';
+const OPEN_SO_LINES_SHEET = 'open so lines';
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
-const MAX_DATA_ROWS = 10000;
+const MAX_DATA_ROWS = 200000;
 const CHUNK_SIZE = 100;
 const ALLOWED_MIME = new Set([
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -32,6 +34,7 @@ const ALLOWED_MIME = new Set([
 ]);
 
 const ZOHO_SO_NUMBER_ALIASES = ['zoho so number', 'zoho sales order number', 'zoho so no'];
+const ZOHO_SO_ID_ALIASES = ['zoho so id', 'zoho sales order id', 'salesorder id'];
 const ZOHO_CUSTOMER_ID_ALIASES = ['zoho customer id', 'customer id'];
 
 /** Columns read from "Open SO Headers". Skipped: EI SO Reference, Status (Zoho) read-only, Active Clients flag, Payment Terms Days, SO Subtotal. */
@@ -78,6 +81,42 @@ const HEADER_ALIASES = {
 };
 
 const HEADER_KEYS = Object.keys(HEADER_ALIASES);
+const LINE_HEADER_ALIASES = {
+  zohoSoNumber: ZOHO_SO_NUMBER_ALIASES,
+  zohoSoId: ZOHO_SO_ID_ALIASES,
+  zohoCustomerId: ZOHO_CUSTOMER_ID_ALIASES,
+  customerName: ['customer name'],
+  zohoStatus: ['status (zoho)', 'status zoho', 'zoho status'],
+  productName: [
+    'product(item name)',
+    'product (item name)',
+    'item name',
+    'product name',
+    'product',
+    'item',
+    'description',
+  ],
+  sku: ['sku'],
+  zohoProductId: ['product id (zoho)', 'zoho product id', 'item id'],
+  hsnSac: ['hsn/sac', 'hsn', 'sac'],
+  packSize: ['pack size', 'pack'],
+  qtyOrdered: ['qty ordered', 'quantity ordered', 'qty', 'quantity', 'order qty', 'ordered qty'],
+  qtyInvoiced: ['qty invoiced', 'quantity invoiced'],
+  qtyCancelled: ['qty cancelled', 'qty canceled', 'quantity cancelled'],
+  openQtyRemaining: ['open qty (remaining)', 'open qty remaining', 'open quantity', 'open qty', 'balance qty', 'pending qty'],
+  uom: ['uom', 'unit'],
+  unitPrice: ['unit price (₹)', 'unit price', 'rate', 'unit rate', 'price'],
+  itemTotal: ['item total', 'line total'],
+  taxPercent: ['tax %', 'tax percent'],
+  taxAmount: ['tax amount'],
+  cgstRatePercent: ['cgst rate %'],
+  sgstRatePercent: ['sgst rate %'],
+  igstRatePercent: ['igst rate %'],
+  cgstAmount: ['cgst'],
+  sgstAmount: ['sgst'],
+  igstAmount: ['igst'],
+};
+const LINE_HEADER_KEYS = Object.keys(LINE_HEADER_ALIASES);
 
 const SO_NUMBER_RE = /^SO[-\s]?\d+/i;
 
@@ -97,6 +136,17 @@ function normalizeSheetName(name) {
 }
 
 /**
+ * Scan full visible worksheet bounds so late rows are not missed.
+ * @param {import('exceljs').Worksheet} worksheet
+ * @param {number} headerRow
+ */
+function getWorksheetEndRow(worksheet, headerRow) {
+  const bottom = Number(worksheet.dimensions?.bottom ?? 0);
+  const reported = Number(worksheet.rowCount || worksheet.actualRowCount || 0);
+  return Math.max(bottom, reported, headerRow + 1);
+}
+
+/**
  * @param {import('exceljs').Workbook} workbook
  */
 function findOpenSoHeadersWorksheet(workbook) {
@@ -106,6 +156,20 @@ function findOpenSoHeadersWorksheet(workbook) {
   for (const ws of workbook.worksheets || []) {
     const n = normalizeSheetName(ws.name);
     if (n.includes('open so') && n.includes('header')) return ws;
+  }
+  return null;
+}
+
+/**
+ * @param {import('exceljs').Workbook} workbook
+ */
+function findOpenSoLinesWorksheet(workbook) {
+  for (const ws of workbook.worksheets || []) {
+    if (normalizeSheetName(ws.name) === OPEN_SO_LINES_SHEET) return ws;
+  }
+  for (const ws of workbook.worksheets || []) {
+    const n = normalizeSheetName(ws.name);
+    if (n.includes('open so') && n.includes('line')) return ws;
   }
   return null;
 }
@@ -130,6 +194,32 @@ function detectOpenSoHeadersColumnMap(worksheet, maxScanRow = 8) {
       }
     }
     if (map.zohoSoNumber != null) {
+      return { headerRow: r, col: map };
+    }
+  }
+  return null;
+}
+
+/**
+ * @param {import('exceljs').Worksheet} worksheet
+ * @param {number} [maxScanRow]
+ */
+function detectOpenSoLinesColumnMap(worksheet, maxScanRow = 8) {
+  const lastCol = Math.min(worksheet.columnCount || 100, 160);
+  for (let r = 1; r <= maxScanRow; r += 1) {
+    const row = worksheet.getRow(r);
+    const map = {};
+    for (let c = 1; c <= lastCol; c += 1) {
+      const label = normalizeHeaderLabel(cellToText(row.getCell(c)));
+      if (!label) continue;
+      for (const [key, aliases] of Object.entries(LINE_HEADER_ALIASES)) {
+        if (map[key]) continue;
+        if (aliases.some((a) => label === a || label.includes(a) || a.includes(label))) {
+          map[key] = c;
+        }
+      }
+    }
+    if ((map.zohoSoId != null || map.zohoSoNumber != null) && map.productName != null) {
       return { headerRow: r, col: map };
     }
   }
@@ -190,6 +280,9 @@ function resolveZohoSoIdFromFields(fields) {
     .trim()
     .replace(/\s/g, '');
   const display = String(fields.zohoSoDisplayNumber || '').trim();
+  if (raw && SO_NUMBER_RE.test(raw)) {
+    return { zohoId: null, displayNumber: raw, reliable: false };
+  }
   if (raw && /^\d{10,22}$/.test(raw)) {
     return { zohoId: raw, displayNumber: display || null, reliable: fields.zohoSoNumberReliable === true };
   }
@@ -203,6 +296,43 @@ function resolveZohoSoIdFromFields(fields) {
 function rowHasSoIdentity(fields) {
   const { zohoId, displayNumber } = resolveZohoSoIdFromFields(fields);
   return Boolean(zohoId || displayNumber || String(fields.customerName || '').trim());
+}
+
+function cleanDigitsOrText(value) {
+  return String(value || '').trim().replace(/\s/g, '');
+}
+
+function normalizeSoKey(key) {
+  return String(key || '').trim().toUpperCase();
+}
+
+function buildSoLookupKeys(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return [];
+  const keys = new Set();
+  const upper = raw.toUpperCase();
+  keys.add(upper);
+  keys.add(upper.replace(/^'+/, ''));
+  keys.add(upper.replace(/\s+/g, ''));
+  keys.add(upper.replace(/[^A-Z0-9]/g, ''));
+  const m = upper.match(/^SO[\s-]*([0-9]+)$/);
+  if (m && m[1]) {
+    keys.add(`SO-${m[1]}`);
+    keys.add(`SO${m[1]}`);
+  }
+  return [...keys].filter(Boolean);
+}
+
+/**
+ * @param {Record<string, string|boolean>} fields
+ */
+function resolveSoKeyFromLineFields(fields) {
+  const zohoSoId = cleanDigitsOrText(fields.zohoSoId);
+  if (/^\d{10,22}$/.test(zohoSoId)) return { soKey: normalizeSoKey(zohoSoId), type: 'zohoId' };
+  if (SO_NUMBER_RE.test(zohoSoId)) return { soKey: normalizeSoKey(zohoSoId), type: 'orderId' };
+  const zohoSoNo = cleanDigitsOrText(fields.zohoSoNumber);
+  if (zohoSoNo) return { soKey: normalizeSoKey(zohoSoNo), type: 'orderId' };
+  return { soKey: '', type: '' };
 }
 
 /**
@@ -316,6 +446,75 @@ function excelFieldsToSalesOrderPayload(fields) {
 }
 
 /**
+ * @param {import('exceljs').Row} row
+ * @param {Record<string, number>} colMap
+ */
+function readOpenSoLineRowFields(row, colMap) {
+  const fields = readRowFields(
+    row,
+    colMap,
+    LINE_HEADER_KEYS.filter((k) => k !== 'zohoSoNumber' && k !== 'zohoSoId' && k !== 'zohoCustomerId')
+  );
+
+  const soNoMeta = colMap.zohoSoNumber
+    ? readZohoContactIdMetaFromCell(row.getCell(colMap.zohoSoNumber))
+    : { id: '', reliable: false };
+  fields.zohoSoNumber = soNoMeta.id;
+  fields.zohoSoNumberReliable = soNoMeta.reliable;
+  const soDisplay = colMap.zohoSoNumber ? String(cellToText(row.getCell(colMap.zohoSoNumber))).trim() : '';
+  if (soDisplay && SO_NUMBER_RE.test(soDisplay)) fields.zohoSoDisplayNumber = soDisplay;
+
+  const soIdMeta = colMap.zohoSoId
+    ? readZohoContactIdMetaFromCell(row.getCell(colMap.zohoSoId))
+    : { id: '', reliable: false };
+  fields.zohoSoId = soIdMeta.id;
+  fields.zohoSoIdReliable = soIdMeta.reliable;
+
+  const custMeta = colMap.zohoCustomerId
+    ? readZohoContactIdMetaFromCell(row.getCell(colMap.zohoCustomerId))
+    : { id: '', reliable: false };
+  fields.zohoCustomerId = custMeta.id;
+  fields.zohoCustomerIdReliable = custMeta.reliable;
+
+  return fields;
+}
+
+/**
+ * @param {Record<string, string|boolean>} fields
+ */
+function excelLineFieldsToItem(fields) {
+  const qty = parseOptionalNumber(fields.qtyOrdered) ?? 0;
+  const unitPrice = parseOptionalNumber(fields.unitPrice) ?? 0;
+  const taxPercent = parseOptionalNumber(fields.taxPercent);
+  const item = {
+    sku: String(fields.sku || '').trim(),
+    productName: String(fields.productName || '').trim() || 'Line item',
+    pack: String(fields.packSize || '').trim(),
+    quantity: qty,
+    unitPrice,
+    orderedQty: qty,
+    invoicedQty: parseOptionalNumber(fields.qtyInvoiced) ?? undefined,
+    cancelledQty: parseOptionalNumber(fields.qtyCancelled) ?? undefined,
+    openQty: parseOptionalNumber(fields.openQtyRemaining) ?? undefined,
+    uom: String(fields.uom || '').trim() || undefined,
+    itemTotal: parseOptionalNumber(fields.itemTotal) ?? undefined,
+    taxPercent: taxPercent ?? undefined,
+    taxAmount: parseOptionalNumber(fields.taxAmount) ?? undefined,
+    cgstRatePercent: parseOptionalNumber(fields.cgstRatePercent) ?? undefined,
+    sgstRatePercent: parseOptionalNumber(fields.sgstRatePercent) ?? undefined,
+    igstRatePercent: parseOptionalNumber(fields.igstRatePercent) ?? undefined,
+    cgstAmount: parseOptionalNumber(fields.cgstAmount) ?? undefined,
+    sgstAmount: parseOptionalNumber(fields.sgstAmount) ?? undefined,
+    igstAmount: parseOptionalNumber(fields.igstAmount) ?? undefined,
+  };
+  const zohoProductId = cleanDigitsOrText(fields.zohoProductId);
+  if (zohoProductId) item.zohoItemId = zohoProductId;
+  const hsnSac = String(fields.hsnSac || '').trim();
+  if (hsnSac) item.hsnCode = hsnSac;
+  return item;
+}
+
+/**
  * @param {import('exceljs').Workbook} workbook
  * @param {Buffer} [buffer]
  */
@@ -335,10 +534,7 @@ function parseOpenSoHeadersWorkbook(workbook, buffer) {
     ? buildZohoColumnOverlayFromXlsx(buffer, worksheet.name, ZOHO_SO_NUMBER_ALIASES)
     : { byRow: {}, unreliableCount: 0 };
 
-  const lastDataRow = findLastDataRow(worksheet, headerRow, (row) => {
-    const f = readOpenSoHeaderRowFields(row, colMap);
-    return rowHasSoIdentity(f);
-  });
+  const lastDataRow = getWorksheetEndRow(worksheet, headerRow);
 
   const rows = [];
   let skippedNoIdentity = 0;
@@ -384,10 +580,104 @@ function parseOpenSoHeadersWorkbook(workbook, buffer) {
   };
 }
 
+/**
+ * @param {import('exceljs').Workbook} workbook
+ * @param {Buffer} [buffer]
+ */
+function parseOpenSoLinesWorkbook(workbook, buffer) {
+  const worksheet = findOpenSoLinesWorksheet(workbook);
+  if (!worksheet) {
+    return {
+      rows: [],
+      sheetName: null,
+      headerRow: null,
+      parseStats: { scanned_through_row: 0, skipped_no_identity: 0, zoho_overlay_unreliable: 0 },
+    };
+  }
+
+  const layout = detectOpenSoLinesColumnMap(worksheet);
+  if (!layout) {
+    throw new Error('Could not detect "Open SO Lines" columns');
+  }
+
+  const { headerRow, col: colMap } = layout;
+  const soIdOverlay = buffer
+    ? buildZohoColumnOverlayFromXlsx(buffer, worksheet.name, ZOHO_SO_ID_ALIASES)
+    : { byRow: {}, unreliableCount: 0 };
+  const soNoOverlay = buffer
+    ? buildZohoColumnOverlayFromXlsx(buffer, worksheet.name, ZOHO_SO_NUMBER_ALIASES)
+    : { byRow: {}, unreliableCount: 0 };
+  const customerOverlay = buffer
+    ? buildZohoColumnOverlayFromXlsx(buffer, worksheet.name, ZOHO_CUSTOMER_ID_ALIASES)
+    : { byRow: {}, unreliableCount: 0 };
+
+  const lastDataRow = getWorksheetEndRow(worksheet, headerRow);
+
+  const rows = [];
+  let skippedNoIdentity = 0;
+  for (let r = headerRow + 1; r <= lastDataRow; r += 1) {
+    const fields = readOpenSoLineRowFields(worksheet.getRow(r), colMap);
+    if (soIdOverlay.byRow?.[r]?.id) {
+      fields.zohoSoId = soIdOverlay.byRow[r].id;
+      fields.zohoSoIdReliable = soIdOverlay.byRow[r].reliable;
+    }
+    if (soNoOverlay.byRow?.[r]?.id) {
+      fields.zohoSoNumber = soNoOverlay.byRow[r].id;
+      fields.zohoSoNumberReliable = soNoOverlay.byRow[r].reliable;
+    }
+    if (customerOverlay.byRow?.[r]?.id) {
+      fields.zohoCustomerId = customerOverlay.byRow[r].id;
+      fields.zohoCustomerIdReliable = customerOverlay.byRow[r].reliable;
+    }
+
+    const { soKey } = resolveSoKeyFromLineFields(fields);
+    if (!soKey) {
+      skippedNoIdentity += 1;
+      continue;
+    }
+    const item = excelLineFieldsToItem(fields);
+    rows.push({ excel_row: r, sheet_name: worksheet.name, so_key: soKey, item, fields });
+  }
+
+  return {
+    rows,
+    sheetName: worksheet.name,
+    headerRow,
+    parseStats: {
+      scanned_through_row: lastDataRow,
+      skipped_no_identity: skippedNoIdentity,
+      zoho_overlay_unreliable:
+        (soIdOverlay.unreliableCount ?? 0) + (soNoOverlay.unreliableCount ?? 0),
+    },
+  };
+}
+
+function groupItemsBySoKey(lineRows) {
+  const out = new Map();
+  for (const row of lineRows || []) {
+    const keys = buildSoLookupKeys(row.so_key);
+    if (!keys.length) continue;
+    for (const key of keys) {
+      const list = out.get(key) || [];
+      list.push(row.item);
+      out.set(key, list);
+    }
+  }
+  return out;
+}
+
 async function extractOpenSoHeadersFromBuffer(buffer) {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer);
   return parseOpenSoHeadersWorkbook(workbook, buffer);
+}
+
+async function extractOpenSoWorkbookFromBuffer(buffer) {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
+  const headers = parseOpenSoHeadersWorkbook(workbook, buffer);
+  const lines = parseOpenSoLinesWorkbook(workbook, buffer);
+  return { headers, lines };
 }
 
 async function findByZohoSalesorderId(zohoId) {
@@ -466,6 +756,96 @@ async function enrichPayloadWithClient(payload, createdBy) {
   return payload;
 }
 
+function toDateOnlySafe(value) {
+  const v = toDateOnly(value);
+  return typeof v === 'string' && v.trim() ? v : null;
+}
+
+function mapPriorityFromSoStatus(statusRaw) {
+  const s = String(statusRaw || '').trim().toLowerCase();
+  if (s.includes('urgent') || s.includes('high')) return 'high';
+  return 'normal';
+}
+
+function buildFulfillmentOrderPatchFromSalesPayload(payload, salesOrderId) {
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  const soValue = items.reduce((sum, line) => {
+    const qty = Number(line.quantity ?? line.orderedQty ?? 0) || 0;
+    const unitPrice = Number(line.unitPrice ?? line.rate ?? 0) || 0;
+    return sum + (qty * unitPrice);
+  }, 0);
+  return {
+    so_no: String(payload.order_id || '').trim(),
+    sales_order_id: salesOrderId,
+    customer_name: String(payload.customer_name || '').trim() || 'Unknown Customer',
+    customer_city: String(payload.form_data?.shippingCity || payload.form_data?.billingCity || '').trim() || null,
+    order_date: toDateOnlySafe(payload.order_date),
+    due_date: toDateOnlySafe(payload.expected_shipment_date),
+    priority: mapPriorityFromSoStatus(payload.status),
+    so_status: 'planned',
+    so_value: Number.isFinite(soValue) ? soValue : 0,
+    ship_address: String(payload.form_data?.shippingAddress || '').trim() || null,
+    payment_terms: String(payload.payment_terms || payload.form_data?.paymentTerms || '').trim() || null,
+    notes: 'Synced from Open SO Headers Excel import',
+  };
+}
+
+function mapSoItemsToFulfillmentItems(itemsInput) {
+  const items = Array.isArray(itemsInput) ? itemsInput : [];
+  return items.map((line, idx) => {
+    const qtyRaw = Number(line.quantity ?? line.orderedQty ?? 0);
+    const qty = Number.isFinite(qtyRaw) && qtyRaw > 0 ? Math.round(qtyRaw) : 0;
+    const price = Number(line.unitPrice ?? line.rate ?? 0) || 0;
+    return {
+      item_no: String(line.itemNo || idx + 1),
+      sku: String(line.sku || '').trim() || null,
+      product_name: String(line.productName || line.name || `Item ${idx + 1}`).trim(),
+      pack: String(line.pack || '').trim() || null,
+      ordered_qty: qty,
+      rate: price,
+      unit_price: price,
+    };
+  });
+}
+
+async function upsertFulfillmentFromSalesOrderPayload(salesOrderRow, payload) {
+  if (!salesOrderRow || !payload?.order_id) return;
+  const patch = buildFulfillmentOrderPatchFromSalesPayload(payload, salesOrderRow.id);
+  const soNo = String(patch.so_no || '').trim();
+  if (!soNo) return;
+
+  let ff = await FulfillmentOrder.findOne({ where: { sales_order_id: salesOrderRow.id } });
+  if (!ff) {
+    ff = await FulfillmentOrder.findOne({ where: { so_no: soNo } });
+  }
+
+  if (ff) {
+    await ff.update(patch);
+  } else {
+    ff = await FulfillmentOrder.create(patch);
+  }
+
+  const existingItemCount = await FulfillmentOrderItem.count({
+    where: { fulfillment_order_id: ff.id },
+  });
+
+  // Preserve active fulfillment workflows: seed items only when missing.
+  if (existingItemCount > 0) return;
+
+  const salesOrderPlain = salesOrderRow.get ? salesOrderRow.get({ plain: true }) : salesOrderRow;
+  const payloadItems = Array.isArray(payload?.items) ? payload.items : [];
+  const persistedItems = Array.isArray(salesOrderPlain?.items) ? salesOrderPlain.items : [];
+  const sourceItems = payloadItems.length > 0 ? payloadItems : persistedItems;
+
+  const ffItems = mapSoItemsToFulfillmentItems(sourceItems)
+    .filter((it) => it.ordered_qty > 0);
+  if (ffItems.length === 0) return;
+
+  await FulfillmentOrderItem.bulkCreate(
+    ffItems.map((it) => ({ ...it, fulfillment_order_id: ff.id }))
+  );
+}
+
 /**
  * @param {Array<{ excel_row: number, payload: object }>} importRows
  * @param {{ details?: boolean, createdBy?: string }} opts
@@ -473,6 +853,7 @@ async function enrichPayloadWithClient(payload, createdBy) {
 async function executeOpenSoHeadersImportRows(importRows, opts = {}) {
   const details = !!opts.details;
   const createdBy = opts.createdBy || 'Open SO Headers import';
+  const itemsBySoKey = opts.itemsBySoKey instanceof Map ? opts.itemsBySoKey : new Map();
 
   const summary = {
     created: 0,
@@ -504,6 +885,27 @@ async function executeOpenSoHeadersImportRows(importRows, opts = {}) {
         existing ? existing.id : null
       );
       payload.form_data.orderId = payload.order_id;
+      const soKeyFromZohoId = normalizeSoKey(
+        payload.form_data && payload.form_data.zohoSalesorderId
+          ? String(payload.form_data.zohoSalesorderId)
+          : ''
+      );
+      const soKeyFromOrderId = normalizeSoKey(payload.order_id);
+      const lookupKeys = [
+        ...buildSoLookupKeys(soKeyFromZohoId),
+        ...buildSoLookupKeys(soKeyFromOrderId),
+      ];
+      let importedItems = null;
+      for (const lk of lookupKeys) {
+        const hit = itemsBySoKey.get(lk);
+        if (Array.isArray(hit) && hit.length > 0) {
+          importedItems = hit;
+          break;
+        }
+      }
+      if (Array.isArray(importedItems) && importedItems.length > 0) {
+        payload.items = importedItems;
+      }
 
       if (existing) {
         const prevFd = existing.get('form_data');
@@ -517,6 +919,12 @@ async function executeOpenSoHeadersImportRows(importRows, opts = {}) {
             ? { ...prevOs, ...payload.order_status }
             : payload.order_status;
 
+        const mergedItems =
+          Array.isArray(payload.items) && payload.items.length > 0
+            ? payload.items
+            : Array.isArray(existing.items)
+              ? existing.items
+              : [];
         await existing.update({
           customer_name: payload.customer_name ?? existing.customer_name,
           order_date: payload.order_date ?? existing.order_date,
@@ -526,7 +934,10 @@ async function executeOpenSoHeadersImportRows(importRows, opts = {}) {
           status: payload.status ?? existing.status,
           order_status: mergedOs,
           form_data: mergedFd,
+          items: mergedItems,
         });
+        payload.items = mergedItems;
+        await upsertFulfillmentFromSalesOrderPayload(existing, payload);
 
         summary.updated += 1;
         if (details) {
@@ -553,6 +964,7 @@ async function executeOpenSoHeadersImportRows(importRows, opts = {}) {
       }
 
       const row = await SalesOrder.create(payload);
+      await upsertFulfillmentFromSalesOrderPayload(row, payload);
       summary.created += 1;
       if (details) {
         summary.row_log.push({
@@ -589,13 +1001,28 @@ async function postOpenSoHeadersExcelImport(req, res) {
 
     let parsed;
     try {
-      parsed = await extractOpenSoHeadersFromBuffer(req.file.buffer);
+      parsed = await extractOpenSoWorkbookFromBuffer(req.file.buffer);
     } catch (loadErr) {
       console.error('[open-so-headers-excel] parse error', loadErr);
       return res.status(400).json({ error: loadErr.message || 'Invalid Excel file' });
     }
 
-    const { rows, sheetName, headerRow, parseStats } = parsed;
+    const { headers, lines } = parsed;
+    const { rows, sheetName, headerRow, parseStats } = headers;
+    if (!lines.sheetName) {
+      return res.status(400).json({
+        error: 'Worksheet "Open SO Lines" not found. SKU/product rows are required for import.',
+      });
+    }
+    if (!lines.rows.length) {
+      return res.status(400).json({
+        error:
+          'No line rows parsed from "Open SO Lines". Please verify line headers (SKU, Product, Qty Ordered, Zoho SO Number/ID).',
+        sheet: lines.sheetName,
+        header_row: lines.headerRow,
+        lines_parse_stats: lines.parseStats ?? null,
+      });
+    }
     if (!rows.length) {
       return res.status(400).json({
         error: 'No sales order rows found on "Open SO Headers". Need Zoho SO Number or customer name.',
@@ -623,10 +1050,11 @@ async function postOpenSoHeadersExcelImport(req, res) {
       sheet_name: r.sheet_name,
       payload: r.payload,
     }));
+    const itemsBySoKey = groupItemsBySoKey(lines.rows);
 
     for (let offset = 0; offset < importRows.length; offset += CHUNK_SIZE) {
       const slice = importRows.slice(offset, offset + CHUNK_SIZE);
-      const part = await executeOpenSoHeadersImportRows(slice, { details, createdBy });
+      const part = await executeOpenSoHeadersImportRows(slice, { details, createdBy, itemsBySoKey });
       aggregated.created += part.created;
       aggregated.updated += part.updated;
       aggregated.skipped += part.skipped;
@@ -641,6 +1069,8 @@ async function postOpenSoHeadersExcelImport(req, res) {
       sheet: sheetName,
       header_row: headerRow,
       parse_stats: parseStats ?? null,
+      lines_parse_stats: lines.parseStats ?? null,
+      lines_rows_total: lines.rows.length,
       summary: {
         sales_orders_created: aggregated.created,
         sales_orders_updated: aggregated.updated,
@@ -678,13 +1108,21 @@ function uploadOpenSoHeadersExcelSafe(req, res, next) {
 
 module.exports = {
   OPEN_SO_HEADERS_SHEET,
+  OPEN_SO_LINES_SHEET,
   HEADER_ALIASES,
+  LINE_HEADER_ALIASES,
   normalizeSheetName,
   findOpenSoHeadersWorksheet,
+  findOpenSoLinesWorksheet,
   detectOpenSoHeadersColumnMap,
+  detectOpenSoLinesColumnMap,
   excelFieldsToSalesOrderPayload,
+  excelLineFieldsToItem,
   parseOpenSoHeadersWorkbook,
+  parseOpenSoLinesWorkbook,
   extractOpenSoHeadersFromBuffer,
+  extractOpenSoWorkbookFromBuffer,
+  groupItemsBySoKey,
   executeOpenSoHeadersImportRows,
   uploadOpenSoHeadersExcelSafe,
   postOpenSoHeadersExcelImport,

@@ -1,0 +1,366 @@
+const ExcelJS = require('exceljs');
+const {
+  normalizeSheetName,
+  findPrRowsWorksheet,
+  findQuotationRowsWorksheet,
+  findRawPoDetailWorksheet,
+  prRowFieldsToItem,
+  quotationRowFieldsToItem,
+  rawPoDetailFieldsToItem,
+  parsePrRowsWorkbook,
+  parseQuotationRowsWorkbook,
+  parseRawPoDetailWorkbook,
+  groupPrRowsToPoPayloads,
+  applyQuotationRowsToGroupedPos,
+  applyRawPoDetailsToGroupedPos,
+} = require('../../src/purchaseOrders/prRowsExcelImport');
+
+describe('prRowsExcelImport', () => {
+  test('normalizeSheetName matches PR rows', () => {
+    expect(normalizeSheetName('PR rows')).toBe('pr rows');
+  });
+
+  test('findPrRowsWorksheet finds sheet by name', () => {
+    const wb = new ExcelJS.Workbook();
+    wb.addWorksheet('Summary');
+    const ws = wb.addWorksheet('PR rows');
+    expect(findPrRowsWorksheet(wb)).toBe(ws);
+  });
+
+  test('findQuotationRowsWorksheet finds sheet by name', () => {
+    const wb = new ExcelJS.Workbook();
+    wb.addWorksheet('Sheet 1-PR rows');
+    const ws = wb.addWorksheet('Sheet 2- Quotation rows');
+    expect(findQuotationRowsWorksheet(wb)).toBe(ws);
+  });
+
+  test('findRawPoDetailWorksheet finds sheet by name', () => {
+    const wb = new ExcelJS.Workbook();
+    wb.addWorksheet('Sheet 1-PR rows');
+    const ws = wb.addWorksheet('Raw PO Detail (reconcile)');
+    expect(findRawPoDetailWorksheet(wb)).toBe(ws);
+  });
+
+  test('prRowFieldsToItem maps columns', () => {
+    const item = prRowFieldsToItem({
+      itemName: 'Cap 24mm',
+      sku: 'PM-CAP-24',
+      reqQty: '500',
+      openQtyRemaining: '300',
+      uom: 'Nos',
+      moq: '1000',
+      plannedPrice: '1.5',
+      packSize: '1 pc',
+      leadTimeDays: '10',
+      hsnSac: '3923',
+      category: 'PM',
+      zohoProductId: '1252231000001111222',
+    });
+    expect(item.productName).toBe('Cap 24mm');
+    expect(item.quantity).toBe(500);
+    expect(item.unitPrice).toBe(1.5);
+    expect(item.zohoItemId).toBe('1252231000001111222');
+  });
+
+  test('parsePrRowsWorkbook parses and groups by EI PO Reference', () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('PR rows');
+    ws.getRow(1).values = [
+      null,
+      'EI PO Reference',
+      'PO Status',
+      'Category',
+      'Priority',
+      'Request Date',
+      'Required Date',
+      'Item Name',
+      'Req Qty',
+      'Open Qty (Remaining)',
+      'UOM',
+      'MOQ',
+      'Planned Price (₹)',
+      'Pack Size',
+      'Lead Time (Days)',
+      'Preferred Vendor',
+      'Prefferred  Vendor Zoho ID',
+      'HSN/SAC',
+      'SKU',
+      'Product ID (Zoho)',
+    ];
+    ws.getRow(2).values = [
+      null, 'PO-001', 'Open', 'RM', 'High', '2026-05-01', '2026-05-15',
+      'Glycerin', '100', '80', 'KG', '25', '150', '25 KG', '12',
+      'ABC Chemicals', '1252231000030001000', '2905', 'RM-GLY', '1252231000090000001',
+    ];
+    ws.getRow(3).values = [
+      null, 'PO-001', 'Open', 'RM', 'High', '2026-05-01', '2026-05-15',
+      'Niacinamide', '50', '50', 'KG', '10', '320', '25 KG', '9',
+      'ABC Chemicals', '1252231000030001000', '2936', 'RM-NIA', '1252231000090000002',
+    ];
+
+    const parsed = parsePrRowsWorkbook(wb);
+    expect(parsed.rows.length).toBe(2);
+    const grouped = groupPrRowsToPoPayloads(parsed.rows);
+    expect(grouped.size).toBe(1);
+    expect(grouped.get('PO-001').payload.items).toHaveLength(2);
+  });
+
+  test('quotationRowFieldsToItem maps quotation columns', () => {
+    const item = quotationRowFieldsToItem({
+      itemName: 'Glycerin',
+      sku: 'RM-GLY',
+      hsnSac: '2905',
+      uom: 'KG',
+      quotedQty: '100',
+      unitPrice: '145',
+      itemTaxPercent: '18',
+      itemTaxAmount: '2610',
+      itemTotal: '17110',
+      currency: 'INR',
+    });
+    expect(item.productName).toBe('Glycerin');
+    expect(item.quotedQty).toBe(100);
+    expect(item.unitPrice).toBe(145);
+    expect(item.taxPercent).toBe(18);
+    expect(item.currency).toBe('INR');
+  });
+
+  test('parseQuotationRowsWorkbook parses quotation rows', () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet 2- Quotation rows');
+    ws.getRow(1).values = [
+      null,
+      'EI PO Reference',
+      'Vendor',
+      'Vendor Zoho ID',
+      'Vendor GSTIN',
+      'GST Treatment',
+      'Item Name',
+      'SKU',
+      'HSN/SAC',
+      'UOM',
+      'Quoted Qty',
+      'Rate / Unit Price (₹)',
+      'Item Tax %',
+      'Item Tax Amount',
+      'Item Total',
+      'Currency',
+      'Quotation Date',
+      'Validity / Expected Arrival',
+      'Payment Terms',
+      'Confirmed?',
+    ];
+    ws.getRow(2).values = [
+      null,
+      'PO-001',
+      'ABC Chemicals',
+      '1252231000030001000',
+      '27AAAAA0000A1Z5',
+      'business_gst',
+      'Glycerin',
+      'RM-GLY',
+      '2905',
+      'KG',
+      '100',
+      '145',
+      '18',
+      '2610',
+      '17110',
+      'INR',
+      '2026-05-10',
+      '2026-05-20',
+      'Net 30',
+      'Yes',
+    ];
+    const parsed = parseQuotationRowsWorkbook(wb);
+    expect(parsed.rows.length).toBe(1);
+    expect(parsed.rows[0].po_key).toBe('PO-001');
+  });
+
+  test('applyQuotationRowsToGroupedPos merges quote fields to existing item', () => {
+    const grouped = new Map();
+    grouped.set('PO-001', {
+      excel_rows: [2],
+      payload: {
+        order_id: 'PO-001',
+        vendor_name: 'ABC Chemicals',
+        form_data: {},
+        items: [{ sku: 'RM-GLY', productName: 'Glycerin', quantity: 100, unitPrice: 150 }],
+      },
+    });
+    const quotationRows = [
+      {
+        excel_row: 5,
+        po_key: 'PO-001',
+        fields: {
+          vendor: 'ABC Chemicals',
+          vendorZohoId: '1252231000030001000',
+          vendorGstin: '27AAAAA0000A1Z5',
+          gstTreatment: 'business_gst',
+          itemName: 'Glycerin',
+          sku: 'RM-GLY',
+          quotedQty: '100',
+          unitPrice: '145',
+          itemTaxPercent: '18',
+          itemTaxAmount: '2610',
+          itemTotal: '17110',
+          currency: 'INR',
+          quotationDate: '2026-05-10',
+          validityExpectedArrival: '2026-05-20',
+          paymentTerms: 'Net 30',
+          confirmed: 'Yes',
+        },
+      },
+    ];
+    applyQuotationRowsToGroupedPos(grouped, quotationRows);
+    const po = grouped.get('PO-001').payload;
+    expect(po.items[0].unitPrice).toBe(145);
+    expect(po.items[0].taxPercent).toBe(18);
+    expect(po.form_data.vendorZohoId).toBe('1252231000030001000');
+    expect(po.form_data.paymentTerms).toBe('Net 30');
+  });
+
+  test('rawPoDetailFieldsToItem maps raw detail columns', () => {
+    const item = rawPoDetailFieldsToItem({
+      itemName: 'Glycerin',
+      sku: 'RM-GLY',
+      itemDesc: 'Pharma grade',
+      quantityOrdered: '100',
+      quantityReceived: '20',
+      quantityCancelled: '5',
+      quantityBilled: '50',
+      usageUnit: 'KG',
+      itemPrice: '140',
+      itemTaxPercent: '18',
+      itemTaxAmount: '2520',
+      itemTotal: '16520',
+      hsnSac: '2905',
+      currencyCode: 'INR',
+    });
+    expect(item.productName).toBe('Glycerin');
+    expect(item.quantityOrdered).toBe(100);
+    expect(item.quantityReceived).toBe(20);
+    expect(item.unitPrice).toBe(140);
+    expect(item.currency).toBe('INR');
+  });
+
+  test('parseRawPoDetailWorkbook parses detail rows', () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Raw PO Detail (reconcile)');
+    ws.getRow(1).values = [
+      null,
+      'Purchase Order Number',
+      'Reference#',
+      'Purchase Order Date',
+      'Delivery Date',
+      'Expected Arrival Date',
+      'Vendor Name',
+      'GST Identification Number(GSTIN)',
+      'GST Treatment',
+      'Item Name',
+      'SKU',
+      'HSN/SAC',
+      'Item Desc',
+      'QuantityOrdered',
+      'QuantityRecieved',
+      'QuantityCancelled',
+      'QuantityBilled',
+      'Usage Unit',
+      'Item Price',
+      'Item Tax %',
+      'Item Tax Amount',
+      'Item Total',
+      'Total',
+      'Currency Code',
+      'Payment Terms Label',
+    ];
+    ws.getRow(2).values = [
+      null,
+      'PO-Z-001',
+      'PO-001',
+      '2026-05-01',
+      '2026-05-10',
+      '2026-05-12',
+      'ABC Chemicals',
+      '27AAAAA0000A1Z5',
+      'business_gst',
+      'Glycerin',
+      'RM-GLY',
+      '2905',
+      'Pharma grade',
+      '100',
+      '20',
+      '5',
+      '50',
+      'KG',
+      '140',
+      '18',
+      '2520',
+      '16520',
+      '16520',
+      'INR',
+      'Net 30',
+    ];
+    const parsed = parseRawPoDetailWorkbook(wb);
+    expect(parsed.rows.length).toBe(1);
+    expect(parsed.rows[0].po_key).toBe('PO-001');
+  });
+
+  test('applyRawPoDetailsToGroupedPos merges raw detail fields', () => {
+    const grouped = new Map();
+    grouped.set('PO-001', {
+      excel_rows: [2],
+      payload: {
+        order_id: 'PO-001',
+        vendor_name: null,
+        order_date: null,
+        expected_shipment_date: null,
+        payment_terms: null,
+        form_data: {},
+        items: [{ sku: 'RM-GLY', productName: 'Glycerin', quantity: 100, unitPrice: 150 }],
+      },
+    });
+
+    const rawRows = [
+      {
+        excel_row: 9,
+        po_key: 'PO-001',
+        fields: {
+          purchaseOrderNumber: 'PO-Z-001',
+          vendorName: 'ABC Chemicals',
+          vendorGstin: '27AAAAA0000A1Z5',
+          gstTreatment: 'business_gst',
+          purchaseOrderDate: '2026-05-01',
+          deliveryDate: '2026-05-10',
+          expectedArrivalDate: '2026-05-12',
+          paymentTermsLabel: 'Net 30',
+          currencyCode: 'INR',
+          poTotal: '16520',
+          itemName: 'Glycerin',
+          sku: 'RM-GLY',
+          itemDesc: 'Pharma grade',
+          quantityOrdered: '100',
+          quantityRecieved: '20',
+          quantityCancelled: '5',
+          quantityBilled: '50',
+          usageUnit: 'KG',
+          itemPrice: '140',
+          itemTaxPercent: '18',
+          itemTaxAmount: '2520',
+          itemTotal: '16520',
+          hsnSac: '2905',
+        },
+      },
+    ];
+
+    applyRawPoDetailsToGroupedPos(grouped, rawRows);
+    const po = grouped.get('PO-001').payload;
+    expect(po.vendor_name).toBe('ABC Chemicals');
+    expect(po.order_date).toBe('2026-05-01');
+    expect(po.payment_terms).toBe('Net 30');
+    expect(po.items[0].unitPrice).toBe(140);
+    expect(po.items[0].quantityOrdered).toBe(100);
+    expect(po.form_data.poTotal).toBe(16520);
+  });
+});
+
