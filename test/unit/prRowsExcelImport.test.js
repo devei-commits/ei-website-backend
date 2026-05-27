@@ -13,6 +13,7 @@ const {
   groupPrRowsToPoPayloads,
   applyQuotationRowsToGroupedPos,
   applyRawPoDetailsToGroupedPos,
+  enrichItemsWithMaterialLookup,
 } = require('../../src/purchaseOrders/prRowsExcelImport');
 
 describe('prRowsExcelImport', () => {
@@ -60,6 +61,8 @@ describe('prRowsExcelImport', () => {
     expect(item.quantity).toBe(500);
     expect(item.unitPrice).toBe(1.5);
     expect(item.zohoItemId).toBe('1252231000001111222');
+    expect(item.type).toBe('PM');
+    expect(item.itemCode).toBe('PM-CAP-24');
   });
 
   test('parsePrRowsWorkbook parses and groups by EI PO Reference', () => {
@@ -361,6 +364,37 @@ describe('prRowsExcelImport', () => {
     expect(po.items[0].unitPrice).toBe(140);
     expect(po.items[0].quantityOrdered).toBe(100);
     expect(po.form_data.poTotal).toBe(16520);
+  });
+
+  test('enrichItemsWithMaterialLookup maps sku using category', () => {
+    const items = [
+      {
+        sku: 'RM-GLY',
+        category: 'RM',
+        itemName: 'Glycerin from excel',
+      },
+      {
+        sku: 'PM-CAP-24',
+        category: 'PM',
+        itemName: 'Cap from excel',
+      },
+    ];
+    const lookup = {
+      rmBySku: new Map([
+        ['RM-GLY', { id: 11, code: 'RM-0007', name: 'Glycerin USP' }],
+      ]),
+      pmBySku: new Map([
+        ['PM-CAP-24', { id: 22, code: 'PM-0042', name: 'Cap 24mm White' }],
+      ]),
+    };
+
+    const out = enrichItemsWithMaterialLookup(items, lookup);
+    expect(out[0].raw_material_id).toBe(11);
+    expect(out[0].itemCode).toBe('RM-0007');
+    expect(out[0].itemName).toBe('Glycerin USP');
+    expect(out[1].pack_material_id).toBe(22);
+    expect(out[1].itemCode).toBe('PM-0042');
+    expect(out[1].itemName).toBe('Cap 24mm White');
   });
 });
 

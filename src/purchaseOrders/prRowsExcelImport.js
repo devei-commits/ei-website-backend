@@ -9,6 +9,8 @@ const ExcelJS = require('exceljs');
 const multer = require('multer');
 const PurchaseOrder = require('./models');
 const VendorClient = require('../vendorClient/models');
+const RawMaterial = require('../rawMaterials/models');
+const PackMaterial = require('../packMaterials/models');
 const { cellToText } = require('../masterBulk/masterExcelFlexibleParse');
 const { readRowFields, readZohoContactIdMetaFromCell } = require('../vendorClient/vendorClientExcelParseUtils');
 
@@ -118,6 +120,12 @@ function parseOptionalNumber(val) {
   if (!s) return null;
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
+}
+
+function normalizeMaterialType(raw) {
+  const s = String(raw || '').trim().toLowerCase();
+  if (s === 'pm' || s.includes('pack')) return 'PM';
+  return 'RM';
 }
 
 function toDateOnly(val) {
@@ -327,9 +335,17 @@ function poKeyFromRawDetailFields(fields) {
 }
 
 function prRowFieldsToItem(fields) {
+  const sku = String(fields.sku || '').trim();
+  const type = normalizeMaterialType(fields.category);
+  const itemName = String(fields.itemName || '').trim() || 'PO item';
   const item = {
-    sku: String(fields.sku || '').trim(),
-    productName: String(fields.itemName || '').trim() || 'PO item',
+    sku,
+    productName: itemName,
+    itemName,
+    name: itemName,
+    itemCode: sku || undefined,
+    code: sku || undefined,
+    type,
     pack: String(fields.packSize || '').trim(),
     quantity: parseOptionalNumber(fields.reqQty) ?? 0,
     reqQty: parseOptionalNumber(fields.reqQty) ?? undefined,
@@ -339,7 +355,7 @@ function prRowFieldsToItem(fields) {
     unitPrice: parseOptionalNumber(fields.plannedPrice) ?? 0,
     leadTimeDays: parseOptionalNumber(fields.leadTimeDays) ?? undefined,
     hsnCode: String(fields.hsnSac || '').trim() || undefined,
-    category: String(fields.category || '').trim() || undefined,
+    category: type,
   };
   const zohoPid = String(fields.zohoProductId || '').trim();
   if (zohoPid) item.zohoItemId = zohoPid;
@@ -347,9 +363,14 @@ function prRowFieldsToItem(fields) {
 }
 
 function quotationRowFieldsToItem(fields) {
+  const itemName = String(fields.itemName || '').trim() || 'PO item';
   const item = {
     sku: String(fields.sku || '').trim(),
-    productName: String(fields.itemName || '').trim() || 'PO item',
+    productName: itemName,
+    itemName,
+    name: itemName,
+    itemCode: String(fields.sku || '').trim() || undefined,
+    code: String(fields.sku || '').trim() || undefined,
     quantity: parseOptionalNumber(fields.quotedQty) ?? undefined,
     quotedQty: parseOptionalNumber(fields.quotedQty) ?? undefined,
     uom: String(fields.uom || '').trim() || undefined,
@@ -364,9 +385,14 @@ function quotationRowFieldsToItem(fields) {
 }
 
 function rawPoDetailFieldsToItem(fields) {
+  const itemName = String(fields.itemName || '').trim() || 'PO item';
   return {
     sku: String(fields.sku || '').trim(),
-    productName: String(fields.itemName || '').trim() || 'PO item',
+    productName: itemName,
+    itemName,
+    name: itemName,
+    itemCode: String(fields.sku || '').trim() || undefined,
+    code: String(fields.sku || '').trim() || undefined,
     itemDesc: String(fields.itemDesc || '').trim() || undefined,
     quantity: parseOptionalNumber(fields.quantityOrdered) ?? undefined,
     quantityOrdered: parseOptionalNumber(fields.quantityOrdered) ?? undefined,
@@ -381,6 +407,90 @@ function rawPoDetailFieldsToItem(fields) {
     hsnCode: String(fields.hsnSac || '').trim() || undefined,
     currency: String(fields.currencyCode || '').trim() || undefined,
   };
+}
+
+async function buildMaterialSkuLookup() {
+  const [rmRows, pmRows] = await Promise.all([
+    RawMaterial.findAll({
+      attributes: ['id', 'code', 'name', 'zoho_sku_code'],
+    }),
+    PackMaterial.findAll({
+      attributes: ['id', 'code', 'description', 'zoho_sku_code'],
+    }),
+  ]);
+
+  const rmBySku = new Map();
+  const pmBySku = new Map();
+  for (const row of rmRows) {
+    const d = row.get ? row.get({ plain: true }) : row;
+    const key = String(d.zoho_sku_code || '').trim().toUpperCase();
+    if (!key) continue;
+    rmBySku.set(key, {
+      id: Number(d.id),
+      code: String(d.code || '').trim(),
+      name: String(d.name || '').trim(),
+    });
+  }
+  for (const row of pmRows) {
+    const d = row.get ? row.get({ plain: true }) : row;
+    const key = String(d.zoho_sku_code || '').trim().toUpperCase();
+    if (!key) continue;
+    pmBySku.set(key, {
+      id: Number(d.id),
+      code: String(d.code || '').trim(),
+      name: String(d.description || '').trim(),
+    });
+  }
+  return { rmBySku, pmBySku };
+}
+
+function enrichItemsWithMaterialLookup(items, lookup) {
+  const list = Array.isArray(items) ? items : [];
+  if (!lookup) return list;
+
+  return list.map((item) => {
+    const out = { ...(item || {}) };
+    const type = normalizeMaterialType(out.type || out.category);
+    const sku = String(out.sku || '').trim().toUpperCase();
+    const ref = type === 'PM' ? lookup.pmBySku.get(sku) : lookup.rmBySku.get(sku);
+    out.type = type;
+    out.category = type;
+
+    if (ref) {
+      const code = String(ref.code || '').trim();
+      const displayName = String(ref.name || '').trim();
+      if (type === 'PM') {
+        out.pack_material_id = ref.id;
+      } else {
+        out.raw_material_id = ref.id;
+      }
+      if (code) {
+        out.itemCode = code;
+        out.code = code;
+      } else if (!out.itemCode && out.sku) {
+        out.itemCode = out.sku;
+        out.code = out.sku;
+      }
+      if (displayName) {
+        out.itemName = displayName;
+        out.name = displayName;
+        out.productName = displayName;
+      }
+    } else {
+      if (!out.itemCode && out.sku) {
+        out.itemCode = out.sku;
+        out.code = out.sku;
+      }
+      const fallbackName = String(out.itemName || out.name || out.productName || '').trim();
+      if (fallbackName) {
+        out.itemName = fallbackName;
+        out.name = fallbackName;
+        out.productName = fallbackName;
+      }
+    }
+
+    return out;
+  });
 }
 
 function buildPoHeaderFromFirstRow(fields) {
@@ -720,6 +830,7 @@ function applyRawPoDetailsToGroupedPos(grouped, rawRows) {
 async function executePrRowsImport(grouped, opts = {}) {
   const details = !!opts.details;
   const createdBy = opts.createdBy || 'PR rows import';
+  const materialLookup = opts.materialLookup || null;
   const summary = { created: 0, updated: 0, skipped: 0, errors: 0, row_log: [] };
 
   for (const [key, entry] of grouped.entries()) {
@@ -728,6 +839,7 @@ async function executePrRowsImport(grouped, opts = {}) {
       const payload = entry.payload;
       payload.form_data = payload.form_data || {};
       payload.form_data.createdBy = createdBy;
+      payload.items = enrichItemsWithMaterialLookup(payload.items, materialLookup);
       const vendor = await resolveVendorByZohoId(
         payload.form_data.preferredVendorZohoId || payload.form_data.vendorZohoId,
         payload.vendor_name
@@ -805,8 +917,9 @@ async function postPrRowsExcelImport(req, res) {
     const grouped = groupPrRowsToPoPayloads(parsed.rows);
     applyQuotationRowsToGroupedPos(grouped, quotationParsed.rows);
     applyRawPoDetailsToGroupedPos(grouped, rawDetailParsed.rows);
+    const materialLookup = await buildMaterialSkuLookup();
     const createdBy = req.user.fullName || req.user.email || req.user.name || 'PR rows import';
-    const summary = await executePrRowsImport(grouped, { details, createdBy });
+    const summary = await executePrRowsImport(grouped, { details, createdBy, materialLookup });
     return res.json({
       ok: true,
       rows_total: parsed.rows.length,
@@ -879,6 +992,8 @@ module.exports = {
   groupPrRowsToPoPayloads,
   applyQuotationRowsToGroupedPos,
   applyRawPoDetailsToGroupedPos,
+  buildMaterialSkuLookup,
+  enrichItemsWithMaterialLookup,
   executePrRowsImport,
   uploadPrRowsExcelSafe,
   postPrRowsExcelImport,

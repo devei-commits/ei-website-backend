@@ -201,6 +201,7 @@ describe('openSoHeadersExcelImport', () => {
     expect(parsed.rows[0].item.productName).toBe('Face Wash');
     const grouped = groupItemsBySoKey(parsed.rows);
     expect(grouped.get('1252231000040833999')).toHaveLength(1);
+    expect(grouped.get('SO-03611')).toHaveLength(1);
   });
 
   test('parseOpenSoHeadersWorkbook includes late sparse rows', () => {

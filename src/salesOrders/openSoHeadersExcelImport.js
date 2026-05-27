@@ -37,8 +37,9 @@ const ZOHO_SO_NUMBER_ALIASES = ['zoho so number', 'zoho sales order number', 'zo
 const ZOHO_SO_ID_ALIASES = ['zoho so id', 'zoho sales order id', 'salesorder id'];
 const ZOHO_CUSTOMER_ID_ALIASES = ['zoho customer id', 'customer id'];
 
-/** Columns read from "Open SO Headers". Skipped: EI SO Reference, Status (Zoho) read-only, Active Clients flag, Payment Terms Days, SO Subtotal. */
+/** Columns read from "Open SO Headers". */
 const HEADER_ALIASES = {
+  eiSoReference: ['ei so reference', 'ei so reference (reference#)', 'reference#', 'reference'],
   zohoSoNumber: ZOHO_SO_NUMBER_ALIASES,
   customerName: ['customer name'],
   zohoCustomerId: ZOHO_CUSTOMER_ID_ALIASES,
@@ -82,6 +83,7 @@ const HEADER_ALIASES = {
 
 const HEADER_KEYS = Object.keys(HEADER_ALIASES);
 const LINE_HEADER_ALIASES = {
+  eiSoReference: ['ei so reference', 'ei so reference (reference#)', 'reference#', 'reference'],
   zohoSoNumber: ZOHO_SO_NUMBER_ALIASES,
   zohoSoId: ZOHO_SO_ID_ALIASES,
   zohoCustomerId: ZOHO_CUSTOMER_ID_ALIASES,
@@ -219,7 +221,7 @@ function detectOpenSoLinesColumnMap(worksheet, maxScanRow = 8) {
         }
       }
     }
-    if ((map.zohoSoId != null || map.zohoSoNumber != null) && map.productName != null) {
+    if ((map.zohoSoId != null || map.zohoSoNumber != null || map.eiSoReference != null) && map.productName != null) {
       return { headerRow: r, col: map };
     }
   }
@@ -302,6 +304,13 @@ function cleanDigitsOrText(value) {
   return String(value || '').trim().replace(/\s/g, '');
 }
 
+function normalizeEiSoReference(value) {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '');
+}
+
 function normalizeSoKey(key) {
   return String(key || '').trim().toUpperCase();
 }
@@ -333,6 +342,17 @@ function resolveSoKeyFromLineFields(fields) {
   const zohoSoNo = cleanDigitsOrText(fields.zohoSoNumber);
   if (zohoSoNo) return { soKey: normalizeSoKey(zohoSoNo), type: 'orderId' };
   return { soKey: '', type: '' };
+}
+
+function extractLineLookupKeys(fields) {
+  const keys = new Set();
+  const soIdRaw = cleanDigitsOrText(fields.zohoSoId);
+  const soNoRaw = cleanDigitsOrText(fields.zohoSoNumber);
+  const soDisplayRaw = cleanDigitsOrText(fields.zohoSoDisplayNumber);
+  [soIdRaw, soNoRaw, soDisplayRaw].forEach((v) => {
+    for (const k of buildSoLookupKeys(v)) keys.add(k);
+  });
+  return [...keys];
 }
 
 /**
@@ -404,6 +424,10 @@ function excelFieldsToSalesOrderPayload(fields) {
     creditDays: parseOptionalNumber(fields.creditDays) ?? undefined,
     zohoStatus,
   };
+  const eiSoReference = normalizeEiSoReference(fields.eiSoReference);
+  if (eiSoReference) {
+    form_data.eiSoReference = eiSoReference;
+  }
 
   if (zohoId) {
     form_data.zohoSalesorderId = zohoId;
@@ -631,12 +655,21 @@ function parseOpenSoLinesWorkbook(workbook, buffer) {
     }
 
     const { soKey } = resolveSoKeyFromLineFields(fields);
-    if (!soKey) {
+    const soKeys = extractLineLookupKeys(fields);
+    const refKey = normalizeEiSoReference(fields.eiSoReference);
+    if (!soKey && !soKeys.length && !refKey) {
       skippedNoIdentity += 1;
       continue;
     }
     const item = excelLineFieldsToItem(fields);
-    rows.push({ excel_row: r, sheet_name: worksheet.name, so_key: soKey, item, fields });
+    rows.push({
+      excel_row: r,
+      sheet_name: worksheet.name,
+      so_key: soKey,
+      so_keys: soKeys,
+      item,
+      fields,
+    });
   }
 
   return {
@@ -655,13 +688,27 @@ function parseOpenSoLinesWorkbook(workbook, buffer) {
 function groupItemsBySoKey(lineRows) {
   const out = new Map();
   for (const row of lineRows || []) {
-    const keys = buildSoLookupKeys(row.so_key);
+    const keys = Array.isArray(row.so_keys) && row.so_keys.length
+      ? row.so_keys
+      : buildSoLookupKeys(row.so_key);
     if (!keys.length) continue;
     for (const key of keys) {
       const list = out.get(key) || [];
       list.push(row.item);
       out.set(key, list);
     }
+  }
+  return out;
+}
+
+function groupItemsByEiSoReference(lineRows) {
+  const out = new Map();
+  for (const row of lineRows || []) {
+    const ref = normalizeEiSoReference(row.fields?.eiSoReference);
+    if (!ref) continue;
+    const list = out.get(ref) || [];
+    list.push(row.item);
+    out.set(ref, list);
   }
   return out;
 }
@@ -854,6 +901,8 @@ async function executeOpenSoHeadersImportRows(importRows, opts = {}) {
   const details = !!opts.details;
   const createdBy = opts.createdBy || 'Open SO Headers import';
   const itemsBySoKey = opts.itemsBySoKey instanceof Map ? opts.itemsBySoKey : new Map();
+  const itemsByEiSoReference =
+    opts.itemsByEiSoReference instanceof Map ? opts.itemsByEiSoReference : new Map();
 
   const summary = {
     created: 0,
@@ -891,16 +940,22 @@ async function executeOpenSoHeadersImportRows(importRows, opts = {}) {
           : ''
       );
       const soKeyFromOrderId = normalizeSoKey(payload.order_id);
+      const refKey = normalizeEiSoReference(entry.ei_so_reference);
+      let importedItems = null;
+      if (refKey && itemsByEiSoReference.has(refKey)) {
+        importedItems = itemsByEiSoReference.get(refKey);
+      }
       const lookupKeys = [
         ...buildSoLookupKeys(soKeyFromZohoId),
         ...buildSoLookupKeys(soKeyFromOrderId),
       ];
-      let importedItems = null;
-      for (const lk of lookupKeys) {
-        const hit = itemsBySoKey.get(lk);
-        if (Array.isArray(hit) && hit.length > 0) {
-          importedItems = hit;
-          break;
+      if (!importedItems) {
+        for (const lk of lookupKeys) {
+          const hit = itemsBySoKey.get(lk);
+          if (Array.isArray(hit) && hit.length > 0) {
+            importedItems = hit;
+            break;
+          }
         }
       }
       if (Array.isArray(importedItems) && importedItems.length > 0) {
@@ -1049,12 +1104,19 @@ async function postOpenSoHeadersExcelImport(req, res) {
       excel_row: r.excel_row,
       sheet_name: r.sheet_name,
       payload: r.payload,
+      ei_so_reference: r.fields?.eiSoReference || '',
     }));
     const itemsBySoKey = groupItemsBySoKey(lines.rows);
+    const itemsByEiSoReference = groupItemsByEiSoReference(lines.rows);
 
     for (let offset = 0; offset < importRows.length; offset += CHUNK_SIZE) {
       const slice = importRows.slice(offset, offset + CHUNK_SIZE);
-      const part = await executeOpenSoHeadersImportRows(slice, { details, createdBy, itemsBySoKey });
+      const part = await executeOpenSoHeadersImportRows(slice, {
+        details,
+        createdBy,
+        itemsBySoKey,
+        itemsByEiSoReference,
+      });
       aggregated.created += part.created;
       aggregated.updated += part.updated;
       aggregated.skipped += part.skipped;
@@ -1123,6 +1185,7 @@ module.exports = {
   extractOpenSoHeadersFromBuffer,
   extractOpenSoWorkbookFromBuffer,
   groupItemsBySoKey,
+  groupItemsByEiSoReference,
   executeOpenSoHeadersImportRows,
   uploadOpenSoHeadersExcelSafe,
   postOpenSoHeadersExcelImport,

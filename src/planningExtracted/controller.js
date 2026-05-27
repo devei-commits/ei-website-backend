@@ -733,6 +733,20 @@ async function syncPlanningExtractedFromSalesOrders() {
 
     for (const item of items) {
       let productId = item.product_id || item.productId;
+      // Preferred fallback for Excel-imported SO lines: resolve by SKU.
+      if (!productId && item.sku) {
+        const sku = String(item.sku).trim();
+        if (sku) {
+          const prodBySku = await Product.findOne({
+            where: { zoho_sku_code: sku },
+            attributes: ['product_id'],
+          });
+          if (prodBySku) {
+            const plainProd = prodBySku.get ? prodBySku.get({ plain: true }) : prodBySku;
+            productId = plainProd.product_id;
+          }
+        }
+      }
       // Fallback: resolve by product_code / productCode when product_id missing
       if (!productId && (item.product_code || item.productCode)) {
         const code = item.product_code || item.productCode;
@@ -743,6 +757,20 @@ async function syncPlanningExtractedFromSalesOrders() {
         if (prodByCode) {
           const plainProd = prodByCode.get ? prodByCode.get({ plain: true }) : prodByCode;
           productId = plainProd.product_id;
+        }
+      }
+      // Last fallback: resolve by product display name from imported line.
+      if (!productId && (item.productName || item.name)) {
+        const productName = String(item.productName || item.name).trim();
+        if (productName) {
+          const prodByName = await Product.findOne({
+            where: { product_name: productName },
+            attributes: ['product_id'],
+          });
+          if (prodByName) {
+            const plainProd = prodByName.get ? prodByName.get({ plain: true }) : prodByName;
+            productId = plainProd.product_id;
+          }
         }
       }
       if (!productId) continue;
@@ -2562,6 +2590,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
 }
 
 module.exports = {
+  syncPlanningExtractedFromSalesOrders,
   listPlanningExtracted,
   getPlanningExtractedById,
   updatePlanningExtracted,
