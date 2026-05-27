@@ -11,6 +11,7 @@ const SalesOrder = require('../salesOrders/models');
 const PlanningExtracted = require('../planningExtracted/models');
 const PlanningBatch = require('../planningExtracted/planningBatchModel');
 const PlanningBomOverride = require('../planningExtracted/planningBomOverrideModel');
+const PlanningQuotationAsk = require('../planningQuotationAsks/models');
 const ProcurementRequest = require('../procurementRequests/models');
 const ProcurementQuotation = require('../procurementQuotations/models');
 const PurchaseOrder = require('../purchaseOrders/models');
@@ -73,6 +74,7 @@ async function resetOrderLifecycle(opts = {}) {
       [PurchaseOrder, 'purchase_orders'],
       [PlanningBatch, 'planning_batches'],
       [PlanningBomOverride, 'planning_bom_override'],
+      [PlanningQuotationAsk, 'planning_quotation_asks'],
       [PlanningExtracted, 'planning_extracted'],
       [SalesOrder, 'sales_orders'],
       [WarehouseInventoryLocationHistory, 'warehouse_inventory_location_history'],

@@ -10,10 +10,30 @@ const {
   updateVendorClient,
   deleteVendorClient,
 } = require('./controller');
+const {
+  uploadClientMasterExcelSafe,
+  postClientMasterExcelImport,
+} = require('./clientMasterExcelImport');
+const {
+  uploadVendorMasterExcelSafe,
+  postVendorMasterExcelImport,
+} = require('./vendorMasterExcelImport');
 
 const requireVendorClient = [isAuthenticated, requireModule('vendor-client')];
 
 router.get('/', requireVendorClient, listVendorClients);
+router.post(
+  '/import-excel',
+  requireVendorClient,
+  uploadClientMasterExcelSafe,
+  postClientMasterExcelImport
+);
+router.post(
+  '/import-vendor-excel',
+  requireVendorClient,
+  uploadVendorMasterExcelSafe,
+  postVendorMasterExcelImport
+);
 router.get('/next-code', requireVendorClient, getNextCode);
 router.post('/sync-zoho', requireVendorClient, syncZohoVendorDraft);
 router.get('/:id', requireVendorClient, getVendorClientById);

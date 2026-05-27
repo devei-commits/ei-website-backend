@@ -7,6 +7,7 @@ const { User } = require('../users/models');
 const db = require('../../db');
 const { computeCheckoutPreview } = require('./checkoutTermsFromBom');
 const { roundPlanningMaterialQty } = require('../planningExtracted/orderKgMath');
+const { indiaDateOnlyString, backendNow, addDaysToIndiaDateOnly } = require('../lib/indiaTime');
 // const { orderSchema, updateOrderSchema } = require('./schemas');
 
 /**
@@ -117,7 +118,7 @@ const saveOrder = async (req, res) => {
             });
         }
 
-        const orderDateStr = new Date().toISOString().slice(0, 10);
+        const orderDateStr = indiaDateOnlyString();
         /** Standard catalog / finished product lines */
         const LEAD_TIME_DAYS_PRODUCT = 45;
         /** Bespoke or explicit customisation lines */
@@ -406,8 +407,8 @@ const saveOrder = async (req, res) => {
                 packaging_materials: packagingMaterials,
                 // BOM is never auto-confirmed on SO creation: planner must confirm BOM + SG on first-batch flow.
                 bom_confirmed_at: null,
-                created_at: new Date(),
-                updated_at: new Date(),
+                created_at: backendNow(),
+                updated_at: backendNow(),
             }, { transaction: t });
 
             // Do not reserve stock on order/planning creation.
@@ -415,12 +416,7 @@ const saveOrder = async (req, res) => {
         }
 
         const orderLeadTimeDays = computedOrderLeadTimeDays > 0 ? computedOrderLeadTimeDays : LEAD_TIME_DAYS_PRODUCT;
-        const addDaysToDateOnly = (dateOnlyStr, days) => {
-            const d = new Date(`${dateOnlyStr}T00:00:00Z`);
-            d.setUTCDate(d.getUTCDate() + Number(days || 0));
-            return d.toISOString().slice(0, 10);
-        };
-        const expectedShipmentDateStr = addDaysToDateOnly(orderDateStr, orderLeadTimeDays);
+        const expectedShipmentDateStr = addDaysToIndiaDateOnly(orderDateStr, orderLeadTimeDays);
 
         // Populate due dates so "Due Date + Days left" in Planning SO details reflects lead time.
         await soRow.update({ expected_shipment_date: expectedShipmentDateStr }, { transaction: t });

@@ -324,6 +324,18 @@ const PATCHES = [
     sql:
       'ALTER TABLE "item_list_vendor_rates" ALTER COLUMN "default_moq" TYPE DECIMAL(14,4) USING "default_moq"::decimal',
   },
+
+  // production_batches — schedule-first BMR: MU zone + notes at schedule time
+  {
+    name: 'production_batches.scheduled_mu_zone',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "scheduled_mu_zone" VARCHAR(80)',
+  },
+  {
+    name: 'production_batches.schedule_remarks',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "schedule_remarks" TEXT',
+  },
 ];
 
 async function tableExists(tableName) {

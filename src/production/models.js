@@ -117,6 +117,11 @@ ProductionBatch.init(
     qc_officer_bmr: { type: DataTypes.STRING(20), allowNull: true },
     qc_officer_bpr: { type: DataTypes.STRING(20), allowNull: true },
 
+    /** Manufacturing unit zone code (MTR receive) chosen at batch schedule — used by outbound MTR. */
+    scheduled_mu_zone: { type: DataTypes.STRING(80), allowNull: true },
+    /** Planning notes captured when scheduling (separate from batch remarks / QC). */
+    schedule_remarks: { type: DataTypes.TEXT, allowNull: true },
+
     mfg_date: { type: DataTypes.DATEONLY, allowNull: true },
     fill_date: { type: DataTypes.DATEONLY, allowNull: true },
     pack_date: { type: DataTypes.DATEONLY, allowNull: true },

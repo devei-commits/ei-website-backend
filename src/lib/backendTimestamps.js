@@ -4,9 +4,11 @@
  * via `new Date()`, never from DB functions (NOW(), CURRENT_TIMESTAMP, DataTypes.NOW defaults).
  */
 
+const { backendNow: indiaBackendNow } = require('./indiaTime');
+
 /** Current instant in the backend process (use instead of DB NOW()). */
 function backendNow() {
-  return new Date();
+  return indiaBackendNow();
 }
 
 /** Parse a value previously stored in the DB into a JS Date for API/logic (read path). */

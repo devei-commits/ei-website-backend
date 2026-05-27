@@ -13,6 +13,8 @@
     "clean-data": "node cleanData.js --yes",
     "reset-order-lifecycle": "node scripts/reset-order-lifecycle.js",
     "reset-order-lifecycle:yes": "node scripts/reset-order-lifecycle.js --yes",
+    "delete-vendor-clients": "node scripts/delete-all-vendor-clients.js",
+    "delete-vendor-clients:yes": "node scripts/delete-all-vendor-clients.js --yes",
     "zoho:import:items": "node scripts/zoho-pull-items-to-products.js",
     "zoho:import:customers-to-users": "node scripts/zoho-pull-customers-to-users.js",
     "zoho:import:customers-to-clients": "node scripts/zoho-pull-customers-to-clients.js",

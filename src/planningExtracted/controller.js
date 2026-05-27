@@ -21,6 +21,14 @@ const {
   buildPlanningKgFromSoLine,
   roundPlanningMaterialQty,
 } = require('./orderKgMath');
+const { getCreatedAndRemainingUnitsFromPlanningRow } = require('./planningSlaUnits');
+const { computePlanningSlaMeta } = require('../lib/planningSla');
+const {
+  backendNow,
+  serializeInstantIndia,
+  addDaysToIndiaDateOnly,
+  daysLeftFromDueDateIndia,
+} = require('../lib/indiaTime');
 
 /** Idempotent schema patch: adds bom_specific_gravity on Postgres if missing. Lazy, safe to call repeatedly. */
 let bomSgColumnEnsured = false;
@@ -59,23 +67,11 @@ function filterPlanningBatchesSentToProduction(planPlain, planBatchesPlain) {
 }
 
 function daysLeftDisplay(dueDate) {
-  if (!dueDate) return '';
-  const due = new Date(dueDate);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  due.setHours(0, 0, 0, 0);
-  const diff = Math.ceil((due - today) / (1000 * 60 * 60 * 24));
-  if (diff < 0) return 'Overdue';
-  if (diff === 0) return 'Today';
-  return `${diff} days`;
+  return daysLeftFromDueDateIndia(dueDate);
 }
 
 function addDaysDateOnly(baseDate, days) {
-  if (!baseDate) return '';
-  const d = new Date(`${String(baseDate).slice(0, 10)}T00:00:00Z`);
-  if (Number.isNaN(d.getTime())) return '';
-  d.setUTCDate(d.getUTCDate() + (Number(days) || 0));
-  return d.toISOString().slice(0, 10);
+  return addDaysToIndiaDateOnly(baseDate, days);
 }
 
 /**
@@ -340,6 +336,13 @@ function formatRow(row) {
     so.expected_shipment_date ||
     addDaysDateOnly(d.order_date || so.order_date, fallbackLeadDays) ||
     '';
+  const { remainingUnits } = getCreatedAndRemainingUnitsFromPlanningRow(d);
+  const planningSla = computePlanningSlaMeta({
+    createdAt: d.created_at,
+    orderDate: d.order_date || so.order_date,
+    bomConfirmedAt: d.bom_confirmed_at,
+    remainingUnits,
+  });
   return {
     id: String(d.id),
     soNumber: so.order_id || '',
@@ -367,12 +370,14 @@ function formatRow(row) {
     batchSizeKg: d.batch_size_kg != null ? Number(d.batch_size_kg) : null,
     plannedStartDate: d.planned_start_date || null,
     productionLine: d.production_line || null,
-    bomConfirmedAt: d.bom_confirmed_at || null,
+    bomConfirmedAt:
+      d.bom_confirmed_at != null ? serializeInstantIndia(d.bom_confirmed_at) : null,
     bomSpecificGravity: d.bom_specific_gravity != null ? Number(d.bom_specific_gravity) : null,
     customBatches: Array.isArray(d.custom_batches) ? d.custom_batches : null,
     sentBatchIndices: Array.isArray(d.sent_batch_indices) ? d.sent_batch_indices : [],
-    createdAt: d.created_at,
-    updatedAt: d.updated_at,
+    createdAt: d.created_at != null ? serializeInstantIndia(d.created_at) : null,
+    updatedAt: d.updated_at != null ? serializeInstantIndia(d.updated_at) : null,
+    planningSla,
   };
 }
 
@@ -921,11 +926,11 @@ async function updatePlanningExtracted(req, res) {
         return;
       }
       if (prevBomConfirmedAt == null) {
-        row.set('bom_confirmed_at', new Date());
+        row.set('bom_confirmed_at', backendNow());
         return;
       }
       const d = incoming instanceof Date ? incoming : new Date(incoming);
-      row.set('bom_confirmed_at', Number.isNaN(d.getTime()) ? new Date() : d);
+      row.set('bom_confirmed_at', Number.isNaN(d.getTime()) ? backendNow() : d);
     };
 
     for (const key of allowed) {
