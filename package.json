@@ -21,6 +21,8 @@
     "zoho:import:vendors-to-vendor-clients": "node scripts/zoho-pull-vendors-to-vendor-clients.js",
     "zoho:import:invoices-to-fulfillment-invoices": "node scripts/zoho-pull-invoices-to-fulfillment-invoices.js",
     "zoho:import:salesorders": "node scripts/zoho-pull-salesorders-to-sales-orders.js",
+    "db:backup": "bash scripts/backup-postgres.sh",
+    "db:restore": "bash scripts/restore-postgres.sh",
     "export:products-sample": "node scripts/export-products-with-bom.js --limit 10",
     "import:product-mrp-bom": "node scripts/import-product-mrp-from-bom-price-list.js",
     "pm2:start": "pm2 start ecosystem.config.cjs --env production",

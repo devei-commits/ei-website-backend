@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Restore a .dump or .sql backup into an EMPTY database (drops DB first).
-# Sprdlx root compose: container sprdlx_postgres_temp, env in ei-website-backend/.env
+# Default container: orders_postgres (ei-website-backend/docker-compose.yml). Env in .env
 #
 # Usage (from anywhere):
 #   SPRDLX_ROOT=/path/to/sprdlx ./scripts/restore-postgres.sh backups/ei_pg_backup_20260526_112023.dump
@@ -10,7 +10,7 @@ set -euo pipefail
 
 BACKUP_PATH="${1:-}"
 FORCE="${2:-}"
-CONTAINER="${POSTGRES_CONTAINER:-sprdlx_postgres_temp}"
+CONTAINER="${POSTGRES_CONTAINER:-orders_postgres}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"

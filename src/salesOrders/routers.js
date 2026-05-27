@@ -8,9 +8,14 @@ const {
   updateSalesOrder,
   deleteSalesOrder,
 } = require('./controller');
+const {
+  uploadOpenSoHeadersExcelSafe,
+  postOpenSoHeadersExcelImport,
+} = require('./openSoHeadersExcelImport');
 
 const guard = [isAuthenticated, requireModule('sales-purchase')];
 
+router.post('/import-excel', guard, uploadOpenSoHeadersExcelSafe, postOpenSoHeadersExcelImport);
 router.get('/', guard, listSalesOrders);
 router.get('/:id', guard, getSalesOrderById);
 router.post('/', guard, createSalesOrder);
