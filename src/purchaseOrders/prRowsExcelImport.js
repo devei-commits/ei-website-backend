@@ -327,10 +327,10 @@ function poKeyFromQuotationFields(fields) {
 }
 
 function poKeyFromRawDetailFields(fields) {
-  const ref = String(fields.eiPoReference || '').trim();
-  if (ref) return ref;
   const poNo = String(fields.purchaseOrderNumber || '').trim();
   if (poNo) return poNo;
+  const ref = String(fields.eiPoReference || '').trim();
+  if (ref) return ref;
   return '';
 }
 
@@ -535,6 +535,7 @@ function parsePrRowsWorkbook(workbook) {
   const lastDataRow = getWorksheetEndRow(worksheet, headerRow);
   const parsedRows = [];
   let skippedNoIdentity = 0;
+  let lastPoKey = '';
 
   for (let r = headerRow + 1; r <= lastDataRow; r += 1) {
     const fields = readPrRowFields(worksheet.getRow(r), colMap);
@@ -542,11 +543,12 @@ function parsePrRowsWorkbook(workbook) {
       skippedNoIdentity += 1;
       continue;
     }
-    const key = poKeyFromFields(fields);
+    const key = poKeyFromFields(fields) || lastPoKey;
     if (!key) {
       skippedNoIdentity += 1;
       continue;
     }
+    lastPoKey = key;
     parsedRows.push({ excel_row: r, sheet_name: worksheet.name, po_key: key, fields });
   }
 
@@ -579,10 +581,11 @@ function parseQuotationRowsWorkbook(workbook) {
   const lastDataRow = getWorksheetEndRow(worksheet, headerRow);
   const parsedRows = [];
   let skippedNoIdentity = 0;
+  let lastPoKey = '';
 
   for (let r = headerRow + 1; r <= lastDataRow; r += 1) {
     const fields = readQuotationRowFields(worksheet.getRow(r), colMap);
-    const key = poKeyFromQuotationFields(fields);
+    const key = poKeyFromQuotationFields(fields) || lastPoKey;
     if (!key) {
       skippedNoIdentity += 1;
       continue;
@@ -591,6 +594,7 @@ function parseQuotationRowsWorkbook(workbook) {
       skippedNoIdentity += 1;
       continue;
     }
+    lastPoKey = key;
     parsedRows.push({ excel_row: r, sheet_name: worksheet.name, po_key: key, fields });
   }
 
@@ -623,14 +627,16 @@ function parseRawPoDetailWorkbook(workbook) {
   const lastDataRow = getWorksheetEndRow(worksheet, headerRow);
   const parsedRows = [];
   let skippedNoIdentity = 0;
+  let lastPoKey = '';
 
   for (let r = headerRow + 1; r <= lastDataRow; r += 1) {
     const fields = readRawPoDetailRowFields(worksheet.getRow(r), colMap);
-    const key = poKeyFromRawDetailFields(fields);
+    const key = poKeyFromRawDetailFields(fields) || lastPoKey;
     if (!key || !String(fields.itemName || '').trim()) {
       skippedNoIdentity += 1;
       continue;
     }
+    lastPoKey = key;
     parsedRows.push({ excel_row: r, sheet_name: worksheet.name, po_key: key, fields });
   }
 
@@ -755,9 +761,24 @@ function applyRawPoDetailsToGroupedPos(grouped, rawRows) {
     return grouped;
   }
 
+  // Raw PO Detail is item-level and keys by Purchase Order Number.
+  // PR rows group keys may be EI reference, so keep a secondary lookup by source PO number.
+  const groupedBySourcePoNumber = new Map();
+  for (const [groupKey, entry] of grouped.entries()) {
+    const sourcePoNumber = String(
+      entry?.payload?.form_data?.sourcePoNumber || entry?.payload?.reference || ''
+    ).trim();
+    if (!sourcePoNumber) continue;
+    groupedBySourcePoNumber.set(sourcePoNumber, groupKey);
+  }
+
   for (const rr of rawRows) {
     const poKey = String(rr.po_key || '').trim();
-    const entry = grouped.get(poKey);
+    let entry = grouped.get(poKey);
+    if (!entry) {
+      const groupKeyBySource = groupedBySourcePoNumber.get(poKey);
+      if (groupKeyBySource) entry = grouped.get(groupKeyBySource);
+    }
     if (!entry) continue;
     const fields = rr.fields || {};
     const rawItem = rawPoDetailFieldsToItem(fields);

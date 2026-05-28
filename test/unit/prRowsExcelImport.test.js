@@ -108,6 +108,27 @@ describe('prRowsExcelImport', () => {
     expect(grouped.get('PO-001').payload.items).toHaveLength(2);
   });
 
+  test('parsePrRowsWorkbook carries forward PO key when repeated rows leave it blank', () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('PR rows');
+    ws.getRow(1).values = [
+      null,
+      'EI PO Reference',
+      'PO Status',
+      'Category',
+      'Item Name',
+      'Req Qty',
+      'SKU',
+    ];
+    ws.getRow(2).values = [null, 'PO-XYZ-01', 'Open', 'RM', 'Glycerin', '100', 'RM-GLY'];
+    ws.getRow(3).values = [null, '', 'Open', 'RM', 'Niacinamide', '50', 'RM-NIA'];
+
+    const parsed = parsePrRowsWorkbook(wb);
+    expect(parsed.rows.length).toBe(2);
+    expect(parsed.rows[0].po_key).toBe('PO-XYZ-01');
+    expect(parsed.rows[1].po_key).toBe('PO-XYZ-01');
+  });
+
   test('quotationRowFieldsToItem maps quotation columns', () => {
     const item = quotationRowFieldsToItem({
       itemName: 'Glycerin',
@@ -178,6 +199,18 @@ describe('prRowsExcelImport', () => {
     const parsed = parseQuotationRowsWorkbook(wb);
     expect(parsed.rows.length).toBe(1);
     expect(parsed.rows[0].po_key).toBe('PO-001');
+  });
+
+  test('parseQuotationRowsWorkbook carries forward PO key for continuation rows', () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Quotation rows');
+    ws.getRow(1).values = [null, 'EI PO Reference', 'Item Name', 'SKU', 'Quoted Qty'];
+    ws.getRow(2).values = [null, 'PO-001', 'Glycerin', 'RM-GLY', '100'];
+    ws.getRow(3).values = [null, '', 'Niacinamide', 'RM-NIA', '50'];
+
+    const parsed = parseQuotationRowsWorkbook(wb);
+    expect(parsed.rows.length).toBe(2);
+    expect(parsed.rows[1].po_key).toBe('PO-001');
   });
 
   test('applyQuotationRowsToGroupedPos merges quote fields to existing item', () => {
@@ -306,7 +339,19 @@ describe('prRowsExcelImport', () => {
     ];
     const parsed = parseRawPoDetailWorkbook(wb);
     expect(parsed.rows.length).toBe(1);
-    expect(parsed.rows[0].po_key).toBe('PO-001');
+    expect(parsed.rows[0].po_key).toBe('PO-Z-001');
+  });
+
+  test('parseRawPoDetailWorkbook carries forward PO key for continuation rows', () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Raw PO Detail (reconcile)');
+    ws.getRow(1).values = [null, 'Reference#', 'Item Name', 'SKU', 'QuantityOrdered'];
+    ws.getRow(2).values = [null, 'PO-001', 'Glycerin', 'RM-GLY', '100'];
+    ws.getRow(3).values = [null, '', 'Niacinamide', 'RM-NIA', '50'];
+
+    const parsed = parseRawPoDetailWorkbook(wb);
+    expect(parsed.rows.length).toBe(2);
+    expect(parsed.rows[1].po_key).toBe('PO-001');
   });
 
   test('applyRawPoDetailsToGroupedPos merges raw detail fields', () => {
@@ -364,6 +409,44 @@ describe('prRowsExcelImport', () => {
     expect(po.items[0].unitPrice).toBe(140);
     expect(po.items[0].quantityOrdered).toBe(100);
     expect(po.form_data.poTotal).toBe(16520);
+  });
+
+  test('applyRawPoDetailsToGroupedPos maps Purchase Order Number to Source Po Number', () => {
+    const grouped = new Map();
+    grouped.set('EI-PO-9001', {
+      excel_rows: [2],
+      payload: {
+        order_id: 'EI-PO-9001',
+        reference: 'PO-Z-001',
+        vendor_name: null,
+        form_data: {
+          sourcePoNumber: 'PO-Z-001',
+          eiPoReference: 'EI-PO-9001',
+        },
+        items: [{ sku: 'RM-GLY', productName: 'Glycerin', quantity: 100 }],
+      },
+    });
+
+    const rawRows = [
+      {
+        excel_row: 10,
+        po_key: 'PO-Z-001',
+        fields: {
+          purchaseOrderNumber: 'PO-Z-001',
+          itemName: 'Glycerin',
+          sku: 'RM-GLY',
+          itemPrice: '140',
+          quantityOrdered: '100',
+          paymentTermsLabel: 'Net 30',
+        },
+      },
+    ];
+
+    applyRawPoDetailsToGroupedPos(grouped, rawRows);
+    const po = grouped.get('EI-PO-9001').payload;
+    expect(po.items[0].unitPrice).toBe(140);
+    expect(po.items[0].quantityOrdered).toBe(100);
+    expect(po.payment_terms).toBe('Net 30');
   });
 
   test('enrichItemsWithMaterialLookup maps sku using category', () => {

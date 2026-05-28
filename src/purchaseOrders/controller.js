@@ -215,19 +215,22 @@ function toDateOnly(val) {
 }
 
 function bodyToPayload(body) {
+  const b = body || {};
   const formData = body.formData && typeof body.formData === 'object' ? body.formData : {};
   const items = Array.isArray(body.items) ? body.items : [];
   const orderStatus = body.orderStatus && typeof body.orderStatus === 'object' ? body.orderStatus : {};
   return {
-    order_id: body.orderId ?? formData.poNumber ?? formData.orderId ?? '',
-    vendor_name: body.vendorName ?? formData.vendorName ?? null,
-    branch: body.branch ?? formData.branch ?? null,
-    order_date: toDateOnly(body.orderDate ?? formData.orderDate),
-    expected_shipment_date: toDateOnly(body.expectedShipmentDate ?? formData.expectedShipmentDate),
-    reference: body.reference ?? formData.reference ?? null,
-    payment_terms: body.paymentTerms ?? formData.paymentTerms ?? null,
-    status: body.status ?? 'Draft',
-    order_status: orderStatus,
+    order_id: b.order_id ?? b.orderId ?? formData.po_number ?? formData.poNumber ?? formData.order_id ?? formData.orderId ?? '',
+    vendor_name: b.vendor_name ?? b.vendorName ?? formData.vendor_name ?? formData.vendorName ?? null,
+    branch: b.branch ?? formData.branch ?? null,
+    order_date: toDateOnly(b.order_date ?? b.orderDate ?? formData.order_date ?? formData.orderDate),
+    expected_shipment_date: toDateOnly(
+      b.expected_shipment_date ?? b.expectedShipmentDate ?? formData.expected_shipment_date ?? formData.expectedShipmentDate
+    ),
+    reference: b.reference ?? formData.reference ?? null,
+    payment_terms: b.payment_terms ?? b.paymentTerms ?? formData.payment_terms ?? formData.paymentTerms ?? null,
+    status: b.status ?? 'Draft',
+    order_status: b.order_status ?? orderStatus,
     form_data: formData,
     items,
   };
@@ -238,15 +241,43 @@ function bodyToUpdatePayload(body) {
   body = body || {};
   const formData = body.formData && typeof body.formData === 'object' ? body.formData : {};
   const payload = {};
-  if (body.orderId !== undefined || formData.poNumber !== undefined || formData.orderId !== undefined) payload.order_id = body.orderId ?? formData.poNumber ?? formData.orderId ?? '';
-  if (body.vendorName !== undefined || formData.vendorName !== undefined) payload.vendor_name = body.vendorName ?? formData.vendorName ?? null;
+  if (
+    body.order_id !== undefined ||
+    body.orderId !== undefined ||
+    formData.po_number !== undefined ||
+    formData.poNumber !== undefined ||
+    formData.order_id !== undefined ||
+    formData.orderId !== undefined
+  ) {
+    payload.order_id =
+      body.order_id ?? body.orderId ?? formData.po_number ?? formData.poNumber ?? formData.order_id ?? formData.orderId ?? '';
+  }
+  if (body.vendor_name !== undefined || body.vendorName !== undefined || formData.vendor_name !== undefined || formData.vendorName !== undefined) {
+    payload.vendor_name = body.vendor_name ?? body.vendorName ?? formData.vendor_name ?? formData.vendorName ?? null;
+  }
   if (body.branch !== undefined || formData.branch !== undefined) payload.branch = body.branch ?? formData.branch ?? null;
-  if (body.orderDate !== undefined || formData.orderDate !== undefined) payload.order_date = toDateOnly(body.orderDate ?? formData.orderDate);
-  if (body.expectedShipmentDate !== undefined || formData.expectedShipmentDate !== undefined) payload.expected_shipment_date = toDateOnly(body.expectedShipmentDate ?? formData.expectedShipmentDate);
+  if (body.order_date !== undefined || body.orderDate !== undefined || formData.order_date !== undefined || formData.orderDate !== undefined) {
+    payload.order_date = toDateOnly(body.order_date ?? body.orderDate ?? formData.order_date ?? formData.orderDate);
+  }
+  if (
+    body.expected_shipment_date !== undefined ||
+    body.expectedShipmentDate !== undefined ||
+    formData.expected_shipment_date !== undefined ||
+    formData.expectedShipmentDate !== undefined
+  ) {
+    payload.expected_shipment_date = toDateOnly(
+      body.expected_shipment_date ?? body.expectedShipmentDate ?? formData.expected_shipment_date ?? formData.expectedShipmentDate
+    );
+  }
   if (body.reference !== undefined || formData.reference !== undefined) payload.reference = body.reference ?? formData.reference ?? null;
-  if (body.paymentTerms !== undefined || formData.paymentTerms !== undefined) payload.payment_terms = body.paymentTerms ?? formData.paymentTerms ?? null;
+  if (body.payment_terms !== undefined || body.paymentTerms !== undefined || formData.payment_terms !== undefined || formData.paymentTerms !== undefined) {
+    payload.payment_terms = body.payment_terms ?? body.paymentTerms ?? formData.payment_terms ?? formData.paymentTerms ?? null;
+  }
   if (body.status !== undefined) payload.status = body.status ?? 'Draft';
-  if (body.orderStatus !== undefined) payload.order_status = body.orderStatus && typeof body.orderStatus === 'object' ? body.orderStatus : {};
+  if (body.order_status !== undefined || body.orderStatus !== undefined) {
+    const incoming = body.order_status !== undefined ? body.order_status : body.orderStatus;
+    payload.order_status = incoming && typeof incoming === 'object' ? incoming : {};
+  }
   if (body.formData !== undefined) payload.form_data = body.formData && typeof body.formData === 'object' ? body.formData : {};
   if (body.items !== undefined) payload.items = Array.isArray(body.items) ? body.items : [];
   return payload;

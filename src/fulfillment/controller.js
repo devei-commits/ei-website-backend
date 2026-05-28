@@ -699,6 +699,7 @@ async function updateOrder(req, res) {
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await FulfillmentOrder.findByPk(id);
     if (!row) return res.status(404).json({ error: 'Fulfillment order not found' });
+    const rowPlain = row.get ? row.get({ plain: true }) : row;
 
     const CAMEL_MAP = {
       soNo: 'so_no', salesOrderId: 'sales_order_id',
@@ -715,6 +716,49 @@ async function updateOrder(req, res) {
       'ship_address', 'payment_terms', 'notes',
       'invoice_no', 'invoice_date', 'awb_no', 'dispatch_date', 'courier',
     ];
+    const hasItemsPayload = Array.isArray(req.body.items);
+    const requestedKeys = Object.keys(req.body || {});
+    const mutableKeys = new Set([
+      ...ALLOWED,
+      ...Object.keys(CAMEL_MAP),
+      'items',
+    ]);
+    const hasMutableChangeRequest = requestedKeys.some((k) => mutableKeys.has(k));
+
+    // Editing lock: once BO/batch confirmation begins, SO editing is blocked.
+    if (hasMutableChangeRequest) {
+      const allSplits = await FulfillmentBatchSplit.findAll({
+        where: { fulfillment_order_id: id },
+        attributes: ['production_batch_id', 'ff_status'],
+      });
+      const linkedProductionBatchIds = allSplits
+        .map((s) => (s.get ? s.get('production_batch_id') : s.production_batch_id))
+        .filter(Boolean);
+      const ffStatuses = allSplits.map((s) => String(s.get ? s.get('ff_status') : s.ff_status || '').toLowerCase());
+      const hasFulfillmentProgressed = ffStatuses.some((st) =>
+        ['picking', 'invoiced', 'shipped', 'delivered', 'closed'].includes(st)
+      );
+      const productionRows = await ProductionBatch.findAll({
+        where: { so_no: rowPlain.so_no },
+        attributes: ['id', 'bmr_status', 'bpr_status'],
+      });
+      const hasBoConfirmedOrBatchActive = productionRows.some((pb) => {
+        const d = pb.get ? pb.get({ plain: true }) : pb;
+        const bmr = String(d.bmr_status || '').toLowerCase();
+        const bpr = String(d.bpr_status || '').toLowerCase();
+        return (
+          bmr === 'batch_confirmed' ||
+          ['rm_reserved', 'scheduled', 'rm_connected', 'dispensing', 'in_production', 'bulk_qc', 'cleared'].includes(bmr) ||
+          ['pm_reserved', 'scheduled', 'pm_connected', 'pm_dispensing', 'filling', 'fill_qc', 'packaging', 'pack_qc', 'fg_ready'].includes(bpr)
+        );
+      });
+
+      if (hasFulfillmentProgressed || linkedProductionBatchIds.length > 0 || hasBoConfirmedOrBatchActive) {
+        return res.status(409).json({
+          error: 'Sale order editing is locked because BO/batch confirmation has started for this order.',
+        });
+      }
+    }
 
     if (req.body.payment_terms !== undefined || req.body.paymentTerms !== undefined) {
       const ptToCheck = req.body.paymentTerms !== undefined ? req.body.paymentTerms : req.body.payment_terms;
@@ -727,6 +771,82 @@ async function updateOrder(req, res) {
     }
     for (const [camel, snake] of Object.entries(CAMEL_MAP)) {
       if (req.body[camel] !== undefined) row.set(snake, req.body[camel]);
+    }
+
+    if (hasItemsPayload) {
+      const nextItems = req.body.items
+        .filter((item) => item && String(item.productName || '').trim())
+        .map((item, idx) => ({
+          itemNo: item.itemNo || String(idx + 1).padStart(3, '0'),
+          sku: item.sku || null,
+          productName: String(item.productName || '').trim(),
+          pack: normalizePackSizeForOrder(item.pack) || null,
+          orderedQty: Number(item.orderedQty || 0),
+          unitPrice: Number(item.unitPrice || 0),
+        }))
+        .filter((item) => item.orderedQty > 0 && item.unitPrice > 0);
+
+      if (!nextItems.length) {
+        return res.status(400).json({ error: 'At least one valid item is required.' });
+      }
+
+      const existingItems = await FulfillmentOrderItem.findAll({
+        where: { fulfillment_order_id: id },
+        attributes: ['id'],
+      });
+      const existingItemIds = existingItems.map((it) => (it.get ? it.get('id') : it.id));
+      if (existingItemIds.length > 0) {
+        await FulfillmentBatchSplit.destroy({
+          where: { fulfillment_order_item_id: { [Op.in]: existingItemIds } },
+        });
+      }
+      await FulfillmentOrderItem.destroy({ where: { fulfillment_order_id: id } });
+
+      for (const item of nextItems) {
+        const createdItem = await FulfillmentOrderItem.create({
+          fulfillment_order_id: id,
+          item_no: item.itemNo,
+          sku: item.sku,
+          product_name: item.productName,
+          pack: item.pack,
+          ordered_qty: item.orderedQty,
+          rate: item.unitPrice,
+          unit_price: item.unitPrice,
+        });
+
+        await FulfillmentBatchSplit.create({
+          fulfillment_order_item_id: createdItem.id,
+          fulfillment_order_id: id,
+          production_batch_id: null,
+          bmr_no: null,
+          bpr_no: null,
+          planned_qty: item.orderedQty,
+          fg_qty: 0,
+          fg_location: null,
+          ff_status: 'fg_pending',
+        });
+      }
+
+      const nextSoValue = nextItems.reduce((sum, item) => sum + item.orderedQty * item.unitPrice, 0);
+      row.set('so_value', nextSoValue);
+      if (rowPlain.sales_order_id) {
+        await SalesOrder.update(
+          {
+            customer_name: row.get('customer_name'),
+            order_date: row.get('order_date'),
+            expected_shipment_date: row.get('due_date'),
+            payment_terms: row.get('payment_terms'),
+            items: nextItems.map((it) => ({
+              sku: it.sku || '',
+              productName: it.productName,
+              pack: it.pack || '',
+              quantity: it.orderedQty,
+              unitPrice: it.unitPrice,
+            })),
+          },
+          { where: { id: rowPlain.sales_order_id } }
+        );
+      }
     }
 
     await row.save();
