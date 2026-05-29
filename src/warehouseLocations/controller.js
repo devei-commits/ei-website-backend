@@ -4,6 +4,7 @@
  */
 const { WarehouseLocation, WarehouseRack, WarehouseRackItem } = require('./models');
 const { Op } = require('sequelize');
+const { softDeleteInstance, softDeleteWhere, activeRowWhere } = require('../lib/softDelete');
 const FacilityArea = require('../facilityAreas/models');
 const WarehouseInventory = require('../warehouseInventory/models');
 const RawMaterial = require('../rawMaterials/models');
@@ -353,9 +354,15 @@ async function deleteLocation(req, res) {
   try {
     const id = parseInt(String(req.params.id), 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid location id' });
-    const loc = await WarehouseLocation.findByPk(id);
+    const loc = await WarehouseLocation.findOne({ where: activeRowWhere({ id }) });
     if (!loc) return res.status(404).json({ error: 'Location not found' });
-    await loc.destroy();
+    const racks = await WarehouseRack.findAll({ where: activeRowWhere({ location_id: id }), attributes: ['id'] });
+    const rackIds = racks.map((r) => r.id);
+    if (rackIds.length > 0) {
+      await softDeleteWhere(WarehouseRackItem, { rack_id: { [Op.in]: rackIds } });
+      await softDeleteWhere(WarehouseRack, { id: { [Op.in]: rackIds } });
+    }
+    await softDeleteInstance(loc);
     res.status(204).send();
   } catch (err) {
     console.error('[warehouse-locations] deleteLocation error:', err);
@@ -473,9 +480,10 @@ async function deleteRack(req, res) {
   try {
     const rackId = parseInt(String(req.params.rackId), 10);
     if (Number.isNaN(rackId)) return res.status(400).json({ error: 'Invalid rack id' });
-    const rack = await WarehouseRack.findByPk(rackId);
+    const rack = await WarehouseRack.findOne({ where: activeRowWhere({ id: rackId }) });
     if (!rack) return res.status(404).json({ error: 'Rack not found' });
-    await rack.destroy();
+    await softDeleteWhere(WarehouseRackItem, { rack_id: rackId });
+    await softDeleteInstance(rack);
     res.status(204).send();
   } catch (err) {
     console.error('[warehouse-locations] deleteRack error:', err);
@@ -520,10 +528,10 @@ async function removeRackItem(req, res) {
       return res.status(400).json({ error: 'Invalid rack id or warehouse inventory id' });
     }
     const row = await WarehouseRackItem.findOne({
-      where: { rack_id: rackId, warehouse_inventory_id: warehouseInventoryId },
+      where: activeRowWhere({ rack_id: rackId, warehouse_inventory_id: warehouseInventoryId }),
     });
     if (!row) return res.status(404).json({ error: 'Rack item not found' });
-    await row.destroy();
+    await softDeleteInstance(row);
     res.status(204).send();
   } catch (err) {
     console.error('[warehouse-locations] removeRackItem error:', err);

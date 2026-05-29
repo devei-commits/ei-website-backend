@@ -1,4 +1,5 @@
 const db = require('../../db');
+const { softDeleteInstance, softDeleteWhere, activeRowWhere } = require('../lib/softDelete');
 const RawMaterial = require('./models');
 const { syncZohoItemForNewRawMaterial } = require('../services/zohoMasterItemSync');
 const zohoEnv = require('../services/zohoEnv');
@@ -158,24 +159,31 @@ async function listRawMaterials(req, res) {
   try {
     const search = req.query.search != null ? String(req.query.search).trim() : '';
     const statusParam = req.query.status != null ? String(req.query.status).trim() : '';
-    const where = {};
+    let where = activeRowWhere();
 
     if (search.length > 0) {
       const like = { [Op.iLike]: `%${search}%` };
-      where[Op.or] = [
-        { code: like },
-        { zoho_sku_code: like },
-        { name: like },
-        { inci: like },
-        { category: like },
-        { rm_type: like },
-      ];
+      where = {
+        [Op.and]: [
+          where,
+          {
+            [Op.or]: [
+              { code: like },
+              { zoho_sku_code: like },
+              { name: like },
+              { inci: like },
+              { category: like },
+              { rm_type: like },
+            ],
+          },
+        ],
+      };
     }
 
     // Optional status filtering for list screens (e.g. active/inactive).
     // When status=all (or empty), the filter is ignored.
     if (statusParam.length > 0 && statusParam.toLowerCase() !== 'all') {
-      where.status = statusParam.toLowerCase();
+      where = { [Op.and]: [where, { status: statusParam.toLowerCase() }] };
     }
 
     const limitQ = req.query.limit;
@@ -283,8 +291,11 @@ function payloadToListFields(b, omitGroupIfUnset = false) {
 
 async function destroyRawMaterialDraft(row) {
   if (!row) return;
-  await WarehouseInventory.destroy({ where: { item_type: 'RM', raw_material_id: row.id } });
-  await row.destroy();
+  const whInv = await WarehouseInventory.findOne({
+    where: activeRowWhere({ item_type: 'RM', raw_material_id: row.id }),
+  });
+  if (whInv) await softDeleteInstance(whInv);
+  await softDeleteInstance(row);
 }
 
 /**
@@ -651,18 +662,18 @@ async function updateRawMaterial(req, res) {
  */
 async function deleteRawMaterial(req, res) {
   try {
-    const row = await RawMaterial.findByPk(req.params.id);
+    const row = await RawMaterial.findOne({ where: activeRowWhere({ id: req.params.id }) });
     if (!row) return res.status(404).json({ error: 'Raw material not found' });
 
-    // warehouse_inventory has FK (raw_material_id -> raw_materials.id) which blocks the master-row delete.
-    // Delete the dependent inventory row(s) (and location history) first so the raw material can be removed cleanly.
-    const whInv = await WarehouseInventory.findOne({ where: { item_type: 'RM', raw_material_id: row.id } });
+    const whInv = await WarehouseInventory.findOne({
+      where: activeRowWhere({ item_type: 'RM', raw_material_id: row.id }),
+    });
     if (whInv) {
-      await WarehouseInventoryLocationHistory.destroy({ where: { warehouse_inventory_id: whInv.id } });
-      await whInv.destroy(); // cascades to rack items via FK onDelete: CASCADE
+      await softDeleteWhere(WarehouseInventoryLocationHistory, { warehouse_inventory_id: whInv.id });
+      await softDeleteInstance(whInv);
     }
 
-    await row.destroy();
+    await softDeleteInstance(row);
     res.status(204).send();
   } catch (err) {
     console.error('deleteRawMaterial error', err);

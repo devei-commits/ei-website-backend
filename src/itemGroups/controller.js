@@ -1,3 +1,4 @@
+const { softDeleteWhere, activeRowWhere } = require('../lib/softDelete');
 const ItemGroup = require('./models');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
@@ -35,7 +36,7 @@ async function resolveMembers(type, memberIds) {
   const ids = toIntList(memberIds);
   if (ids.length === 0) return [];
   if (type === 'RM') {
-    const rows = await RawMaterial.findAll({ where: { id: ids } });
+    const rows = await RawMaterial.findAll({ where: activeRowWhere({ id: ids }) });
     const byId = new Map(rows.map((r) => [r.id, r.get ? r.get({ plain: true }) : r]));
     return ids.map((id) => {
       const d = byId.get(id);
@@ -43,7 +44,7 @@ async function resolveMembers(type, memberIds) {
     }).filter(Boolean);
   }
   if (type === 'PM') {
-    const rows = await PackMaterial.findAll({ where: { id: ids } });
+    const rows = await PackMaterial.findAll({ where: activeRowWhere({ id: ids }) });
     const byId = new Map(rows.map((r) => [r.id, r.get ? r.get({ plain: true }) : r]));
     return ids.map((id) => {
       const d = byId.get(id);
@@ -78,7 +79,7 @@ async function resolveProposedAlternates(type, raw) {
   const ids = [...new Set(list.map((e) => e.item_id))];
   if (ids.length === 0) return [];
   if (type === 'RM') {
-    const rows = await RawMaterial.findAll({ where: { id: ids } });
+    const rows = await RawMaterial.findAll({ where: activeRowWhere({ id: ids }) });
     const byId = new Map(rows.map((r) => [r.id, r.get ? r.get({ plain: true }) : r]));
     return list.map((e) => {
       const d = byId.get(e.item_id);
@@ -86,7 +87,7 @@ async function resolveProposedAlternates(type, raw) {
     }).filter(Boolean);
   }
   if (type === 'PM') {
-    const rows = await PackMaterial.findAll({ where: { id: ids } });
+    const rows = await PackMaterial.findAll({ where: activeRowWhere({ id: ids }) });
     const byId = new Map(rows.map((r) => [r.id, r.get ? r.get({ plain: true }) : r]));
     return list.map((e) => {
       const d = byId.get(e.item_id);
@@ -133,13 +134,22 @@ async function listItemGroups(req, res) {
     const search = req.query.search != null ? String(req.query.search).trim() : '';
     const wantsPagination = req.query.limit != null || req.query.offset != null;
 
-    const where = {};
-    if (typeFilter === 'RM' || typeFilter === 'PM') where.type = typeFilter;
+    let where = activeRowWhere();
+    if (typeFilter === 'RM' || typeFilter === 'PM') {
+      where = activeRowWhere({ type: typeFilter });
+    }
     if (search) {
-      where[Op.or] = [
-        { code: { [Op.iLike]: `%${search}%` } },
-        { name: { [Op.iLike]: `%${search}%` } },
-      ];
+      const searchClause = {
+        [Op.or]: [
+          { code: { [Op.iLike]: `%${search}%` } },
+          { name: { [Op.iLike]: `%${search}%` } },
+        ],
+      };
+      const filters =
+        typeFilter === 'RM' || typeFilter === 'PM'
+          ? { type: typeFilter, ...searchClause }
+          : searchClause;
+      where = activeRowWhere(filters);
     }
 
     const limit = req.query.limit != null ? parseInt(String(req.query.limit), 10) : undefined;
@@ -197,7 +207,7 @@ async function getNextCode(req, res) {
     const type = (req.query.type || 'RM').toString().toUpperCase() === 'PM' ? 'PM' : 'RM';
     const prefix = type === 'PM' ? 'IG-PM' : 'IG';
     const rows = await ItemGroup.findAll({
-      where: { type },
+      where: activeRowWhere({ type }),
       attributes: ['code'],
       order: [['code', 'DESC']],
     });
@@ -360,7 +370,7 @@ async function deleteItemGroup(req, res) {
     if (!row) return res.status(404).json({ error: 'Item group not found' });
     const plain = row.get ? row.get({ plain: true }) : row;
     await syncGroupIdToMembers(plain.type, String(id), [], plain.member_ids);
-    await ItemGroup.destroy({ where: { id } });
+    await softDeleteWhere(ItemGroup, { id });
     res.status(204).send();
   } catch (err) {
     console.error('deleteItemGroup error', err);

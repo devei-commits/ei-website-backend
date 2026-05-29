@@ -1,25 +1,50 @@
 /**
- * Shared destructive cleanup for catalogue / PR products (same dependents as DELETE /products/:id).
+ * Shared soft-delete cleanup for catalogue / PR products (same dependents as DELETE /products/:id).
  */
 const { Op } = require('sequelize');
+const { softDeleteWhere, softDeleteInstance } = require('../lib/softDelete');
 const WarehouseInventory = require('../warehouseInventory/models');
 const WarehouseInventoryLocationHistory = require('../warehouseInventory/locationHistoryModel');
 const PlanningExtracted = require('../planningExtracted/models');
 const ProductCustomization = require('../productCustomizations/models');
 const ItemDedicatedFacilityLocation = require('../itemDedicatedFacilityLocations/models');
 const BOM = require('../bom/models');
-const ItemMaster = require('../itemsMaster/models');
 const ProcurementRequest = require('../procurementRequests/models');
 const ProcurementQuotation = require('../procurementQuotations/models');
-const { deleteItemsListChain } = require('../masters/resetMaterialMasters');
+const { ItemsList, ItemListVendorRate, ItemListTier } = require('../itemsList/models');
 const { Product } = require('./models');
 
 /**
- * `procurement_requests.planning_extracted_id` FK blocks deleting planning rows unless these are removed first.
+ * @param {import('sequelize').WhereOptions} where
+ * @param {import('sequelize').Transaction} transaction
+ */
+async function softDeleteItemsListChain(where, transaction) {
+  const lists = await ItemsList.findAll({ where, attributes: ['id'], transaction });
+  const listIds = lists.map((r) => r.id);
+  if (listIds.length === 0) return;
+  const rates = await ItemListVendorRate.findAll({
+    where: { items_list_id: { [Op.in]: listIds } },
+    attributes: ['id'],
+    transaction,
+  });
+  const rateIds = rates.map((r) => r.id);
+  if (rateIds.length > 0) {
+    await softDeleteWhere(
+      ItemListTier,
+      { item_list_vendor_rate_id: { [Op.in]: rateIds } },
+      { transaction }
+    );
+  }
+  await softDeleteWhere(ItemListVendorRate, { items_list_id: { [Op.in]: listIds } }, { transaction });
+  await softDeleteWhere(ItemsList, { id: { [Op.in]: listIds } }, { transaction });
+}
+
+/**
+ * Soft-delete procurement rows tied to planning for this product.
  * @param {number} productId — products.product_id
  * @param {import('sequelize').Transaction} transaction
  */
-async function destroyProcurementRequestsForProductPlanning(productId, transaction) {
+async function softDeleteProcurementRequestsForProductPlanning(productId, transaction) {
   const plans = await PlanningExtracted.findAll({
     where: { product_id: productId },
     attributes: ['id'],
@@ -35,21 +60,23 @@ async function destroyProcurementRequestsForProductPlanning(productId, transacti
   });
   const requestIds = requests.map((r) => r.id);
   if (requestIds.length > 0) {
-    await ProcurementQuotation.destroy({
-      where: { procurement_request_id: { [Op.in]: requestIds } },
-      transaction,
-    });
+    await softDeleteWhere(
+      ProcurementQuotation,
+      { procurement_request_id: { [Op.in]: requestIds } },
+      { transaction }
+    );
   }
-  await ProcurementRequest.destroy({
-    where: { planning_extracted_id: { [Op.in]: planIds } },
-    transaction,
-  });
+  await softDeleteWhere(
+    ProcurementRequest,
+    { planning_extracted_id: { [Op.in]: planIds } },
+    { transaction }
+  );
 }
 
 /**
  * @param {import('sequelize').Transaction} transaction
  */
-async function destroyProductWithDependents(productId, transaction) {
+async function softDeleteProductWithDependents(productId, transaction) {
   const pid = parseInt(String(productId), 10);
   if (!Number.isFinite(pid)) return;
 
@@ -58,24 +85,28 @@ async function destroyProductWithDependents(productId, transaction) {
     transaction,
   });
   for (const whInv of whInvRows) {
-    await WarehouseInventoryLocationHistory.destroy({
-      where: { warehouse_inventory_id: whInv.id },
-      transaction,
-    });
-    await whInv.destroy({ transaction });
+    await softDeleteWhere(
+      WarehouseInventoryLocationHistory,
+      { warehouse_inventory_id: whInv.id },
+      { transaction }
+    );
+    await softDeleteInstance(whInv, { transaction });
   }
 
-  await destroyProcurementRequestsForProductPlanning(pid, transaction);
-  await PlanningExtracted.destroy({ where: { product_id: pid }, transaction });
-  await ProductCustomization.destroy({ where: { product_id: pid }, transaction });
-  await ItemDedicatedFacilityLocation.destroy({ where: { product_id: pid }, transaction });
+  await softDeleteProcurementRequestsForProductPlanning(pid, transaction);
+  await softDeleteWhere(PlanningExtracted, { product_id: pid }, { transaction });
+  await softDeleteWhere(ProductCustomization, { product_id: pid }, { transaction });
+  await softDeleteWhere(ItemDedicatedFacilityLocation, { product_id: pid }, { transaction });
 
-  await deleteItemsListChain({ product_id: pid }, transaction);
+  await softDeleteItemsListChain({ product_id: pid }, transaction);
 
-  await BOM.destroy({ where: { product_id: pid }, transaction });
+  await softDeleteWhere(BOM, { product_id: pid }, { transaction });
 
-  await Product.destroy({ where: { product_id: pid }, transaction });
+  await softDeleteWhere(Product, { product_id: pid }, { transaction });
 }
+
+/** @deprecated use softDeleteProductWithDependents */
+const destroyProductWithDependents = softDeleteProductWithDependents;
 
 function stripProductIdsFromProcurementItems(items, idSet) {
   if (!Array.isArray(items)) return items;
@@ -93,15 +124,24 @@ function stripProductIdsFromProcurementItems(items, idSet) {
  * @param {import('sequelize').Transaction} transaction
  */
 async function scrubProcurementJsonForDeletedProducts(deletedProductIds, transaction) {
+  const { activeRowWhere } = require('../lib/softDelete');
   const idSet = new Set(deletedProductIds.map((x) => Number(x)).filter((n) => Number.isFinite(n)));
   if (idSet.size === 0) return;
 
-  const prs = await ProcurementRequest.findAll({ attributes: ['id', 'items'], transaction });
+  const prs = await ProcurementRequest.findAll({
+    where: activeRowWhere(),
+    attributes: ['id', 'items'],
+    transaction,
+  });
   for (const row of prs) {
     const nextItems = stripProductIdsFromProcurementItems(row.items, idSet);
     await row.update({ items: nextItems }, { transaction });
   }
-  const quotes = await ProcurementQuotation.findAll({ attributes: ['id', 'items'], transaction });
+  const quotes = await ProcurementQuotation.findAll({
+    where: activeRowWhere(),
+    attributes: ['id', 'items'],
+    transaction,
+  });
   for (const row of quotes) {
     const nextItems = stripProductIdsFromProcurementItems(row.items, idSet);
     await row.update({ items: nextItems }, { transaction });
@@ -114,6 +154,7 @@ async function scrubProcurementJsonForDeletedProducts(deletedProductIds, transac
  * @param {import('sequelize').Transaction} transaction
  */
 async function reconcileItemMasterBomIdsRemovingBomIds(bomIdsToRemove, transaction) {
+  const ItemMaster = require('../itemsMaster/models');
   const idSet = new Set(bomIdsToRemove.map((x) => Number(x)).filter((n) => Number.isFinite(n)));
   if (idSet.size === 0) return;
 
@@ -128,7 +169,9 @@ async function reconcileItemMasterBomIdsRemovingBomIds(bomIdsToRemove, transacti
 }
 
 module.exports = {
+  softDeleteProductWithDependents,
   destroyProductWithDependents,
+  softDeleteItemsListChain,
   scrubProcurementJsonForDeletedProducts,
   reconcileItemMasterBomIdsRemovingBomIds,
 };

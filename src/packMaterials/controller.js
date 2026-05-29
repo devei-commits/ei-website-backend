@@ -1,4 +1,5 @@
 const db = require('../../db');
+const { softDeleteInstance, softDeleteWhere, activeRowWhere } = require('../lib/softDelete');
 const PackMaterial = require('./models');
 const { syncZohoItemForNewPackMaterial } = require('../services/zohoMasterItemSync');
 const zohoEnv = require('../services/zohoEnv');
@@ -195,20 +196,27 @@ function formatPackMaterialFull(row) {
 async function listPackMaterials(req, res) {
   try {
     const search = req.query.search != null ? String(req.query.search).trim() : '';
-    const where = {};
+    let where = activeRowWhere();
 
     if (search.length > 0) {
       const like = { [Op.iLike]: `%${search}%` };
-      where[Op.or] = [
-        { code: like },
-        { zoho_sku_code: like },
-        { description: like },
-        { type: like },
-        { level: like },
-        { material: like },
-        { size_spec: like },
-        { print_status: like },
-      ];
+      where = {
+        [Op.and]: [
+          where,
+          {
+            [Op.or]: [
+              { code: like },
+              { zoho_sku_code: like },
+              { description: like },
+              { type: like },
+              { level: like },
+              { material: like },
+              { size_spec: like },
+              { print_status: like },
+            ],
+          },
+        ],
+      };
     }
 
     const limitQ = req.query.limit;
@@ -302,8 +310,11 @@ function bodyToPackMaterial(b) {
 
 async function destroyPackMaterialDraft(row) {
   if (!row) return;
-  await WarehouseInventory.destroy({ where: { item_type: 'PM', pack_material_id: row.id } });
-  await row.destroy();
+  const whInv = await WarehouseInventory.findOne({
+    where: activeRowWhere({ item_type: 'PM', pack_material_id: row.id }),
+  });
+  if (whInv) await softDeleteInstance(whInv);
+  await softDeleteInstance(row);
 }
 
 /**
@@ -706,18 +717,18 @@ async function deletePackMaterial(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
-    const row = await PackMaterial.findByPk(id);
+    const row = await PackMaterial.findOne({ where: activeRowWhere({ id }) });
     if (!row) return res.status(404).json({ error: 'Pack material not found' });
 
-    // warehouse_inventory has FK (pack_material_id -> pack_materials.id) which blocks master-row delete.
-    // Clean warehouse_inventory + location history first.
-    const whInv = await WarehouseInventory.findOne({ where: { item_type: 'PM', pack_material_id: row.id } });
+    const whInv = await WarehouseInventory.findOne({
+      where: activeRowWhere({ item_type: 'PM', pack_material_id: row.id }),
+    });
     if (whInv) {
-      await WarehouseInventoryLocationHistory.destroy({ where: { warehouse_inventory_id: whInv.id } });
-      await whInv.destroy(); // cascades to rack items via FK onDelete: CASCADE
+      await softDeleteWhere(WarehouseInventoryLocationHistory, { warehouse_inventory_id: whInv.id });
+      await softDeleteInstance(whInv);
     }
 
-    await row.destroy();
+    await softDeleteInstance(row);
     res.status(204).send();
   } catch (err) {
     console.error('deletePackMaterial error', err);

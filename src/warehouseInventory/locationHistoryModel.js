@@ -31,7 +31,7 @@ WarehouseInventoryLocationHistory.init(
     to_zone: { type: DataTypes.STRING(100), allowNull: true },
     to_rack: { type: DataTypes.STRING(100), allowNull: true },
     // Quantity delta associated with this movement (positive for inbound, negative for outbound)
-    qty_delta: { type: DataTypes.DECIMAL(14, 2), allowNull: true },
+    qty_delta: { type: DataTypes.DECIMAL(28, 16), allowNull: true },
     // Action type, e.g. GRN_IN, TRANSFER_OUT, MANUAL_ADJUST
     action_type: { type: DataTypes.STRING(30), allowNull: true },
     source_grn_id: { type: DataTypes.INTEGER, allowNull: true },
@@ -42,8 +42,8 @@ WarehouseInventoryLocationHistory.init(
       // Set in app layer via backendNow() (global Sequelize beforeCreate hook).
     },
     // Reserved change from BMR/BPR — only set when action_type is BMR_RESERVED or BPR_RESERVED
-    reserved_delta: { type: DataTypes.DECIMAL(14, 4), allowNull: true },
-    reserved_after: { type: DataTypes.DECIMAL(14, 4), allowNull: true },
+    reserved_delta: { type: DataTypes.DECIMAL(28, 16), allowNull: true },
+    reserved_after: { type: DataTypes.DECIMAL(28, 16), allowNull: true },
     production_batch_id: { type: DataTypes.INTEGER, allowNull: true },
     batch_no: { type: DataTypes.STRING(50), allowNull: true },
     /** Same id on all RM/PM history rows for one dispensing PATCH — ties MU consumption to production_batches.mu_dispensing_bundles. */
@@ -52,6 +52,8 @@ WarehouseInventoryLocationHistory.init(
     changes_json: { type: DataTypes.JSON, allowNull: true },
     /** Optional operator note on manual adjustment */
     note: { type: DataTypes.TEXT, allowNull: true },
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
+    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
   },
   {
     sequelize: db,

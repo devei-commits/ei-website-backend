@@ -18,6 +18,8 @@ Role.init(
     description: { type: DataTypes.TEXT, allowNull: true },
     level: { type: DataTypes.STRING(50), allowNull: true },
     status: { type: DataTypes.STRING(20), allowNull: true },
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
+    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
   },
   {
     sequelize: db,

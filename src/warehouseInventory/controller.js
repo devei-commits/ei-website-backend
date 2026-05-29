@@ -19,12 +19,18 @@ const GoodsReceivedNote = require('../grn/models');
 const PurchaseOrder = require('../purchaseOrders/models');
 const { quantityToKg } = require('./quantityToKg');
 const { loadRmPmMeta, getCompletedGrnReceivedKgByKey } = require('./inTransitSync');
+const { resolveWhUnit } = require('./whUnitDefaults');
 const db = require('../../db');
 
 function toNum(x) {
   if (x == null) return 0;
   const n = Number(x);
   return Number.isNaN(n) ? 0 : n;
+}
+
+/** Usable stock = physical SIH minus all reservations (planning + production). */
+function inventoryAvailable(stockInHand, reserved) {
+  return Math.max(0, toNum(stockInHand) - toNum(reserved));
 }
 
 let locationHistoryAuditEnsured = false;
@@ -384,15 +390,19 @@ async function updateStock(req, res) {
     let ml1Stock = beforeSnap.ml1_stock;
     let ml2Stock = beforeSnap.ml2_stock;
 
-    if (body.wh_stock != null) {
+    const hasWhStockInput = body.wh_stock != null;
+    const hasMl1StockInput = body.ml1_stock != null;
+    const hasMl2StockInput = body.ml2_stock != null;
+
+    if (hasWhStockInput) {
       whStock = Number(body.wh_stock);
       updates.wh_stock = whStock;
     }
-    if (body.ml1_stock != null) {
+    if (hasMl1StockInput) {
       ml1Stock = Number(body.ml1_stock);
       updates.ml1_stock = ml1Stock;
     }
-    if (body.ml2_stock != null) {
+    if (hasMl2StockInput) {
       ml2Stock = Number(body.ml2_stock);
       updates.ml2_stock = ml2Stock;
     }
@@ -414,11 +424,16 @@ async function updateStock(req, res) {
       if (refreshed) {
         const r = refreshed.get ? refreshed.get({ plain: true }) : refreshed;
         whStock = toNum(r.wh_stock);
-        ml1Stock = toNum(r.ml1_stock);
-        ml2Stock = toNum(r.ml2_stock);
         updates.wh_stock = whStock;
-        updates.ml1_stock = ml1Stock;
-        updates.ml2_stock = ml2Stock;
+        // Preserve explicit ML edits from request when rack quantities are also submitted.
+        if (!hasMl1StockInput) {
+          ml1Stock = toNum(r.ml1_stock);
+          updates.ml1_stock = ml1Stock;
+        }
+        if (!hasMl2StockInput) {
+          ml2Stock = toNum(r.ml2_stock);
+          updates.ml2_stock = ml2Stock;
+        }
         if (r.zone != null) updates.zone = r.zone;
         if (r.rack != null) updates.rack = r.rack;
       }
@@ -847,11 +862,13 @@ async function listPayload() {
     const ml1Stock = toNum(wh.ml1_stock);
     const ml2Stock = toNum(wh.ml2_stock);
     const stockInHand = whStock + ml1Stock + ml2Stock;
+    const reserved = toNum(wh.reserved);
+    const available = inventoryAvailable(stockInHand, reserved);
     const reorderPt = toNum(wh.reorder_pt);
     let status = (wh.qc_status || 'In Stock').trim();
     if (status === 'In Stock' && reorderPt > 0) {
-      if (stockInHand < reorderPt * 0.5) status = 'Critical';
-      else if (stockInHand < reorderPt) status = 'Low Stock';
+      if (available < reorderPt * 0.5) status = 'Critical';
+      else if (available < reorderPt) status = 'Low Stock';
     }
     const qcStatusRaw = (wh.qc_status || 'In Stock').trim();
     if (wh.item_type === 'RM' && wh.raw_material_id) {
@@ -881,11 +898,12 @@ async function listPayload() {
         zone: wh.zone || '—',
         rack: wh.rack || '—',
         whStock,
-        whUnit: wh.wh_unit || 'KG',
+        whUnit: resolveWhUnit(wh.wh_unit, 'RM'),
         ml1Stock,
         ml2Stock,
         stockInHand,
-        reserved: toNum(wh.reserved),
+        available,
+        reserved,
         // Synced pipeline (GRN + procurement PO) minus Under GRN (own column); breakdown adds PO-only slice.
         inTransit: inTransitQty,
         underGrn: underGrnQty,
@@ -926,11 +944,12 @@ async function listPayload() {
         zone: wh.zone || '—',
         rack: wh.rack || '—',
         whStock,
-        whUnit: wh.wh_unit || 'KG',
+        whUnit: resolveWhUnit(wh.wh_unit, 'PM'),
         ml1Stock,
         ml2Stock,
         stockInHand,
-        reserved: toNum(wh.reserved),
+        available,
+        reserved,
         // Synced pipeline (GRN + procurement PO) minus Under GRN (own column); breakdown adds PO-only slice.
         inTransit: inTransitQty,
         underGrn: underGrnQty,
@@ -959,10 +978,11 @@ async function listPayload() {
         zone: wh.zone || '—',
         rack: wh.rack || '—',
         whStock,
-        whUnit: wh.wh_unit || 'KG',
+        whUnit: resolveWhUnit(wh.wh_unit, 'PR'),
         ml1Stock,
         ml2Stock,
         stockInHand,
+        available: inventoryAvailable(stockInHand, toNum(wh.reserved)),
         reserved: toNum(wh.reserved),
         inTransit: toNum(wh.in_transit),
         underGrn: 0,

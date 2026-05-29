@@ -1,3 +1,4 @@
+const { softDeleteInstance, activeRowWhere } = require('../lib/softDelete');
 const ProcurementQuotation = require('./models');
 const ProcurementRequest = require('../procurementRequests/models');
 const VendorClient = require('../vendorClient/models');
@@ -289,18 +290,18 @@ async function listProcurementQuotations(req, res) {
       req.query.procurement_request_id != null ? parseInt(req.query.procurement_request_id, 10) : null;
     const vendorId = req.query.vendor_id != null ? parseInt(req.query.vendor_id, 10) : null;
     const status = req.query.status || null;
-    const where = {};
+    const filters = {};
     if (procurementRequestId != null && !Number.isNaN(procurementRequestId)) {
-      where.procurement_request_id = procurementRequestId;
+      filters.procurement_request_id = procurementRequestId;
     }
     if (vendorId != null && !Number.isNaN(vendorId)) {
-      where.vendor_id = vendorId;
+      filters.vendor_id = vendorId;
     }
     if (status) {
-      where.status = status;
+      filters.status = status;
     }
     const rows = await ProcurementQuotation.findAll({
-      where,
+      where: activeRowWhere(filters),
       order: [['quote_date', 'DESC'], ['created_at', 'DESC']],
       include: [
         { model: ProcurementRequest, as: 'procurementRequest', attributes: ['id', 'priority', 'required_by_date', 'status', 'items'], required: false },
@@ -659,7 +660,7 @@ async function deleteProcurementQuotation(req, res) {
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await ProcurementQuotation.findByPk(id);
     if (!row) return res.status(404).json({ error: 'Procurement quotation not found' });
-    await row.destroy();
+    await softDeleteInstance(row);
     res.status(204).send();
   } catch (err) {
     console.error('deleteProcurementQuotation error', err);

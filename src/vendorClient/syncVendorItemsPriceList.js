@@ -250,13 +250,14 @@ async function syncVendorMasterItemsToPriceList({
  * Delete all price-list rates for this vendor (used when vendor master row is deleted).
  */
 async function deleteAllVendorPriceListRates(vendorId, transaction) {
+  const { softDeleteInstance, softDeleteWhere, activeRowWhere } = require('../lib/softDelete');
   const rates = await ItemListVendorRate.findAll({
-    where: { vendor_id: vendorId, ...vendorRatesPartyWhere() },
+    where: activeRowWhere({ vendor_id: vendorId, ...vendorRatesPartyWhere() }),
     transaction,
   });
   for (const r of rates) {
-    await ItemListTier.destroy({ where: { item_list_vendor_rate_id: r.id }, transaction });
-    await r.destroy({ transaction });
+    await softDeleteWhere(ItemListTier, { item_list_vendor_rate_id: r.id }, { transaction });
+    await softDeleteInstance(r, { transaction });
   }
   return rates.length;
 }

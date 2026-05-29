@@ -14,6 +14,8 @@ ClientQuery.init(
     notes: { type: DataTypes.TEXT, allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
+    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
   },
   { sequelize: db, modelName: 'ClientQuery', tableName: 'client_queries', timestamps: true, createdAt: 'created_at', updatedAt: 'updated_at' }
 );
@@ -31,6 +33,8 @@ ClientDevelopment.init(
     phase: { type: DataTypes.STRING(100), allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
+    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
   },
   { sequelize: db, modelName: 'ClientDevelopment', tableName: 'client_developments', timestamps: true, createdAt: 'created_at', updatedAt: 'updated_at' }
 );
@@ -47,6 +51,8 @@ ClientOrder.init(
     batch_code: { type: DataTypes.STRING(100), allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
+    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
   },
   { sequelize: db, modelName: 'ClientOrder', tableName: 'client_orders', timestamps: true, createdAt: 'created_at', updatedAt: 'updated_at' }
 );
@@ -63,6 +69,8 @@ ClientAppointment.init(
     with_person: { type: DataTypes.STRING(500), allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
+    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
   },
   { sequelize: db, modelName: 'ClientAppointment', tableName: 'client_appointments', timestamps: true, createdAt: 'created_at', updatedAt: 'updated_at' }
 );

@@ -1,3 +1,4 @@
+const { softDeleteInstance, activeRowWhere } = require('../lib/softDelete');
 const ProcurementRequest = require('./models');
 const PlanningExtracted = require('../planningExtracted/models');
 const SalesOrder = require('../salesOrders/models');
@@ -219,13 +220,14 @@ async function listProcurementRequests(req, res) {
     const planningBatchId = req.query.planning_batch_id != null
       ? parseInt(req.query.planning_batch_id, 10)
       : null;
-    const where = {};
+    const filters = {};
     if (planningExtractedId != null && !Number.isNaN(planningExtractedId)) {
-      where.planning_extracted_id = planningExtractedId;
+      filters.planning_extracted_id = planningExtractedId;
     }
     if (planningBatchId != null && !Number.isNaN(planningBatchId)) {
-      where.planning_batch_id = planningBatchId;
+      filters.planning_batch_id = planningBatchId;
     }
+    const where = activeRowWhere(filters);
     const rows = await ProcurementRequest.findAll({
       where,
       order: [['created_at', 'DESC']],
@@ -386,7 +388,7 @@ async function deleteProcurementRequest(req, res) {
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await ProcurementRequest.findByPk(id);
     if (!row) return res.status(404).json({ error: 'Procurement request not found' });
-    await row.destroy();
+    await softDeleteInstance(row);
     res.status(204).send();
   } catch (err) {
     console.error('deleteProcurementRequest error', err);

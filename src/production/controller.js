@@ -16,6 +16,32 @@ const SalesOrder = require('../salesOrders/models');
 const ProcurementRequest = require('../procurementRequests/models');
 const { hasGranularAccess } = require('../middleware/security');
 const { roundPlanningMaterialQty } = require('../planningExtracted/orderKgMath');
+const {
+  muZoneCodeToMlBucket,
+  muBucketLabelForZone,
+  muStockQtyFromPlain,
+  getStockQtyAtMuZone,
+  getStockQtyStrAtMuZone,
+} = require('../facilityAreas/defaultLocationService');
+
+function toNum(x) {
+  if (x == null) return 0;
+  const n = Number(x);
+  return Number.isNaN(n) ? 0 : n;
+}
+
+const { softDeleteInstance, activeRowWhere } = require('../lib/softDelete');
+const {
+  materialQtyGte,
+  materialQtyGt,
+  materialQtyLte,
+  materialQtyLteForDispensing,
+  materialQtyGteForDispensing,
+  capPmDispenseConsumption,
+  materialQtyFromDb,
+  materialQtyToNum,
+  materialQtySub,
+} = require('../utils/materialQtyCompare');
 
 /* ════════════════════════════════════════════════════════════
    EQUIPMENT
@@ -40,7 +66,10 @@ function formatEquipment(row) {
 
 async function listEquipment(req, res) {
   try {
-    const rows = await ProductionEquipment.findAll({ order: [['category', 'ASC'], ['equipment_id', 'ASC']] });
+    const rows = await ProductionEquipment.findAll({
+      where: activeRowWhere(),
+      order: [['category', 'ASC'], ['equipment_id', 'ASC']],
+    });
     const grouped = { manufacturing: [], filling: [], packaging: [] };
     for (const r of rows) {
       const cat = r.category;
@@ -92,9 +121,9 @@ async function updateEquipment(req, res) {
 
 async function deleteEquipment(req, res) {
   try {
-    const row = await ProductionEquipment.findByPk(req.params.id);
+    const row = await ProductionEquipment.findOne({ where: activeRowWhere({ id: req.params.id }) });
     if (!row) return res.status(404).json({ error: 'Equipment not found' });
-    await row.destroy();
+    await softDeleteInstance(row);
     res.json({ message: 'Equipment deleted' });
   } catch (err) {
     console.error('deleteEquipment error:', err);
@@ -113,7 +142,10 @@ function formatTeamMember(row) {
 
 async function listTeam(req, res) {
   try {
-    const rows = await ProductionTeamMember.findAll({ order: [['member_id', 'ASC']] });
+    const rows = await ProductionTeamMember.findAll({
+      where: activeRowWhere(),
+      order: [['member_id', 'ASC']],
+    });
     res.json(rows.map(formatTeamMember));
   } catch (err) {
     console.error('listTeam error:', err);
@@ -164,9 +196,9 @@ async function updateTeamMember(req, res) {
 
 async function deleteTeamMember(req, res) {
   try {
-    const row = await ProductionTeamMember.findByPk(req.params.id);
+    const row = await ProductionTeamMember.findOne({ where: activeRowWhere({ id: req.params.id }) });
     if (!row) return res.status(404).json({ error: 'Team member not found' });
-    await row.destroy();
+    await softDeleteInstance(row);
     res.json({ message: 'Team member deleted' });
   } catch (err) {
     console.error('deleteTeamMember error:', err);
@@ -412,7 +444,10 @@ async function getNextRworkSuffix(baseBmrNo) {
 
 async function listBatches(req, res) {
   try {
-    const rows = await ProductionBatch.findAll({ order: [['bmr_no', 'ASC']] });
+    const rows = await ProductionBatch.findAll({
+      where: activeRowWhere(),
+      order: [['bmr_no', 'ASC']],
+    });
     const visibility = await getBatchVisibility(req);
     res.json(rows.map((r) => formatBatch(r, visibility)));
   } catch (err) {
@@ -882,19 +917,36 @@ const DISPENDING_MU_ERR_TAG = '[dispending-mu-error]';
  * Idempotent: removes any existing RM reservations for this batch first so repeat runs don't double-count.
  * Inventory: available = SIH - reserved; after reserve X, reserved_new = R + X, available_new = SIH - reserved_new.
  */
-async function applyRmReservedToInventory(batchRow) {
-  const d = batchRow.get ? batchRow.get({ plain: true }) : batchRow;
-  // Idempotent: if this batch already has RM reserved_batch_items (e.g. double PATCH), skip to avoid double-counting
-  const existingRmCount = await ReservedBatchItem.count({
-    where: { production_batch_id: d.id, pack_material_id: null },
+/** Re-sync warehouse_inventory.reserved when RBI rows already exist (idempotent reserve re-run). */
+async function syncWarehouseReservedForExistingBatchRbi(batchId, kind) {
+  const where =
+    kind === 'rm'
+      ? { production_batch_id: batchId, pack_material_id: null, raw_material_id: { [Op.ne]: null } }
+      : { production_batch_id: batchId, raw_material_id: null, pack_material_id: { [Op.ne]: null } };
+  const rows = await ReservedBatchItem.findAll({
+    where,
+    attributes: ['raw_material_id', 'pack_material_id'],
   });
-  if (existingRmCount > 0) {
+  const rmIds = [...new Set(rows.map((r) => Number(r.raw_material_id)).filter((id) => Number.isFinite(id) && id > 0))];
+  const pmIds = [...new Set(rows.map((r) => Number(r.pack_material_id)).filter((id) => Number.isFinite(id) && id > 0))];
+  if (rmIds.length || pmIds.length) {
+    await syncWarehouseReserved(rmIds, pmIds);
+  }
+}
+
+async function applyRmReservedToInventory(batchRow, options = {}) {
+  const { force = false } = options;
+  const d = batchRow.get ? batchRow.get({ plain: true }) : batchRow;
+  const existingRmCount = await countRmReservedBatchItems(d.id);
+  if (existingRmCount > 0 && !force) {
+    await syncWarehouseReservedForExistingBatchRbi(d.id, 'rm');
     return;
   }
-  // Remove existing RM reserved_batch_items for this batch so we don't double-count on repeat transition
-  await ReservedBatchItem.destroy({
-    where: { production_batch_id: d.id, pack_material_id: null },
-  });
+  if (existingRmCount > 0) {
+    await ReservedBatchItem.destroy({
+      where: { production_batch_id: d.id, pack_material_id: null },
+    });
+  }
 
   const { rmLines: bomRmLines, source: bomSource, batchSizeKg: planningBatchSizeKg } = await getBomLinesForBatch(d);
   if (!Array.isArray(bomRmLines) || bomRmLines.length === 0) {
@@ -970,29 +1022,64 @@ async function applyRmReservedToInventory(batchRow) {
   }
 }
 
+function batchMarkedPmReserved(plain) {
+  return !!plain.pm_reserved || plain.bpr_status === 'pm_reserved';
+}
+
+async function countPmReservedBatchItems(batchId) {
+  return ReservedBatchItem.count({
+    where: { production_batch_id: batchId, raw_material_id: null },
+  });
+}
+
+/** PM shows reserved in UI but RBI rows missing — safe to rebuild only before PM connect/MTR consumed reserve. */
+async function needsPmReserveRepair(batchId, plain) {
+  if (!batchMarkedPmReserved(plain)) return false;
+  if (plain.pm_connected) return false;
+  const n = await countPmReservedBatchItems(batchId);
+  return n === 0;
+}
+
+function batchMarkedRmReserved(plain) {
+  return !!plain.rm_reserved || plain.bmr_status === 'rm_reserved';
+}
+
+async function countRmReservedBatchItems(batchId) {
+  return ReservedBatchItem.count({
+    where: { production_batch_id: batchId, pack_material_id: null },
+  });
+}
+
+async function needsRmReserveRepair(batchId, plain) {
+  if (!batchMarkedRmReserved(plain)) return false;
+  if (plain.rm_connected) return false;
+  const n = await countRmReservedBatchItems(batchId);
+  return n === 0;
+}
+
 /**
  * When BPR status transitions to pm_reserved: create reserved_batch_items for PM from BOM,
  * sync warehouse_inventory.reserved, and log reserved change in history with batch id.
- * Idempotent: removes any existing PM reservations for this batch first so repeat runs don't double-count.
+ * Idempotent: skips when PM RBI rows already exist unless options.force (repair missing reserve).
  * Inventory: available = SIH - reserved; after reserve X, reserved_new = R + X, available_new = SIH - reserved_new.
  */
-async function applyPmReservedToInventory(batchRow) {
+async function applyPmReservedToInventory(batchRow, options = {}) {
+  const { force = false } = options;
   const d = batchRow.get ? batchRow.get({ plain: true }) : batchRow;
-  // Idempotent: if this batch already has PM reserved_batch_items (e.g. double PATCH), skip to avoid double-counting
-  const existingPmCount = await ReservedBatchItem.count({
-    where: { production_batch_id: d.id, raw_material_id: null },
-  });
-  if (existingPmCount > 0) {
+  const existingPmCount = await countPmReservedBatchItems(d.id);
+  if (existingPmCount > 0 && !force) {
+    await syncWarehouseReservedForExistingBatchRbi(d.id, 'pm');
     return;
   }
-  // Remove existing PM reserved_batch_items for this batch so we don't double-count on repeat transition
-  await ReservedBatchItem.destroy({
-    where: { production_batch_id: d.id, raw_material_id: null },
-  });
+  if (existingPmCount > 0) {
+    await ReservedBatchItem.destroy({
+      where: { production_batch_id: d.id, raw_material_id: null },
+    });
+  }
 
   const { pmLines: bomPmLines, source: bomSource, batchSizeKg: planningBatchSizeKg } = await getBomLinesForBatch(d);
   if (!Array.isArray(bomPmLines) || bomPmLines.length === 0) {
-    console.warn('[production] pm_reserved: no BOM pm_lines for batch', d.bpr_no);
+    console.warn('[production] pm_reserved: no BOM pm_lines for batch', d.bpr_no, d.bmr_no);
     return;
   }
   // When using planning batch BOM, use its size_kg for units; else match frontend formula
@@ -1004,11 +1091,15 @@ async function applyPmReservedToInventory(batchRow) {
 
   // Aggregate by pack_material_id so same PM in multiple BOM lines is one reserved row (SIH - reserved = available)
   const pmQuantities = new Map(); // pmId -> { quantity, unit, code }
+  const missingPmCodes = [];
   for (const line of bomPmLines) {
-    const code = line.pm_code || line.pmCode || line.code;
+    const code = String(line.pm_code || line.pmCode || line.code || '').trim();
     if (!code) continue;
     const pm = await PackMaterial.findOne({ where: { code } });
-    if (!pm) continue;
+    if (!pm) {
+      missingPmCodes.push(code);
+      continue;
+    }
     const pmId = pm.id;
     const qtyPerUnit = line.qty_per_unit != null ? Number(line.qty_per_unit) : (line.quantity != null ? Number(line.quantity) : 1);
     const quantity = qtyPerUnit * batchSizeUnits;
@@ -1022,7 +1113,22 @@ async function applyPmReservedToInventory(batchRow) {
     }
   }
   const affectedPmIds = new Set(pmQuantities.keys());
-  if (affectedPmIds.size === 0) return;
+  if (affectedPmIds.size === 0) {
+    if (missingPmCodes.length > 0) {
+      console.warn('[production] pm_reserved: no pack_materials rows for BOM codes', {
+        bpr_no: d.bpr_no,
+        bmr_no: d.bmr_no,
+        missingPmCodes,
+      });
+    }
+    return;
+  }
+  if (missingPmCodes.length > 0) {
+    console.warn('[production] pm_reserved: skipped BOM lines (pack_materials not found)', {
+      bpr_no: d.bpr_no,
+      missingPmCodes,
+    });
+  }
   for (const [pmId, { quantity, unit }] of pmQuantities) {
     await ReservedBatchItem.create({
       production_batch_id: d.id,
@@ -1079,6 +1185,174 @@ function pickDispensingLine(nextArr, prevArr, code) {
   const fromNext = (nextArr || []).find((l) => String(l?.code || '').trim() === c);
   if (fromNext) return fromNext;
   return (prevArr || []).find((l) => String(l?.code || '').trim() === c) || null;
+}
+
+function sumDispensedByCodeForDispensing(arr) {
+  const m = new Map();
+  for (const line of arr || []) {
+    const code = (line?.code ?? '').toString().trim();
+    if (!code) continue;
+    const dispensed = Number(line.dispensed ?? 0) || 0;
+    m.set(code, (m.get(code) || 0) + dispensed);
+  }
+  return m;
+}
+
+/**
+ * Dispensing may only consume from the batch scheduled manufacturing zone (scheduled_mu_zone).
+ * Returns shortage rows for positive deltas that exceed on-hand qty at that MU.
+ */
+async function collectDispensingMuZoneShortages(type, prevArr, nextArr, scheduledMuZone) {
+  const muZone = String(scheduledMuZone || '').trim();
+  if (!muZone) {
+    return [{ reason: 'no_scheduled_mu', type, code: '', delta: 0, atMu: 0, shortage: 0 }];
+  }
+
+  const prevMap = sumDispensedByCodeForDispensing(prevArr);
+  const nextMap = sumDispensedByCodeForDispensing(nextArr);
+  const codes = new Set([...prevMap.keys(), ...nextMap.keys()]);
+  const shortages = [];
+  const muLabel = muBucketLabelForZone(muZone);
+
+  for (const code of codes) {
+    const delta = (nextMap.get(code) || 0) - (prevMap.get(code) || 0);
+    if (!Number.isFinite(delta) || delta <= 1e-9) continue;
+
+    const sampleLine = pickDispensingLine(nextArr, prevArr, code);
+    const rmOrPmRow = type === 'RM'
+      ? await resolveRawMaterialForDispensingLine(sampleLine || { code })
+      : await resolvePackMaterialForDispensingLine(sampleLine || { code });
+    if (!rmOrPmRow) {
+      shortages.push({
+        type,
+        code,
+        delta,
+        atMu: 0,
+        shortage: delta,
+        muZone,
+        muLabel,
+        reason: 'master_not_found',
+      });
+      continue;
+    }
+
+    const wh = await WarehouseInventory.findOne({
+      where: type === 'RM'
+        ? { item_type: 'RM', raw_material_id: rmOrPmRow.id }
+        : { item_type: 'PM', pack_material_id: rmOrPmRow.id },
+    });
+    if (!wh) {
+      shortages.push({
+        type,
+        code,
+        delta,
+        atMu: 0,
+        shortage: delta,
+        muZone,
+        muLabel,
+        reason: 'no_inventory_row',
+      });
+      continue;
+    }
+
+    const plainWh = wh.get ? wh.get({ plain: true }) : wh;
+    let atMu = 0;
+    try {
+      atMu = await getStockQtyAtMuZone(plainWh.id, muZone);
+      if (type === 'PM' && delta > 0) {
+        delta = capPmDispenseConsumption(delta, atMu);
+      }
+    } catch (e) {
+      shortages.push({
+        type,
+        code,
+        delta,
+        atMu: 0,
+        shortage: delta,
+        muZone,
+        muLabel,
+        reason: 'inventory_lookup_failed',
+      });
+      continue;
+    }
+
+    if (!materialQtyLteForDispensing(delta, atMu, type)) {
+      const deltaN = materialQtyToNum(delta);
+      const atMuN = materialQtyToNum(atMu);
+      shortages.push({
+        type,
+        code,
+        masterCode: rmOrPmRow.code || code,
+        delta: deltaN,
+        atMu: atMuN,
+        shortage: Math.max(0, deltaN - atMuN),
+        muZone,
+        muLabel,
+        whStock: toNum(plainWh.wh_stock),
+        ml1Stock: toNum(plainWh.ml1_stock),
+        ml2Stock: toNum(plainWh.ml2_stock),
+      });
+    }
+  }
+
+  return shortages;
+}
+
+/** Lines marked done must have dispensed >= required. */
+function collectDispensingRequiredShortages(arr) {
+  const shortages = [];
+  for (const line of arr || []) {
+    if (!line?.done) continue;
+    const required = line.required;
+    if (!materialQtyGt(required, 0)) continue;
+    const dispensed = line.dispensed;
+    const isPcs = String(line.unit || '').toUpperCase() === 'PCS' || String(line.uom || '').toUpperCase() === 'PCS';
+    const meets = isPcs
+      ? materialQtyGteForDispensing(dispensed, required, 'pcs')
+      : materialQtyGte(dispensed, required);
+    if (!meets) {
+      shortages.push({
+        code: String(line.code || '').trim(),
+        required: Number(required) || 0,
+        dispensed: Number(dispensed) || 0,
+        shortage: (Number(required) || 0) - (Number(dispensed) || 0),
+      });
+    }
+  }
+  return shortages;
+}
+
+function formatDispensingMuZoneShortageMessage(shortages, scheduledMuZone) {
+  const muZone = String(scheduledMuZone || '').trim();
+  const noMu = shortages.find((s) => s.reason === 'no_scheduled_mu');
+  if (noMu) {
+    return 'Dispensing blocked — schedule the batch and select a manufacturing site (MTR receive zone) before dispensing.';
+  }
+  const lines = shortages.slice(0, 8).map((s) => {
+    const label = s.masterCode || s.code;
+    const at = Number(s.atMu) || 0;
+    const need = Number(s.delta) || 0;
+    const zone = s.muZone || muZone;
+    const bucket = s.muLabel || muBucketLabelForZone(zone);
+    if (s.reason === 'master_not_found') {
+      return `${label}: material master not found`;
+    }
+    if (s.reason === 'no_inventory_row') {
+      return `${label}: no warehouse inventory row`;
+    }
+    return `${label}: need ${need} at ${zone} (${bucket}), only ${at} available — complete MTR to this site first`;
+  });
+  const more = shortages.length > 8 ? ` (+${shortages.length - 8} more)` : '';
+  return `Dispensing blocked — stock must be at the batch manufacturing site.${lines.length ? ` ${lines.join('; ')}` : ''}${more}`;
+}
+
+function formatDispensingRequiredShortageMessage(shortages) {
+  const lines = shortages.slice(0, 8).map((s) => {
+    const code = s.code || 'item';
+    return `${code}: dispensed ${s.dispensed} < required ${s.required}`;
+  });
+  const more = shortages.length > 8 ? ` (+${shortages.length - 8} more)` : '';
+  return `Dispensing blocked — each completed line must meet the required quantity.${lines.length ? ` ${lines.join('; ')}` : ''}${more}`;
 }
 
 async function resolveRawMaterialForDispensingLine(line) {
@@ -1172,7 +1446,8 @@ async function adjustProductionReservedAfterDispenseDelta({
 }
 
 /**
- * Apply dispensing delta: prefer ML1 then ML2 (manufacturing / MU stock), then WH if MU insufficient.
+ * Apply dispensing delta from the batch scheduled manufacturing zone only (ML1 or ML2 bucket).
+ * WH stock and the other MU cannot be used without MTR to the batch site first.
  * qty_delta in history: negative when material leaves inventory (dispense), positive when restored.
  * @returns {boolean} true if warehouse row was updated and history logged
  */
@@ -1266,41 +1541,94 @@ async function applyDispensingDeltaToWarehouseInventory({
     });
   }
 
+  const muZone = String(batchPlain?.scheduled_mu_zone || '').trim();
+  const muBucket = muZoneCodeToMlBucket(muZone);
+  const muLabel = muBucketLabelForZone(muZone);
+
   let fromMl1Used = 0;
   let fromMl2Used = 0;
-  let fromWhUsed = 0;
   if (delta > 0) {
-    let remaining = delta;
-    fromMl1Used = Math.min(newMl1, remaining);
-    newMl1 -= fromMl1Used;
-    remaining -= fromMl1Used;
-    if (remaining > 0) {
-      fromMl2Used = Math.min(newMl2, remaining);
-      newMl2 -= fromMl2Used;
-      remaining -= fromMl2Used;
+    if (!muZone) {
+      const err = new Error(formatDispensingMuZoneShortageMessage([{ reason: 'no_scheduled_mu' }], ''));
+      err.statusCode = 400;
+      throw err;
     }
-    if (remaining > 0) {
-      fromWhUsed = Math.min(whStock, remaining);
-      whStock -= fromWhUsed;
-      remaining -= fromWhUsed;
-      if (remaining > 1e-6) {
-        console.warn(DISPENDING_MU_ERR_TAG, 'applyDispensingDelta: insufficient WH+ML1+ML2', {
-          code,
+
+    let atMuBefore = await getStockQtyAtMuZone(plainWh.id, muZone);
+    if (type === 'PM' && delta > 0) {
+      delta = capPmDispenseConsumption(delta, atMuBefore);
+    }
+    if (!materialQtyLteForDispensing(delta, atMuBefore, type)) {
+      const err = new Error(
+        formatDispensingMuZoneShortageMessage(
+          [{
+            type,
+            code,
+            masterCode: rmOrPmRow.code || code,
+            delta,
+            atMu: atMuBefore,
+            shortage: Math.max(0, Number(delta) - Number(atMuBefore)),
+            muZone,
+            muLabel,
+          }],
+          muZone
+        )
+      );
+      err.statusCode = 400;
+      err.dispensingFacilityShortages = [{
+        type,
+        code,
+        masterCode: rmOrPmRow.code || code,
+        delta,
+        atMu: atMuBefore,
+        shortage: delta - atMuBefore,
+        muZone,
+        muLabel,
+      }];
+      throw err;
+    }
+
+    if (muBucket === 'ml2') {
+      fromMl2Used = Math.min(newMl2, delta);
+      newMl2 -= fromMl2Used;
+      const ml2Remainder = materialQtyToNum(materialQtySub(delta, fromMl2Used));
+      if (materialQtyGt(ml2Remainder, 0)) {
+        const err = new Error(formatDispensingMuZoneShortageMessage([{
           type,
-          bmr_no: batchPlain?.bmr_no,
-          shortage: remaining,
-        });
-        console.warn('[production][DISPENSING_TRACE] insufficient WH+ML1+ML2; short by', {
           code,
+          masterCode: rmOrPmRow.code || code,
+          delta,
+          atMu: atMuBefore,
+          shortage: ml2Remainder,
+          muZone,
+          muLabel,
+        }], muZone));
+        err.statusCode = 400;
+        throw err;
+      }
+    } else {
+      fromMl1Used = Math.min(newMl1, delta);
+      newMl1 -= fromMl1Used;
+      const ml1Remainder = materialQtyToNum(materialQtySub(delta, fromMl1Used));
+      if (materialQtyGt(ml1Remainder, 0)) {
+        const err = new Error(formatDispensingMuZoneShortageMessage([{
           type,
-          batch: batchPlain?.bmr_no,
-          shortage: remaining,
-        });
+          code,
+          masterCode: rmOrPmRow.code || code,
+          delta,
+          atMu: atMuBefore,
+          shortage: ml1Remainder,
+          muZone,
+          muLabel,
+        }], muZone));
+        err.statusCode = 400;
+        throw err;
       }
     }
   } else {
     const restore = Math.abs(delta);
-    newMl1 += restore;
+    if (muBucket === 'ml2') newMl2 += restore;
+    else newMl1 += restore;
   }
 
   const newStockInHand = whStock + newMl1 + newMl2;
@@ -1308,7 +1636,7 @@ async function applyDispensingDeltaToWarehouseInventory({
     whInventoryId: plainWh.id,
     code,
     delta,
-    tookFrom: { ml1: fromMl1Used, ml2: fromMl2Used, wh: fromWhUsed },
+    tookFrom: { ml1: fromMl1Used, ml2: fromMl2Used },
     after: { wh_stock: whStock, ml1_stock: newMl1, ml2_stock: newMl2, stock_in_hand: newStockInHand },
   });
 
@@ -1335,7 +1663,7 @@ async function applyDispensingDeltaToWarehouseInventory({
     whInventoryId: plainWh.id,
     code,
     delta,
-    tookFrom: { ml1: fromMl1Used, ml2: fromMl2Used, wh: fromWhUsed },
+    tookFrom: { ml1: fromMl1Used, ml2: fromMl2Used },
     sih_before: beforeSih,
     sih_after: newStockInHand,
   });
@@ -1659,12 +1987,39 @@ async function updateBatch(req, res) {
       }
     }
 
+    if (incomingHasDispensing) {
+      const scheduledMuZone = String(nextPreview?.scheduled_mu_zone || prevPlain?.scheduled_mu_zone || '').trim();
+      const nextDispensingRmPreview = Array.isArray(nextPreview?.dispensing_rm) ? nextPreview.dispensing_rm : [];
+      const nextDispensingPmPreview = Array.isArray(nextPreview?.dispensing_pm) ? nextPreview.dispensing_pm : [];
+      const requiredShortages = [
+        ...collectDispensingRequiredShortages(nextDispensingRmPreview),
+        ...collectDispensingRequiredShortages(nextDispensingPmPreview),
+      ];
+      if (requiredShortages.length > 0) {
+        return res.status(400).json({
+          error: formatDispensingRequiredShortageMessage(requiredShortages),
+          shortages: requiredShortages,
+        });
+      }
+      const [rmShortages, pmShortages] = await Promise.all([
+        collectDispensingMuZoneShortages('RM', prevDispensingRmSnapshot, nextDispensingRmPreview, scheduledMuZone),
+        collectDispensingMuZoneShortages('PM', prevDispensingPmSnapshot, nextDispensingPmPreview, scheduledMuZone),
+      ]);
+      const allShortages = [...rmShortages, ...pmShortages];
+      if (allShortages.length > 0) {
+        return res.status(400).json({
+          error: formatDispensingMuZoneShortageMessage(allShortages, scheduledMuZone),
+          shortages: allShortages,
+        });
+      }
+    }
+
     await row.save();
     const nextPlain = row.get ? row.get({ plain: true }) : row;
 
     // --- Dispensing consumption (delta on dispensed qty) ---
     // When dispensing_rm/dispensing_pm values change (even via Save Progress),
-    // consume the delta from RM/PM in warehouse_inventory (ML1 → ML2 → WH).
+    // consume the delta from RM/PM at the batch scheduled_mu_zone only (not WH or other MU).
     //
     // IMPORTANT: This must run even when bpr_status is already fg_ready. Previously we skipped
     // the whole block for fg_ready, which meant: (1) saving dispensing on a completed BPR never
@@ -1676,17 +2031,6 @@ async function updateBatch(req, res) {
     const nextDispensingRm = Array.isArray(nextPlain?.dispensing_rm) ? nextPlain.dispensing_rm : [];
     const prevDispensingPm = prevDispensingPmSnapshot;
     const nextDispensingPm = Array.isArray(nextPlain?.dispensing_pm) ? nextPlain.dispensing_pm : [];
-
-    const sumDispensedByCode = (arr, codeKey) => {
-      const m = new Map();
-      for (const line of arr) {
-        const code = (line?.[codeKey] ?? line?.code ?? '').toString().trim();
-        if (!code) continue;
-        const dispensed = Number(line.dispensed ?? 0) || 0;
-        m.set(code, (m.get(code) || 0) + dispensed);
-      }
-      return m;
-    };
 
     const consumedForBundle = [];
     const consumeDelta = async (type, prevMap, nextMap, nextLines, prevLines, bundleTagId) => {
@@ -1718,24 +2062,29 @@ async function updateBatch(req, res) {
             nextLine: nextLines?.find((l) => String(l?.code || '').trim() === code) ?? null,
           });
         }
-        const applied = await applyDispensingDeltaToWarehouseInventory({
-          type,
-          code,
-          delta,
-          sampleLine,
-          batchPlain: nextPlain,
-          dispensingBundleId: bundleTagId || null,
-        });
-        if (applied && delta > 0) {
-          consumedForBundle.push({ type, code, qty: delta });
+        try {
+          const applied = await applyDispensingDeltaToWarehouseInventory({
+            type,
+            code,
+            delta,
+            sampleLine,
+            batchPlain: nextPlain,
+            dispensingBundleId: bundleTagId || null,
+          });
+          if (applied && delta > 0) {
+            consumedForBundle.push({ type, code, qty: delta });
+          }
+        } catch (consumeErr) {
+          if (consumeErr && consumeErr.statusCode === 400) throw consumeErr;
+          throw consumeErr;
         }
       }
     };
 
-    const prevRmMap = sumDispensedByCode(prevDispensingRm, 'code');
-    const nextRmMap = sumDispensedByCode(nextDispensingRm, 'code');
-    const prevPmMap = sumDispensedByCode(prevDispensingPm, 'code');
-    const nextPmMap = sumDispensedByCode(nextDispensingPm, 'code');
+    const prevRmMap = sumDispensedByCodeForDispensing(prevDispensingRm);
+    const nextRmMap = sumDispensedByCodeForDispensing(nextDispensingRm);
+    const prevPmMap = sumDispensedByCodeForDispensing(prevDispensingPm);
+    const nextPmMap = sumDispensedByCodeForDispensing(nextDispensingPm);
 
     const dispensingDeltaThisPatch =
       dispensingMapsHaveAnyDelta(prevRmMap, nextRmMap) || dispensingMapsHaveAnyDelta(prevPmMap, nextPmMap);
@@ -1781,11 +2130,21 @@ async function updateBatch(req, res) {
       await persistMuDispensingBundleSnapshot(id, muDispensingBundleTagId, consumedForBundle, peId);
       await row.reload();
     }
-    if (prevBmrStatus !== 'rm_reserved' && nextPlain.bmr_status === 'rm_reserved') {
+    const rmReserveTriggered =
+      (prevBmrStatus !== 'rm_reserved' && nextPlain.bmr_status === 'rm_reserved') ||
+      (!prevPlain.rm_reserved && !!nextPlain.rm_reserved);
+    if (rmReserveTriggered) {
       await applyRmReservedToInventory(row);
+    } else if (await needsRmReserveRepair(id, nextPlain)) {
+      await applyRmReservedToInventory(row, { force: true });
     }
-    if (prevBprStatus !== 'pm_reserved' && nextPlain.bpr_status === 'pm_reserved') {
+    const pmReserveTriggered =
+      (prevBprStatus !== 'pm_reserved' && nextPlain.bpr_status === 'pm_reserved') ||
+      (!prevPlain.pm_reserved && !!nextPlain.pm_reserved);
+    if (pmReserveTriggered) {
       await applyPmReservedToInventory(row);
+    } else if (await needsPmReserveRepair(id, nextPlain)) {
+      await applyPmReservedToInventory(row, { force: true });
     }
     if (prevBprStatus !== 'fg_ready' && nextPlain.bpr_status === 'fg_ready') {
       await applyBprFgReadyToInventory(row);
@@ -1810,6 +2169,12 @@ async function updateBatch(req, res) {
     res.json(formatBatch(row));
   } catch (err) {
     console.error('updateBatch error:', err);
+    if (err && err.statusCode === 400) {
+      return res.status(400).json({
+        error: err.message || 'Dispensing blocked — insufficient stock at production facility',
+        shortages: err.dispensingFacilityShortages || undefined,
+      });
+    }
     res.status(500).json({ error: 'Failed to update batch' });
   }
 }
@@ -1818,9 +2183,9 @@ async function deleteBatch(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
-    const row = await ProductionBatch.findByPk(id);
+    const row = await ProductionBatch.findOne({ where: activeRowWhere({ id }) });
     if (!row) return res.status(404).json({ error: 'Batch not found' });
-    await row.destroy();
+    await softDeleteInstance(row);
     res.json({ message: 'Batch deleted' });
   } catch (err) {
     console.error('deleteBatch error:', err);
@@ -2374,6 +2739,12 @@ async function getBatchMtrReserved(req, res) {
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const batch = await ProductionBatch.findByPk(id);
     if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    const plain = batch.get ? batch.get({ plain: true }) : batch;
+    if (await needsPmReserveRepair(id, plain)) {
+      await applyPmReservedToInventory(batch, { force: true });
+    } else if (await needsRmReserveRepair(id, plain)) {
+      await applyRmReservedToInventory(batch, { force: true });
+    }
 
     const rows = await ReservedBatchItem.findAll({
       where: { production_batch_id: id },
@@ -2408,10 +2779,98 @@ async function getBatchMtrReserved(req, res) {
   }
 }
 
+/**
+ * GET /batches/:id/dispensing-mu-stock — qty at batch scheduled_mu_zone per RM/PM code (rack sum at zone, else ML bucket).
+ * Matches backend dispensing validation (not warehouse list ml1/ml2 columns alone).
+ */
+async function getBatchDispensingMuStock(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const batch = await ProductionBatch.findByPk(id);
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    const d = batch.get ? batch.get({ plain: true }) : batch;
+    const scheduledMuZone = String(d.scheduled_mu_zone || '').trim();
+
+    const rmCodes = new Set();
+    const pmCodes = new Set();
+    for (const line of Array.isArray(d.dispensing_rm) ? d.dispensing_rm : []) {
+      const c = String(line?.code || '').trim();
+      if (c) rmCodes.add(c);
+    }
+    for (const line of Array.isArray(d.dispensing_pm) ? d.dispensing_pm : []) {
+      const c = String(line?.code || '').trim();
+      if (c) pmCodes.add(c);
+    }
+    if (rmCodes.size === 0 && pmCodes.size === 0) {
+      const { rmLines, pmLines } = await getBomLinesForBatch(d);
+      for (const line of rmLines || []) {
+        const c = String(line.rm_code || line.code || '').trim();
+        if (c) rmCodes.add(c);
+      }
+      for (const line of pmLines || []) {
+        const c = String(line.pm_code || line.code || '').trim();
+        if (c) pmCodes.add(c);
+      }
+    }
+
+    const rmByCode = {};
+    const pmByCode = {};
+
+    for (const code of rmCodes) {
+      const rmOrPmRow = await resolveRawMaterialForDispensingLine({ code });
+      if (!rmOrPmRow) {
+        rmByCode[code] = 0;
+        continue;
+      }
+      const wh = await WarehouseInventory.findOne({
+        where: { item_type: 'RM', raw_material_id: rmOrPmRow.id },
+      });
+      if (!wh) {
+        rmByCode[code] = 0;
+        continue;
+      }
+      const plainWh = wh.get ? wh.get({ plain: true }) : wh;
+      rmByCode[code] = scheduledMuZone
+        ? materialQtyFromDb(await getStockQtyStrAtMuZone(plainWh.id, scheduledMuZone))
+        : '0';
+    }
+
+    for (const code of pmCodes) {
+      const rmOrPmRow = await resolvePackMaterialForDispensingLine({ code });
+      if (!rmOrPmRow) {
+        pmByCode[code] = 0;
+        continue;
+      }
+      const wh = await WarehouseInventory.findOne({
+        where: { item_type: 'PM', pack_material_id: rmOrPmRow.id },
+      });
+      if (!wh) {
+        pmByCode[code] = 0;
+        continue;
+      }
+      const plainWh = wh.get ? wh.get({ plain: true }) : wh;
+      pmByCode[code] = scheduledMuZone
+        ? materialQtyFromDb(await getStockQtyStrAtMuZone(plainWh.id, scheduledMuZone))
+        : '0';
+    }
+
+    res.json({
+      success: true,
+      scheduledMuZone,
+      rmByCode,
+      pmByCode,
+    });
+  } catch (err) {
+    console.error('getBatchDispensingMuStock error:', err);
+    res.status(500).json({ success: false, error: 'Failed to fetch dispensing MU stock' });
+  }
+}
+
 module.exports = {
   listEquipment, getEquipmentById, createEquipment, updateEquipment, deleteEquipment,
   listTeam, getTeamMemberById, createTeamMember, updateTeamMember, deleteTeamMember,
-  listBatches, getBatchById, createBatch, createRworkBatch, updateBatch, deleteBatch, getBatchBom, getBatchMtrReserved, syncBatchesFromPlanning,
+  listBatches, getBatchById, createBatch, createRworkBatch, updateBatch, deleteBatch, getBatchBom, getBatchMtrReserved, getBatchDispensingMuStock, syncBatchesFromPlanning,
   computeRequiredVolumeLiters,
   applyRmReservedToInventory,
   applyPmReservedToInventory,

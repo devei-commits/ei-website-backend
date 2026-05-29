@@ -1,3 +1,4 @@
+const { softDeleteInstance } = require('../lib/softDelete');
 const CustomizationPackagingOption = require('./models');
 
 function normalizeSpecs(raw) {
@@ -161,7 +162,7 @@ async function deleteCustomizationPackaging(req, res) {
     }
     const row = await CustomizationPackagingOption.findByPk(id);
     if (!row) return res.status(404).json({ success: false, message: 'Not found' });
-    await row.destroy();
+    await softDeleteInstance(row);
     res.status(204).send();
   } catch (err) {
     console.error('deleteCustomizationPackaging', err);

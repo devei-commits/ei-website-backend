@@ -119,7 +119,8 @@ User.init({
   deleted_at: {
     type: DataTypes.DATE,
     allowNull: true
-  }
+  },
+  lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
 
 }, {
   sequelize: db,
@@ -142,7 +143,10 @@ DoctorProfile.init({
   city: DataTypes.STRING,
   state: DataTypes.STRING,
   country: DataTypes.STRING,
-  pincode: DataTypes.STRING
+  pincode: DataTypes.STRING,
+
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
+    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
 
 }, {
   sequelize: db,

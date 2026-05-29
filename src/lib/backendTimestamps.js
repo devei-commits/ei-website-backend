@@ -85,6 +85,10 @@ function stampForCreate(record, model) {
   for (const key of created) assignTimestampField(record, model, key, now, true);
   for (const key of updated) assignTimestampField(record, model, key, now, true);
   for (const key of eventOnCreate) assignTimestampField(record, model, key, now, true);
+  const lcAttr = model.rawAttributes?.lifecycle_status;
+  if (lcAttr && lcAttr.defaultValue === 'active') {
+    assignTimestampField(record, model, 'lifecycle_status', 'active', true);
+  }
 }
 
 /**
@@ -105,6 +109,20 @@ function stampForDelete(record, model) {
   const now = backendNow();
   const { deleted } = collectModelTimestampKeys(model);
   for (const key of deleted) assignTimestampField(record, model, key, now, false);
+  stampLifecycleDeleted(record, model);
+}
+
+/**
+ * Set lifecycle_status on soft-delete when the model has that column.
+ */
+function stampLifecycleDeleted(record, model) {
+  if (!record || !model?.rawAttributes?.lifecycle_status) return;
+  const val = 'deleted';
+  if (typeof record.set === 'function') {
+    record.set('lifecycle_status', val);
+    return;
+  }
+  record.lifecycle_status = val;
 }
 
 function registerSequelizeTimestampHooks(sequelize) {
@@ -142,6 +160,7 @@ module.exports = {
   stampForCreate,
   stampForUpdate,
   stampForDelete,
+  stampLifecycleDeleted,
   registerSequelizeTimestampHooks,
   collectModelTimestampKeys,
 };

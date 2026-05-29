@@ -1,3 +1,4 @@
+const { softDeleteInstance, activeRowWhere } = require('../lib/softDelete');
 const { Department } = require('./models');
 
 async function listDepartments(_req, res) {
@@ -63,7 +64,7 @@ async function deleteDepartment(req, res) {
   try {
     const row = await Department.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Department not found' });
-    await row.destroy();
+    await softDeleteInstance(row);
     res.json({ success: true });
   } catch (err) {
     console.error('deleteDepartment error:', err);

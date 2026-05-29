@@ -120,6 +120,8 @@ app.use(logginHandler);
 app.use(cacheInvalidationMiddleware);
 
 const apiPrefix = '/api/v1';
+const { mountSwagger } = require('./src/docs/swaggerSetup');
+mountSwagger(app, { apiPrefix, port: Number(process.env.PORT) || 3000 });
 
 app.get(`${apiPrefix}/health`, (req, res) => {
     res.json({ status: 'ok' });
@@ -176,6 +178,10 @@ app.use(errorHandler);
 app.use((req, res) => {
     res.status(404).send('Not Found');
 });
+
+// After all routers/models are loaded: GET reads exclude lifecycle_status = 'deleted'.
+const { registerActiveReadScopes } = require('./src/lib/registerActiveReadScopes');
+registerActiveReadScopes(db);
 
 if (process.env.NODE_ENV !== 'test') {
   db.authenticate()

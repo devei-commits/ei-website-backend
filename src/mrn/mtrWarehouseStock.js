@@ -2,16 +2,20 @@
  * Outbound MTR (WH → MU): transfer from production-reserved qty at warehouse,
  * capped by physical WH stock (matches Production MTR modal).
  */
-
-function toNum(x) {
-  if (x == null) return 0;
-  const n = Number(x);
-  return Number.isNaN(n) ? 0 : n;
-}
+const {
+  materialQtyAdd,
+  materialQtyFromDb,
+  materialQtyGte,
+  materialQtyGt,
+  materialQtyMin,
+  materialQtySubNonNeg,
+  materialQtyToNum,
+  sanitizeMrnLineItemQuantity,
+} = require('../utils/materialQtyCompare');
 
 /** Free stock — used for reserve flows, not outbound MTR. */
 function qtyAvailableWh(whStock, reserved) {
-  return Math.max(0, toNum(whStock) - toNum(reserved));
+  return materialQtyToNum(materialQtySubNonNeg(whStock, reserved));
 }
 
 /**
@@ -19,12 +23,12 @@ function qtyAvailableWh(whStock, reserved) {
  * Prefer batchReserved (reserved_batch_items for this BMR/BPR) when provided; else warehouse_inventory.reserved.
  */
 function qtyMtrFromReserved(whStock, reservedGlobal, batchReserved) {
-  const wh = toNum(whStock);
+  const wh = materialQtyFromDb(whStock);
   const alloc =
     batchReserved !== undefined && batchReserved !== null
-      ? toNum(batchReserved)
-      : toNum(reservedGlobal);
-  return Math.max(0, Math.min(alloc, wh));
+      ? materialQtyFromDb(batchReserved)
+      : materialQtyFromDb(reservedGlobal);
+  return materialQtyToNum(materialQtyMin(alloc, wh));
 }
 
 /**
@@ -42,27 +46,27 @@ async function loadBatchReservedQtyMaps(productionBatchId) {
   });
   for (const row of rows) {
     const plain = row.get ? row.get({ plain: true }) : row;
-    const qty = toNum(plain.quantity_reserved);
+    const qty = materialQtyToNum(plain.quantity_reserved);
     if (qty <= 0) continue;
     if (plain.raw_material_id != null) {
       const id = Number(plain.raw_material_id);
-      rm.set(id, (rm.get(id) || 0) + qty);
+      rm.set(id, materialQtyToNum(materialQtyAdd(rm.get(id) || 0, qty)));
     } else if (plain.pack_material_id != null) {
       const id = Number(plain.pack_material_id);
-      pm.set(id, (pm.get(id) || 0) + qty);
+      pm.set(id, materialQtyToNum(materialQtyAdd(pm.get(id) || 0, qty)));
     }
   }
   return { rm, pm };
 }
 
 function isQtyShort(available, required) {
-  return toNum(available) + 1e-9 < toNum(required);
+  return !materialQtyGte(available, required);
 }
 
 /**
  * Aggregate positive line qty by RM/PM id (and track code for error messages).
  * @param {Array<object>} lineItems
- * @returns {{ rm: Map<number, { qty: number, code: string }>, pm: Map<number, { qty: number, code: string }>, unresolved: Array<{ code: string, qty: number, unit: string }> }}
+ * @returns {{ rm: Map<number, { qty: string, code: string }>, pm: Map<number, { qty: string, code: string }>, unresolved: Array<{ code: string, qty: string, unit: string }> }}
  */
 function aggregateMtrLineQuantities(lineItems) {
   const rm = new Map();
@@ -70,20 +74,20 @@ function aggregateMtrLineQuantities(lineItems) {
   const unresolved = [];
 
   for (const li of lineItems || []) {
-    const qty = toNum(li.quantity);
-    if (qty <= 0) continue;
+    const qty = sanitizeMrnLineItemQuantity(li.quantity);
+    if (!materialQtyGt(qty, 0)) continue;
     const code = String(li.code || li.itemCode || li.rm_code || li.pm_code || '').trim();
 
     if (li.raw_material_id != null) {
       const id = Number(li.raw_material_id);
-      const prev = rm.get(id) || { qty: 0, code };
-      rm.set(id, { qty: prev.qty + qty, code: prev.code || code });
+      const prev = rm.get(id) || { qty: '0', code };
+      rm.set(id, { qty: materialQtyAdd(prev.qty, qty), code: prev.code || code });
       continue;
     }
     if (li.pack_material_id != null) {
       const id = Number(li.pack_material_id);
-      const prev = pm.get(id) || { qty: 0, code };
-      pm.set(id, { qty: prev.qty + qty, code: prev.code || code });
+      const prev = pm.get(id) || { qty: '0', code };
+      pm.set(id, { qty: materialQtyAdd(prev.qty, qty), code: prev.code || code });
       continue;
     }
     if (code) unresolved.push({ code, qty, unit: String(li.unit || '').trim() });
@@ -126,10 +130,10 @@ async function validateOutboundMtrWarehouseStock(WarehouseInventory, lineItems, 
       shortages.push({
         type: 'RM',
         code: agg.code || `RM#${rmId}`,
-        requested: agg.qty,
+        requested: materialQtyToNum(agg.qty),
         available: mtrPool,
-        reserved: batchReserved !== undefined ? toNum(batchReserved) : toNum(plain?.reserved),
-        wh_stock: toNum(plain?.wh_stock),
+        reserved: batchReserved !== undefined ? materialQtyToNum(batchReserved) : materialQtyToNum(plain?.reserved),
+        wh_stock: materialQtyToNum(plain?.wh_stock),
       });
     }
   }
@@ -146,10 +150,10 @@ async function validateOutboundMtrWarehouseStock(WarehouseInventory, lineItems, 
       shortages.push({
         type: 'PM',
         code: agg.code || `PM#${pmId}`,
-        requested: agg.qty,
+        requested: materialQtyToNum(agg.qty),
         available: mtrPool,
-        reserved: batchReserved !== undefined ? toNum(batchReserved) : toNum(plain?.reserved),
-        wh_stock: toNum(plain?.wh_stock),
+        reserved: batchReserved !== undefined ? materialQtyToNum(batchReserved) : materialQtyToNum(plain?.reserved),
+        wh_stock: materialQtyToNum(plain?.wh_stock),
       });
     }
   }

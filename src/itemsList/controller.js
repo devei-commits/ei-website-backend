@@ -1,4 +1,6 @@
 const { Op } = require('sequelize');
+const { softDeleteInstance, softDeleteWhere, activeRowWhere } = require('../lib/softDelete');
+const { softDeleteItemsListChain } = require('../products/destroyProductWithDependents');
 const { ItemsList, ItemListVendorRate, ItemListTier } = require('./models');
 const { partyWhereForItemsListRowType } = require('./partyTypeWhere');
 const RawMaterial = require('../rawMaterials/models');
@@ -186,10 +188,10 @@ async function pageItemsList(req, res) {
 async function listItemsList(req, res) {
   try {
     const typeFilter = req.query.type; // 'RM' | 'PM' | 'PR' | omit = all
-    const where = {};
-    if (typeFilter === 'RM' || typeFilter === 'PM' || typeFilter === 'PR') where.type = typeFilter;
+    const filters = {};
+    if (typeFilter === 'RM' || typeFilter === 'PM' || typeFilter === 'PR') filters.type = typeFilter;
 
-    const rows = await ItemsList.findAll({ where, order: [['id', 'ASC']] });
+    const rows = await ItemsList.findAll({ where: activeRowWhere(filters), order: [['id', 'ASC']] });
     const rowIds = rows.map((r) => r.id);
     const rmIds = [...new Set(rows.map((r) => (r.get ? r.get({ plain: true }) : r).raw_material_id).filter(Boolean))];
     const pmIds = [...new Set(rows.map((r) => (r.get ? r.get({ plain: true }) : r).pack_material_id).filter(Boolean))];
@@ -420,14 +422,9 @@ async function deleteItemsList(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
-    const row = await ItemsList.findByPk(id);
+    const row = await ItemsList.findOne({ where: activeRowWhere({ id }) });
     if (!row) return res.status(404).json({ error: 'Item not found' });
-    const rates = await ItemListVendorRate.findAll({ where: { items_list_id: id } });
-    for (const r of rates) {
-      await ItemListTier.destroy({ where: { item_list_vendor_rate_id: r.id } });
-    }
-    await ItemListVendorRate.destroy({ where: { items_list_id: id } });
-    await row.destroy();
+    await softDeleteItemsListChain({ id }, undefined);
     res.status(204).send();
   } catch (err) {
     console.error('deleteItemsList error', err);
@@ -589,10 +586,10 @@ async function deleteRate(req, res) {
   try {
     const rateId = parseInt(req.params.rateId, 10);
     if (Number.isNaN(rateId)) return res.status(400).json({ error: 'Invalid rateId' });
-    const row = await ItemListVendorRate.findByPk(rateId);
+    const row = await ItemListVendorRate.findOne({ where: activeRowWhere({ id: rateId }) });
     if (!row) return res.status(404).json({ error: 'Rate not found' });
-    await ItemListTier.destroy({ where: { item_list_vendor_rate_id: rateId } });
-    await row.destroy();
+    await softDeleteWhere(ItemListTier, { item_list_vendor_rate_id: rateId });
+    await softDeleteInstance(row);
     res.status(204).send();
   } catch (err) {
     console.error('deleteRate error', err);
@@ -680,9 +677,9 @@ async function deleteTier(req, res) {
   try {
     const tierId = parseInt(req.params.tierId, 10);
     if (Number.isNaN(tierId)) return res.status(400).json({ error: 'Invalid tierId' });
-    const row = await ItemListTier.findByPk(tierId);
+    const row = await ItemListTier.findOne({ where: activeRowWhere({ id: tierId }) });
     if (!row) return res.status(404).json({ error: 'Tier not found' });
-    await row.destroy();
+    await softDeleteInstance(row);
     res.status(204).send();
   } catch (err) {
     console.error('deleteTier error', err);

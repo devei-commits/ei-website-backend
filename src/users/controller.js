@@ -20,6 +20,7 @@ const {
   isInternalStaffUsertype,
   buildInternalStaffWhere,
 } = require('./internalStaff');
+const { activeRowWhere, softDeleteInstance, softDeleteWhere } = require('../lib/softDelete');
 
 const isDev = process.env.DEV === "true" || process.env.NODE_ENV === "development";
 const DEV_BYPASS_EMAIL = "client1@example.com";
@@ -406,6 +407,7 @@ const getMe = async (req, res) => {
         {
           model: Address,
           as: "addresses",
+          required: false,
           attributes: [
             "address_id",
             "address_type",
@@ -420,6 +422,7 @@ const getMe = async (req, res) => {
         {
           model: DoctorProfile,
           as: "doctorProfile",
+          required: false,
           attributes: [
             "doctor_id",
             "clinic_name",
@@ -503,7 +506,7 @@ const getAllUsers = async (req, res) => {
     const attributes = [
       'userid', 'fname', 'lname', 'display_name', 'email', 'mobile', 'usertype', 'department', 'status', 'created_at', 'zoho_contact_id',
     ];
-    const where = staffOnly ? buildInternalStaffWhere() : {};
+    const where = activeRowWhere(staffOnly ? buildInternalStaffWhere() : {});
     let rolesByCode = null;
     if (staffOnly) {
       const roles = await Role.findAll({ attributes: ['role_id', 'role_code', 'role_name'] });
@@ -523,11 +526,13 @@ const getAllUsers = async (req, res) => {
 
     // Full list (legacy): include addresses
     const usersWithAddresses = await User.findAll({
+      where: activeRowWhere(),
       attributes: ['userid', 'display_name', 'email', 'usertype'],
       include: [
         {
           model: Address,
           as: 'addresses',
+          required: false,
           attributes: ['address_id', 'address_type', 'address_line1', 'city_text', 'state_text', 'country_text', 'pincode', 'phone'],
         },
       ],
@@ -543,10 +548,10 @@ const searchUsers = async (req, res) => {
   try {
     const q = req.query.q != null ? String(req.query.q).trim() : '';
     const attributes = ['userid', 'fname', 'lname', 'display_name', 'email', 'department', 'usertype'];
-    const where = { usertype: { [Op.in]: STAFF_USERTYPES } };
+    const filters = { usertype: { [Op.in]: STAFF_USERTYPES } };
     if (q.length > 0) {
       const like = { [Op.iLike]: `%${q}%` };
-      where[Op.or] = [
+      filters[Op.or] = [
         { display_name: like },
         { email: like },
         { fname: like },
@@ -555,7 +560,7 @@ const searchUsers = async (req, res) => {
     }
     const users = await User.findAll({
       attributes,
-      where,
+      where: activeRowWhere(filters),
       order: [['display_name', 'ASC']],
       limit: 30,
     });
@@ -584,18 +589,17 @@ const searchPortalCustomers = async (req, res) => {
       return res.status(200).json([]);
     }
     const like = { [Op.iLike]: `%${q}%` };
-    const where = {
-      usertype: { [Op.in]: PORTAL_CUSTOMER_USERTYPES },
-      [Op.or]: [
-        { display_name: like },
-        { email: like },
-        { fname: like },
-        { lname: like },
-      ],
-    };
     const users = await User.findAll({
       attributes: ['userid', 'fname', 'lname', 'display_name', 'email', 'mobile', 'usertype'],
-      where,
+      where: activeRowWhere({
+        usertype: { [Op.in]: PORTAL_CUSTOMER_USERTYPES },
+        [Op.or]: [
+          { display_name: like },
+          { email: like },
+          { fname: like },
+          { lname: like },
+        ],
+      }),
       include: [LINKED_VC_INCLUDE],
       order: [
         ['display_name', 'ASC'],
@@ -624,14 +628,12 @@ const searchPortalCustomers = async (req, res) => {
 // Admin-only: get one user by id (for view/edit in User Management)
 const getUserById = async (req, res) => {
   try {
-    const user = await User.findByPk(req.params.id, {
+    const user = await User.findOne({
+      where: activeRowWhere({ userid: req.params.id }),
       attributes: ['userid', 'fname', 'lname', 'display_name', 'email', 'mobile', 'usertype', 'department', 'status', 'created_at', 'updated_at', 'zoho_contact_id'],
       include: [LINKED_VC_INCLUDE],
     });
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    if (!isInternalStaffUsertype(user.usertype)) {
+    if (!user || !isInternalStaffUsertype(user.usertype)) {
       return res.status(404).json({ error: 'User not found' });
     }
     const rolesByCode = await getRolesByCode();
@@ -794,7 +796,7 @@ const createStaffUser = async (req, res) => {
 const deleteUser = async (req, res) => {
   const t = await db.transaction();
   try {
-    const user = await User.findByPk(req.params.id, { transaction: t });
+    const user = await User.findOne({ where: activeRowWhere({ userid: req.params.id }), transaction: t });
     if (!user) {
       await t.rollback();
       return res.status(404).json({ error: 'User not found' });
@@ -806,17 +808,21 @@ const deleteUser = async (req, res) => {
     const userid = user.userid;
     const email = user.email;
 
-    const orders = await Order.findAll({ where: { user_id: userid }, attributes: ['order_id'], transaction: t });
+    const orders = await Order.findAll({
+      where: activeRowWhere({ user_id: userid }),
+      attributes: ['order_id'],
+      transaction: t,
+    });
     const orderIds = orders.map((o) => o.order_id);
     if (orderIds.length > 0) {
-      await OrderItem.destroy({ where: { order_id: { [Op.in]: orderIds } }, transaction: t });
-      await Payment.destroy({ where: { orderOrderId: { [Op.in]: orderIds } }, transaction: t }).catch(() => { });
-      await Order.destroy({ where: { user_id: userid }, transaction: t });
+      await softDeleteWhere(OrderItem, { order_id: { [Op.in]: orderIds } }, { transaction: t });
+      await softDeleteWhere(Payment, { orderOrderId: { [Op.in]: orderIds } }, { transaction: t }).catch(() => {});
+      await softDeleteWhere(Order, { user_id: userid }, { transaction: t });
     }
-    await Address.destroy({ where: { user_id: userid }, transaction: t });
-    await DoctorProfile.destroy({ where: { user_id: userid }, transaction: t });
-    await RefreshToken.destroy({ where: { email }, transaction: t }).catch(() => { });
-    await User.destroy({ where: { userid }, transaction: t });
+    await softDeleteWhere(Address, { user_id: userid }, { transaction: t });
+    await softDeleteWhere(DoctorProfile, { user_id: userid }, { transaction: t });
+    await RefreshToken.destroy({ where: { email }, transaction: t }).catch(() => {});
+    await softDeleteInstance(user, { transaction: t });
 
     await t.commit();
     res.status(200).json({ message: 'User deleted' });
@@ -940,8 +946,8 @@ const updateMe = async (req, res) => {
     // Fetch updated user with profile and addresses
     const updatedUser = await User.findByPk(userId, {
       include: [
-        { model: DoctorProfile, as: 'doctorProfile' },
-        { model: Address, as: 'addresses' }
+        { model: DoctorProfile, as: 'doctorProfile', required: false },
+        { model: Address, as: 'addresses', required: false },
       ]
     });
 

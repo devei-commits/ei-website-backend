@@ -1,3 +1,4 @@
+const { softDeleteInstance, activeRowWhere } = require('../lib/softDelete');
 const Packaging = require('./models');
 const { Op } = require('sequelize');
 
@@ -60,7 +61,7 @@ async function listPackaging(req, res) {
     }
 
     const list = await Packaging.findAll({
-      where,
+      where: activeRowWhere(where),
       order: [['id', 'ASC']],
     });
 
@@ -160,7 +161,7 @@ async function deletePackaging(req, res) {
   try {
     const row = await Packaging.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Packaging not found' });
-    await row.destroy();
+    await softDeleteInstance(row);
     res.status(204).send();
   } catch (err) {
     console.error('deletePackaging error', err);

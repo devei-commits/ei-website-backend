@@ -1,3 +1,4 @@
+const { softDeleteInstance, activeRowWhere } = require('../lib/softDelete');
 const ItemDedicatedFacilityLocation = require('./models');
 const {
   buildItemKey,
@@ -146,7 +147,7 @@ async function remove(req, res) {
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await ItemDedicatedFacilityLocation.findByPk(id);
     if (!row) return res.status(404).json({ error: 'Not found' });
-    await row.destroy();
+    await softDeleteInstance(row);
     res.json({ ok: true });
   } catch (e) {
     console.error('[itemDedicatedFacilityLocations] remove', e);

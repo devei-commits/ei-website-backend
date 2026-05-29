@@ -1,3 +1,4 @@
+const { softDeleteInstance, softDeleteWhere, activeRowWhere } = require('../lib/softDelete');
 const { Order, OrderItem } = require('./models');
 const { Product } = require('../products/models');
 const { Payment } = require('../payments/models');
@@ -625,13 +626,13 @@ const getAllOrders = async (req, res) => {
         const isAdmin = req.user && ORDER_ADMIN_ROLES.includes(req.user.role);
         const { status } = req.query;
 
-        const where = isAdmin ? {} : { user_id: userId };
+        const filters = isAdmin ? {} : { user_id: userId };
         if (status) {
-            where.order_status = status;
+            filters.order_status = status;
         }
 
         const orders = await Order.findAll({
-            where,
+            where: activeRowWhere(filters),
             include: [
                 OrderItem,
                 { model: Payment, as: 'payments', required: false, attributes: ['remainingAmount', 'gatewayReference', 'gateway', 'status', 'paidAmount'] },
@@ -671,7 +672,8 @@ const getAllOrders = async (req, res) => {
 };
 const getOrderById = async (req, res) => {
     try {
-        const order = await Order.findByPk(req.params.id, {
+        const order = await Order.findOne({
+            where: activeRowWhere({ order_id: req.params.id }),
             include: [
                 OrderItem,
                 { model: Payment, as: 'payments', required: false, attributes: ['remainingAmount', 'gatewayReference', 'gateway', 'status', 'paidAmount'] },
@@ -731,7 +733,7 @@ const updateOrder = async (req, res) => {
 
 const deleteOrder = async (req, res) => {
     try {
-        const order = await Order.findByPk(req.params.id);
+        const order = await Order.findOne({ where: activeRowWhere({ order_id: req.params.id }) });
         if (!order) {
             return res.status(404).json({ error: 'Order not found' });
         }
@@ -739,7 +741,8 @@ const deleteOrder = async (req, res) => {
         if (!isAdmin && order.user_id !== req.user.id) {
             return res.status(403).json({ error: 'Not allowed to delete this order' });
         }
-        await order.destroy();
+        await softDeleteWhere(OrderItem, { order_id: order.order_id });
+        await softDeleteInstance(order);
         res.json({ message: 'Order deleted' });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -770,7 +773,7 @@ const getOrdersByUserId = async (req, res) => {
             return res.status(403).json({ error: 'Not allowed to view orders for this user' });
         }
         const orders = await Order.findAll({
-            where: { user_id: requestedUserId },
+            where: activeRowWhere({ user_id: requestedUserId }),
             include: [
                 OrderItem,
                 { model: Payment, as: 'payments', required: false, attributes: ['remainingAmount', 'gatewayReference', 'gateway', 'status', 'paidAmount'] },

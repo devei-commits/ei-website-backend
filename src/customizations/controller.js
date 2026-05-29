@@ -1,8 +1,10 @@
+const { softDeleteInstance, activeRowWhere } = require('../lib/softDelete');
 const Customization = require('./models');
 
 const getAllCustomizations = async (req, res) => {
   try {
     const list = await Customization.findAll({
+      where: activeRowWhere(),
       order: [['custom_id', 'ASC']],
     });
     res.json(list);
@@ -150,7 +152,7 @@ const deleteCustomization = async (req, res) => {
     if (!row) {
       return res.status(404).json({ error: 'Customization not found' });
     }
-    await row.destroy();
+    await softDeleteInstance(row);
     res.json({ message: 'Customization deleted' });
   } catch (err) {
     res.status(500).json({ error: err.message });

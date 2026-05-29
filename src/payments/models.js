@@ -52,6 +52,9 @@ Payment.init({
     allowNull: false,
     defaultValue: 'pending',
   },
+
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
+    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
 }, {
   sequelize: db,
   modelName: 'payment',

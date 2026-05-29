@@ -19,9 +19,10 @@ const {
   validateFormulaPctNotOver100,
 } = require('../bom/skuBomMath');
 const {
-  destroyProductWithDependents,
+  softDeleteProductWithDependents,
   scrubProcurementJsonForDeletedProducts,
 } = require('./destroyProductWithDependents');
+const { productActiveWhere, softDeleteInstance } = require('../lib/softDelete');
 const { linkMaterialMastersToProductCode } = require('./linkMaterialMastersToProduct');
 const { nextNumericSuffixAfterMax } = require('../lib/nextNumericMasterCode');
 const {
@@ -864,6 +865,10 @@ const getAllProducts = async (req, res) => {
         : searchClause;
     }
 
+    productWhere = productWhere
+      ? { [Op.and]: [productWhere, productActiveWhere()] }
+      : productActiveWhere();
+
     if (wantsPagination) {
       limit = limitQ != null ? normalizeInt(limitQ) : 20;
       offset = offsetQ != null ? normalizeInt(offsetQ) : 0;
@@ -1492,7 +1497,7 @@ const deleteProduct = async (req, res) => {
         const resolvedProductId = product.product_id;
 
         await db.transaction(async (transaction) => {
-          await destroyProductWithDependents(resolvedProductId, transaction);
+          await softDeleteProductWithDependents(resolvedProductId, transaction);
           await scrubProcurementJsonForDeletedProducts([resolvedProductId], transaction);
         });
 

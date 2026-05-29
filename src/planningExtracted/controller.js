@@ -388,15 +388,12 @@ const RESERVE_EPS_PCS = 1e-6;
 /**
  * Recompute warehouse_inventory.reserved for given RM/PM ids from sum of reserved_batch_items.
  * Central table stays in sync so feasibility and everywhere else see correct reserved/available.
- * Formula: reserved = sum(quantity_reserved) for that item; available = SIH - reserved.
+ * Formula: reserved = sum(quantity_reserved) for that item (planning + production batches); available = SIH - reserved.
  */
 async function syncWarehouseReserved(affectedRmIds, affectedPmIds) {
   for (const rid of affectedRmIds) {
     const sum = await ReservedBatchItem.sum('quantity_reserved', {
-      where: {
-        raw_material_id: rid,
-        production_batch_id: { [Op.ne]: null },
-      },
+      where: { raw_material_id: rid },
     });
     const val = sum != null ? Number(sum) : 0;
     const [updated] = await WarehouseInventory.update(
@@ -415,10 +412,7 @@ async function syncWarehouseReserved(affectedRmIds, affectedPmIds) {
   }
   for (const pid of affectedPmIds) {
     const sum = await ReservedBatchItem.sum('quantity_reserved', {
-      where: {
-        pack_material_id: pid,
-        production_batch_id: { [Op.ne]: null },
-      },
+      where: { pack_material_id: pid },
     });
     const val = sum != null ? Number(sum) : 0;
     const [updated] = await WarehouseInventory.update(

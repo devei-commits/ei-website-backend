@@ -1,4 +1,5 @@
 const { Op } = require('sequelize');
+const { softDeleteInstance, softDeleteWhere, activeRowWhere } = require('../lib/softDelete');
 const { FulfillmentOrder, FulfillmentOrderItem, FulfillmentBatchSplit, Transporter, FulfillmentInvoice, ReservedBatchItem } = require('./models');
 const BOM = require('../bom/models');
 const { ProductionBatch } = require('../production/models');
@@ -326,6 +327,7 @@ async function syncOrderSplitsFromProduction(orderRow) {
 async function listOrders(req, res) {
   try {
     let rows = await FulfillmentOrder.findAll({
+      where: activeRowWhere(),
       include: INCLUDE_FULL,
       order: [['due_date', 'ASC'], ['id', 'ASC']],
     });
@@ -333,6 +335,7 @@ async function listOrders(req, res) {
       await syncOrderSplitsFromProduction(row);
     }
     rows = await FulfillmentOrder.findAll({
+      where: activeRowWhere(),
       include: INCLUDE_FULL,
       order: [['due_date', 'ASC'], ['id', 'ASC']],
     });
@@ -862,9 +865,11 @@ async function deleteOrder(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
-    const row = await FulfillmentOrder.findByPk(id);
+    const row = await FulfillmentOrder.findOne({ where: activeRowWhere({ id }) });
     if (!row) return res.status(404).json({ error: 'Fulfillment order not found' });
-    await row.destroy();
+    await softDeleteWhere(FulfillmentBatchSplit, { fulfillment_order_id: id });
+    await softDeleteWhere(FulfillmentOrderItem, { fulfillment_order_id: id });
+    await softDeleteInstance(row);
     res.json({ message: 'Fulfillment order deleted' });
   } catch (err) {
     console.error('deleteOrder error:', err);

@@ -42,6 +42,8 @@ FulfillmentOrder.init(
     courier: { type: DataTypes.STRING(200), allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
+    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
   },
   {
     sequelize: db,
@@ -75,6 +77,8 @@ FulfillmentOrderItem.init(
     unit_price: { type: DataTypes.DECIMAL(12, 2), allowNull: true, defaultValue: 0 },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
+    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
   },
   {
     sequelize: db,
@@ -139,6 +143,8 @@ FulfillmentBatchSplit.init(
     delivery_remarks: { type: DataTypes.TEXT, allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
+    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
   },
   {
     sequelize: db,
@@ -165,6 +171,8 @@ Transporter.init(
     status: { type: DataTypes.STRING(20), allowNull: false, defaultValue: 'active' },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
+    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
   },
   {
     sequelize: db,
@@ -211,6 +219,8 @@ FulfillmentInvoice.init(
     zoho_invoice_id: { type: DataTypes.STRING(64), allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
+    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
   },
   {
     sequelize: db,
@@ -279,6 +289,8 @@ ReservedBatchItem.init(
     so_no: { type: DataTypes.STRING(50), allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
+    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
   },
   {
     sequelize: db,

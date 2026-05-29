@@ -1,3 +1,4 @@
+const { softDeleteWhere, softDeleteInstance, activeRowWhere } = require('../lib/softDelete');
 const FacilityArea = require('./models');
 const { WarehouseLocation, WarehouseRack } = require('../warehouseLocations/models');
 const { ensureWarehouseZoneAndRack } = require('./ensureWarehouseCustomLocation');
@@ -66,10 +67,10 @@ function formatArea(row) {
 
 async function listAreas(req, res) {
   try {
-    const where = {};
-    if (req.query.area_type) where.area_type = req.query.area_type;
+    const filters = {};
+    if (req.query.area_type) filters.area_type = req.query.area_type;
     const rows = await FacilityArea.findAll({
-      where,
+      where: activeRowWhere(filters),
       order: [['id', 'ASC']],
       include: [{
         model: WarehouseLocation,
@@ -165,10 +166,10 @@ async function deleteArea(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
-    const row = await FacilityArea.findByPk(id);
+    const row = await FacilityArea.findOne({ where: activeRowWhere({ id }) });
     if (!row) return res.status(404).json({ error: 'Facility area not found' });
-    await WarehouseLocation.destroy({ where: { area_id: id } });
-    await row.destroy();
+    await softDeleteWhere(WarehouseLocation, { area_id: id });
+    await softDeleteInstance(row);
     res.json({ message: 'Facility area deleted' });
   } catch (err) {
     console.error('deleteArea error:', err);

@@ -1,4 +1,6 @@
+const { softDeleteWhere, softDeleteInstance, activeRowWhere } = require('../lib/softDelete');
 const SalesOrder = require('./models');
+const PlanningExtracted = require('../planningExtracted/models');
 
 function formatRow(row) {
   if (!row) return null;
@@ -23,7 +25,10 @@ function formatRow(row) {
 
 async function listSalesOrders(req, res) {
   try {
-    const rows = await SalesOrder.findAll({ order: [['order_date', 'DESC'], ['id', 'DESC']] });
+    const rows = await SalesOrder.findAll({
+      where: activeRowWhere(),
+      order: [['order_date', 'DESC'], ['id', 'DESC']],
+    });
     res.json(rows.map(formatRow));
   } catch (err) {
     console.error('listSalesOrders error', err);
@@ -241,8 +246,7 @@ async function createPlanningExtractedRowsForSalesOrder(salesOrderId, payload) {
  * @param {number} salesOrderId
  */
 async function deletePlanningExtractedForSalesOrder(salesOrderId) {
-  const PlanningExtracted = require('../planningExtracted/models');
-  await PlanningExtracted.destroy({ where: { sales_order_id: salesOrderId } });
+  await softDeleteWhere(PlanningExtracted, { sales_order_id: salesOrderId });
 }
 
 /**
@@ -305,8 +309,10 @@ async function deleteSalesOrder(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
-    const n = await SalesOrder.destroy({ where: { id } });
-    if (n === 0) return res.status(404).json({ error: 'Sales order not found' });
+    const row = await SalesOrder.findOne({ where: activeRowWhere({ id }) });
+    if (!row) return res.status(404).json({ error: 'Sales order not found' });
+    await softDeleteWhere(PlanningExtracted, { sales_order_id: id });
+    await softDeleteInstance(row);
     res.status(204).send();
   } catch (err) {
     console.error('deleteSalesOrder error', err);

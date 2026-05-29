@@ -5,6 +5,7 @@
 
 const { Role, Permission, RolePermission, ModuleDefinition, User, StaffProfile } = require('../models/index');
 const { Op } = require('sequelize');
+const { softDeleteInstance, activeRowWhere } = require('../lib/softDelete');
 const { buildInternalStaffRolesWhere } = require('../users/internalStaff');
 const defaultModuleDef = require('./defaultModuleDefinition');
 
@@ -64,9 +65,9 @@ async function findRoleByParam(idParam) {
   if (!raw) return null;
   const numeric = Number(raw);
   if (Number.isFinite(numeric) && numeric > 0) {
-    return Role.findByPk(numeric);
+    return Role.findOne({ where: activeRowWhere({ role_id: numeric }) });
   }
-  return Role.findOne({ where: { role_code: raw } });
+  return Role.findOne({ where: activeRowWhere({ role_code: raw }) });
 }
 
 function deriveLegacyUsertypes(role) {
@@ -114,7 +115,10 @@ async function listRoles(req, res) {
   try {
     const staffOnly = req.query.staffOnly === 'true';
     const roleWhere = staffOnly ? buildInternalStaffRolesWhere() : {};
-    const roles = await Role.findAll({ where: roleWhere, order: [['role_id', 'ASC']] });
+    const roles = await Role.findAll({
+      where: activeRowWhere(roleWhere),
+      order: [['role_id', 'ASC']],
+    });
     const roleIds = roles.map((r) => r.role_id);
 
     const [userCounts, permCounts] = await Promise.all([
@@ -381,7 +385,7 @@ async function deleteRole(req, res) {
       return res.status(403).json({ error: 'System roles cannot be deleted' });
     }
     await RolePermission.destroy({ where: { role_id: id } });
-    await role.destroy();
+    await softDeleteInstance(role);
     res.status(200).json({ message: 'Role deleted' });
   } catch (err) {
     res.status(500).json({ error: err.message });

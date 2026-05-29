@@ -17,6 +17,7 @@
 const db = require('../../db');
 const { removeLegacyParentManufacturingArea } = require('../facilityAreas/removeLegacyParentMuArea');
 const { ensureFacilityDefaultLocations } = require('../facilityAreas/ensureSingleDefaultLocationPerType');
+const { getSoftDeleteSchemaPatches } = require('./softDeleteSchemaPatches');
 
 const PATCHES = [
   // boms — SKU BOM (per-unit RM lines + net-per-unit limit) added April 2026
@@ -231,6 +232,26 @@ const PATCHES = [
     table: 'warehouse_inventory',
     sql: 'ALTER TABLE "warehouse_inventory" ALTER COLUMN "in_transit" TYPE DECIMAL(28, 16)',
   },
+  {
+    name: 'warehouse_rack_items.qty_wh_decimal_16',
+    table: 'warehouse_rack_items',
+    sql: 'ALTER TABLE "warehouse_rack_items" ALTER COLUMN "qty_wh" TYPE DECIMAL(28, 16)',
+  },
+  {
+    name: 'warehouse_inventory_location_history.qty_delta_decimal_16',
+    table: 'warehouse_inventory_location_history',
+    sql: 'ALTER TABLE "warehouse_inventory_location_history" ALTER COLUMN "qty_delta" TYPE DECIMAL(28, 16)',
+  },
+  {
+    name: 'warehouse_inventory_location_history.reserved_delta_decimal_16',
+    table: 'warehouse_inventory_location_history',
+    sql: 'ALTER TABLE "warehouse_inventory_location_history" ALTER COLUMN "reserved_delta" TYPE DECIMAL(28, 16)',
+  },
+  {
+    name: 'warehouse_inventory_location_history.reserved_after_decimal_16',
+    table: 'warehouse_inventory_location_history',
+    sql: 'ALTER TABLE "warehouse_inventory_location_history" ALTER COLUMN "reserved_after" TYPE DECIMAL(28, 16)',
+  },
 
   // po_tracking — payment transaction captured at PO release (Treasury)
   {
@@ -336,6 +357,7 @@ const PATCHES = [
     table: 'production_batches',
     sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "schedule_remarks" TEXT',
   },
+  ...getSoftDeleteSchemaPatches(),
 ];
 
 async function tableExists(tableName) {

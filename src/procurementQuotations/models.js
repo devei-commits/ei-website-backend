@@ -40,6 +40,8 @@ ProcurementQuotation.init(
     status: { type: DataTypes.STRING(50), allowNull: true, defaultValue: 'pending' }, // confirmed | not_selected | pending
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
+    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
   },
   {
     sequelize: db,

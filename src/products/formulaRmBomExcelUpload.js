@@ -172,6 +172,8 @@ function detectFormulaRmHeaders(sheet) {
   });
 
   const map = {};
+  let qtyPerKgLtrIdx = null;
+  let fallbackQtyIdx = null;
   headers.forEach((h, idx) => {
     if (!h) return;
     const norm = normalizeHeader(h);
@@ -206,19 +208,24 @@ function detectFormulaRmHeaders(sheet) {
       map.component_sku = idx;
     } else if (norm === 'component name' && map.component_name == null) map.component_name = idx;
     else if (
-      (norm === 'qty per unit' ||
-        norm === 'qty per sku kg nos' ||
-        norm === 'qty per sku' ||
-        norm === 'quantity per unit' ||
-        norm === 'qty kg ltr' ||
+      (norm === 'qty kg ltr' ||
         norm === 'qty in kg ltr' ||
         norm === 'qty kg litre' ||
-        norm === 'qty kg liter') &&
-      map.qty == null
+        norm === 'qty kg liter' ||
+        norm === 'qty per kg ltr' ||
+        norm === 'qty per kg litre' ||
+        norm === 'qty per kg liter') &&
+      qtyPerKgLtrIdx == null
     ) {
-      map.qty = idx;
+      qtyPerKgLtrIdx = idx;
+    } else if (
+      (norm === 'qty per unit' || norm === 'qty per sku kg nos' || norm === 'qty per sku' || norm === 'quantity per unit') &&
+      fallbackQtyIdx == null
+    ) {
+      fallbackQtyIdx = idx;
     }
   });
+  map.qty = qtyPerKgLtrIdx != null ? qtyPerKgLtrIdx : fallbackQtyIdx;
 
   return { headerMap: map, headers: headers.filter(Boolean) };
 }
@@ -238,7 +245,7 @@ async function parseWorkbookToRows(buffer) {
   if (m.composite_sku == null) missing.push('Composite SKU (or SKU Code)');
   if (m.component_sku == null) missing.push('Component SKU (or Item SKU / Material SKU)');
   if (m.component_name == null) missing.push('Component Name');
-  if (m.qty == null) missing.push('Qty per Unit');
+  if (m.qty == null) missing.push('Qty per KG/LTR');
   if (missing.length > 0) {
     const err = new Error(`Missing required column(s): ${missing.join(', ')}. Found: ${headers.join(', ')}`);
     err.code = 'MISSING_COLUMNS';
@@ -374,8 +381,8 @@ async function processRmGroupForComposite(compositeSku, groupRows, applySg) {
     }
   }
 
-  const baseTotal = Math.max(0, totalQty);
-  const computedAquaQty = aquaPresent ? 0 : Math.max(0, 1 - baseTotal);
+  const baseTotal = Math.max(0, totalQty * 1000);
+  const computedAquaQty = aquaPresent ? 0 : Math.max(0, 1000 - baseTotal);
   const denominator = baseTotal + computedAquaQty;
   const safeDenominator = denominator > 0 ? denominator : 1;
   const formulaRmLines = formulaLinesRaw.map((line, idx) => {
@@ -388,7 +395,7 @@ async function processRmGroupForComposite(compositeSku, groupRows, applySg) {
       rm_code: line.rm_code,
       zoho_sku_code: line.zoho_sku_code || null,
       raw_material_id: line.raw_material_id,
-      pct_w_w: toFixedNumber((Number(line.qty_per_unit) || 0) / safeDenominator) * 100,
+      pct_w_w: toFixedNumber(((Number(line.qty_per_unit) || 0) * 1000) / safeDenominator) * 100,
       uom: line.uom,
       ...(sg != null ? { specific_gravity: sg } : {}),
     };
@@ -402,7 +409,7 @@ async function processRmGroupForComposite(compositeSku, groupRows, applySg) {
       rm_code: aquaRm?.code || '',
       zoho_sku_code: aquaRm?.zoho_sku_code || null,
       raw_material_id: aquaRm?.id ?? null,
-      pct_w_w: toFixedNumber(computedAquaQty / safeDenominator),
+      pct_w_w: toFixedNumber((computedAquaQty / safeDenominator) * 100),
       uom: lineUom,
     });
   }

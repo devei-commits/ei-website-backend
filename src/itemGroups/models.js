@@ -23,6 +23,8 @@ ItemGroup.init(
     proposed_alternates: { type: DataTypes.JSON, allowNull: true }, // [{ id, name, notes, status, ratio? }]
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
+    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
   },
   {
     sequelize: db,

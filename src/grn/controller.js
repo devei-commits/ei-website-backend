@@ -1,3 +1,4 @@
+const { softDeleteWhere, activeRowWhere } = require('../lib/softDelete');
 const { Op } = require('sequelize');
 const db = require('../../db');
 const GoodsReceivedNote = require('./models');
@@ -388,6 +389,7 @@ async function list(req, res) {
   try {
     await ensureGrnLocationZoneColumn();
     const rows = await GoodsReceivedNote.findAll({
+      where: activeRowWhere(),
       order: [['expected_date', 'DESC'], ['id', 'DESC']],
     });
     await repairLineItemsMasterLinks(rows);
@@ -1163,7 +1165,7 @@ async function remove(req, res) {
   try {
     const id = parseInt(String(req.params.id), 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
-    const n = await GoodsReceivedNote.destroy({ where: { id } });
+    const n = await softDeleteWhere(GoodsReceivedNote, { id });
     if (n === 0) return res.status(404).json({ error: 'GRN not found' });
     try {
       const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');

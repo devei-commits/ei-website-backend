@@ -168,10 +168,6 @@ Appointment.init({
     type: DataTypes.STRING,
     allowNull: true
   },
-  lifecycle_status: {
-    type: DataTypes.STRING,
-    allowNull: true
-  },
   slot1_date: {
     type: DataTypes.DATEONLY,
     allowNull: true
@@ -195,7 +191,10 @@ Appointment.init({
   updated_at: {
     type: DataTypes.DATE,
     allowNull: true
-  }
+  },
+
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
+    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
 }, {
   sequelize: db,
   modelName: 'Appointment',

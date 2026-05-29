@@ -1,3 +1,4 @@
+const { softDeleteWhere, activeRowWhere } = require('../lib/softDelete');
 const PurchaseOrder = require('./models');
 const ProcurementRequest = require('../procurementRequests/models');
 const { syncZohoPurchaseOrderForPo, syncZohoBillForPo } = require('../services/zohoPurchaseOrderSync');
@@ -163,6 +164,7 @@ async function listPurchaseOrders(req, res) {
     try {
       // Prefer including Zoho columns when present (helps UI verification).
       rows = await PurchaseOrder.findAll({
+        where: activeRowWhere(),
         attributes: PO_SYNC_ATTRIBUTES,
         order: [['order_date', 'DESC'], ['id', 'DESC']],
       });
@@ -170,6 +172,7 @@ async function listPurchaseOrders(req, res) {
       // Older DB schemas may not have zoho_* columns yet.
       if (isMissingColumnError(err, 'zoho_purchase_order_id') || isMissingColumnError(err, 'zoho_bill_id')) {
         rows = await PurchaseOrder.findAll({
+          where: activeRowWhere(),
           attributes: PO_SAFE_ATTRIBUTES,
           order: [['order_date', 'DESC'], ['id', 'DESC']],
         });
@@ -366,7 +369,7 @@ async function deletePurchaseOrder(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
-    const n = await PurchaseOrder.destroy({ where: { id } });
+    const n = await softDeleteWhere(PurchaseOrder, { id });
     if (n === 0) return res.status(404).json({ error: 'Purchase order not found' });
     try {
       const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');

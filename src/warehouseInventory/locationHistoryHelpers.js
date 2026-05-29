@@ -1,4 +1,5 @@
 const WarehouseInventoryLocationHistory = require('./locationHistoryModel');
+const { materialQtyFromDb } = require('../utils/materialQtyCompare');
 
 /**
  * Log a location / movement history entry in a safe, centralized way.
@@ -38,7 +39,7 @@ async function logLocationMovement({
       from_rack: fromRack ?? null,
       to_zone: toZone ?? null,
       to_rack: toRack ?? null,
-      qty_delta: qtyDelta != null ? Number(qtyDelta) : null,
+      qty_delta: qtyDelta != null ? materialQtyFromDb(qtyDelta) : null,
       action_type: actionType || null,
       source_grn_id: sourceGrnId ?? null,
       source_mrn_id: sourceMrnId ?? null,
@@ -85,12 +86,12 @@ async function logReservedChange({
       from_rack: null,
       to_zone: null,
       to_rack: null,
-      qty_delta: reservedDelta != null ? Number(reservedDelta) : null,
+      qty_delta: reservedDelta != null ? materialQtyFromDb(reservedDelta) : null,
       action_type: action,
       source_grn_id: null,
       source_mrn_id: null,
-      reserved_delta: reservedDelta != null ? Number(reservedDelta) : null,
-      reserved_after: reservedAfter != null ? Number(reservedAfter) : null,
+      reserved_delta: reservedDelta != null ? materialQtyFromDb(reservedDelta) : null,
+      reserved_after: reservedAfter != null ? materialQtyFromDb(reservedAfter) : null,
       production_batch_id: productionBatchId ?? null,
       batch_no: batchNo ?? null,
     });

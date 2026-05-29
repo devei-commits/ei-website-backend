@@ -5,19 +5,20 @@
 const WarehouseInventory = require('./models');
 const { WarehouseRackItem, WarehouseRack, WarehouseLocation } = require('../warehouseLocations/models');
 const { inferMlBucketFromProductionZone } = require('../facilityAreas/defaultLocationService');
-
-function toNum(x) {
-  if (x == null) return 0;
-  const n = Number(x);
-  return Number.isNaN(n) ? 0 : n;
-}
+const {
+  materialQtyAdd,
+  materialQtyFromDb,
+  materialQtySubNonNeg,
+  materialQtyToNum,
+  isMaterialQtyPositive,
+} = require('../utils/materialQtyCompare');
 
 /**
  * Pure formula: stock_in_hand = wh_stock + ml1_stock + ml2_stock.
  * Used for unit tests and by updateStock / GRN / BPR.
  */
 function computeStockInHand(wh, ml1, ml2) {
-  return toNum(wh) + toNum(ml1) + toNum(ml2);
+  return materialQtyToNum(materialQtyAdd(materialQtyAdd(wh, ml1), ml2));
 }
 
 /**
@@ -45,25 +46,25 @@ async function recalculateInventoryForItem(warehouseInventoryId, opts = {}) {
     ...(transaction ? { transaction } : {}),
   });
 
-  let totalWh = 0;
-  let ml1 = 0;
-  let ml2 = 0;
+  let totalWh = '0';
+  let ml1 = '0';
+  let ml2 = '0';
   for (const r of rows) {
     const plain = r.get ? r.get({ plain: true }) : r;
-    const qty = toNum(plain.qty_wh);
+    const qty = materialQtyFromDb(plain.qty_wh);
     const rack = r.WarehouseRack;
     const loc = rack && rack.WarehouseLocation;
     const locPlain = loc && loc.get ? loc.get({ plain: true }) : loc;
     const locType = String(locPlain?.location_type || '').toLowerCase();
     if (locType === 'production') {
-      if (inferMlBucketFromProductionZone(locPlain) === 'ml2') ml2 += qty;
-      else ml1 += qty;
+      if (inferMlBucketFromProductionZone(locPlain) === 'ml2') ml2 = materialQtyAdd(ml2, qty);
+      else ml1 = materialQtyAdd(ml1, qty);
     } else {
-      totalWh += qty;
+      totalWh = materialQtyAdd(totalWh, qty);
     }
   }
 
-  const stockInHand = computeStockInHand(totalWh, ml1, ml2);
+  const stockInHand = materialQtyAdd(materialQtyAdd(totalWh, ml1), ml2);
 
   await inv.update(
     {
@@ -85,9 +86,15 @@ async function recalculateInventoryForItem(warehouseInventoryId, opts = {}) {
  * Returns { rackItem, inventory } where inventory is the updated WarehouseInventory row.
  */
 async function applyDeltaToRack(warehouseInventoryId, rackId, deltaQty, opts = {}) {
-  if (!warehouseInventoryId || !rackId || !deltaQty) {
+  if (!warehouseInventoryId || !rackId) {
     return { rackItem: null, inventory: null };
   }
+  const delta = materialQtyFromDb(deltaQty);
+  const deltaNum = materialQtyToNum(delta);
+  if (deltaNum === 0) {
+    return { rackItem: null, inventory: null };
+  }
+
   const transaction = opts.transaction;
 
   const rack = await WarehouseRack.findByPk(rackId, {
@@ -104,8 +111,7 @@ async function applyDeltaToRack(warehouseInventoryId, rackId, deltaQty, opts = {
   });
 
   if (!rackItem) {
-    if (deltaQty < 0) {
-      // Nothing to subtract; ignore.
+    if (deltaNum < 0) {
       return {
         rackItem: null,
         inventory: await recalculateInventoryForItem(warehouseInventoryId, { transaction }),
@@ -115,17 +121,16 @@ async function applyDeltaToRack(warehouseInventoryId, rackId, deltaQty, opts = {
       {
         rack_id: rackId,
         warehouse_inventory_id: warehouseInventoryId,
-        qty_wh: deltaQty,
+        qty_wh: delta,
       },
       transaction ? { transaction } : {}
     );
   } else {
     const plain = rackItem.get ? rackItem.get({ plain: true }) : rackItem;
-    const currentQty = toNum(plain.qty_wh);
-    let nextQty = currentQty + deltaQty;
-    if (nextQty < 0) nextQty = 0;
+    const currentQty = materialQtyFromDb(plain.qty_wh);
+    const nextQty = materialQtyAdd(currentQty, delta);
 
-    if (nextQty === 0) {
+    if (!isMaterialQtyPositive(nextQty)) {
       await rackItem.destroy(transaction ? { transaction } : {});
       rackItem = null;
     } else {
@@ -142,4 +147,3 @@ module.exports = {
   recalculateInventoryForItem,
   computeStockInHand,
 };
-

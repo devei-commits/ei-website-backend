@@ -116,6 +116,7 @@ describe('Stage 3: dispensing consumption -> MU stock + history link (integratio
       dispensing_rm: null,
       dispensing_pm: null,
       mu_dispensing_bundle_id: null,
+      scheduled_mu_zone: 'LOC-ML1',
     });
   });
 
@@ -139,8 +140,8 @@ describe('Stage 3: dispensing consumption -> MU stock + history link (integratio
       .patch(`/api/v1/production/batches/${batch.id}`)
       .set('Authorization', `Bearer ${token}`)
       .send({
-        dispensing_rm: [{ code: rm.code, dispensed: deltaRm }],
-        dispensing_pm: [{ code: pm.code, dispensed: deltaPm }],
+        dispensing_rm: [{ code: rm.code, required: deltaRm, dispensed: deltaRm, done: true }],
+        dispensing_pm: [{ code: pm.code, required: deltaPm, dispensed: deltaPm, done: true }],
       });
 
     expect(resp.status).toBe(200);
@@ -170,6 +171,78 @@ describe('Stage 3: dispensing consumption -> MU stock + history link (integratio
     expect(pmHist).toBeTruthy();
     expect(Number(pmHist.qty_delta)).toBeCloseTo(-deltaPm, 5);
     expect(pmHist.production_batch_id).toBe(batch.id);
+  });
+
+  test('PATCH dispensing rejects when stock is warehouse-only (not at ML1/ML2)', async () => {
+    if (!dbAvailable) return;
+
+    const whOnlyRm = await RawMaterial.create({ code: 'EI-RM-STAGE3-WH-ONLY', name: 'WH only RM', status: 'Active' });
+    await WarehouseInventory.create({
+      item_type: 'RM',
+      raw_material_id: whOnlyRm.id,
+      pack_material_id: null,
+      product_id: null,
+      wh_stock: 20,
+      wh_unit: 'KG',
+      ml1_stock: 0,
+      ml2_stock: 0,
+      stock_in_hand: 20,
+      reserved: 0,
+      in_transit: 0,
+      reorder_pt: 0,
+      avg_mo: 0,
+      qc_status: 'In Stock',
+    });
+
+    const whBatch = await ProductionBatch.create({
+      bmr_no: 'BMR-2026-DISP-WH-ONLY',
+      bpr_no: 'BPR-2026-DISP-WH-ONLY',
+      product_name: 'WH only dispense test',
+      sku: 'SKU-DISP-WH',
+      so_no: 'SO-IGNORE-DISP-WH',
+      order_qty: 10,
+      batch_size: 10,
+      batch_no: 'B-02',
+      batch_index: 1,
+      total_batches: 1,
+      planning_batch_id: null,
+      bmr_status: 'dispensing',
+      bpr_status: 'pm_dispensing',
+      rm_connected: true,
+      pm_connected: true,
+      dispensing_rm: null,
+      dispensing_pm: null,
+      scheduled_mu_zone: 'LOC-ML1',
+    });
+
+    const resp = await request(app)
+      .patch(`/api/v1/production/batches/${whBatch.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        dispensing_rm: [{ code: whOnlyRm.code, required: 5, dispensed: 5, done: true }],
+      });
+
+    expect(resp.status).toBe(400);
+    expect(String(resp.body.error || '')).toMatch(/manufacturing site|LOC-ML1|MTR/i);
+
+    const inv = await WarehouseInventory.findOne({ where: { item_type: 'RM', raw_material_id: whOnlyRm.id } });
+    expect(Number(inv.wh_stock)).toBe(20);
+    expect(Number(inv.ml1_stock)).toBe(0);
+    expect(Number(inv.ml2_stock)).toBe(0);
+  });
+
+  test('PATCH dispensing rejects when dispensed qty is below required', async () => {
+    if (!dbAvailable) return;
+
+    const resp = await request(app)
+      .patch(`/api/v1/production/batches/${batch.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        dispensing_rm: [{ code: rm.code, required: 10, dispensed: 3, done: true }],
+      });
+
+    expect(resp.status).toBe(400);
+    expect(String(resp.body.error || '')).toMatch(/required/i);
   });
 });
 

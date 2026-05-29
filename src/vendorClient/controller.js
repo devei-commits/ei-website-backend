@@ -1,4 +1,5 @@
 const db = require('../../db');
+const { softDeleteInstance, activeRowWhere } = require('../lib/softDelete');
 const VendorClient = require('./models');
 const { Op } = require('sequelize');
 const {
@@ -158,12 +159,12 @@ async function listVendorClients(req, res) {
     const categoryFilter = req.query.category != null ? String(req.query.category).trim() : '';
     const wantsPagination = req.query.limit != null || req.query.offset != null;
 
-    const where = {};
-    if (typeFilter === 'vendor' || typeFilter === 'client') where.type = typeFilter;
-    if (statusFilter && statusFilter !== 'all') where.status = statusFilter;
-    if (categoryFilter && categoryFilter !== 'all') where.category = categoryFilter;
+    const filters = {};
+    if (typeFilter === 'vendor' || typeFilter === 'client') filters.type = typeFilter;
+    if (statusFilter && statusFilter !== 'all') filters.status = statusFilter;
+    if (categoryFilter && categoryFilter !== 'all') filters.category = categoryFilter;
     if (search) {
-      where[Op.or] = [
+      filters[Op.or] = [
         { entity_code: { [Op.iLike]: `%${search}%` } },
         { name: { [Op.iLike]: `%${search}%` } },
         { email: { [Op.iLike]: `%${search}%` } },
@@ -173,6 +174,7 @@ async function listVendorClients(req, res) {
         { category: { [Op.iLike]: `%${search}%` } },
       ];
     }
+    const where = activeRowWhere(filters);
 
     if (wantsPagination) {
       const limit = req.query.limit != null ? parseInt(String(req.query.limit), 10) : undefined;
@@ -577,7 +579,7 @@ async function deleteVendorClient(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
-    const existing = await VendorClient.findByPk(id);
+    const existing = await VendorClient.findOne({ where: activeRowWhere({ id }) });
     if (!existing) return res.status(404).json({ error: 'Vendor/Client not found' });
 
     const t = await db.transaction();
@@ -585,7 +587,7 @@ async function deleteVendorClient(req, res) {
       if (existing.type === 'vendor') {
         await deleteAllVendorPriceListRates(id, t);
       }
-      await VendorClient.destroy({ where: { id }, transaction: t });
+      await softDeleteInstance(existing, { transaction: t });
       await t.commit();
     } catch (txErr) {
       await t.rollback();

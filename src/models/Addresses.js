@@ -52,7 +52,10 @@ Address.init({
   },
 
   phone: DataTypes.STRING,
-  email: DataTypes.STRING
+  email: DataTypes.STRING,
+
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
+    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
 
 }, {
   sequelize: db,
@@ -62,9 +65,6 @@ Address.init({
   timestamps: true,
   createdAt: 'created_at',
   updatedAt: 'updated_at',
-
-  paranoid: true,
-  deletedAt: 'deleted_at'
 });
 
 module.exports = Address;

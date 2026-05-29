@@ -21,6 +21,8 @@ UniversalSwapHistory.init(
     affected_bom_ids: { type: DataTypes.JSON, allowNull: true }, // [10, 11] bom ids (PR formulas)
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
+    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
   },
   {
     sequelize: db,

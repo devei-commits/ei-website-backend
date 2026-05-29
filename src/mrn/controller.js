@@ -1,4 +1,5 @@
 const { Op } = require('sequelize');
+const { softDeleteWhere, activeRowWhere } = require('../lib/softDelete');
 const MaterialRequestNote = require('./models');
 const {
   PHASE,
@@ -25,6 +26,17 @@ const { validateOutboundMtrWarehouseStock } = require('./mtrWarehouseStock');
 const { ReservedBatchItem } = require('../fulfillment/models');
 const { ProductionBatch } = require('../production/models');
 const { syncWarehouseReserved } = require('../planningExtracted/controller');
+const {
+  compareMaterialQty,
+  materialQtyAdd,
+  materialQtyFromDb,
+  materialQtyGte,
+  materialQtyGt,
+  materialQtySubNonNeg,
+  materialQtyToNum,
+  sanitizeMrnLineItemQuantity,
+  sanitizeMrnLineItems,
+} = require('../utils/materialQtyCompare');
 
 /** Usertypes that can be assigned as Picker / Transfer Team (same as GRN). */
 const ASSIGNABLE_USERTYPES = ['super_admin', 'admin', 'bd_manager'];
@@ -157,7 +169,7 @@ function enrichMrnLineItems(lineItems, rmMap, pmMap, productMap) {
       product_id: line.product_id,
       item,
       itemCode,
-      quantity: Number(line.quantity) || 0,
+      quantity: materialQtyToNum(line.quantity),
       unit: line.unit || '',
       notes: line.notes || '',
     };
@@ -220,8 +232,8 @@ async function resolveLineItemCodes(lineItems, itemType) {
     const pid = pmByCode[code];
     const { code: _c, rm_code: _rc, pm_code: _pc, ...rest } = line;
     const id = line.id || `m${idx + 1}`;
-    if (rid != null) return { ...rest, id, raw_material_id: rid, quantity: Number(line.quantity) || 0, unit: line.unit || 'KG', notes: line.notes || '' };
-    if (pid != null) return { ...rest, id, pack_material_id: pid, quantity: Number(line.quantity) || 0, unit: line.unit || 'PCS', notes: line.notes || '' };
+    if (rid != null) return { ...rest, id, raw_material_id: rid, quantity: sanitizeMrnLineItemQuantity(line.quantity), unit: line.unit || 'KG', notes: line.notes || '' };
+    if (pid != null) return { ...rest, id, pack_material_id: pid, quantity: sanitizeMrnLineItemQuantity(line.quantity), unit: line.unit || 'PCS', notes: line.notes || '' };
     return line;
   });
 }
@@ -333,11 +345,13 @@ function mergeOutboundMtrLogisticsAndZone(updates, plainBefore) {
 async function list(req, res) {
   try {
     const transferType = req.query.transferType; // 'outbound' | 'inbound_from_mu'
-    let where = {};
-    if (transferType === 'outbound') where = { [Op.or]: [{ is_inbound_from_mu: false }, { is_inbound_from_mu: null }] };
-    if (transferType === 'inbound_from_mu') where = { is_inbound_from_mu: true };
+    let filters = {};
+    if (transferType === 'outbound') {
+      filters = { [Op.or]: [{ is_inbound_from_mu: false }, { is_inbound_from_mu: null }] };
+    }
+    if (transferType === 'inbound_from_mu') filters = { is_inbound_from_mu: true };
     const rows = await MaterialRequestNote.findAll({
-      where: Object.keys(where).length ? where : undefined,
+      where: activeRowWhere(filters),
       order: [['id', 'DESC']],
     });
     const { rmMap, pmMap, productMap } = await getMastersForLineItems(rows);
@@ -374,7 +388,7 @@ async function create(req, res) {
     const body = req.body || {};
     let lineItems = body.lineItems ?? body.line_items ?? [];
     const itemType = body.itemType || body.item_type;
-    lineItems = await resolveLineItemCodes(lineItems, itemType);
+    lineItems = sanitizeMrnLineItems(await resolveLineItemCodes(lineItems, itemType));
     const bmrNoForMtr = body.bmrNo ?? body.bmr_no ?? null;
     const sourceForMtr = body.source ?? null;
     const inboundMu = Boolean(body.isInboundFromMu ?? body.is_inbound_from_mu);
@@ -501,8 +515,8 @@ async function update(req, res) {
     if (body.assigned_picker !== undefined) updates.assigned_picker = body.assigned_picker;
     if (body.transferTeam !== undefined) updates.transfer_team = body.transferTeam;
     if (body.transfer_team !== undefined) updates.transfer_team = body.transfer_team;
-    if (body.lineItems !== undefined) updates.line_items = body.lineItems;
-    if (body.line_items !== undefined) updates.line_items = body.line_items;
+    if (body.lineItems !== undefined) updates.line_items = sanitizeMrnLineItems(body.lineItems);
+    if (body.line_items !== undefined) updates.line_items = sanitizeMrnLineItems(body.line_items);
     if (body.notes !== undefined) updates.notes = body.notes;
     if (body.bmrNo !== undefined) updates.bmr_no = body.bmrNo;
     if (body.bmr_no !== undefined) updates.bmr_no = body.bmr_no;
@@ -845,9 +859,9 @@ function aggregateRequiredByCode(lines) {
   for (const line of Array.isArray(lines) ? lines : []) {
     const key = normalizeItemCodeKey(line?.code);
     if (!key) continue;
-    const qty = Number(line?.required) || 0;
-    if (qty <= 0) continue;
-    map.set(key, (map.get(key) || 0) + qty);
+    const qty = materialQtyFromDb(line?.required);
+    if (!materialQtyGt(qty, 0)) continue;
+    map.set(key, materialQtyAdd(map.get(key) || '0', qty));
   }
   return map;
 }
@@ -868,9 +882,9 @@ function aggregateMovedByCodeFromMrnPlain(plain, kind) {
       normalizeItemCodeKey(li?.code) ||
       normalizeItemCodeKey(li?.item);
     if (!key) continue;
-    const qty = Number(li?.quantity) || 0;
-    if (qty <= 0) continue;
-    map.set(key, (map.get(key) || 0) + qty);
+    const qty = sanitizeMrnLineItemQuantity(li?.quantity);
+    if (!materialQtyGt(qty, 0)) continue;
+    map.set(key, materialQtyAdd(map.get(key) || '0', qty));
   }
   return map;
 }
@@ -881,7 +895,7 @@ function aggregateMovedByCodeFromMrnRows(rows, kind) {
     const plain = row.get ? row.get({ plain: true }) : row;
     const part = aggregateMovedByCodeFromMrnPlain(plain, kind);
     for (const [k, v] of part.entries()) {
-      map.set(k, (map.get(k) || 0) + v);
+      map.set(k, materialQtyAdd(map.get(k) || '0', v));
     }
   }
   return map;
@@ -890,8 +904,8 @@ function aggregateMovedByCodeFromMrnRows(rows, kind) {
 function isRequirementSatisfied(requiredMap, movedMap) {
   if (requiredMap.size === 0) return true;
   for (const [key, required] of requiredMap.entries()) {
-    const moved = Number(movedMap.get(key) || 0);
-    if (moved + 1e-6 < Number(required)) return false;
+    const moved = movedMap.get(key) || '0';
+    if (!materialQtyGte(moved, required)) return false;
   }
   return true;
 }
@@ -986,7 +1000,8 @@ async function applyMtrCompletionToProductionBatch(plainMrn) {
  * then re-sync warehouse_inventory.reserved from sums (avoids desync with manual reserved -= qty).
  */
 async function reduceReservedBatchAfterOutboundMtr(bmrNo, line, qty) {
-  if (!bmrNo || qty <= 0) return { rmId: null, pmId: null };
+  const transferQty = sanitizeMrnLineItemQuantity(qty);
+  if (!bmrNo || !materialQtyGt(transferQty, 0)) return { rmId: null, pmId: null };
   const batch = await ProductionBatch.findOne({
     where: { bmr_no: bmrNo },
     attributes: ['id'],
@@ -1000,18 +1015,18 @@ async function reduceReservedBatchAfterOutboundMtr(bmrNo, line, qty) {
     const where = { production_batch_id: batchId, raw_material_id: rmId, pack_material_id: null };
     const rbi = await ReservedBatchItem.findOne({ where });
     if (rbi) {
-      const cur = Number(rbi.quantity_reserved) || 0;
-      const next = Math.max(0, cur - qty);
-      if (Math.abs(next - cur) >= 1e-9) await rbi.update({ quantity_reserved: next });
+      const cur = materialQtyFromDb(rbi.quantity_reserved);
+      const next = materialQtySubNonNeg(cur, transferQty);
+      if (compareMaterialQty(next, cur) !== 0) await rbi.update({ quantity_reserved: next });
     }
   } else if (line.pack_material_id != null) {
     pmId = Number(line.pack_material_id);
     const where = { production_batch_id: batchId, pack_material_id: pmId, raw_material_id: null };
     const rbi = await ReservedBatchItem.findOne({ where });
     if (rbi) {
-      const cur = Number(rbi.quantity_reserved) || 0;
-      const next = Math.max(0, cur - qty);
-      if (Math.abs(next - cur) >= 1e-9) await rbi.update({ quantity_reserved: next });
+      const cur = materialQtyFromDb(rbi.quantity_reserved);
+      const next = materialQtySubNonNeg(cur, transferQty);
+      if (compareMaterialQty(next, cur) !== 0) await rbi.update({ quantity_reserved: next });
     }
   }
   return { rmId, pmId };
@@ -1031,8 +1046,8 @@ async function applyMrnCompletionToInventory(plainMrn) {
   const affectedPmIds = new Set();
 
   for (const line of lineItems) {
-    const qty = Number(line.quantity) || 0;
-    if (qty <= 0) continue;
+    const qty = sanitizeMrnLineItemQuantity(line.quantity);
+    if (!materialQtyGt(qty, 0)) continue;
     let whRow = null;
     const itemIds = {};
     if (line.raw_material_id != null) {
@@ -1106,8 +1121,8 @@ async function logMrnReceiveAtMuLocation(plainMrn) {
   const toRack = plainMrn.mu_receive_rack || null;
   if (!toZone && !toRack) return;
   for (const line of lineItems) {
-    const qty = Number(line.quantity) || 0;
-    if (qty <= 0) continue;
+    const qty = sanitizeMrnLineItemQuantity(line.quantity);
+    if (!materialQtyGt(qty, 0)) continue;
     let whRow = null;
     if (line.raw_material_id != null) {
       whRow = await WarehouseInventory.findOne({
@@ -1141,7 +1156,7 @@ async function remove(req, res) {
   try {
     const id = parseInt(String(req.params.id), 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
-    const n = await MaterialRequestNote.destroy({ where: { id } });
+    const n = await softDeleteWhere(MaterialRequestNote, { id });
     if (n === 0) return res.status(404).json({ error: 'MRN not found' });
     res.status(204).send();
   } catch (err) {

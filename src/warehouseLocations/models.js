@@ -35,6 +35,8 @@ WarehouseLocation.init(
     zoho_meta: { type: DataTypes.JSONB, allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
+    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
   },
   {
     sequelize: db,
@@ -65,6 +67,8 @@ WarehouseRack.init(
     utilisation_pct: { type: DataTypes.DECIMAL(5, 2), allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
+    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
   },
   {
     sequelize: db,
@@ -94,10 +98,12 @@ WarehouseRackItem.init(
       onDelete: 'CASCADE',
     },
     // Quantity of this item stored on this rack (warehouse-level stock).
-    qty_wh: { type: DataTypes.DECIMAL(14, 2), allowNull: true, defaultValue: 0 },
+    qty_wh: { type: DataTypes.DECIMAL(28, 16), allowNull: true, defaultValue: 0 },
     // Optional: if we later split ML1/ML2 by rack, we can extend here.
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
+    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
   },
   {
     sequelize: db,

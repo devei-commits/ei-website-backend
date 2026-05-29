@@ -4,6 +4,7 @@ const {
   qtyMtrFromReserved,
   validateOutboundMtrWarehouseStock,
 } = require('../../src/mrn/mtrWarehouseStock');
+const { materialQtyToNum } = require('../../src/utils/materialQtyCompare');
 
 describe('mtrWarehouseStock', () => {
   it('qtyAvailableWh is wh_stock minus reserved floored at 0', () => {
@@ -28,7 +29,7 @@ describe('mtrWarehouseStock', () => {
       { raw_material_id: 1, code: 'RM-001', quantity: 5 },
       { raw_material_id: 1, code: 'RM-001', quantity: 3 },
     ]);
-    expect(rm.get(1).qty).toBe(8);
+    expect(materialQtyToNum(rm.get(1).qty)).toBe(8);
   });
 
   it('validateOutboundMtrWarehouseStock passes when request is within reserved pool', async () => {

@@ -1,3 +1,4 @@
+const { softDeleteWhere, activeRowWhere } = require('../lib/softDelete');
 const ItemMaster = require('./models');
 const BOM = require('../bom/models');
 const PackMaterial = require('../packMaterials/models');
@@ -52,7 +53,7 @@ async function listItemMasters(req, res) {
     }
     if (typeFilter.length > 0) where.type = typeFilter;
 
-    let rows = await ItemMaster.findAll({ where, order: [['code', 'ASC']] });
+    let rows = await ItemMaster.findAll({ where: activeRowWhere(where), order: [['code', 'ASC']] });
     if (!Number.isNaN(rawMaterialId) && rawMaterialId > 0) {
       rows = rows.filter((r) => {
         const plain = r.get ? r.get({ plain: true }) : r;
@@ -198,7 +199,7 @@ async function deleteItemMaster(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
-    const n = await ItemMaster.destroy({ where: { id } });
+    const n = await softDeleteWhere(ItemMaster, { id });
     if (n === 0) return res.status(404).json({ error: 'Item not found' });
     res.status(204).send();
   } catch (err) {

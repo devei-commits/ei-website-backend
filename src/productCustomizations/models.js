@@ -101,7 +101,10 @@ ProductCustomization.init({
   updated_at: {
     type: DataTypes.DATE,
     allowNull: true
-  }
+  },
+
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
+    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
 }, {
   sequelize: db,
   modelName: 'ProductCustomization',

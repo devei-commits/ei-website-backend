@@ -11,6 +11,7 @@ const {
   filterWarehouseZonesForItemType,
   isWarehouseLocationAllowedForItemType,
 } = require('./warehouseLocationByItemType');
+const { resolveWhUnit } = require('./whUnitDefaults');
 
 function toNum(x) {
   if (x == null) return 0;
@@ -60,6 +61,7 @@ async function buildStockByLocationPayload(warehouseInventoryId) {
   }
 
   const itemType = String(plain.item_type || '').trim().toUpperCase() || null;
+  const whUnitResolved = resolveWhUnit(plain.wh_unit, itemType);
 
   const whZones = await loadAllWarehouseZonesWithRacks();
   const warehouseAll = [];
@@ -137,7 +139,7 @@ async function buildStockByLocationPayload(warehouseInventoryId) {
       bucket: 'ML1',
       label: 'Manufacturing — ML1',
       qty: ml1Qty,
-      unit: plain.wh_unit || 'KG',
+      unit: whUnitResolved,
       locationId: muLabels.ml1.locationId,
       locationCode: muLabels.ml1.locationCode,
       locationName: muLabels.ml1.locationName,
@@ -147,7 +149,7 @@ async function buildStockByLocationPayload(warehouseInventoryId) {
       bucket: 'ML2',
       label: 'Manufacturing — ML2',
       qty: ml2Qty,
-      unit: plain.wh_unit || 'KG',
+      unit: whUnitResolved,
       locationId: muLabels.ml2.locationId,
       locationCode: muLabels.ml2.locationCode,
       locationName: muLabels.ml2.locationName,
@@ -162,7 +164,7 @@ async function buildStockByLocationPayload(warehouseInventoryId) {
     itemType,
     code: plain.code,
     whStock: whTotal,
-    whUnit: plain.wh_unit || 'KG',
+    whUnit: whUnitResolved,
     stockInHand: toNum(plain.stock_in_hand),
     warehouse,
     manufacturing,

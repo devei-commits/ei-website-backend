@@ -3,7 +3,14 @@
  */
 const { Op } = require('sequelize');
 const db = require('../../db');
-const { WarehouseLocation, WarehouseRack } = require('../warehouseLocations/models');
+const { WarehouseLocation, WarehouseRack, WarehouseRackItem } = require('../warehouseLocations/models');
+const WarehouseInventory = require('../warehouseInventory/models');
+
+function toNum(x) {
+  if (x == null) return 0;
+  const n = Number(x);
+  return Number.isNaN(n) ? 0 : n;
+}
 const ItemDedicatedFacilityLocation = require('../itemDedicatedFacilityLocations/models');
 const { resolveDedicatedProductionCodes } = require('../itemDedicatedFacilityLocations/service');
 
@@ -23,6 +30,43 @@ function muZoneCodeToMlBucket(zoneCode) {
   const z = String(zoneCode).trim().toUpperCase();
   if (z.includes('ML2') || z === 'LOC-ML2' || z.includes('MU02')) return 'ml2';
   return 'ml1';
+}
+
+/** Human label for batch scheduled_mu_zone bucket. */
+function muBucketLabelForZone(zoneCode) {
+  return muZoneCodeToMlBucket(zoneCode) === 'ml2' ? 'ML2' : 'ML1';
+}
+
+/** ML1 or ML2 aggregate column for a zone code (fast path when rack rows are not used). */
+function muStockQtyFromPlain(plainWh, muZoneCode) {
+  const bucket = muZoneCodeToMlBucket(muZoneCode);
+  return bucket === 'ml2' ? toNum(plainWh?.ml2_stock) : toNum(plainWh?.ml1_stock);
+}
+
+/**
+ * Qty at batch manufacturing site = ML1 or ML2 bucket column (warehouse_inventory aggregate).
+ * Matches physical ML1/ML2 stock in DB — no rounding; rack rows roll up into these columns.
+ */
+async function getStockQtyAtMuZone(warehouseInventoryId, muZoneCode, opts = {}) {
+  const str = await getStockQtyStrAtMuZone(warehouseInventoryId, muZoneCode, opts);
+  return toNum(str);
+}
+
+/** Same as getStockQtyAtMuZone but preserves DECIMAL string from Postgres. */
+async function getStockQtyStrAtMuZone(warehouseInventoryId, muZoneCode, opts = {}) {
+  const zoneCode = String(muZoneCode || '').trim();
+  if (!zoneCode || !warehouseInventoryId) return '0';
+  const transaction = opts.transaction;
+  const bucket = muZoneCodeToMlBucket(zoneCode);
+  const inv = await WarehouseInventory.findByPk(
+    warehouseInventoryId,
+    transaction ? { transaction } : {}
+  );
+  if (!inv) return '0';
+  const plain = inv.get ? inv.get({ plain: true }) : inv;
+  const raw = bucket === 'ml2' ? plain?.ml2_stock : plain?.ml1_stock;
+  if (raw == null) return '0';
+  return typeof raw === 'string' ? raw.trim() || '0' : String(raw);
 }
 
 async function ensureDefaultRackForLocation(locationId, opts = {}) {
@@ -316,4 +360,8 @@ module.exports = {
   getManufacturingLocationLabels,
   inferMlBucketFromProductionZone,
   muZoneCodeToMlBucket,
+  muBucketLabelForZone,
+  muStockQtyFromPlain,
+  getStockQtyAtMuZone,
+  getStockQtyStrAtMuZone,
 };

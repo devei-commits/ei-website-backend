@@ -91,6 +91,8 @@ Order.init({
         allowNull: false,
         defaultValue: 0
     },
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
+    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
 }, {
     sequelize: db,
     modelName: 'order',
@@ -150,7 +152,9 @@ OrderItem.init({
     line_total: {
         type: DataTypes.DECIMAL(10, 2),
         allowNull: false
-    }
+    },
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
+    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
 }, {
     sequelize: db,
     modelName: 'orderItem',
