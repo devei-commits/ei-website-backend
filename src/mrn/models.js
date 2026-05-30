@@ -37,6 +37,8 @@ MaterialRequestNote.init(
     /** MU zone/rack when transfer is completed (for location history). */
     mu_receive_zone: { type: DataTypes.STRING(100), allowNull: true },
     mu_receive_rack: { type: DataTypes.STRING(100), allowNull: true },
+    /** Set at Send MTR (Production Required By Date) — shown as Expected date in transfer orders. */
+    required_by_date: { type: DataTypes.DATEONLY, allowNull: true },
     /** Outbound MTR logistics captured when warehouse initiates transfer. */
     logistics_tracking_no: { type: DataTypes.STRING(200), allowNull: true },
     logistics_transporter: { type: DataTypes.STRING(200), allowNull: true },

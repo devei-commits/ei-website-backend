@@ -1,7 +1,6 @@
 /**
  * Default warehouse / manufacturing zones and inbound stock routing.
  */
-const { Op } = require('sequelize');
 const db = require('../../db');
 const { WarehouseLocation, WarehouseRack, WarehouseRackItem } = require('../warehouseLocations/models');
 const WarehouseInventory = require('../warehouseInventory/models');
@@ -11,8 +10,6 @@ function toNum(x) {
   const n = Number(x);
   return Number.isNaN(n) ? 0 : n;
 }
-const ItemDedicatedFacilityLocation = require('../itemDedicatedFacilityLocations/models');
-const { resolveDedicatedProductionCodes } = require('../itemDedicatedFacilityLocations/service');
 
 const DEFAULT_RACK_CODE = 'DEFAULT';
 
@@ -144,55 +141,10 @@ async function setDefaultLocation(locationId, opts = {}) {
   return db.transaction(run);
 }
 
-async function findDedicatedWhRack({ rawMaterialId, packMaterialId, productId }, opts = {}) {
-  const transaction = opts.transaction;
-  const or = [];
-  if (rawMaterialId != null) or.push({ raw_material_id: Number(rawMaterialId) });
-  if (packMaterialId != null) or.push({ pack_material_id: Number(packMaterialId) });
-  if (productId != null) or.push({ product_id: Number(productId) });
-  if (or.length === 0) return null;
-
-  const row = await ItemDedicatedFacilityLocation.findOne({
-    where: { [Op.or]: or },
-    ...(transaction ? { transaction } : {}),
-  });
-  if (!row) return null;
-  const d = row.get ? row.get({ plain: true }) : row;
-  if (!d.wh_location_id) return null;
-
-  const zone = await WarehouseLocation.findByPk(d.wh_location_id, transaction ? { transaction } : {});
-  if (!zone) return null;
-  const zPlain = zone.get ? zone.get({ plain: true }) : zone;
-  if (String(zPlain.location_type || '').toLowerCase() !== 'warehouse') return null;
-
-  let rack = null;
-  if (d.wh_rack_id) {
-    rack = await WarehouseRack.findByPk(d.wh_rack_id, transaction ? { transaction } : {});
-    const rPlain = rack && rack.get ? rack.get({ plain: true }) : rack;
-    if (rPlain && Number(rPlain.location_id) !== Number(zPlain.id)) rack = null;
-  }
-  if (!rack) {
-    rack = await ensureDefaultRackForLocation(zPlain.id, { transaction });
-  }
-  const rPlain = rack.get ? rack.get({ plain: true }) : rack;
-  return {
-    locationId: zPlain.id,
-    locationCode: zPlain.code,
-    locationName: zPlain.name,
-    locationType: 'warehouse',
-    rackId: rPlain.id,
-    rackCode: rPlain.code,
-    source: 'item_dedicated',
-  };
-}
-
 /**
- * Resolve rack for GRN / inbound WH stock: item dedicated WH rack, else facility default warehouse zone.
+ * Resolve rack for GRN / inbound WH stock using the facility default warehouse zone.
  */
-async function resolveInboundWarehouseRack(itemIds, opts = {}) {
-  const dedicated = await findDedicatedWhRack(itemIds, opts);
-  if (dedicated) return dedicated;
-
+async function resolveInboundWarehouseRack(_itemIds, opts = {}) {
   const def = await getDefaultLocationForType('warehouse', opts);
   if (!def) return null;
 
@@ -267,9 +219,9 @@ async function getManufacturingLocationLabels(opts = {}) {
 
 /**
  * Resolve production zone + rack for MTR receive (WH → MU) or reverse.
- * Priority: explicit zone/rack codes → item dedicated prod rack (zone must match) → DEFAULT rack on zone → facility default production zone.
+ * Priority: explicit zone/rack codes → DEFAULT rack on zone → facility default production zone.
  */
-async function resolveProductionRackForTransfer({ zoneCode, rackCode, lineItems }, opts = {}) {
+async function resolveProductionRackForTransfer({ zoneCode, rackCode }, opts = {}) {
   const transaction = opts.transaction;
   const zCode = String(zoneCode || '').trim();
   let zone = null;
@@ -289,7 +241,6 @@ async function resolveProductionRackForTransfer({ zoneCode, rackCode, lineItems 
   if (!zone) return null;
 
   const zPlain = zone.get ? zone.get({ plain: true }) : zone;
-  const items = Array.isArray(lineItems) ? lineItems : [];
 
   if (rackCode) {
     const rc = String(rackCode).trim();
@@ -312,29 +263,6 @@ async function resolveProductionRackForTransfer({ zoneCode, rackCode, lineItems 
     }
   }
 
-  if (items.length > 0) {
-    const { prodZoneCode, prodRackCode, ok } = await resolveDedicatedProductionCodes(items);
-    if (ok && prodZoneCode && prodZoneCode === zPlain.code && prodRackCode) {
-      const rack = await WarehouseRack.findOne({
-        where: { location_id: zPlain.id, code: prodRackCode },
-        ...(transaction ? { transaction } : {}),
-      });
-      if (rack) {
-        const rPlain = rack.get ? rack.get({ plain: true }) : rack;
-        return {
-          locationId: zPlain.id,
-          locationCode: zPlain.code,
-          locationName: zPlain.name,
-          locationType: 'production',
-          rackId: rPlain.id,
-          rackCode: rPlain.code,
-          mlBucket: inferMlBucketFromProductionZone(zPlain),
-          source: 'item_dedicated',
-        };
-      }
-    }
-  }
-
   const rack = await ensureDefaultRackForLocation(zPlain.id, { transaction });
   const rPlain = rack.get ? rack.get({ plain: true }) : rack;
   return {
@@ -354,7 +282,6 @@ module.exports = {
   ensureDefaultRackForLocation,
   getDefaultLocationForType,
   setDefaultLocation,
-  findDedicatedWhRack,
   resolveInboundWarehouseRack,
   resolveProductionRackForTransfer,
   getManufacturingLocationLabels,

@@ -156,10 +156,87 @@ async function applyPackSizeToProductAndBom({ product, bom, groupFirstRow, now =
   return { pack_size: packSize, applied: true };
 }
 
+/** SG vs water from Summary sheet: Total RM (GM) ÷ Pack Size. */
+function computeProductSgFromTotalRmGm(totalRmGm, packSize) {
+  const total = Number(totalRmGm);
+  const pack = Number(packSize);
+  if (!Number.isFinite(total) || total <= 0) return null;
+  if (!Number.isFinite(pack) || pack <= 0) return null;
+  const sg = total / pack;
+  if (!Number.isFinite(sg) || sg <= 0) return null;
+  return Number(sg.toFixed(3));
+}
+
+const BOM_NOTE_SEGMENTS = [
+  { key: 'pr_qc_group', label: 'QC Group' },
+  { key: 'pr_sub_category', label: 'PR Sub-category' },
+  { key: 'microbial_limits', label: 'Microbial Limits' },
+  { key: 'spf_pa_rating', label: 'SPF/PA Rating' },
+  { key: 'photostability', label: 'Photostability' },
+  { key: 'freeze_thaw_cycles', label: 'Freeze-Thaw Cycles' },
+  { key: 'cosmos_natural_certification', label: 'COSMOS / Natural Certification' },
+  { key: 'dermatologically_tested', label: 'Dermatologically Tested' },
+  { key: 'cruelty_free_vegan', label: 'Cruelty Free / Vegan' },
+];
+
+function parseBomNotesForMerge(notes) {
+  const result = {};
+  for (const seg of BOM_NOTE_SEGMENTS) {
+    result[seg.key] = null;
+  }
+  const text = String(notes || '').trim();
+  if (!text) return result;
+  const parts = text.split('|').map((p) => String(p || '').trim()).filter(Boolean);
+  parts.forEach((part) => {
+    const idx = part.indexOf(':');
+    if (idx < 0) return;
+    const key = part.slice(0, idx).trim().toLowerCase();
+    const value = part.slice(idx + 1).trim();
+    if (!value) return;
+    for (const seg of BOM_NOTE_SEGMENTS) {
+      if (key === seg.label.toLowerCase()) {
+        result[seg.key] = value;
+        break;
+      }
+    }
+  });
+  return result;
+}
+
+function serializeBomNotes(parsed) {
+  const parts = [];
+  for (const seg of BOM_NOTE_SEGMENTS) {
+    const v = String(parsed[seg.key] ?? '').trim();
+    if (v) parts.push(`${seg.label}: ${v}`);
+  }
+  return parts.length ? parts.join(' | ') : null;
+}
+
+/** Replace PR Sub-category in BOM notes without dropping other segments. */
+function mergeBomNotesPrSubCategory(existingNotes, subCategory) {
+  const parsed = parseBomNotesForMerge(existingNotes);
+  const sub = String(subCategory ?? '').trim();
+  parsed.pr_sub_category = sub || null;
+  return serializeBomNotes(parsed);
+}
+
+/** Map Summary row pack size + unit → BOM sku_bom_limit_* */
+function skuBomLimitFromSummaryRow(row) {
+  const qty = Number(row?.pack_size);
+  const uomNorm = normalizePackSizeUom(row?.unit);
+  if (!Number.isFinite(qty) || qty <= 0 || !uomNorm) return null;
+  const skuUom = uomNorm === 'G' ? 'GM' : uomNorm;
+  return { qty, uom: skuUom };
+}
+
 module.exports = {
   findProductByCompositeSku,
   findOrCreateProductForFormulaBom,
   syncProductSkuCodesFromCompositeImport,
   derivePackSizeFromFormulaRow,
   applyPackSizeToProductAndBom,
+  normalizePackSizeUom,
+  computeProductSgFromTotalRmGm,
+  mergeBomNotesPrSubCategory,
+  skuBomLimitFromSummaryRow,
 };

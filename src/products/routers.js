@@ -20,6 +20,7 @@ const {
   uploadFormulaPackBomExcel,
   processFormulaPackBomChunk,
 } = require('./formulaPackBomExcelUpload');
+const { processFormulaSummaryChunk } = require('./formulaSummaryExcelUpload');
 const { createCacheReadMiddleware } = require('../cache/cacheReadMiddleware');
 
 const requireCatalogueModule = requireModule('catalogue-management', 'packaging-management', 'active-ingredients');
@@ -61,6 +62,8 @@ router.post(
   uploadFormulaPackBomExcel
 );
 router.post('/formula-pack-bom/chunk', requireCatalogueModule, processFormulaPackBomChunk);
+/** Chunked JSON import for Summary worksheet (PR category, pack size, SG). */
+router.post('/formula-summary/chunk', requireCatalogueModule, processFormulaSummaryChunk);
 /** Danger: deletes all PR-linked products, all `boms` rows, and dependents (same as per-product delete). Requires confirm body. */
 router.post('/bom/full-reset-all', requireCatalogueModule, clearAllPrBomForExcelReimport);
 router.post(

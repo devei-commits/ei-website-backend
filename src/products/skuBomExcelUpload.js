@@ -29,15 +29,16 @@ const multer = require('multer');
 const { Op, fn, col, where: sqlWhere } = require('sequelize');
 const db = require('../../db');
 const { OrderItem } = require('../orders/models');
-const redisCache = require('../cache/redis');
 const {
-  destroyProductWithDependents,
+  hardDeleteProductWithDependents,
   scrubProcurementJsonForDeletedProducts,
   reconcileItemMasterBomIdsRemovingBomIds,
+  unscopedModel,
 } = require('./destroyProductWithDependents');
 
 const { Product } = require('./models');
 const BOM = require('../bom/models');
+const { invalidateForModule } = require('../cache/invalidateCacheForModule');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const { findRawMaterialByMasterSku, findPackMaterialByMasterSku } = require('./masterSkuLookup');
@@ -526,10 +527,9 @@ const ALL_PR_BOM_RESET_CONFIRM = 'RESET_ALL_PR_BOM_DATA';
 
 /**
  * POST /api/v1/products/bom/full-reset-all
- * Destructive: removes every PR / catalogue product that is linked from `boms.product_id`, deletes all
- * `boms` rows (including orphans), and scrubs procurement JSON lines that referenced those products.
- * Same dependent cleanup as DELETE /products/:id (inventory, planning, customizations, items_list PR rows).
- * Blocked when ecommerce order lines still reference any of those products.
+ * Destructive: hard-deletes every row in `products` and `boms` (including soft-deleted), plus dependents
+ * (warehouse FG, planning, customizations, items_list PR links). Scrubs procurement JSON for those product ids.
+ * Blocked when ecommerce order lines still reference any catalogue product.
  * Body: { "confirm": "RESET_ALL_PR_BOM_DATA" }
  */
 async function clearAllPrBomForExcelReimport(req, res) {
@@ -542,9 +542,15 @@ async function clearAllPrBomForExcelReimport(req, res) {
       });
     }
 
-    const bomRows = await BOM.findAll({ attributes: ['id', 'product_id'], raw: true });
+    const BomModel = unscopedModel(BOM);
+    const ProductModel = unscopedModel(Product);
+
+    const bomRows = await BomModel.findAll({ attributes: ['id', 'product_id'], raw: true });
     const allBomIds = bomRows.map((r) => r.id);
-    const productIds = [...new Set(bomRows.map((r) => r.product_id).filter((id) => id != null))];
+    const allProductRows = await ProductModel.findAll({ attributes: ['product_id'], raw: true });
+    const fromBoms = bomRows.map((r) => r.product_id).filter((id) => id != null);
+    const fromProducts = allProductRows.map((r) => r.product_id).filter((id) => id != null);
+    const productIds = [...new Set([...fromProducts, ...fromBoms])];
 
     if (productIds.length > 0) {
       const orderLineCount = await OrderItem.count({
@@ -562,21 +568,21 @@ async function clearAllPrBomForExcelReimport(req, res) {
     await db.transaction(async (transaction) => {
       await reconcileItemMasterBomIdsRemovingBomIds(allBomIds, transaction);
       for (const pid of productIds) {
-        await destroyProductWithDependents(pid, transaction);
+        await hardDeleteProductWithDependents(pid, transaction, { skipBom: true });
       }
-      await BOM.destroy({ where: {}, transaction });
+      await BomModel.destroy({ where: {}, transaction });
       if (productIds.length > 0) {
         await scrubProcurementJsonForDeletedProducts(productIds, transaction);
       }
     });
 
-    await redisCache.delByPattern('products:v1:/api/v1/products:').catch(() => {});
+    await invalidateForModule('products').catch(() => {});
 
     return res.status(200).json({
       success: true,
       products_deleted: productIds.length,
       boms_removed: allBomIds.length,
-      message: `Removed ${productIds.length} PR product(s) and ${allBomIds.length} BOM row(s) from the database. Raw and pack material masters were not changed.`,
+      message: `Hard-deleted ${productIds.length} product row(s) and ${allBomIds.length} BOM row(s). Raw and pack material masters were not changed.`,
     });
   } catch (err) {
     console.error('clearAllPrBomForExcelReimport error', err);

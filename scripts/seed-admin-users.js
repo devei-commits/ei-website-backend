@@ -22,6 +22,8 @@ const EI_SUPER_ADMIN_EMAILS = [
   'sravan@estheticinsights.com',
   'pavankalyan@estheticinsights.com',
   'sandepbysani@estheticinsights.com',
+  'madhuparna@estheticinsights.com',
+  'komal@estheticinsights.com',
 ];
 
 function capitalizeLocalPart(local) {

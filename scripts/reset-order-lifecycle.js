@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * Clear order-management lifecycle data (SO → planning → procurement → GRN →
- * production/BMR/BPR → fulfillment → MRN/MTR → WH reservations & in-transit).
+ * Clear all order lifecycle data (B2B + website + client hub), including soft-deleted rows:
+ * SO → planning → procurement → GRN → production/BMR/BPR → fulfillment → MRN/MTR →
+ * website orders/payments → client_orders → WH reservations & in-transit.
  *
  * Keeps masters: products, RM/PM, BOMs, vendors, facility, users, items_list vendor rates.
  *

@@ -45,7 +45,6 @@ require('./src/production/models');
 require('./src/fulfillment/models');
 require('./src/clientHub/models');
 require('./src/facilityAreas/models');
-require('./src/itemDedicatedFacilityLocations/models');
 require('./src/departments/models');
 require('./src/roles/models');
 require('./src/logisticsSchedules/models');

@@ -19,6 +19,23 @@ const {
   pmSkuSeriesKey,
   pmLevelForSubCategorySlug,
 } = require('../lib/pmSubCategoryRules');
+const { PM_CANONICAL_UNIT } = require('../warehouseInventory/whUnitDefaults');
+
+/** All PM stock is counted in pieces (aligned with planning, production, warehouse). */
+function canonicalPmUnit() {
+  return PM_CANONICAL_UNIT;
+}
+
+async function syncPmWarehouseInventoryUnit(packMaterialId, transaction) {
+  if (packMaterialId == null) return;
+  await WarehouseInventory.update(
+    { wh_unit: PM_CANONICAL_UNIT },
+    {
+      where: { item_type: 'PM', pack_material_id: packMaterialId },
+      ...(transaction ? { transaction } : {}),
+    },
+  );
+}
 
 /** Canonical PM categories (PPM / SPM / TPM). Internal code: 4… / 5L… / 5M… / 5O… / 6T… / 6A… */
 function getPmSubCategoryNormalized(b) {
@@ -299,7 +316,7 @@ function bodyToPackMaterial(b) {
       b.zoho_sku_code ?? b.zohoSkuCode ??
       b.sku ?? b.pkgSku ?? b.code ?? b.itemCode ?? null,
     hsn_code: b.hsn_code ?? b.pkgHsn ?? b.hsnCode ?? null,
-    unit: b.unit ?? b.pkgUnit ?? null,
+    unit: canonicalPmUnit(),
     tax_pref: b.tax_pref ?? b.pkgTaxPreference ?? b.taxPref ?? null,
     pkg_returnable: b.pkg_returnable ?? b.pkgReturnable ?? null,
     pkg_associate_items: b.pkg_associate_items ?? b.pkgAssociateItems ?? b.associateItems ?? null,
@@ -347,6 +364,7 @@ async function syncPmZoho(req, res) {
       });
       if (b.form_data !== undefined) row.set('form_data', b.form_data);
       await row.save();
+      await syncPmWarehouseInventoryUnit(row.id);
     } else {
       const dup = await findConflictingMasterRow(PackMaterial, fields.code, fields.zoho_sku_code, null);
       if (dup) {
@@ -360,7 +378,7 @@ async function syncPmZoho(req, res) {
           item_type: 'PM',
           pack_material_id: row.id,
           wh_stock: 0,
-          wh_unit: row.unit || 'PCS',
+          wh_unit: PM_CANONICAL_UNIT,
           ml1_stock: 0,
           ml2_stock: 0,
           stock_in_hand: 0,
@@ -592,7 +610,7 @@ async function createPackMaterial(req, res) {
           item_type: 'PM',
           pack_material_id: row.id,
           wh_stock: 0,
-          wh_unit: row.unit || 'PCS',
+          wh_unit: PM_CANONICAL_UNIT,
           ml1_stock: 0,
           ml2_stock: 0,
           stock_in_hand: 0,

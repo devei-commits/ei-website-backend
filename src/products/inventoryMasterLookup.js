@@ -121,8 +121,7 @@ function masterWhUnit(kind, row) {
     return u || 'KG';
   }
   if (kind === 'PM') {
-    const u = row.unit != null ? String(row.unit).trim() : '';
-    return u || 'PCS';
+    return 'PCS';
   }
   return 'PCS';
 }

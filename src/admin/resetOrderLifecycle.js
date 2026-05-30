@@ -2,9 +2,10 @@
  * Clears transactional order-management lifecycle data while keeping masters
  * (products, RM/PM, BOMs, vendors, facility structure, users, items_list rates).
  *
- * Wipes: SO → planning → procurement/quotations/PO/GRN → production (BMR/BPR) →
- * fulfillment → MRN/MTR → reservations → WH movement history & rack placements →
- * in-transit / SIH counters on warehouse_inventory.
+ * Wipes every order pipeline (including soft-deleted rows):
+ * B2B SO → planning → procurement/quotations/PO/GRN → production (BMR/BPR) →
+ * fulfillment → MRN/MTR → reservations → website orders/payments → client hub
+ * orders → WH movement history & rack placements → in-transit / SIH counters.
  */
 const db = require('../../db');
 const SalesOrder = require('../salesOrders/models');
@@ -31,20 +32,39 @@ const WarehouseInventoryLocationHistory = require('../warehouseInventory/locatio
 const { WarehouseRackItem } = require('../warehouseLocations/models');
 const LogisticsSchedule = require('../logisticsSchedules/models');
 const UniversalSwapHistory = require('../universalSwap/models');
+const { Order, OrderItem } = require('../orders/models');
+const { Payment } = require('../payments/models');
+const { ClientOrder } = require('../clientHub/models');
 
 const CONFIRM_TOKEN = 'RESET_ORDER_MANAGEMENT_LIFECYCLE';
 
 /** @typedef {{ table: string, deleted: number }} DeleteStat */
 
 /**
- * @param {import('sequelize').Transaction | null} t
+ * Hard-delete every row in a table, including soft-deleted (defaultScope hides those).
+ * @param {import('sequelize').ModelStatic<any>} Model
+ */
+function unscopedModel(Model) {
+  return typeof Model.unscoped === 'function' ? Model.unscoped() : Model;
+}
+
+/**
  * @param {import('sequelize').ModelStatic<any>} Model
  * @param {string} label
+ * @param {import('sequelize').Transaction | null} t
  * @returns {Promise<DeleteStat>}
  */
-async function destroyAll(Model, label, t) {
-  const deleted = await Model.destroy({ where: {}, transaction: t });
+async function hardDestroyAll(Model, label, t) {
+  const deleted = await unscopedModel(Model).destroy({ where: {}, transaction: t });
   return { table: label, deleted };
+}
+
+/**
+ * @param {import('sequelize').ModelStatic<any>} Model
+ * @param {import('sequelize').Transaction | null} t
+ */
+async function hardCountAll(Model, t) {
+  return unscopedModel(Model).count({ transaction: t });
 }
 
 /**
@@ -82,15 +102,45 @@ async function resetOrderLifecycle(opts = {}) {
       [WarehouseRackItem, 'warehouse_rack_items'],
       [LogisticsSchedule, 'logistics_schedules'],
       [UniversalSwapHistory, 'universal_swap_history'],
+      [Payment, 'payments'],
+      [OrderItem, 'order_items'],
+      [Order, 'orders'],
+      [ClientOrder, 'client_orders'],
     ];
 
     for (const [Model, label] of steps) {
       if (dryRun) {
-        const count = await Model.count({ transaction: t });
+        const count = await hardCountAll(Model, t);
         stats.push({ table: label, deleted: count });
       } else {
-        stats.push(await destroyAll(Model, label, t));
+        stats.push(await hardDestroyAll(Model, label, t));
       }
+    }
+
+    if (dryRun) {
+      const [enquiryRows] = await db.query(
+        `SELECT COUNT(*)::int AS cnt FROM enquiries
+         WHERE linked_orders IS NOT NULL
+           AND linked_orders::text NOT IN ('[]', 'null')`,
+        { transaction: t }
+      );
+      stats.push({
+        table: 'enquiries (linked_orders to clear)',
+        deleted: enquiryRows?.[0]?.cnt ?? 0,
+      });
+    } else {
+      const [updated] = await db.query(
+        `UPDATE enquiries
+         SET linked_orders = '[]'::jsonb
+         WHERE linked_orders IS NOT NULL
+           AND linked_orders::text NOT IN ('[]', 'null')
+         RETURNING enquiry_id`,
+        { transaction: t }
+      );
+      stats.push({
+        table: 'enquiries (linked_orders cleared)',
+        deleted: Array.isArray(updated) ? updated.length : 0,
+      });
     }
 
     if (!dryRun) {
@@ -130,6 +180,21 @@ async function resetOrderLifecycle(opts = {}) {
 
   if (!dryRun && ownTx) {
     try {
+      const { invalidateForModule } = require('../cache/invalidateCacheForModule');
+      await Promise.all([
+        'fulfillment',
+        'planning-extracted',
+        'sales-orders',
+        'dashboard',
+        'orders',
+        'production',
+        'warehouse-inventory',
+      ].map((root) => invalidateForModule(root)));
+      stats.push({ table: 'redis (order lifecycle caches cleared)', deleted: 0 });
+    } catch (e) {
+      console.warn('[reset-order-lifecycle] redis cache clear failed:', e?.message || e);
+    }
+    try {
       const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
       await syncWarehouseInTransitAll();
       stats.push({ table: 'warehouse_inventory.in_transit (re-synced)', deleted: 0 });
@@ -144,4 +209,7 @@ async function resetOrderLifecycle(opts = {}) {
 module.exports = {
   CONFIRM_TOKEN,
   resetOrderLifecycle,
+  hardDestroyAll,
+  hardCountAll,
+  unscopedModel,
 };

@@ -8,7 +8,6 @@ const PackMaterial = require('../packMaterials/models');
 const WarehouseInventory = require('../warehouseInventory/models');
 const WarehouseInventoryLocationHistory = require('../warehouseInventory/locationHistoryModel');
 const { ReservedBatchItem } = require('../fulfillment/models');
-const ItemDedicatedFacilityLocation = require('../itemDedicatedFacilityLocations/models');
 const { ItemsList, ItemListVendorRate, ItemListTier } = require('../itemsList/models');
 const UniversalSwapHistory = require('../universalSwap/models');
 const BOM = require('../bom/models');
@@ -94,11 +93,6 @@ async function resetRawMaterialsMasterData(transaction) {
     transaction,
   });
 
-  await ItemDedicatedFacilityLocation.destroy({
-    where: { raw_material_id: { [Op.ne]: null } },
-    transaction,
-  });
-
   await deleteItemsListChain({ raw_material_id: { [Op.ne]: null } }, transaction);
 
   await UniversalSwapHistory.destroy({ where: {}, transaction });
@@ -139,11 +133,6 @@ async function resetPackMaterialsMasterData(transaction) {
   }
   await WarehouseInventory.destroy({ where: { item_type: 'PM' }, transaction });
   await WarehouseInventoryLocationHistory.destroy({
-    where: { pack_material_id: { [Op.ne]: null } },
-    transaction,
-  });
-
-  await ItemDedicatedFacilityLocation.destroy({
     where: { pack_material_id: { [Op.ne]: null } },
     transaction,
   });

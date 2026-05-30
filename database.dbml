@@ -477,20 +477,6 @@ Table "goods_received_notes" {
   "updated_at" timestamptz
 }
 
-Table "item_dedicated_facility_locations" {
-  "id" int4 [pk, not null, increment]
-  "item_key" varchar(80) [unique, not null]
-  "raw_material_id" int4
-  "pack_material_id" int4
-  "product_id" int4
-  "wh_location_id" int4
-  "wh_rack_id" int4
-  "prod_location_id" int4
-  "prod_rack_id" int4
-  "created_at" timestamptz
-  "updated_at" timestamptz
-}
-
 Table "item_groups" {
   "id" int4 [pk, not null, increment]
   "code" varchar(50) [not null]

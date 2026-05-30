@@ -1011,7 +1011,25 @@ const getProductDetail = async (req, res) => {
         order: [['order_date', 'DESC']],
       }),
     ]);
-    const rmLines = (bom && bom.rm_lines) ? bom.rm_lines : [];
+    const rawRmLines = (bom && bom.rm_lines) ? bom.rm_lines : [];
+    const { enrichStoredFormulaRmLine, isAquaQsStoredFormulaLine } = require('./aquaRmSku');
+    let rmLinesDirty = false;
+    const rmLines = await Promise.all(
+      rawRmLines.map(async (line) => {
+        if (!isAquaQsStoredFormulaLine(line)) return line;
+        const enriched = await enrichStoredFormulaRmLine(line);
+        if (
+          String(enriched.inci_name || '') !== String(line.inci_name || line.inciName || '') ||
+          String(enriched.rm_code || '') !== String(line.rm_code || line.rmCode || '')
+        ) {
+          rmLinesDirty = true;
+        }
+        return enriched;
+      })
+    );
+    if (rmLinesDirty && bom) {
+      await bom.update({ rm_lines: rmLines, updated_at: new Date() });
+    }
     const pmLines = (bom && bom.pm_lines) ? bom.pm_lines : [];
     const processSteps = (bom && bom.process_steps) ? bom.process_steps : [];
 

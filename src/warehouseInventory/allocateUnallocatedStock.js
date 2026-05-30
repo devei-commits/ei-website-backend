@@ -74,10 +74,7 @@ async function resolveDefaultRackForBucket(bucketKey, itemIds, opts = {}) {
   const labels = await getManufacturingLocationLabels(opts);
   const zoneCode =
     bucketKey === 'ml2' ? labels.ml2?.locationCode : labels.ml1?.locationCode;
-  return resolveProductionRackForTransfer(
-    { zoneCode: zoneCode || undefined, lineItems: [] },
-    opts
-  );
+  return resolveProductionRackForTransfer({ zoneCode: zoneCode || undefined }, opts);
 }
 
 function targetQtyForBucket(plain, bucketKey) {

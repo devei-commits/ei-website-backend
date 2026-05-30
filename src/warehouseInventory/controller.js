@@ -19,7 +19,7 @@ const GoodsReceivedNote = require('../grn/models');
 const PurchaseOrder = require('../purchaseOrders/models');
 const { quantityToKg } = require('./quantityToKg');
 const { loadRmPmMeta, getCompletedGrnReceivedKgByKey } = require('./inTransitSync');
-const { resolveWhUnit } = require('./whUnitDefaults');
+const { resolveWhUnit, resolvePmWhUnit } = require('./whUnitDefaults');
 const db = require('../../db');
 
 function toNum(x) {
@@ -944,7 +944,7 @@ async function listPayload() {
         zone: wh.zone || '—',
         rack: wh.rack || '—',
         whStock,
-        whUnit: resolveWhUnit(wh.wh_unit, 'PM'),
+        whUnit: resolvePmWhUnit(wh.wh_unit, m.unit),
         ml1Stock,
         ml2Stock,
         stockInHand,

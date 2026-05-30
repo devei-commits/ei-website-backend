@@ -17,6 +17,7 @@ const {
   readZohoContactIdMetaFromCell,
   buildZohoColumnOverlayFromXlsx,
 } = require('../vendorClient/vendorClientExcelParseUtils');
+const { invalidateForModule } = require('../cache/invalidateCacheForModule');
 const {
   toDateOnly,
   mapZohoSoStatus,
@@ -1123,6 +1124,8 @@ async function postOpenSoHeadersExcelImport(req, res) {
       aggregated.errors += part.errors;
       if (details && part.row_log?.length) aggregated.row_log.push(...part.row_log);
     }
+
+    await invalidateForModule('sales-orders');
 
     return res.json({
       ok: true,

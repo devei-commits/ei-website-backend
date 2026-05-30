@@ -18,7 +18,6 @@ function stableQueryString(query) {
 }
 
 function getAuthScope(req) {
-  // Per-user scope when authenticated (e.g. client-specific product pricing on the website).
   const uid = req?.user?.id ?? req?.user?.userid;
   if (uid != null && String(uid).trim() !== '') {
     return `u${uid}`;
@@ -28,7 +27,6 @@ function getAuthScope(req) {
 }
 
 function getPathPart(req) {
-  // Use originalUrl path without query to keep keys consistent.
   const originalUrl = req?.originalUrl ?? '';
   const pathNoQuery = originalUrl.split('?')[0];
   return pathNoQuery || req?.path || '';
@@ -36,8 +34,9 @@ function getPathPart(req) {
 
 /**
  * Redis cache-aside read middleware for GET endpoints.
- * - Key includes: namespace + path + stable query params + optional auth scope.
- * - Cache is set when res.json() is called with a 2xx status code.
+ * - Key: namespace + path + query + auth scope.
+ * - Writes invalidate via cacheInvalidationMiddleware / invalidateForModule.
+ * - Browser must not cache separately (Cache-Control on HIT).
  */
 function createCacheReadMiddleware({ namespace, ttlSeconds = 120 } = {}) {
   if (!namespace) throw new Error('createCacheReadMiddleware requires namespace');
@@ -50,11 +49,13 @@ function createCacheReadMiddleware({ namespace, ttlSeconds = 120 } = {}) {
     try {
       const cached = await redis.get(cacheKey);
       if (cached != null) {
+        res.set('Cache-Control', 'private, no-cache');
+        res.set('X-Cache', 'HIT');
         res.json(cached);
         return;
       }
     } catch {
-      // Any cache read errors should degrade gracefully.
+      // Degrade to DB on cache read errors.
     }
 
     const originalJson = res.json.bind(res);
@@ -62,12 +63,12 @@ function createCacheReadMiddleware({ namespace, ttlSeconds = 120 } = {}) {
       try {
         const okStatus = res.statusCode >= 200 && res.statusCode < 300;
         if (okStatus && body !== undefined) {
-          // Fire-and-forget; response must not be blocked by cache latency.
           redis.set(cacheKey, body, ttlSeconds).catch(() => {});
         }
       } catch {
         // ignore serialization/cache errors
       }
+      res.set('X-Cache', 'MISS');
       return originalJson(body);
     };
 
@@ -76,4 +77,3 @@ function createCacheReadMiddleware({ namespace, ttlSeconds = 120 } = {}) {
 }
 
 module.exports = { createCacheReadMiddleware };
-

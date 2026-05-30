@@ -5,8 +5,6 @@
 
 const ExcelJS = require('exceljs');
 const multer = require('multer');
-const { Op, fn, col, where: sqlWhere } = require('sequelize');
-
 const BOM = require('../bom/models');
 const PackMaterial = require('../packMaterials/models');
 const { findPackMaterialByMasterSku } = require('./masterSkuLookup');
@@ -169,31 +167,12 @@ function detectPackagingHeaders(sheet) {
   return { headerMap: map, headers: headers.filter(Boolean) };
 }
 
-async function findPackMaterialByName(name) {
-  const trimmed = String(name || '').trim();
-  if (!trimmed) return null;
-  const lowered = trimmed.toLowerCase();
-  const exact = await PackMaterial.findOne({
-    where: sqlWhere(fn('lower', col('description')), lowered),
-  });
-  if (exact) return exact;
-  return PackMaterial.findOne({
-    where: { description: { [Op.iLike]: trimmed } },
-  });
-}
-
-async function resolvePackMaterial(componentSku, componentName) {
+/** Resolve PM master by Component SKU only (zoho_sku_code, then internal code). */
+async function resolvePackMaterialBySku(componentSku) {
   const skuTrim = String(componentSku || '').trim();
-  const nameTrim = String(componentName || '').trim();
-  if (skuTrim) {
-    const bySku = await findPackMaterialByMasterSku(skuTrim);
-    if (bySku) return { pm: bySku };
-  }
-  if (nameTrim) {
-    const byName = await findPackMaterialByName(nameTrim);
-    if (byName) return { pm: byName };
-  }
-  return { pm: null };
+  if (!skuTrim) return { pm: null };
+  const pm = await findPackMaterialByMasterSku(skuTrim);
+  return { pm: pm || null };
 }
 
 async function parsePackagingSheetToRows(buffer) {
@@ -297,7 +276,7 @@ async function processPackGroupForComposite(compositeSku, groupRows) {
 
   for (const gr of groupRows) {
     const lineUom = normalizePmUom(gr.uom_raw || first.uom_raw);
-    const { pm } = await resolvePackMaterial(gr.component_sku, gr.component_name);
+    const { pm } = await resolvePackMaterialBySku(gr.component_sku);
 
     const volPrimary =
       gr.limit_qty_vol_kg_ltr != null && Number.isFinite(gr.limit_qty_vol_kg_ltr)

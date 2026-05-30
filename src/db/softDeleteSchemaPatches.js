@@ -38,7 +38,6 @@ const OPERATIONAL_TABLES = [
   'item_groups',
   'vendor_clients',
   'facility_areas',
-  'item_dedicated_facility_locations',
   'packaging',
   'customizations',
   'customization_packaging_options',

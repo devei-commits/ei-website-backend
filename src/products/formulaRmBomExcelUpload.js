@@ -7,8 +7,6 @@
 
 const ExcelJS = require('exceljs');
 const multer = require('multer');
-const { Op, fn, col, where: sqlWhere } = require('sequelize');
-
 const BOM = require('../bom/models');
 const RawMaterial = require('../rawMaterials/models');
 const { findRawMaterialByMasterSku } = require('./masterSkuLookup');
@@ -18,6 +16,10 @@ const {
   applyPackSizeToProductAndBom,
 } = require('./formulaBomProductResolve');
 const { linkMaterialMastersToProductFromBomRow } = require('./linkMaterialMastersToProduct');
+const {
+  resolveRawMaterialForBomLine,
+  buildFormulaPctRmLine,
+} = require('./aquaRmSku');
 
 const PREFERRED_SHEET_NAME = 'Formula BOM - RM per KG-LTR';
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
@@ -124,41 +126,12 @@ function isAquaText(value) {
   return s === 'aqua' || s === 'water' || s.includes('aqua');
 }
 
-async function findRawMaterialByName(name) {
-  const trimmed = String(name || '').trim();
-  if (!trimmed) return null;
-  const lowered = trimmed.toLowerCase();
-  const row = await RawMaterial.findOne({
-    where: {
-      [Op.or]: [
-        sqlWhere(fn('lower', col('inci')), lowered),
-        sqlWhere(fn('lower', col('name')), lowered),
-      ],
-    },
-  });
-  if (row) return row;
-  return RawMaterial.findOne({
-    where: {
-      [Op.or]: [
-        { inci: { [Op.iLike]: trimmed } },
-        { name: { [Op.iLike]: trimmed } },
-      ],
-    },
-  });
-}
-
-async function resolveRawMaterial(componentSku, componentName) {
+/** Resolve RM master by Component SKU only (zoho_sku_code, then internal code). */
+async function resolveRawMaterialBySku(componentSku) {
   const skuTrim = String(componentSku || '').trim();
-  const nameTrim = String(componentName || '').trim();
-  if (skuTrim) {
-    const bySku = await findRawMaterialByMasterSku(skuTrim);
-    if (bySku) return { rm: bySku };
-  }
-  if (nameTrim) {
-    const byName = await findRawMaterialByName(nameTrim);
-    if (byName) return { rm: byName };
-  }
-  return { rm: null };
+  if (!skuTrim) return { rm: null };
+  const rm = await findRawMaterialByMasterSku(skuTrim);
+  return { rm: rm || null };
 }
 
 /**
@@ -299,6 +272,16 @@ function groupRowsByCompositeSku(rows) {
   return map;
 }
 
+function groupUsesFormulaPctImport(groupRows) {
+  if (!Array.isArray(groupRows) || groupRows.length === 0) return false;
+  const hasPositiveQty = groupRows.some((gr) => Number(gr.qty) > 0);
+  if (hasPositiveQty) return false;
+  return groupRows.some((gr) => {
+    const pct = Number(gr?.pct_w_w ?? gr?.formula_pct);
+    return Number.isFinite(pct);
+  });
+}
+
 /**
  * @param {string} compositeSku
  * @param {Array<Record<string, unknown>>} groupRows rows from parseWorkbookToRows (same shape)
@@ -326,7 +309,83 @@ async function processRmGroupForComposite(compositeSku, groupRows, applySg) {
   }
 
   const productId = product.product_id;
-  const lineUom = formulaLineUomFromPrUom(first?.uom_raw);
+  const lineUom = 'KG';
+  const pctImport = groupUsesFormulaPctImport(groupRows);
+
+  if (pctImport) {
+    const formulaRmLines = [];
+    const unmatched = [];
+
+    for (const gr of groupRows) {
+      const pct = toFixedNumber(Number(gr.pct_w_w ?? gr.formula_pct) || 0);
+      const rm = await resolveRawMaterialForBomLine(gr.component_sku, gr.component_name);
+      const line = buildFormulaPctRmLine(gr, rm, pct, lineUom);
+
+      if (!rm) {
+        unmatched.push({
+          row_number: gr.row_number,
+          component_sku: line.zoho_sku_code || line.rm_code,
+          zoho_sku_code: line.zoho_sku_code,
+          component_name: gr.component_name,
+          qty: pct,
+          uom: lineUom,
+        });
+      }
+      formulaRmLines.push(line);
+    }
+
+    let bom = await BOM.findOne({ where: { product_id: productId } });
+    const now = new Date();
+    if (!bom) {
+      const productCode = product.product_code ? product.product_code : `PR-${productId}`;
+      bom = await BOM.create({
+        bom_code: `BOM-${productCode}`,
+        name: product.product_name || `Product ${productId}`,
+        product_id: productId,
+        type: 'FG',
+        status: 'Draft',
+        rm_lines: formulaRmLines,
+        sku_rm_lines: [],
+        sku_bom_limit_qty: null,
+        sku_bom_limit_uom: null,
+        pm_lines: [],
+        process_steps: [],
+        created_at: now,
+        updated_at: now,
+      });
+    } else {
+      await bom.update({
+        rm_lines: formulaRmLines,
+        updated_at: now,
+      });
+    }
+
+    await bom.reload();
+    await product.reload();
+    await linkMaterialMastersToProductFromBomRow(product, bom);
+
+    const pctSum = formulaRmLines.reduce((s, l) => s + (Number(l.pct_w_w) || 0), 0);
+
+    return {
+      composite_sku: compositeSku,
+      success: true,
+      product_id: productId,
+      bom_id: bom.id,
+      product_created: created,
+      lines_written: formulaRmLines.length,
+      sku_rm_matched: formulaRmLines.filter((l) => l.raw_material_id != null).length,
+      sku_rm_unmatched: formulaRmLines.filter((l) => l.raw_material_id == null).length,
+      sg_updates: 0,
+      fill_size: bom.pack_size || null,
+      rm_qty_total: null,
+      aqua_added_qty: null,
+      composition_total: toFixedNumber(pctSum, 6),
+      pct_import: true,
+      unmatched,
+    };
+  }
+
+  const legacyLineUom = formulaLineUomFromPrUom(first?.uom_raw);
 
   const formulaLinesRaw = [];
   const unmatched = [];
@@ -336,7 +395,7 @@ async function processRmGroupForComposite(compositeSku, groupRows, applySg) {
 
   for (const gr of groupRows) {
     const qty = Number.isFinite(Number(gr.qty)) ? Math.max(0, Number(gr.qty)) : 0;
-    const { rm } = await resolveRawMaterial(gr.component_sku, gr.component_name);
+    const rm = await resolveRawMaterialForBomLine(gr.component_sku, gr.component_name);
     const lineIsAqua =
       isAquaText(gr.component_name) ||
       isAquaText(gr.component_sku) ||
@@ -346,37 +405,28 @@ async function processRmGroupForComposite(compositeSku, groupRows, applySg) {
     if (lineIsAqua) aquaPresent = true;
     totalQty += qty;
 
-    if (rm) {
-      formulaLinesRaw.push({
-        phase: 'Main',
-        inci_name: rm.inci || rm.name || gr.component_name,
-        rm_code: rm.code || '',
-        zoho_sku_code: rm.zoho_sku_code || String(gr.component_sku || '').trim() || null,
-        raw_material_id: rm.id,
-        qty_per_unit: qty,
-        uom: lineUom,
-      });
+    const pctPlaceholder = 0;
+    const built = buildFormulaPctRmLine(gr, rm, pctPlaceholder, legacyLineUom);
+    formulaLinesRaw.push({
+      phase: built.phase,
+      inci_name: built.inci_name,
+      rm_code: built.rm_code,
+      zoho_sku_code: built.zoho_sku_code,
+      raw_material_id: built.raw_material_id,
+      qty_per_unit: qty,
+      uom: legacyLineUom,
+    });
 
-      if (applySg && Number.isFinite(gr.sg) && gr.sg > 0) {
-        sgUpdated += 1;
-      }
-    } else {
+    if (rm && applySg && Number.isFinite(gr.sg) && gr.sg > 0) {
+      sgUpdated += 1;
+    } else if (!rm) {
       unmatched.push({
         row_number: gr.row_number,
-        component_sku: gr.component_sku,
-        zoho_sku_code: String(gr.component_sku || '').trim() || null,
+        component_sku: built.zoho_sku_code || built.rm_code,
+        zoho_sku_code: built.zoho_sku_code,
         component_name: gr.component_name,
         qty,
-        uom: lineUom,
-      });
-      formulaLinesRaw.push({
-        phase: 'Main',
-        inci_name: gr.component_name || '',
-        rm_code: '',
-        zoho_sku_code: String(gr.component_sku || '').trim() || null,
-        raw_material_id: null,
-        qty_per_unit: qty,
-        uom: lineUom,
+        uom: legacyLineUom,
       });
     }
   }
@@ -401,18 +451,7 @@ async function processRmGroupForComposite(compositeSku, groupRows, applySg) {
     };
   });
 
-  if (computedAquaQty > 0) {
-    const aquaRm = await findRawMaterialByName('Aqua');
-    formulaRmLines.push({
-      phase: 'Main',
-      inci_name: aquaRm?.inci || aquaRm?.name || 'Aqua',
-      rm_code: aquaRm?.code || '',
-      zoho_sku_code: aquaRm?.zoho_sku_code || null,
-      raw_material_id: aquaRm?.id ?? null,
-      pct_w_w: toFixedNumber((computedAquaQty / safeDenominator) * 100),
-      uom: lineUom,
-    });
-  }
+  // No name-based Aqua lookup: filler water must appear on the sheet with a resolvable Component SKU.
 
   let bom = await BOM.findOne({ where: { product_id: productId } });
   if (!bom) {
@@ -586,4 +625,5 @@ module.exports = {
   uploadFormulaRmBomExcel,
   processFormulaRmBomChunk,
   processRmGroupForComposite,
+  groupUsesFormulaPctImport,
 };

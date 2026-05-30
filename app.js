@@ -37,7 +37,6 @@ const poTrackingRouters = require('./src/poTracking/routers');
 const treasuryRouters = require('./src/treasury/routers');
 const productionRouters = require('./src/production/routers');
 const facilityAreasRouters = require('./src/facilityAreas/routers');
-const itemDedicatedFacilityLocationsRouters = require('./src/itemDedicatedFacilityLocations/routers');
 const departmentsRouters = require('./src/departments/routers');
 const fulfillmentRouters = require('./src/fulfillment/routers');
 const clientHubRouters = require('./src/clientHub/routers');
@@ -120,6 +119,14 @@ app.use(logginHandler);
 app.use(cacheInvalidationMiddleware);
 
 const apiPrefix = '/api/v1';
+
+/** Authenticated API responses must not be cached by the browser (Redis handles server-side caching). */
+app.use(apiPrefix, (_req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.set('Pragma', 'no-cache');
+  next();
+});
+
 const { mountSwagger } = require('./src/docs/swaggerSetup');
 mountSwagger(app, { apiPrefix, port: Number(process.env.PORT) || 3000 });
 
@@ -167,7 +174,6 @@ app.use(`${apiPrefix}/po-tracking`, isAuthenticated, poTrackingRouters);
 app.use(`${apiPrefix}/treasury`, isAuthenticated, treasuryRouters);
 app.use(`${apiPrefix}/production`, isAuthenticated, productionRouters);
 app.use(`${apiPrefix}/facility-areas`, isAuthenticated, facilityAreasRouters);
-app.use(`${apiPrefix}/item-dedicated-facility-locations`, itemDedicatedFacilityLocationsRouters);
 app.use(`${apiPrefix}/departments`, departmentsRouters);
 app.use(`${apiPrefix}/fulfillment`, isAuthenticated, fulfillmentRouters);
 app.use(`${apiPrefix}/client-hub`, isAuthenticated, clientHubRouters);

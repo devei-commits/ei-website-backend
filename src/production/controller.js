@@ -1182,15 +1182,21 @@ function extractEiCodeFromDispensingText(text) {
 function pickDispensingLine(nextArr, prevArr, code) {
   const c = String(code || '').trim();
   if (!c) return null;
-  const fromNext = (nextArr || []).find((l) => String(l?.code || '').trim() === c);
+  const fromNext = (nextArr || []).find((l) => dispensingLineCode(l) === c);
   if (fromNext) return fromNext;
-  return (prevArr || []).find((l) => String(l?.code || '').trim() === c) || null;
+  return (prevArr || []).find((l) => dispensingLineCode(l) === c) || null;
+}
+
+function dispensingLineCode(line) {
+  return String(
+    line?.code ?? line?.pm_code ?? line?.pmCode ?? line?.rm_code ?? line?.rmCode ?? ''
+  ).trim();
 }
 
 function sumDispensedByCodeForDispensing(arr) {
   const m = new Map();
   for (const line of arr || []) {
-    const code = (line?.code ?? '').toString().trim();
+    const code = dispensingLineCode(line);
     if (!code) continue;
     const dispensed = Number(line.dispensed ?? 0) || 0;
     m.set(code, (m.get(code) || 0) + dispensed);
@@ -1215,7 +1221,7 @@ async function collectDispensingMuZoneShortages(type, prevArr, nextArr, schedule
   const muLabel = muBucketLabelForZone(muZone);
 
   for (const code of codes) {
-    const delta = (nextMap.get(code) || 0) - (prevMap.get(code) || 0);
+    let delta = (nextMap.get(code) || 0) - (prevMap.get(code) || 0);
     if (!Number.isFinite(delta) || delta <= 1e-9) continue;
 
     const sampleLine = pickDispensingLine(nextArr, prevArr, code);
@@ -1263,6 +1269,12 @@ async function collectDispensingMuZoneShortages(type, prevArr, nextArr, schedule
         delta = capPmDispenseConsumption(delta, atMu);
       }
     } catch (e) {
+      console.warn(DISPENSING_MU_ERR_TAG, 'collectDispensingMuZoneShortages: stock lookup failed', {
+        type,
+        code,
+        muZone,
+        err: e?.message || e,
+      });
       shortages.push({
         type,
         code,
@@ -1391,7 +1403,7 @@ async function resolvePackMaterialForDispensingLine(line) {
     const pm = await PackMaterial.findByPk(pid);
     if (pm) return pm;
   }
-  const code = String(line.code || '').trim();
+  const code = dispensingLineCode(line);
   if (code) {
     const byCode = await PackMaterial.findOne({ where: { code } });
     if (byCode) return byCode;

@@ -21,7 +21,6 @@ const {
 } = require('../facilityAreas/defaultLocationService');
 const { logLocationMovement } = require('../warehouseInventory/locationHistoryHelpers');
 const WarehouseInventoryLocationHistory = require('../warehouseInventory/locationHistoryModel');
-const { applyDedicatedDefaultsToNewMrn, resolveDedicatedProductionCodes, resolveProductionRackForMrn } = require('../itemDedicatedFacilityLocations/service');
 const { validateOutboundMtrWarehouseStock } = require('./mtrWarehouseStock');
 const { ReservedBatchItem } = require('../fulfillment/models');
 const { ProductionBatch } = require('../production/models');
@@ -57,6 +56,47 @@ function lineItemsIndicatePm(lineItems) {
     const u = String(l.unit || '').toUpperCase();
     return u === 'PCS' || u === 'PC' || u === 'PIECES';
   });
+}
+
+/** RM vs PM MTR from line items (warehouse / transfer orders source label). */
+function inferMtrKind(lineItems) {
+  const rm = lineItemsIndicateRm(lineItems);
+  const pm = lineItemsIndicatePm(lineItems);
+  if (pm && !rm) return 'pm';
+  if (rm && !pm) return 'rm';
+  if (pm) return 'pm';
+  if (rm) return 'rm';
+  return null;
+}
+
+async function loadBatchMetaByBmrNo(rows) {
+  const bmrNos = [
+    ...new Set(
+      rows
+        .map((r) => {
+          const d = r.get ? r.get({ plain: true }) : r;
+          return String(d.bmr_no || '').trim();
+        })
+        .filter(Boolean)
+    ),
+  ];
+  if (!bmrNos.length) return {};
+  const batches = await ProductionBatch.findAll({
+    where: { bmr_no: { [Op.in]: bmrNos } },
+    attributes: ['bmr_no', 'bpr_no', 'product_name', 'batch_no'],
+  });
+  const map = {};
+  for (const b of batches) {
+    const d = b.get ? b.get({ plain: true }) : b;
+    const key = String(d.bmr_no || '').trim();
+    if (!key) continue;
+    map[key] = {
+      bprNo: String(d.bpr_no || '').trim(),
+      productName: String(d.product_name || '').trim(),
+      batchNo: String(d.batch_no || '').trim(),
+    };
+  }
+  return map;
 }
 
 function normalizeMrnStatus(status) {
@@ -251,7 +291,7 @@ async function generateMrnNo() {
   return prefix + String(lastNum + 1).padStart(3, '0');
 }
 
-function formatRow(r, enrichedLineItems) {
+function formatRow(r, enrichedLineItems, extra = {}) {
   if (!r) return null;
   const d = r.get ? r.get({ plain: true }) : r;
   const lineItems = enrichedLineItems !== undefined ? enrichedLineItems : (d.line_items || []);
@@ -260,6 +300,13 @@ function formatRow(r, enrichedLineItems) {
   const lineTransferStatus = isOutboundMtr
     ? normalizeLineTransferMap(lineItems, d.line_transfer_status, d.status)
     : undefined;
+  const mtrKind = isOutboundMtr ? inferMtrKind(lineItems) : null;
+  const batchMeta = extra.batchMeta && typeof extra.batchMeta === 'object' ? extra.batchMeta : {};
+  const bprNo = String(batchMeta.bprNo ?? extra.bprNo ?? '').trim();
+  const productName = String(batchMeta.productName ?? extra.productName ?? '').trim();
+  const batchNo = String(batchMeta.batchNo ?? extra.batchNo ?? '').trim();
+  const bmrNo = String(d.bmr_no || '').trim();
+  const sourceRef = mtrKind === 'pm' ? (bprNo || bmrNo) : bmrNo;
   return {
     id: String(d.id),
     mrnNo: d.mrn_no,
@@ -270,7 +317,12 @@ function formatRow(r, enrichedLineItems) {
     lineItems,
     lineTransferStatus,
     notes: d.notes || '',
-    bmrNo: d.bmr_no || '',
+    bmrNo,
+    bprNo,
+    productName,
+    batchNo,
+    mtrKind,
+    sourceRef,
     source: d.source || '',
     isInboundFromMu: Boolean(d.is_inbound_from_mu),
     receivedAtMu: d.received_at_mu || null,
@@ -289,8 +341,16 @@ function formatRow(r, enrichedLineItems) {
     logisticsDispatchDate: d.logistics_dispatch_date ?? null,
     logisticsEtaDate: d.logistics_eta_date ?? null,
     logisticsVehicleNo: d.logistics_vehicle_no ?? null,
+    requiredByDate: d.required_by_date ?? null,
     createdAt: d.created_at || null,
   };
+}
+
+function normalizeRequiredByDate(body = {}) {
+  const raw = body.requiredByDate !== undefined ? body.requiredByDate : body.required_by_date;
+  if (raw === undefined) return undefined;
+  if (raw == null || String(raw).trim() === '') return null;
+  return String(raw).trim().slice(0, 10);
 }
 
 function normalizeLogisticsFields(body = {}) {
@@ -354,11 +414,13 @@ async function list(req, res) {
       where: activeRowWhere(filters),
       order: [['id', 'DESC']],
     });
+    const batchMetaByBmr = await loadBatchMetaByBmrNo(rows);
     const { rmMap, pmMap, productMap } = await getMastersForLineItems(rows);
     const out = rows.map((r) => {
       const d = r.get ? r.get({ plain: true }) : r;
       const enriched = enrichMrnLineItems(d.line_items || [], rmMap, pmMap, productMap);
-      return formatRow(r, enriched);
+      const batchMeta = batchMetaByBmr[String(d.bmr_no || '').trim()] || {};
+      return formatRow(r, enriched, { batchMeta });
     });
     res.json(out);
   } catch (err) {
@@ -373,10 +435,13 @@ async function getById(req, res) {
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await MaterialRequestNote.findByPk(id);
     if (!row) return res.status(404).json({ error: 'MRN not found' });
+    const dRow = row.get ? row.get({ plain: true }) : row;
+    const batchMetaByBmr = await loadBatchMetaByBmrNo([row]);
+    const batchMeta = batchMetaByBmr[String(dRow.bmr_no || '').trim()] || {};
     const { rmMap, pmMap, productMap } = await getMastersForLineItems([row]);
     const d = row.get ? row.get({ plain: true }) : row;
     const enriched = enrichMrnLineItems(d.line_items || [], rmMap, pmMap, productMap);
-    res.json(formatRow(row, enriched));
+    res.json(formatRow(row, enriched, { batchMeta }));
   } catch (err) {
     console.error('[mrn] getById error:', err);
     res.status(500).json({ error: err.message || 'Failed to get MRN' });
@@ -428,13 +493,9 @@ async function create(req, res) {
     let muReceiveZone =
       body.muReceiveZone !== undefined ? body.muReceiveZone : body.mu_receive_zone;
     if (sourceForMtr === 'MTR' && !inboundMu && lineItems.length > 0 && !String(muReceiveZone || '').trim()) {
-      const { prodZoneCode, ok } = await resolveDedicatedProductionCodes(lineItems);
-      if (ok && prodZoneCode) muReceiveZone = prodZoneCode;
-    }
-    if (sourceForMtr === 'MTR' && !inboundMu && lineItems.length > 0 && !String(muReceiveZone || '').trim()) {
       return res.status(400).json({
         error:
-          'Transfer To (manufacturing / ML zone) is required for MTR. Select it in Production → Send MTR, or set item dedicated production location in Masters.',
+          'Transfer To (manufacturing / ML zone) is required for MTR. Select it in Production → Send MTR.',
       });
     }
     if (sourceForMtr === 'MTR' && !inboundMu && lineItems.length > 0) {
@@ -474,6 +535,8 @@ async function create(req, res) {
     if (body.mu_receive_rack !== undefined) payload.mu_receive_rack = body.mu_receive_rack;
     if (body.whDispatchZone !== undefined) payload.wh_dispatch_zone = body.whDispatchZone;
     if (body.wh_dispatch_zone !== undefined) payload.wh_dispatch_zone = body.wh_dispatch_zone;
+    const requiredByDate = normalizeRequiredByDate(body);
+    if (requiredByDate !== undefined) payload.required_by_date = requiredByDate;
     if (sourceForMtr === 'MTR' && bmrNoForMtr && !inboundMu && lineItems.length > 0) {
       const o = {};
       lineItems.forEach((li, idx) => {
@@ -482,18 +545,12 @@ async function create(req, res) {
       payload.line_transfer_status = o;
     }
     let row = await MaterialRequestNote.create(payload);
-    if (sourceForMtr === 'MTR' && bmrNoForMtr && !inboundMu) {
-      const d0 = row.get ? row.get({ plain: true }) : row;
-      const extra = await applyDedicatedDefaultsToNewMrn(lineItems, d0.mu_receive_zone, d0.mu_receive_rack);
-      if (extra && Object.keys(extra).length > 0) {
-        await row.update(extra);
-        row = await MaterialRequestNote.findByPk(row.id);
-      }
-    }
     const { rmMap, pmMap, productMap } = await getMastersForLineItems([row]);
     const d = row.get ? row.get({ plain: true }) : row;
     const enriched = enrichMrnLineItems(d.line_items || [], rmMap, pmMap, productMap);
-    res.status(201).json(formatRow(row, enriched));
+    const batchMetaByBmr = await loadBatchMetaByBmrNo([row]);
+    const batchMeta = batchMetaByBmr[String(d.bmr_no || '').trim()] || {};
+    res.status(201).json(formatRow(row, enriched, { batchMeta }));
   } catch (err) {
     console.error('[mrn] create error:', err);
     res.status(500).json({ error: err.message || 'Failed to create MRN' });
@@ -542,6 +599,8 @@ async function update(req, res) {
     if (body.mu_receive_zone !== undefined) updates.mu_receive_zone = body.mu_receive_zone;
     if (body.muReceiveRack !== undefined) updates.mu_receive_rack = body.muReceiveRack;
     if (body.mu_receive_rack !== undefined) updates.mu_receive_rack = body.mu_receive_rack;
+    const requiredByDate = normalizeRequiredByDate(body);
+    if (requiredByDate !== undefined) updates.required_by_date = requiredByDate;
     const logisticsFields = normalizeLogisticsFields(body);
     if (logisticsFields.logistics_tracking_no !== undefined) updates.logistics_tracking_no = logisticsFields.logistics_tracking_no;
     if (logisticsFields.logistics_transporter !== undefined) updates.logistics_transporter = logisticsFields.logistics_transporter;
@@ -609,17 +668,7 @@ async function update(req, res) {
 
       if (initiateIds && initiateIds.length > 0) {
         const { logistics: mergedLogistics, muReceiveZone: mergedMuZone } = mergeOutboundMtrLogisticsAndZone(updates, plainBefore);
-        let mergedMuZoneEff = mergedMuZone;
-        if (!String(mergedMuZoneEff || '').trim()) {
-          const resolved = await resolveDedicatedProductionCodes(lineItemsMerged);
-          if (resolved.ok && resolved.prodZoneCode) {
-            mergedMuZoneEff = resolved.prodZoneCode;
-            updates.mu_receive_zone = resolved.prodZoneCode;
-            if (resolved.prodRackCode && !String(plainBefore.mu_receive_rack || '').trim()) {
-              updates.mu_receive_rack = resolved.prodRackCode;
-            }
-          }
-        }
+        const mergedMuZoneEff = mergedMuZone;
         const logisticsErr = validateRequiredOutboundLogistics(mergedLogistics);
         if (logisticsErr) return res.status(400).json({ error: logisticsErr });
         const mlErr = validateMlDestinationForOutboundInitiate(mergedMuZoneEff);
@@ -640,17 +689,7 @@ async function update(req, res) {
       const reqStEarly = updates.status !== undefined ? normalizeMrnStatus(updates.status) : null;
       if (!touched && reqStEarly === 'In Transit' && (!initiateIds || initiateIds.length === 0)) {
         const { logistics: mergedLogisticsBulk, muReceiveZone: mergedMuZoneBulk } = mergeOutboundMtrLogisticsAndZone(updates, plainBefore);
-        let mergedMuZoneBulkEff = mergedMuZoneBulk;
-        if (!String(mergedMuZoneBulkEff || '').trim()) {
-          const resolvedBulk = await resolveDedicatedProductionCodes(lineItemsMerged);
-          if (resolvedBulk.ok && resolvedBulk.prodZoneCode) {
-            mergedMuZoneBulkEff = resolvedBulk.prodZoneCode;
-            updates.mu_receive_zone = resolvedBulk.prodZoneCode;
-            if (resolvedBulk.prodRackCode && !String(plainBefore.mu_receive_rack || '').trim()) {
-              updates.mu_receive_rack = resolvedBulk.prodRackCode;
-            }
-          }
-        }
+        const mergedMuZoneBulkEff = mergedMuZoneBulk;
         const logisticsErrBulk = validateRequiredOutboundLogistics(mergedLogisticsBulk);
         if (logisticsErrBulk) return res.status(400).json({ error: logisticsErrBulk });
         const mlErrBulk = validateMlDestinationForOutboundInitiate(mergedMuZoneBulkEff);
@@ -680,8 +719,10 @@ async function update(req, res) {
         const muRForRack =
           updates.mu_receive_rack !== undefined ? updates.mu_receive_rack : plainBefore.mu_receive_rack;
         if (!String(muRForRack || '').trim()) {
-          const rackGuess = await resolveProductionRackForMrn(lineItemsMerged, muZForRack);
-          if (rackGuess) updates.mu_receive_rack = rackGuess;
+          const resolved = await resolveProductionRackForTransfer({
+            zoneCode: muZForRack,
+          });
+          if (resolved?.rackCode) updates.mu_receive_rack = resolved.rackCode;
         }
       }
 
@@ -808,7 +849,9 @@ async function update(req, res) {
 
     const { rmMap, pmMap, productMap } = await getMastersForLineItems([refreshed]);
     const enriched = enrichMrnLineItems(d.line_items || [], rmMap, pmMap, productMap);
-    res.json(formatRow(refreshed, enriched));
+    const batchMetaByBmr = await loadBatchMetaByBmrNo([refreshed]);
+    const batchMeta = batchMetaByBmr[String(d.bmr_no || '').trim()] || {};
+    res.json(formatRow(refreshed, enriched, { batchMeta }));
   } catch (err) {
     console.error('[mrn] update error:', err);
     res.status(500).json({ error: err.message || 'Failed to update MRN' });
@@ -1068,7 +1111,6 @@ async function applyMrnCompletionToInventory(plainMrn) {
     const prodRackDest = await resolveProductionRackForTransfer({
       zoneCode: muZone,
       rackCode: muRack,
-      lineItems: [line],
     });
 
     if (whRackDest?.rackId && prodRackDest?.rackId) {

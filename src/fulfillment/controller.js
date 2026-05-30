@@ -33,7 +33,8 @@ const INCLUDE_FULL = [
   {
     model: FulfillmentOrderItem,
     as: 'items',
-    include: [{ model: FulfillmentBatchSplit, as: 'batchSplits' }],
+    required: false,
+    include: [{ model: FulfillmentBatchSplit, as: 'batchSplits', required: false }],
   },
 ];
 

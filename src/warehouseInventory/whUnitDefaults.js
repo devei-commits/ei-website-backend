@@ -12,7 +12,19 @@ function resolveWhUnit(whUnit, itemType) {
   return u || defaultWhUnitForItemType(itemType);
 }
 
+/** Canonical count UOM for all packaging materials (master, warehouse, production). */
+const PM_CANONICAL_UNIT = 'PCS';
+
+/**
+ * PM warehouse display UOM — always PCS (see scripts/syncPmUnitsToPcs.js).
+ */
+function resolvePmWhUnit(_warehouseWhUnit, _packMaterialUnit) {
+  return PM_CANONICAL_UNIT;
+}
+
 module.exports = {
+  PM_CANONICAL_UNIT,
   defaultWhUnitForItemType,
   resolveWhUnit,
+  resolvePmWhUnit,
 };
