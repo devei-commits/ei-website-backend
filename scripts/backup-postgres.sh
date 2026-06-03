@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-CONTAINER="${POSTGRES_CONTAINER:-sprdlx_postgres_temp}"
+CONTAINER="${POSTGRES_CONTAINER:-orders_postgres}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BACKUP_DIR="$BACKEND_DIR/backups"
@@ -17,7 +17,7 @@ mkdir -p "$BACKUP_DIR"
 
 if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
   echo "Container not running: $CONTAINER" >&2
-  echo "Start DB from repo root: docker compose up -d db" >&2
+  echo "Start DB: cd $BACKEND_DIR && docker compose up -d db" >&2
   exit 1
 fi
 
@@ -45,10 +45,3 @@ docker exec "$CONTAINER" rm -f /tmp/backup.sql /tmp/backup.dump
 ls -lh "$sql_host" "$dump_host"
 echo ""
 echo "Done. Restore instructions: backups/RESTORE.md"
-
-
-# cd /path/to/sprdlx
-# chmod +x scripts/restore-db.sh
-# ./scripts/restore-db.sh /path/to/ei_pg_backup_YYYYMMDD_HHMMSS.dump
-# # or skip confirmation:
-# ./scripts/restore-db.sh ./ei-website-backend/backups/ei_pg_backup_....dump --force
