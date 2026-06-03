@@ -8,7 +8,21 @@
 
 set -euo pipefail
 
-CONTAINER="${POSTGRES_CONTAINER:-orders_postgres}"
+resolve_postgres_container() {
+  if [[ -n "${POSTGRES_CONTAINER:-}" ]]; then
+    echo "$POSTGRES_CONTAINER"
+    return
+  fi
+  for c in sprdlx_postgres_temp orders_postgres; do
+    if docker inspect "$c" >/dev/null 2>&1; then
+      echo "$c"
+      return
+    fi
+  done
+  echo ""
+}
+
+CONTAINER="$(resolve_postgres_container)"
 FORCE=0
 
 usage() {
@@ -44,10 +58,14 @@ if [[ ! -f "$BACKUP_PATH" ]]; then
   exit 1
 fi
 
-if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
-  echo "Container not running: $CONTAINER" >&2
+if [[ -z "$CONTAINER" ]]; then
+  echo "No Postgres container running (tried: sprdlx_postgres_temp, orders_postgres)." >&2
+  echo "Remote: cd sprdlx && docker compose up -d db" >&2
+  echo "Local:  cd ei-website-backend && docker compose up -d db" >&2
   exit 1
 fi
+
+echo "Using Postgres container: $CONTAINER"
 
 user="$(docker exec "$CONTAINER" printenv POSTGRES_USER 2>/dev/null | head -n1 | tr -d '\r')"
 db="$(docker exec "$CONTAINER" printenv POSTGRES_DB 2>/dev/null | head -n1 | tr -d '\r')"
