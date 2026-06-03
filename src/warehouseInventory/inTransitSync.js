@@ -638,19 +638,48 @@ async function syncWarehouseInTransitAll() {
     attributes: ['id', 'item_type', 'raw_material_id', 'pack_material_id', 'in_transit', 'wh_unit'],
   });
 
+  const rmIds = [
+    ...new Set(
+      whRows
+        .map((w) => {
+          const d = w.get ? w.get({ plain: true }) : w;
+          return d.item_type === 'RM' && d.raw_material_id != null ? Number(d.raw_material_id) : null;
+        })
+        .filter((id) => Number.isFinite(id) && id > 0)
+    ),
+  ];
+  const { normRmPrimaryUom, parseSpecificGravity, kgToRmPrimaryQty } = require('../lib/rmUnitConversion');
+  const { RawMaterial } = require('../rawMaterials/models');
+  const rmMeta = new Map();
+  if (rmIds.length) {
+    const rows = await RawMaterial.findAll({
+      where: { id: rmIds },
+      attributes: ['id', 'uom', 'specific_gravity'],
+    });
+    for (const r of rows) {
+      const plain = r.get ? r.get({ plain: true }) : r;
+      rmMeta.set(Number(plain.id), plain);
+    }
+  }
+
   for (const w of whRows) {
     const d = w.get ? w.get({ plain: true }) : w;
-    let next = 0;
+    let nextKg = 0;
     if (d.item_type === 'RM' && d.raw_material_id != null) {
-      next = rmTotals.get(Number(d.raw_material_id)) || 0;
+      nextKg = rmTotals.get(Number(d.raw_material_id)) || 0;
     } else if (d.item_type === 'PM' && d.pack_material_id != null) {
-      next = pmTotals.get(Number(d.pack_material_id)) || 0;
+      nextKg = pmTotals.get(Number(d.pack_material_id)) || 0;
+    }
+    let next = nextKg;
+    if (d.item_type === 'RM' && d.raw_material_id != null) {
+      const meta = rmMeta.get(Number(d.raw_material_id));
+      const displayUnit = normRmPrimaryUom(d.wh_unit || meta?.uom);
+      const sg = parseSpecificGravity(meta?.specific_gravity);
+      next = kgToRmPrimaryQty(nextKg, displayUnit, sg);
     }
     const prev = toNum(d.in_transit);
-    const wu = String(d.wh_unit || '').toUpperCase();
     const updates = {};
     if (Math.abs(prev - next) > 1e-9) updates.in_transit = next;
-    if (wu !== 'KG') updates.wh_unit = 'KG';
     if (Object.keys(updates).length) {
       await WarehouseInventory.update(updates, { where: { id: d.id } });
     }

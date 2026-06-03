@@ -6,6 +6,7 @@ const { ItemsList, ItemListVendorRate, ItemListTier } = require('../itemsList/mo
 const { vendorRatesPartyWhere } = require('../itemsList/partyTypeWhere');
 const db = require('../../db');
 const { parseMoqQuantity, moqValuesEqual } = require('../lib/moqQuantity');
+const { normalizeProcurementQuotationItems } = require('../lib/procurementQuotationUnits');
 
 /**
  * Resolve price_per_unit from Items List for a vendor + RM or PM.
@@ -82,9 +83,11 @@ async function enrichQuotationItemsFromItemsList(vendorId, items) {
       pricePerUnit: priceNum,
       totalValue: qty * priceNum,
       leadTimeDays,
+      unit: it.unit ?? it.uom,
+      uom: it.uom ?? it.unit,
     });
   }
-  return enriched;
+  return normalizeProcurementQuotationItems(enriched);
 }
 
 function buildQuotationLineKey(line) {
@@ -393,12 +396,14 @@ async function getQuoteLineDefaults(req, res) {
         itemId: it.code ?? it.itemId ?? '',
         name: it.name ?? '',
         orderQty: qty,
-        uom: it.unit ?? it.uom ?? 'KG',
+        unit: it.unit ?? it.uom,
+        uom: it.uom ?? it.unit,
         pricePerUnit: priceNum,
         totalValue: qty * priceNum,
       });
     }
-    res.json({ items: lines });
+    const normalized = await normalizeProcurementQuotationItems(lines);
+    res.json({ items: normalized });
   } catch (err) {
     console.error('getQuoteLineDefaults error', err);
     res.status(500).json({ error: 'Failed to get quote line defaults' });
@@ -463,7 +468,8 @@ async function createProcurementQuotation(req, res) {
       itemId: it.code ?? it.itemId ?? '',
       name: it.name ?? '',
       orderQty: it.quantity_requested ?? it.orderQty ?? 0,
-      uom: it.unit ?? it.uom ?? 'KG',
+      unit: it.unit ?? it.uom,
+      uom: it.uom ?? it.unit,
       pricePerUnit: it.pricePerUnit,
       totalValue: it.totalValue,
     }));
@@ -495,12 +501,14 @@ async function createProcurementQuotation(req, res) {
         itemId: it.itemId ?? it.code ?? '',
         name: it.name ?? '',
         orderQty: qty,
-        uom: it.uom ?? 'KG',
+        unit: it.unit ?? it.uom,
+        uom: it.uom ?? it.unit,
         pricePerUnit: priceNum,
         totalValue,
         leadTimeDays,
       };
     }
+    items = await normalizeProcurementQuotationItems(items);
     const itemsWithHistory = withPriceHistory(items, {
       previousItems: [],
       actor: req.user?.email ?? null,
@@ -603,7 +611,8 @@ async function updateProcurementQuotation(req, res) {
     if (body.attachmentStatus !== undefined) updates.attachment_status = body.attachmentStatus;
     if (body.attachment_status !== undefined) updates.attachment_status = body.attachment_status;
     if (body.items !== undefined) {
-      updates.items = withPriceHistory(body.items, {
+      const normalizedItems = await normalizeProcurementQuotationItems(body.items);
+      updates.items = withPriceHistory(normalizedItems, {
         previousItems: row.items,
         actor: req.user?.email ?? null,
       });

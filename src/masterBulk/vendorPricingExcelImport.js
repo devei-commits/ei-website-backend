@@ -46,6 +46,7 @@ const SHEET_ITEM_TYPE = {
   'shippers %cfb': 'PM',
   'shippers cfb': 'PM',
   'fitness & misc': 'PM',
+  'fitments & misc': 'PM',
 };
 
 const HEADER_ALIASES = {

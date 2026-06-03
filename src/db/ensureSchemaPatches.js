@@ -181,6 +181,26 @@ const PATCHES = [
     sql: 'ALTER TABLE "raw_materials" ALTER COLUMN "zoho_id" DROP NOT NULL',
   },
   {
+    name: 'raw_materials.master_lifecycle_status',
+    table: 'raw_materials',
+    sql: 'ALTER TABLE "raw_materials" ADD COLUMN IF NOT EXISTS "master_lifecycle_status" VARCHAR(50)',
+  },
+  {
+    name: 'raw_materials.rm_owner',
+    table: 'raw_materials',
+    sql: 'ALTER TABLE "raw_materials" ADD COLUMN IF NOT EXISTS "rm_owner" VARCHAR(255)',
+  },
+  {
+    name: 'raw_materials.universal_swap_eligibility',
+    table: 'raw_materials',
+    sql: 'ALTER TABLE "raw_materials" ADD COLUMN IF NOT EXISTS "universal_swap_eligibility" VARCHAR(10)',
+  },
+  {
+    name: 'raw_materials.functional_equivalents',
+    table: 'raw_materials',
+    sql: 'ALTER TABLE "raw_materials" ADD COLUMN IF NOT EXISTS "functional_equivalents" TEXT',
+  },
+  {
     name: 'pack_materials.zoho_id.drop_not_null',
     table: 'pack_materials',
     sql: 'ALTER TABLE "pack_materials" ALTER COLUMN "zoho_id" DROP NOT NULL',

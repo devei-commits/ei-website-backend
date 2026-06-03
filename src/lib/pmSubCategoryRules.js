@@ -22,6 +22,15 @@ function normalizePmSubCategorySlug(raw) {
   if (k.includes('other secondary') || k === 'spm-other' || (k.includes('spm') && k.includes('other'))) {
     return 'spm-other';
   }
+  if (
+    k.includes('fitment') ||
+    k === 'fitness & misc' ||
+    k === 'fitments & misc' ||
+    (k.includes('fitness') && k.includes('misc')) ||
+    (k.includes('fitments') && k.includes('misc'))
+  ) {
+    return 'tpm-ancillary';
+  }
   if (k.includes('ancillary')) return 'tpm-ancillary';
   if (k === 'tpm' || k.includes('tertiary') || k.includes('other component')) {
     return 'tpm-tertiary';

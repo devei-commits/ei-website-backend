@@ -18,7 +18,13 @@ const RawMaterial = require('../rawMaterials/models');
 const WarehouseInventory = require('../warehouseInventory/models');
 const { findConflictingMasterRow } = require('../lib/itemCodeUniqueness');
 const redis = require('../cache/redis');
-const { mapRmImportCategories, mapPmImportCategories } = require('./masterCategoryImportMap');
+const {
+  mapRmImportCategories,
+  mapRmRawMaterialsWorksheetCategories,
+  mapPmImportCategories,
+  mapPmFillWorksheetCategories,
+} = require('./masterCategoryImportMap');
+const { pmLevelForSubCategorySlug } = require('../lib/pmSubCategoryRules');
 
 function mergeFormData(existing, patch) {
   const base =
@@ -234,20 +240,27 @@ async function upsertPackMaterialMultiSheetRow(
     hsnCode,
     gstPct,
     purchaseRate,
+    inci,
+    categoryImportProfile,
   },
   results,
   details
 ) {
   const skuTrim = sku != null ? String(sku).trim() : '';
   const descTrim = description != null ? String(description).trim() : '';
+  const inciTrim = inci != null ? String(inci).trim() : '';
   const subFromCol = subCategoryCol != null ? String(subCategoryCol).trim() : '';
   const catFromCol = categoryCol != null ? String(categoryCol).trim() : '';
-  const mapped = mapPmImportCategories({
-    sheetName,
-    categoryCol: catFromCol,
-    subCategoryCol: subFromCol,
-  });
+  const mapped =
+    categoryImportProfile === 'pm_fill_worksheet'
+      ? mapPmFillWorksheetCategories({ subCategoryCol: subFromCol, sheetName })
+      : mapPmImportCategories({
+          sheetName,
+          categoryCol: catFromCol,
+          subCategoryCol: subFromCol,
+        });
   const groupDb = mapped.groupDb;
+  const levelFromSlug = mapped.levelDb || pmLevelForSubCategorySlug(groupDb);
   const uomTrim = uom != null ? String(uom).trim() : '';
   const hsnTrim = hsnCode != null ? String(hsnCode).trim() : '';
   const gstNum = parsePercent(gstPct);
@@ -318,7 +331,12 @@ async function upsertPackMaterialMultiSheetRow(
       zoho_sku_code: skuTrim,
     };
     if (taxPref) updatePayload.tax_pref = taxPref;
-    updatePayload.form_data = mergeFormData(row.form_data, mapped.formDataPatch);
+    if (levelFromSlug) updatePayload.level = levelFromSlug;
+    updatePayload.form_data = mergeFormData(row.form_data, {
+      ...mapped.formDataPatch,
+      ...(inciTrim ? { inciName: inciTrim } : {}),
+      ...(descTrim ? { tradeCommercialName: descTrim } : {}),
+    });
 
     const codeLower = String(row.code || '').trim().toLowerCase();
     if (skuTrim && codeLower !== skuTrim.toLowerCase()) {
@@ -364,7 +382,7 @@ async function upsertPackMaterialMultiSheetRow(
         description: descTrim,
         zoho_sku_code: skuTrim,
         type: 'Packaging',
-        level: 'Primary',
+        level: levelFromSlug || 'Primary',
         group: groupDb,
         material: mapped.materialDb,
         unit: uomTrim || 'PCS',
@@ -372,7 +390,13 @@ async function upsertPackMaterialMultiSheetRow(
         price_per_pc: rateNum != null ? rateNum : null,
         tax_pref: taxPref,
         products: [],
-        form_data: mapped.formDataPatch,
+        form_data: mergeFormData(
+          mapped.formDataPatch,
+          {
+            ...(inciTrim ? { inciName: inciTrim } : {}),
+            ...(descTrim ? { tradeCommercialName: descTrim } : {}),
+          }
+        ),
       },
       { transaction: t }
     );
@@ -423,6 +447,7 @@ async function upsertRawMaterialMultiSheetRow(
     hsnCode,
     gstPct,
     purchaseRate,
+    categoryImportProfile,
   },
   results,
   details
@@ -432,11 +457,14 @@ async function upsertRawMaterialMultiSheetRow(
   const inciTrim = inci != null ? String(inci).trim() : '';
   const subFromCol = subCategoryCol != null ? String(subCategoryCol).trim() : '';
   const catFromCol = categoryCol != null ? String(categoryCol).trim() : '';
-  const mapped = mapRmImportCategories({
-    sheetName,
-    categoryCol: catFromCol,
-    subCategoryCol: subFromCol,
-  });
+  const mapped =
+    categoryImportProfile === 'rm_raw_materials_worksheet'
+      ? mapRmRawMaterialsWorksheetCategories({ subCategoryCol: subFromCol })
+      : mapRmImportCategories({
+          sheetName,
+          categoryCol: catFromCol,
+          subCategoryCol: subFromCol,
+        });
   const categoryDb = mapped.categoryDb;
   const groupDb = mapped.subCategory;
   const uomTrim = uom != null ? String(uom).trim() : '';
@@ -510,7 +538,11 @@ async function upsertRawMaterialMultiSheetRow(
       zoho_sku_code: skuTrim,
     };
     if (taxPref) updatePayload.tax_pref = taxPref;
-    updatePayload.form_data = mergeFormData(row.form_data, mapped.formDataPatch);
+    updatePayload.form_data = mergeFormData(row.form_data, {
+      ...mapped.formDataPatch,
+      ...(inciTrim ? { inciName: inciTrim } : {}),
+      ...(nameTrim ? { tradeCommercialName: nameTrim } : {}),
+    });
 
     const codeLower = String(row.code || '').trim().toLowerCase();
     if (skuTrim && codeLower !== skuTrim.toLowerCase()) {
@@ -565,7 +597,10 @@ async function upsertRawMaterialMultiSheetRow(
         tax_pref: taxPref,
         status: 'active',
         products: [],
-        form_data: mapped.formDataPatch,
+        form_data: mergeFormData(mapped.formDataPatch, {
+          ...(inciTrim ? { inciName: inciTrim } : {}),
+          ...(nameTrim ? { tradeCommercialName: nameTrim } : {}),
+        }),
       },
       { transaction: t }
     );
@@ -742,7 +777,16 @@ async function executeItemReferenceBulkRows(rowsIn, user, details = false) {
     const excelRow = r.excel_row != null ? Number(r.excel_row) : null;
     const lineType = normalizeLineType(r.line_type ?? r.lineType ?? r.type);
     const sku = r.zoho_sku_code ?? r.zohoSkuCode ?? r.sku ?? '';
-    const description = r.description ?? r.item_name ?? r.itemName ?? r.name ?? '';
+    const inciFromRow = r.inci_name ?? r.inciName ?? r.inci ?? '';
+    const tradeCommercialName =
+      r.trade_commercial_name ??
+      r.tradeCommercialName ??
+      r.description ??
+      r.item_name ??
+      r.itemName ??
+      r.name ??
+      '';
+    const description = tradeCommercialName || inciFromRow;
     const importProfile = r.import_profile ?? r.importProfile ?? '';
 
     if (lineType == null) {
@@ -757,19 +801,21 @@ async function executeItemReferenceBulkRows(rowsIn, user, details = false) {
         if (details) results.row_log.push({ excel_row: excelRow, kind: 'packaging', action: 'skipped', reason: 'forbidden' });
         continue;
       }
-      if (importProfile === 'pm_multi_sheet') {
+      if (importProfile === 'pm_multi_sheet' || importProfile === 'pm_fill_worksheet') {
         await upsertPackMaterialMultiSheetRow(
           {
             sku,
             description,
             excelRow,
             sheetName: r.sheet_name ?? r.sheetName ?? '',
+            inci: inciFromRow,
             categoryCol: r.category ?? r.category_col ?? '',
             subCategoryCol: r.sub_category ?? r.subCategory ?? '',
             uom: r.uom ?? r.unit ?? '',
             hsnCode: r.hsn_code ?? r.hsnCode ?? '',
             gstPct: r.gst_pct ?? r.gstPct ?? r.gst ?? '',
             purchaseRate: r.purchase_rate_inr ?? r.purchaseRateInr ?? r.purchase_rate ?? '',
+            categoryImportProfile: importProfile,
           },
           results,
           details
@@ -783,20 +829,21 @@ async function executeItemReferenceBulkRows(rowsIn, user, details = false) {
         if (details) results.row_log.push({ excel_row: excelRow, kind: 'raw_material', action: 'skipped', reason: 'forbidden' });
         continue;
       }
-      if (importProfile === 'rm_multi_sheet') {
+      if (importProfile === 'rm_multi_sheet' || importProfile === 'rm_raw_materials_worksheet') {
         await upsertRawMaterialMultiSheetRow(
           {
             sku,
             description,
             excelRow,
             sheetName: r.sheet_name ?? r.sheetName ?? '',
-            inci: r.inci_name ?? r.inciName ?? r.inci ?? '',
+            inci: inciFromRow,
             categoryCol: r.category ?? r.category_col ?? '',
             subCategoryCol: r.sub_category ?? r.subCategory ?? '',
             uom: r.uom ?? r.unit ?? '',
             hsnCode: r.hsn_code ?? r.hsnCode ?? '',
             gstPct: r.gst_pct ?? r.gstPct ?? r.gst ?? '',
             purchaseRate: r.purchase_rate_inr ?? r.purchaseRateInr ?? r.purchase_rate ?? '',
+            categoryImportProfile: importProfile,
           },
           results,
           details

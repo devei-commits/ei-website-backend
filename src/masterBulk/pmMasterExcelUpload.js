@@ -7,7 +7,13 @@
 const ExcelJS = require('exceljs');
 const multer = require('multer');
 const { executeItemReferenceBulkRows, userAllows } = require('./itemReferenceBulkChunk');
-const { detectWorksheetLayout, parseWorksheetDataRows, cellToText } = require('./masterExcelFlexibleParse');
+const {
+  detectWorksheetLayout,
+  detectMasterFillWorkbookLayout,
+  parsePmFillWorksheet,
+  parseWorksheetDataRows,
+  cellToText,
+} = require('./masterExcelFlexibleParse');
 
 const ITEM_REFERENCE_SHEET = 'Item Reference';
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
@@ -30,6 +36,7 @@ const PM_IMPORT_SHEET_NAMES_NORMALIZED = new Set([
   'shippers %cfb',
   'shippers cfb',
   'fitness & misc',
+  'fitments & misc',
   'other components',
   'stickers & kits',
 ]);
@@ -52,7 +59,8 @@ function isPmCategoryImportSheet(name) {
     n.includes('sticker') ||
     n.includes('kit') ||
     n.includes('component') ||
-    n.includes('shipper')
+    n.includes('shipper') ||
+    n.includes('fitment')
   ) {
     return true;
   }
@@ -70,6 +78,11 @@ function parsePmMultiSheetWorkbook(workbook) {
   const rows = [];
   for (const worksheet of workbook.worksheets || []) {
     if (!isPmCategoryImportSheet(worksheet.name)) continue;
+    const fillLayout = detectMasterFillWorkbookLayout(worksheet);
+    if (fillLayout) {
+      rows.push(...parsePmFillWorksheet(worksheet, fillLayout));
+      continue;
+    }
     const layout = detectWorksheetLayout(worksheet);
     if (!layout) continue;
     rows.push(
@@ -118,7 +131,10 @@ async function extractPmRowsFromBuffer(buffer) {
 
   if (workbookHasPmCategoryTabs(workbook)) {
     const rows = parsePmMultiSheetWorkbook(workbook);
-    return { rows, format: 'multi_sheet', rawMaterialRowsSkipped: 0 };
+    const format = rows.some((r) => r.import_profile === 'pm_fill_worksheet')
+      ? 'pm_fill_worksheet'
+      : 'multi_sheet';
+    return { rows, format, rawMaterialRowsSkipped: 0 };
   }
 
   const hasItemRef =
@@ -126,7 +142,7 @@ async function extractPmRowsFromBuffer(buffer) {
     (workbook.worksheets || []).some((w) => String(w.name).trim() === ITEM_REFERENCE_SHEET);
   if (!hasItemRef) {
     throw new Error(
-      'No supported sheets found. Use tabs named Primary Packaging, Labels, Monocartons, Shrink Sleeves, Shippers %CFB (or Shippers CFB), and/or Fitness & Misc (headers row 4, data from row 5), or a legacy sheet named "Item Reference".'
+      'No supported sheets found. Use tabs named Primary Packaging, Labels, Monocartons, Shrink Sleeves, Shippers %CFB (or Shippers CFB), and/or Fitments & Misc (headers row 4, data from row 5), or a legacy sheet named "Item Reference".'
     );
   }
 
@@ -160,9 +176,11 @@ async function postPmMasterExcelUpload(req, res) {
 
     if (!rows.length) {
       const hint =
-        format === 'multi_sheet'
-          ? 'No data rows found under PM category tabs (data should start on row 5).'
-          : `No Packaging rows in "${ITEM_REFERENCE_SHEET}" (type column C, from row 2).`;
+        format === 'pm_fill_worksheet'
+          ? 'No data rows in PM fill sheets (headers row 4, data from row 5: SKU, Item Name as INCI and trade name, Sub-Category, UOM, HSN, GST%). BOM Name column is ignored.'
+          : format === 'multi_sheet'
+            ? 'No data rows found under PM category tabs (data should start on row 5).'
+            : `No Packaging rows in "${ITEM_REFERENCE_SHEET}" (type column C, from row 2).`;
       return res.status(400).json({
         error: hint,
         format,

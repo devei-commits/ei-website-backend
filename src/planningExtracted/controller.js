@@ -19,8 +19,14 @@ const {
   parseFillSizeToKgPerUnit,
   inferBlendSpecificGravity,
   buildPlanningKgFromSoLine,
+  buildPlanningSnapshotFromBom,
   roundPlanningMaterialQty,
 } = require('./orderKgMath');
+const {
+  resolveRmIdFromPlanningLine,
+  resolvePmIdFromPlanningLine,
+  resolveRmIdFromMaterialSnapshotRow,
+} = require('../lib/planningRmResolve');
 const { getCreatedAndRemainingUnitsFromPlanningRow } = require('./planningSlaUnits');
 const { computePlanningSlaMeta } = require('../lib/planningSla');
 const {
@@ -127,13 +133,22 @@ function procurementLineMatchesReleaseItem(line, itemType, matId, matCode, matNa
   return nameItem.length > 0 && nameLine.length > 0 && nameItem === nameLine;
 }
 
-function sumProcurementReleaseQtyForItem(itemType, matId, matCode, matName, planningExtractedIds, allPrs) {
+function sumProcurementReleaseQtyForItem(
+  itemType,
+  matId,
+  matCode,
+  matName,
+  planningExtractedIds,
+  allPrs,
+  rmMetaById
+) {
   const idSet = new Set();
   for (const x of planningExtractedIds || []) {
     const n = Number(x);
     if (Number.isFinite(n) && n > 0) idSet.add(n);
   }
   if (idSet.size === 0) return 0;
+  const { procurementOrPoLineQtyToKg, rmMetaForId } = require('../lib/itemsInvolvedRmDisplay');
   let sum = 0;
   for (const pr of allPrs) {
     const plain = pr.get ? pr.get({ plain: true }) : pr;
@@ -144,7 +159,11 @@ function sumProcurementReleaseQtyForItem(itemType, matId, matCode, matName, plan
     const items = Array.isArray(plain.items) ? plain.items : [];
     for (const line of items) {
       if (!procurementLineMatchesReleaseItem(line, itemType, matId, matCode, matName)) continue;
-      sum += Number(line.quantity_requested ?? line.shortage ?? line.required ?? 0) || 0;
+      if (itemType === 'RM' && rmMetaById) {
+        sum += procurementOrPoLineQtyToKg(line, rmMetaForId(rmMetaById, matId));
+      } else {
+        sum += Number(line.quantity_requested ?? line.shortage ?? line.required ?? 0) || 0;
+      }
     }
   }
   return sum;
@@ -159,7 +178,7 @@ function planningExtractedIdFromPlanningPoReference(reference) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-function sumPlanningLinkedDraftPoQtyForItem(itemType, matId, planningExtractedIds, allPos) {
+function sumPlanningLinkedDraftPoQtyForItem(itemType, matId, planningExtractedIds, allPos, rmMetaById) {
   const idSet = new Set();
   for (const x of planningExtractedIds || []) {
     const n = Number(x);
@@ -167,6 +186,7 @@ function sumPlanningLinkedDraftPoQtyForItem(itemType, matId, planningExtractedId
   }
   if (idSet.size === 0) return 0;
   const idNum = Number(matId);
+  const { procurementOrPoLineQtyToKg, rmMetaForId } = require('../lib/itemsInvolvedRmDisplay');
   let sum = 0;
   for (const po of allPos) {
     const d = po.get ? po.get({ plain: true }) : po;
@@ -174,15 +194,18 @@ function sumPlanningLinkedDraftPoQtyForItem(itemType, matId, planningExtractedId
     if (peId == null || !idSet.has(peId)) continue;
     const items = Array.isArray(d.items) ? d.items : [];
     for (const line of items) {
-      const qty = line.quantity ?? line.qty ?? line.poQty;
-      const n = qty != null ? Number(qty) : 0;
-      if (!(n > 0)) continue;
       if (itemType === 'RM') {
         const rid = line.raw_material_id != null ? Number(line.raw_material_id) : NaN;
-        if (Number.isFinite(idNum) && idNum > 0 && Number.isFinite(rid) && rid === idNum) sum += n;
+        if (Number.isFinite(idNum) && idNum > 0 && Number.isFinite(rid) && rid === idNum) {
+          sum += rmMetaById
+            ? procurementOrPoLineQtyToKg(line, rmMetaForId(rmMetaById, idNum))
+            : Number(line.quantity ?? line.qty ?? line.poQty ?? 0) || 0;
+        }
       } else {
         const pid = line.pack_material_id != null ? Number(line.pack_material_id) : NaN;
-        if (Number.isFinite(idNum) && idNum > 0 && Number.isFinite(pid) && pid === idNum) sum += n;
+        const qty = line.quantity ?? line.qty ?? line.poQty;
+        const n = qty != null ? Number(qty) : 0;
+        if (Number.isFinite(idNum) && idNum > 0 && Number.isFinite(pid) && pid === idNum && n > 0) sum += n;
       }
     }
   }
@@ -193,16 +216,23 @@ function sumPlanningLinkedDraftPoQtyForItem(itemType, matId, planningExtractedId
  * Qty committed via Release to Planning only — matches Planning.tsx `releasedQtyTowardPlanningGap`
  * (max of PR lines vs Planning-linked draft PO for the same PIs + item). Not batch/BOM allocation.
  */
-function totalReleaseToPlanningQtyForAgg(itemType, matId, agg, allPrs, allPos) {
+function totalReleaseToPlanningQtyForAgg(itemType, matId, agg, allPrs, allPos, rmMetaById) {
   const prSum = sumProcurementReleaseQtyForItem(
     itemType,
     matId,
     agg.code,
     agg.name,
     agg.planningExtractedIds,
-    allPrs
+    allPrs,
+    rmMetaById
   );
-  const poDraftSum = sumPlanningLinkedDraftPoQtyForItem(itemType, matId, agg.planningExtractedIds, allPos);
+  const poDraftSum = sumPlanningLinkedDraftPoQtyForItem(
+    itemType,
+    matId,
+    agg.planningExtractedIds,
+    allPos,
+    rmMetaById
+  );
   return Math.max(prSum, poDraftSum);
 }
 
@@ -295,28 +325,74 @@ async function syncPlanningRowMaterialsFromBomLines(planRow, rmLines, pmLines) {
   const orderQtyNum = parseInt(String(planRow.order_qty_display || '0').replace(/\D/g, ''), 10) || 0;
   const totalKg = parseFloat(String(planRow.total_kg_display || '0').replace(/[^\d.]/g, '')) || 0;
 
-  const rawMaterials = rmLines.map((line) => {
+  const rmCodes = [
+    ...new Set(
+      (Array.isArray(rmLines) ? rmLines : [])
+        .map((line) => String(line.rm_code ?? line.code ?? '').trim())
+        .filter(Boolean)
+    ),
+  ];
+  const pmCodes = [
+    ...new Set(
+      (Array.isArray(pmLines) ? pmLines : [])
+        .map((line) => String(line.pm_code ?? line.code ?? '').trim())
+        .filter(Boolean)
+    ),
+  ];
+  const rmIdByCode = new Map();
+  const pmIdByCode = new Map();
+  if (rmCodes.length > 0) {
+    const rows = await RawMaterial.findAll({
+      where: { code: { [Op.in]: rmCodes } },
+      attributes: ['id', 'code'],
+    });
+    for (const r of rows) rmIdByCode.set(r.code, r.id);
+  }
+  if (pmCodes.length > 0) {
+    const rows = await PackMaterial.findAll({
+      where: { code: { [Op.in]: pmCodes } },
+      attributes: ['id', 'code'],
+    });
+    for (const p of rows) pmIdByCode.set(p.code, p.id);
+  }
+
+  const rawMaterials = (Array.isArray(rmLines) ? rmLines : []).map((line) => {
     const pct = line.pct_w_w ?? line.pct ?? 0;
     const quantity = totalKg > 0 ? (totalKg * pct) / 100 : (batchSizeKg * pct) / 100;
+    const code = line.rm_code ?? line.code ?? '';
+    const fromCode = code ? rmIdByCode.get(code) : null;
+    const rawMaterialId =
+      fromCode != null
+        ? fromCode
+        : line.raw_material_id != null
+          ? Number(line.raw_material_id)
+          : null;
     return {
-      raw_material_id: line.raw_material_id ?? null,
-      name: line.inci_name ?? line.name ?? line.rm_code ?? '',
+      raw_material_id: rawMaterialId != null && !Number.isNaN(rawMaterialId) ? rawMaterialId : null,
+      name: line.inci_name ?? line.name ?? code ?? '',
       quantity: roundPlanningMaterialQty(quantity),
-      // Keep backend stock/reservation math canonical in KG.
       unit: 'KG',
-      code: line.rm_code ?? line.code ?? '',
+      code,
     };
   });
 
-  const packagingMaterials = pmLines.map((line) => {
+  const packagingMaterials = (Array.isArray(pmLines) ? pmLines : []).map((line) => {
     const qtyPerUnit = line.qty_per_unit ?? line.qty ?? 1;
     const required = orderQtyNum * qtyPerUnit;
+    const code = line.pm_code ?? line.code ?? '';
+    const fromCode = code ? pmIdByCode.get(code) : null;
+    const packMaterialId =
+      fromCode != null
+        ? fromCode
+        : line.pack_material_id != null
+          ? Number(line.pack_material_id)
+          : null;
     return {
-      pack_material_id: line.pack_material_id ?? null,
-      name: line.description ?? line.name ?? line.pm_code ?? '',
+      pack_material_id: packMaterialId != null && !Number.isNaN(packMaterialId) ? packMaterialId : null,
+      name: line.description ?? line.name ?? code ?? '',
       quantity: roundPlanningMaterialQty(required),
       unit: 'PCS',
-      code: line.pm_code ?? line.code ?? '',
+      code,
     };
   });
 
@@ -1001,6 +1077,20 @@ async function updatePlanningExtracted(req, res) {
     // Reserved stock is intentionally NOT changed by BOM confirm/unconfirm.
     // It is changed only by explicit BMR/BPR reserve actions.
     if (prevBomConfirmedAt == null && nowBomConfirmedAt != null) {
+      try {
+        const { rmLines, pmLines } = await getBomCopyForPlanning(id);
+        if (
+          (Array.isArray(rmLines) && rmLines.length > 0) ||
+          (Array.isArray(pmLines) && pmLines.length > 0)
+        ) {
+          await syncPlanningRowMaterialsFromBomLines(row, rmLines, pmLines);
+        }
+      } catch (e) {
+        console.warn(
+          '[planning-extracted] sync materials on BOM confirm:',
+          e && e.message ? e.message : e
+        );
+      }
       // If this planning row belongs to a website order, move it to in_production stage.
       const so = await SalesOrder.findByPk(row.sales_order_id, { attributes: ['order_id'] });
       const soNo = so && (so.get ? so.get('order_id') : so.order_id);
@@ -1117,6 +1207,42 @@ async function getBomCopyForPlanning(planningExtractedId) {
     rmLines: normalizeRmLines(Array.isArray(bom.rm_lines) ? bom.rm_lines : []),
     pmLines: normalizePmLines(Array.isArray(bom.pm_lines) ? bom.pm_lines : []),
   };
+}
+
+/**
+ * Material snapshot for Items Involved on BOM-confirmed PIs — uses override / latest batch BOM,
+ * not a stale planning_extracted.raw_materials row left from pre-swap product master.
+ */
+async function getConfirmedPiMaterialSnapshot(planPlain) {
+  const rmsDefault = Array.isArray(planPlain.raw_materials) ? planPlain.raw_materials : [];
+  const pmsDefault = Array.isArray(planPlain.packaging_materials) ? planPlain.packaging_materials : [];
+  if (!planPlain.bom_confirmed_at) {
+    return { rawMaterials: rmsDefault, packagingMaterials: pmsDefault };
+  }
+  try {
+    const planId = planPlain.id;
+    const { rmLines, pmLines } = await getBomCopyForPlanning(planId);
+    const hasLines =
+      (Array.isArray(rmLines) && rmLines.length > 0) ||
+      (Array.isArray(pmLines) && pmLines.length > 0);
+    if (!hasLines) {
+      return { rawMaterials: rmsDefault, packagingMaterials: pmsDefault };
+    }
+    const orderQty = parseOrderQtyNum(planPlain.order_qty_display);
+    const totalKg = parseFloat(String(planPlain.total_kg_display || '0').replace(/[^\d.]/g, '')) || 0;
+    const batchSizeKg = Number(planPlain.batch_size_kg) || 500;
+    const snap = buildPlanningSnapshotFromBom(rmLines, pmLines, orderQty, totalKg, batchSizeKg);
+    return {
+      rawMaterials: snap.raw_materials,
+      packagingMaterials: snap.packaging_materials,
+    };
+  } catch (e) {
+    console.warn(
+      '[planning-extracted] getConfirmedPiMaterialSnapshot:',
+      e && e.message ? e.message : e
+    );
+    return { rawMaterials: rmsDefault, packagingMaterials: pmsDefault };
+  }
 }
 
 /**
@@ -1539,16 +1665,7 @@ function accumulatePlannedBatchIntoQtyMaps(batchPlain, planPlain, rmByCode, rmBy
 
   const rmLines = Array.isArray(batchPlain.rm_lines) ? batchPlain.rm_lines : [];
   for (const line of rmLines) {
-    let id = line.raw_material_id != null ? Number(line.raw_material_id) : null;
-    if (id == null && (line.rm_code || line.code)) {
-      const rm = rmByCode.get(line.rm_code || line.code);
-      if (rm) id = rm.id;
-    }
-    if (id == null && (line.inci_name || line.name)) {
-      const nameKey = String(line.inci_name || line.name || '').trim().toLowerCase();
-      const rm = nameKey ? rmByName.get(nameKey) : null;
-      if (rm) id = rm.id;
-    }
+    const id = resolveRmIdFromPlanningLine(line, rmByCode, rmByName);
     if (id == null || Number.isNaN(id)) continue;
     const pct = line.pct_w_w ?? line.pct ?? 0;
     const qty = (sizeKg * pct) / 100;
@@ -1574,16 +1691,7 @@ function accumulatePlannedBatchIntoQtyMaps(batchPlain, planPlain, rmByCode, rmBy
     });
   }
   for (const line of pmLines) {
-    let id = line.pack_material_id != null ? Number(line.pack_material_id) : null;
-    if (id == null && (line.pm_code || line.code)) {
-      const pm = pmByCode.get(line.pm_code || line.code);
-      if (pm) id = pm.id;
-    }
-    if (id == null && (line.description || line.name)) {
-      const nameKey = String(line.description || line.name || '').trim().toLowerCase();
-      const pm = nameKey ? pmByName.get(nameKey) : null;
-      if (pm) id = pm.id;
-    }
+    const id = resolvePmIdFromPlanningLine(line, pmByCode, pmByName);
     if (id == null || Number.isNaN(id)) continue;
     const qtyPerUnit = line.qty_per_unit ?? line.qty ?? 1;
     const qty = unitsForBatch * qtyPerUnit;
@@ -1597,16 +1705,7 @@ function countPlanningBatchesTouchingRm(planBatchesPlain, rmId, rmByCode, rmByNa
     const lines = Array.isArray(bp.rm_lines) ? bp.rm_lines : [];
     let touches = false;
     for (const line of lines) {
-      let id = line.raw_material_id != null ? Number(line.raw_material_id) : null;
-      if (id == null && (line.rm_code || line.code)) {
-        const rm = rmByCode.get(line.rm_code || line.code);
-        if (rm) id = rm.id;
-      }
-      if (id == null && (line.inci_name || line.name)) {
-        const nameKey = String(line.inci_name || line.name || '').trim().toLowerCase();
-        const rm = nameKey ? rmByName.get(nameKey) : null;
-        if (rm) id = rm.id;
-      }
+      const id = resolveRmIdFromPlanningLine(line, rmByCode, rmByName);
       if (id === rmId) {
         touches = true;
         break;
@@ -1641,16 +1740,7 @@ function countPlanningBatchesTouchingPm(planBatchesPlain, pmId, pmByCode, pmByNa
     }
     let touches = false;
     for (const line of pmLines) {
-      let id = line.pack_material_id != null ? Number(line.pack_material_id) : null;
-      if (id == null && (line.pm_code || line.code)) {
-        const pm = pmByCode.get(line.pm_code || line.code);
-        if (pm) id = pm.id;
-      }
-      if (id == null && (line.description || line.name)) {
-        const nameKey = String(line.description || line.name || '').trim().toLowerCase();
-        const pm = nameKey ? pmByName.get(nameKey) : null;
-        if (pm) id = pm.id;
-      }
+      const id = resolvePmIdFromPlanningLine(line, pmByCode, pmByName);
       if (id === pmId) {
         touches = true;
         break;
@@ -1774,17 +1864,9 @@ async function getItemsInvolved(req, res) {
       const pmNameById = new Map();
       const pmCodeById = new Map();
 
-      const rms = Array.isArray(plain.raw_materials) ? plain.raw_materials : [];
+      const { rawMaterials: rms, packagingMaterials: pms } = await getConfirmedPiMaterialSnapshot(plain);
       for (const r of rms) {
-        let id = r.raw_material_id != null ? Number(r.raw_material_id) : null;
-        if (id == null && r.code) {
-          const rm = fallbackRmByCode.get(r.code);
-          if (rm) id = rm.id;
-        }
-        if (id == null && r.name) {
-          const rm = fallbackRmByName.get(String(r.name).trim().toLowerCase());
-          if (rm) id = rm.id;
-        }
+        const id = resolveRmIdFromMaterialSnapshotRow(r, fallbackRmByCode, fallbackRmByName);
         if (id == null || Number.isNaN(id)) continue;
         const qty = Number(r.quantity) || 0;
         const unit = r.unit || 'KG';
@@ -1793,24 +1875,23 @@ async function getItemsInvolved(req, res) {
         if (r.name) rmNameById.set(id, r.name);
         if (r.code) rmCodeById.set(id, r.code);
       }
-      const pms = Array.isArray(plain.packaging_materials) ? plain.packaging_materials : [];
       for (const p of pms) {
-        let id = p.pack_material_id != null ? Number(p.pack_material_id) : null;
-        if (id == null && p.code) {
+        let pid = p.pack_material_id != null ? Number(p.pack_material_id) : null;
+        if (pid == null && p.code) {
           const pm = fallbackPmByCode.get(p.code);
-          if (pm) id = pm.id;
+          if (pm) pid = pm.id;
         }
-        if (id == null && p.name) {
+        if (pid == null && p.name) {
           const pm = fallbackPmByName.get(String(p.name).trim().toLowerCase());
-          if (pm) id = pm.id;
+          if (pm) pid = pm.id;
         }
-        if (id == null || Number.isNaN(id)) continue;
+        if (pid == null || Number.isNaN(pid)) continue;
         const qty = Number(p.quantity) || 0;
         const unit = p.unit || 'PCS';
-        fullPm.set(id, (fullPm.get(id) || 0) + qty);
-        if (!pmUnitById.has(id)) pmUnitById.set(id, unit);
-        if (p.name) pmNameById.set(id, p.name);
-        if (p.code) pmCodeById.set(id, p.code);
+        fullPm.set(pid, (fullPm.get(pid) || 0) + qty);
+        if (!pmUnitById.has(pid)) pmUnitById.set(pid, unit);
+        if (p.name) pmNameById.set(pid, p.name);
+        if (p.code) pmCodeById.set(pid, p.code);
       }
 
       const planBatchesRaw = batchesByPlanId.get(planId) || [];
@@ -1896,41 +1977,39 @@ async function getItemsInvolved(req, res) {
     if (allRmIds.length) whWhere.push({ item_type: 'RM', raw_material_id: { [Op.in]: allRmIds } });
     if (allPmIds.length) whWhere.push({ item_type: 'PM', pack_material_id: { [Op.in]: allPmIds } });
     const {
-      getGrnInTransitQtyNativeByKey,
-      getPoPipelineInTransitQtyNativeByKey,
-      getCompletedGrnReceivedNativeByKey,
+      getGrnInTransitQtyByKey,
+      getPoPipelineInTransitQtyByKey,
+      getCompletedGrnReceivedKgByKey,
     } = require('../warehouseInventory/inTransitSync');
+    const {
+      buildRmMetaMap,
+      finalizeItemsInvolvedRmRow,
+      warehouseNativeQtyToKg,
+    } = require('../lib/itemsInvolvedRmDisplay');
 
-    const [whRows, rmsList, pmsList, allPos, allPrs, grnInTransitNative, poInTransitNative, grnReceivedNative] = await Promise.all([
+    const [whRows, rmsList, pmsList, allPos, allPrs, grnInTransitKg, poInTransitKg, grnReceivedKg] = await Promise.all([
       whWhere.length ? WarehouseInventory.findAll({ where: { [Op.or]: whWhere } }) : Promise.resolve([]),
-      allRmIds.length ? RawMaterial.findAll({ where: { id: allRmIds }, attributes: ['id', 'code', 'name'] }) : Promise.resolve([]),
+      allRmIds.length
+        ? RawMaterial.findAll({
+            where: { id: allRmIds },
+            attributes: ['id', 'code', 'name', 'uom', 'specific_gravity'],
+          })
+        : Promise.resolve([]),
       allPmIds.length ? PackMaterial.findAll({ where: { id: allPmIds }, attributes: ['id', 'code', 'description'] }) : Promise.resolve([]),
-      PurchaseOrder.findAll({ attributes: ['id', 'items', 'reference'] }),
-      ProcurementRequest.findAll({ attributes: ['planning_extracted_id', 'status', 'items'] }),
-      getGrnInTransitQtyNativeByKey(),
-      getPoPipelineInTransitQtyNativeByKey(),
-      getCompletedGrnReceivedNativeByKey(),
+      PurchaseOrder.findAll({ attributes: ['id', 'items', 'reference', 'form_data'] }),
+      ProcurementRequest.findAll({ attributes: ['id', 'planning_extracted_id', 'status', 'items'] }),
+      getGrnInTransitQtyByKey(),
+      getPoPipelineInTransitQtyByKey(),
+      getCompletedGrnReceivedKgByKey(),
     ]);
+    const rmMetaById = buildRmMetaMap(rmsList);
 
-    // Build po_qty map keyed by rm-{id} / pm-{id} in native units (sum of all PO line qty for the item).
-    const poQtyMap = new Map();
-    for (const po of allPos) {
-      const items = Array.isArray(po.items) ? po.items : [];
-      for (const line of items) {
-        const qty = line.quantity ?? line.qty ?? line.poQty;
-        const n = qty != null ? Number(qty) : 0;
-        if (!(n > 0)) continue;
-        let key = null;
-        if (line.raw_material_id != null) key = `rm-${line.raw_material_id}`;
-        else if (line.pack_material_id != null) key = `pm-${line.pack_material_id}`;
-        if (!key) continue;
-        poQtyMap.set(key, (poQtyMap.get(key) || 0) + n);
-      }
-    }
+    const { buildPrPlanningExtractedIdByRequestId, computeItemsInvolvedStageFlow } = require('../lib/itemsInvolvedStageFlow');
+    const prPeByRequestId = buildPrPlanningExtractedIdByRequestId(allPrs);
 
-    // Combined in-transit (open GRNs + PO pipeline) by key, native units, for stage subtraction.
+    // Combined in-transit (open GRNs + PO pipeline) by key, kg-canonical for RM stage-flow.
     const inTransitByKey = new Map();
-    for (const source of [grnInTransitNative, poInTransitNative]) {
+    for (const source of [grnInTransitKg, poInTransitKg]) {
       for (const [k, v] of source) {
         const n = Number(v) || 0;
         if (n <= 0) continue;
@@ -1956,6 +2035,7 @@ async function getItemsInvolved(req, res) {
     const avgMoByPm = new Map();
     const statusByRm = new Map();
     const statusByPm = new Map();
+    const whUnitByRm = new Map();
     for (const w of whRows) {
       const s = toNum(w.stock_in_hand);
       const whId = w.id;
@@ -1972,6 +2052,7 @@ async function getItemsInvolved(req, res) {
       }
       if (s <= 0 && status === 'In Stock') status = 'Out of Stock';
       if (w.item_type === 'RM' && w.raw_material_id) {
+        whUnitByRm.set(w.raw_material_id, w.wh_unit);
         sihByRm.set(w.raw_material_id, s);
         whIdByRm.set(w.raw_material_id, whId);
         if (batchNumber) batchNumberByRm.set(w.raw_material_id, batchNumber);
@@ -1997,7 +2078,7 @@ async function getItemsInvolved(req, res) {
     const rmInfo = new Map(rmsList.map((r) => [r.id, { code: r.code, name: r.name }]));
     const pmInfo = new Map(pmsList.map((p) => [p.id, { code: p.code, name: p.description || p.code }]));
 
-    // Stage-flow math (native units, consistent with BOM/PO/GRN line units):
+    // Stage-flow math (kg-canonical); API display via finalizeItemsInvolvedRmRow (planning→primary, WH→native):
     //   totalReleased  = Release to Planning only (PR + Planning PE-* draft PO), NOT planning_batches / BOM confirm
     //   plannedQty     = totalReleased - totalOnPO (not yet on any PO)
     //   totalOnPO      -> poQty stage balance (minus in-transit + received)
@@ -2007,23 +2088,27 @@ async function getItemsInvolved(req, res) {
     // number is derived from current source-of-truth tables.
     const flowEpsilon = 1e-6;
     const isDev = process.env.NODE_ENV !== 'production';
-    const computeStageFlow = (key, totalReleased, stockInHand) => {
-      const totalOnPO = Number(poQtyMap.get(key) ?? 0) || 0;
-      const totalInTransit = Number(inTransitByKey.get(key) ?? 0) || 0;
-      const totalReceived = Number(grnReceivedNative.get(key) ?? 0) || 0;
-      const plannedQty = Math.max(0, totalReleased - totalOnPO);
-      const poQty = Math.max(0, totalOnPO - totalInTransit - totalReceived);
-      const inTransitQty = totalInTransit;
-      const whQty = Math.max(0, Number(stockInHand) || 0);
+    const computeStageFlow = (key, totalReleased, stockInHand, planningExtractedIds) => {
+      const flow = computeItemsInvolvedStageFlow(
+        key,
+        totalReleased,
+        stockInHand,
+        planningExtractedIds,
+        allPos,
+        prPeByRequestId,
+        inTransitByKey,
+        grnReceivedKg,
+        rmMetaById
+      );
       if (isDev) {
-        const stageSum = plannedQty + poQty + inTransitQty;
-        if (stageSum > totalReleased + flowEpsilon && totalReleased > 0) {
+        const stageSum = flow.plannedQty + flow.poQty + flow.inTransitQty;
+        if (stageSum > Number(totalReleased) + flowEpsilon && Number(totalReleased) > 0) {
           console.warn(
-            `[items-involved] stage-flow drift for ${key}: planned+po+inTransit=${stageSum.toFixed(3)} > totalReleased=${totalReleased.toFixed(3)} (totalOnPO=${totalOnPO}, totalInTransit=${totalInTransit}, totalReceived=${totalReceived})`
+            `[items-involved] stage-flow drift for ${key}: planned+po+inTransit=${stageSum.toFixed(3)} > totalReleased=${Number(totalReleased).toFixed(3)} (totalOnPO=${flow.totalOnPO}, totalInTransit=${flow.totalInTransit}, totalReceived=${flow.totalReceived})`
           );
         }
       }
-      return { totalOnPO, totalInTransit, totalReceived, plannedQty, poQty, inTransitQty, whQty };
+      return flow;
     };
 
     const out = [];
@@ -2033,23 +2118,28 @@ async function getItemsInvolved(req, res) {
       // can incorrectly think there is no shortage and disable "Release to Planning".
       const stockInHand = sihByRm.get(id) ?? 0;
       const reserved = reservedByRm.get(id) ?? 0;
-      const sih = Math.max(0, stockInHand - reserved);
-      const inTransit = inTransitByRm.get(id) ?? 0;
-      const surplusShortage = sih + inTransit - agg.totalRequired;
+      const sihNative = Math.max(0, stockInHand - reserved);
+      const inTransitNative = inTransitByRm.get(id) ?? 0;
+      const rmMeta = rmMetaById.get(id);
+      const whUnit = whUnitByRm.get(id);
+      const sihKg = warehouseNativeQtyToKg(sihNative, whUnit, rmMeta);
+      const inTransitKg = warehouseNativeQtyToKg(inTransitNative, whUnit, rmMeta);
+      const stockInHandKg = warehouseNativeQtyToKg(stockInHand, whUnit, rmMeta);
       const batchAllocatedQty = Number(agg.plannedQty) || 0;
-      const totalReleased = totalReleaseToPlanningQtyForAgg('RM', id, agg, allPrs, allPos);
-      const flow = computeStageFlow(`rm-${id}`, totalReleased, stockInHand);
+      const totalReleased = totalReleaseToPlanningQtyForAgg('RM', id, agg, allPrs, allPos, rmMetaById);
+      const flow = computeStageFlow(`rm-${id}`, totalReleased, stockInHandKg, agg.planningExtractedIds);
       const info = rmInfo.get(id) || {};
-      const coverageDenom = agg.totalRequired > 0
-        ? Math.min(100, Math.round(((sih + inTransit) / agg.totalRequired) * 100))
-        : 100;
+      const coverageDenom =
+        agg.totalRequired > 0
+          ? Math.min(100, Math.round(((sihKg + inTransitKg) / agg.totalRequired) * 100))
+          : 100;
       const rowStatus = planningItemsInvolvedDisplayStatus(
         statusByRm.get(id) ?? 'In Stock',
-        sih,
-        inTransit,
+        sihKg,
+        inTransitKg,
         agg.totalRequired
       );
-      out.push({
+      const rmRowKg = {
         type: 'RM',
         raw_material_id: id,
         pack_material_id: null,
@@ -2062,8 +2152,8 @@ async function getItemsInvolved(req, res) {
         unallocatedToBatches: Number(agg.unallocatedToBatches) || 0,
         unit: agg.unit,
         batchCount: agg.batchCount ?? 0,
-        sih,
-        surplusShortage,
+        sih: sihKg,
+        surplusShortage: sihKg + inTransitKg - agg.totalRequired,
         coverage: coverageDenom,
         warehouseInventoryId: whIdByRm.get(id) ?? null,
         batchNumber: batchNumberByRm.get(id) ?? null,
@@ -2077,11 +2167,21 @@ async function getItemsInvolved(req, res) {
         batchAllocatedQty,
         totalOnPO: flow.totalOnPO,
         totalReceived: flow.totalReceived,
-        inTransit,
+        inTransit: inTransitKg,
         reorderPt: reorderPtByRm.get(id) ?? 0,
         avgMo: avgMoByRm.get(id) ?? 0,
         status: rowStatus,
-      });
+      };
+      out.push(
+        finalizeItemsInvolvedRmRow(rmRowKg, rmMeta, {
+          sih: sihNative,
+          reserved,
+          inTransit: inTransitNative,
+          reorderPt: reorderPtByRm.get(id) ?? 0,
+          avgMo: avgMoByRm.get(id) ?? 0,
+          whUnit,
+        })
+      );
     }
     for (const [id, agg] of pmAgg) {
       const stockInHand = sihByPm.get(id) ?? 0;
@@ -2091,7 +2191,7 @@ async function getItemsInvolved(req, res) {
       const surplusShortage = sih + inTransit - agg.totalRequired;
       const batchAllocatedQty = Number(agg.plannedQty) || 0;
       const totalReleased = totalReleaseToPlanningQtyForAgg('PM', id, agg, allPrs, allPos);
-      const flow = computeStageFlow(`pm-${id}`, totalReleased, stockInHand);
+      const flow = computeStageFlow(`pm-${id}`, totalReleased, stockInHand, agg.planningExtractedIds);
       const info = pmInfo.get(id) || {};
       const coverageDenomPm = agg.totalRequired > 0
         ? Math.min(100, Math.round(((sih + inTransit) / agg.totalRequired) * 100))
@@ -2210,11 +2310,19 @@ async function getItemsInvolvedByPlanningId(req, res) {
     const rmReq = new Map(); // id -> { quantity, unit, name, code }
     const pmReq = new Map();
 
-    let rms = Array.isArray(plain.raw_materials) ? plain.raw_materials : [];
-    let pms = Array.isArray(plain.packaging_materials) ? plain.packaging_materials : [];
+    let rms;
+    let pms;
+    if (plain.bom_confirmed_at) {
+      const snap = await getConfirmedPiMaterialSnapshot(plain);
+      rms = snap.rawMaterials;
+      pms = snap.packagingMaterials;
+    } else {
+      rms = Array.isArray(plain.raw_materials) ? plain.raw_materials : [];
+      pms = Array.isArray(plain.packaging_materials) ? plain.packaging_materials : [];
+    }
 
     const productId = plain.product_id ?? plain.product?.product_id;
-    if (productId != null && (rms.length === 0 || pms.length === 0)) {
+    if (!plain.bom_confirmed_at && productId != null && (rms.length === 0 || pms.length === 0)) {
       const bomRows = await BOM.findAll({ where: { product_id: productId }, limit: 1 });
       const bom = bomRows[0];
       if (bom) {
@@ -2295,11 +2403,8 @@ async function getItemsInvolvedByPlanningId(req, res) {
       });
     }
     for (const r of rms) {
-      if (r.raw_material_id != null && !Number.isNaN(Number(r.raw_material_id))) continue;
-      const code = (r.code || '').trim();
-      const nameKey = (r.name || '').trim().toLowerCase();
-      if (code && rmByCode[code]) r.raw_material_id = rmByCode[code];
-      else if (nameKey && rmByName[nameKey]) r.raw_material_id = rmByName[nameKey];
+      const rid = resolveRmIdFromMaterialSnapshotRow(r, rmByCode, rmByName);
+      if (rid != null) r.raw_material_id = rid;
     }
     for (const p of pms) {
       if (p.pack_material_id != null && !Number.isNaN(Number(p.pack_material_id))) continue;
@@ -2310,7 +2415,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
     }
 
     for (const r of rms) {
-      const rid = r.raw_material_id != null ? Number(r.raw_material_id) : null;
+      const rid = resolveRmIdFromMaterialSnapshotRow(r, rmByCode, rmByName);
       if (rid == null || Number.isNaN(rid)) continue;
       const qty = Number(r.quantity) || 0;
       const prev = rmReq.get(rid);
@@ -2395,47 +2500,62 @@ async function getItemsInvolvedByPlanningId(req, res) {
     if (rmIds.length) whWhere.push({ item_type: 'RM', raw_material_id: { [Op.in]: rmIds } });
     if (pmIds.length) whWhere.push({ item_type: 'PM', pack_material_id: { [Op.in]: pmIds } });
     const {
-      getGrnInTransitQtyNativeByKey,
-      getPoPipelineInTransitQtyNativeByKey,
-      getCompletedGrnReceivedNativeByKey,
+      getGrnInTransitQtyByKey,
+      getPoPipelineInTransitQtyByKey,
+      getCompletedGrnReceivedKgByKey,
     } = require('../warehouseInventory/inTransitSync');
-    const [whRows, rmsList, pmsList, allPos, grnInTransitNative, poInTransitNative, grnReceivedNative] = await Promise.all([
+    const {
+      buildRmMetaMap,
+      finalizeItemsInvolvedRmRow,
+      warehouseNativeQtyToKg,
+      procurementOrPoLineQtyToKg,
+      rmMetaForId,
+    } = require('../lib/itemsInvolvedRmDisplay');
+    const [whRows, rmsList, pmsList, allPos, grnInTransitKg, poInTransitKg, grnReceivedKg] = await Promise.all([
       whWhere.length ? WarehouseInventory.findAll({ where: { [Op.or]: whWhere } }) : Promise.resolve([]),
-      rmIds.length ? RawMaterial.findAll({ where: { id: rmIds }, attributes: ['id', 'code', 'name'] }) : Promise.resolve([]),
+      rmIds.length
+        ? RawMaterial.findAll({
+            where: { id: rmIds },
+            attributes: ['id', 'code', 'name', 'uom', 'specific_gravity'],
+          })
+        : Promise.resolve([]),
       pmIds.length ? PackMaterial.findAll({ where: { id: pmIds }, attributes: ['id', 'code', 'description'] }) : Promise.resolve([]),
       PurchaseOrder.findAll({ attributes: ['id', 'items'] }),
-      getGrnInTransitQtyNativeByKey(),
-      getPoPipelineInTransitQtyNativeByKey(),
-      getCompletedGrnReceivedNativeByKey(),
+      getGrnInTransitQtyByKey(),
+      getPoPipelineInTransitQtyByKey(),
+      getCompletedGrnReceivedKgByKey(),
     ]);
+    const rmMetaById = buildRmMetaMap(rmsList);
 
-    const poQtyMap = new Map();
+    const poQtyMapKg = new Map();
     for (const po of allPos) {
       const items = Array.isArray(po.items) ? po.items : [];
       for (const line of items) {
-        const qty = line.quantity ?? line.qty ?? line.poQty;
-        const n = qty != null ? Number(qty) : 0;
-        if (!(n > 0)) continue;
         let key = null;
         if (line.raw_material_id != null) key = `rm-${line.raw_material_id}`;
         else if (line.pack_material_id != null) key = `pm-${line.pack_material_id}`;
         if (!key) continue;
-        poQtyMap.set(key, (poQtyMap.get(key) || 0) + n);
+        const n =
+          key.startsWith('rm-') && rmMetaById
+            ? procurementOrPoLineQtyToKg(line, rmMetaForId(rmMetaById, Number(String(key).slice(3))))
+            : Number(line.quantity ?? line.qty ?? line.poQty ?? 0) || 0;
+        if (!(n > 0)) continue;
+        poQtyMapKg.set(key, (poQtyMapKg.get(key) || 0) + n);
       }
     }
 
-    const inTransitByKeyForPo = new Map();
-    for (const source of [grnInTransitNative, poInTransitNative]) {
+    const inTransitByKeyKg = new Map();
+    for (const source of [grnInTransitKg, poInTransitKg]) {
       for (const [k, v] of source) {
         const n = Number(v) || 0;
         if (n <= 0) continue;
-        inTransitByKeyForPo.set(k, (inTransitByKeyForPo.get(k) || 0) + n);
+        inTransitByKeyKg.set(k, (inTransitByKeyKg.get(k) || 0) + n);
       }
     }
-    const netOpenPoQtyNative = (key) => {
-      const totalOnPO = Number(poQtyMap.get(key) ?? 0) || 0;
-      const totalInTransit = Number(inTransitByKeyForPo.get(key) ?? 0) || 0;
-      const totalReceived = Number(grnReceivedNative.get(key) ?? 0) || 0;
+    const netOpenPoQtyKg = (key) => {
+      const totalOnPO = Number(poQtyMapKg.get(key) ?? 0) || 0;
+      const totalInTransit = Number(inTransitByKeyKg.get(key) ?? 0) || 0;
+      const totalReceived = Number(grnReceivedKg.get(key) ?? 0) || 0;
       return Math.max(0, totalOnPO - totalInTransit - totalReceived);
     };
 
@@ -2445,6 +2565,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
     const batchByRm = new Map();
     const expiryByRm = new Map();
     const inTransitByRm = new Map();
+    const whUnitByRm = new Map();
     const sihByPm = new Map();
     const reservedByPm = new Map();
     const whIdByPm = new Map();
@@ -2456,6 +2577,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
       const resv = Number(w.reserved) || 0;
       const inTr = Number(w.in_transit) || 0;
       if (w.item_type === 'RM' && w.raw_material_id) {
+        whUnitByRm.set(w.raw_material_id, w.wh_unit);
         sihByRm.set(w.raw_material_id, s);
         reservedByRm.set(w.raw_material_id, resv);
         whIdByRm.set(w.raw_material_id, w.id);
@@ -2482,17 +2604,21 @@ async function getItemsInvolvedByPlanningId(req, res) {
       const req = rmReq.get(rid) || {};
       const stockInHand = sihByRm.get(rid) ?? 0;
       const reserved = reservedByRm.get(rid) ?? 0;
-      const sih = Math.max(0, stockInHand - reserved);
-      const inTransit = inTransitByRm.get(rid) ?? 0;
+      const sihNative = Math.max(0, stockInHand - reserved);
+      const inTransitNative = inTransitByRm.get(rid) ?? 0;
+      const rmMeta = rmMetaById.get(rid);
+      const whUnit = whUnitByRm.get(rid);
+      const sihKg = warehouseNativeQtyToKg(sihNative, whUnit, rmMeta);
+      const inTransitKg = warehouseNativeQtyToKg(inTransitNative, whUnit, rmMeta);
       const fullOrderQty = req.quantity || 0;
       const plannedInBatches = plannedRmFromBatches.get(rid) || 0;
-      const bomGrossRequired = fullOrderQty;
+      const bomGrossRequiredKg = fullOrderQty;
       const unallocatedToBatches = Math.max(0, fullOrderQty - plannedInBatches);
       const plannedQty = plannedInBatches;
       const info = rmInfo.get(rid) || {};
       const name = req.name || info.name || `RM ${rid}`;
       const code = req.code || info.code || `RM-${rid}`;
-      out.push({
+      const rmRowKg = {
         id: String(++idx),
         type: 'RM',
         raw_material_id: rid,
@@ -2503,22 +2629,33 @@ async function getItemsInvolvedByPlanningId(req, res) {
         category: 'RM',
         usedInProducts: plain.product ? [plain.product.product_name || plain.product.product_code] : [],
         planningExtractedIds: [id],
-        totalRequired: bomGrossRequired,
+        totalRequired: bomGrossRequiredKg,
         unallocatedToBatches,
         unit: req.unit || 'KG',
-        sih,
+        sih: sihKg,
         reserved,
-        netStock: sih,
-        surplusShortage: sih + inTransit - bomGrossRequired,
-        coverage: bomGrossRequired > 0 ? Math.min(100, Math.round(((sih + inTransit) / bomGrossRequired) * 100)) : 100,
+        netStock: sihKg,
+        surplusShortage: sihKg + inTransitKg - bomGrossRequiredKg,
+        coverage:
+          bomGrossRequiredKg > 0
+            ? Math.min(100, Math.round(((sihKg + inTransitKg) / bomGrossRequiredKg) * 100))
+            : 100,
         warehouseInventoryId: whIdByRm.get(rid) ?? null,
         batchNumber: batchByRm.get(rid) ?? null,
         expiryDate: expiryByRm.get(rid) ?? null,
         plannedQty,
-        poQty: netOpenPoQtyNative(`rm-${rid}`),
-        inTransit,
+        poQty: netOpenPoQtyKg(`rm-${rid}`),
+        inTransit: inTransitKg,
         batchCount: countPlanningBatchesTouchingRm(planBatchesSent, rid, rmByCodeMap, rmByNameMap),
-      });
+      };
+      out.push(
+        finalizeItemsInvolvedRmRow(rmRowKg, rmMeta, {
+          sih: sihNative,
+          reserved,
+          inTransit: inTransitNative,
+          whUnit,
+        })
+      );
     }
     for (const pid of pmIds) {
       const req = pmReq.get(pid) || {};

@@ -46,7 +46,13 @@ RawMaterial.init(
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
     deleted_at: { type: DataTypes.DATE, allowNull: true },
+    /** Soft-delete archive flag (`active` / `deleted`) — do not use for business lifecycle dropdown. */
     lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
+    /** Sourcing/usage lifecycle: Active, Preferred, Conditional, Phase-out, Discontinued. */
+    master_lifecycle_status: { type: DataTypes.STRING(50), allowNull: true },
+    rm_owner: { type: DataTypes.STRING(255), allowNull: true },
+    universal_swap_eligibility: { type: DataTypes.STRING(10), allowNull: true },
+    functional_equivalents: { type: DataTypes.TEXT, allowNull: true },
   },
   {
     sequelize: db,

@@ -45,6 +45,10 @@ function formatRawMaterial(row) {
     hsn_code: d.hsn_code ?? null,
     tax_pref: d.tax_pref ?? null,
     sales_purchase_account: d.sales_purchase_account ?? null,
+    master_lifecycle_status: d.master_lifecycle_status ?? null,
+    rm_owner: d.rm_owner ?? null,
+    universal_swap_eligibility: d.universal_swap_eligibility ?? null,
+    functional_equivalents: d.functional_equivalents ?? null,
     created_at: d.created_at,
     updated_at: d.updated_at,
   };
@@ -267,6 +271,25 @@ function payloadToListFields(b, omitGroupIfUnset = false) {
     hsn_code: fd.hsnCode ?? fd.hsn_code ?? b.hsn_code ?? null,
     tax_pref: fd.rmTaxPreference ?? fd.tax_pref ?? fd.taxPref ?? b.tax_pref ?? null,
     sales_purchase_account: fd.accountingCategory ?? fd.sales_purchase_account ?? fd.salesPurchaseAccount ?? b.sales_purchase_account ?? null,
+    specific_gravity: (() => {
+      const src = fd.specificGravity ?? fd.specific_gravity ?? b.specific_gravity;
+      if (src == null || src === '') return b.specific_gravity ?? null;
+      const n = Number(src);
+      return Number.isFinite(n) && n > 0 ? n : b.specific_gravity ?? null;
+    })(),
+    master_lifecycle_status:
+      fd.masterLifecycleStatus ??
+      fd.master_lifecycle_status ??
+      b.master_lifecycle_status ??
+      'Active',
+    rm_owner: fd.rmOwner ?? fd.rm_owner ?? b.rm_owner ?? null,
+    universal_swap_eligibility: (() => {
+      const v = String(fd.universalSwapEligibility ?? fd.universal_swap_eligibility ?? '').trim();
+      if (v === 'Yes' || v === 'No') return v;
+      return b.universal_swap_eligibility ?? null;
+    })(),
+    functional_equivalents:
+      fd.functionalEquivalents ?? fd.functional_equivalents ?? b.functional_equivalents ?? null,
   };
   const leadSrc = fd.leadTimeDays ?? fd.lead_time_days ?? b.lead_time_days;
   const includeLead =

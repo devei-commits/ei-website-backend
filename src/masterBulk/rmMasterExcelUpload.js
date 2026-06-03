@@ -7,7 +7,13 @@
 const ExcelJS = require('exceljs');
 const multer = require('multer');
 const { executeItemReferenceBulkRows, userAllows } = require('./itemReferenceBulkChunk');
-const { detectWorksheetLayout, parseWorksheetDataRows, cellToText } = require('./masterExcelFlexibleParse');
+const {
+  detectWorksheetLayout,
+  detectRmFillWorkbookLayout,
+  parseRmFillWorksheet,
+  parseWorksheetDataRows,
+  cellToText,
+} = require('./masterExcelFlexibleParse');
 
 const ITEM_REFERENCE_SHEET = 'Item Reference';
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
@@ -62,13 +68,15 @@ function workbookHasRmCategoryTabs(workbook) {
   return (workbook.worksheets || []).some((w) => isRmCategoryImportSheet(w.name));
 }
 
-/**
- * Row 4 = headers A–M; data from row 5. Columns 2–12 = B–L (see FE spec); I,J,M ignored by upsert.
- */
 function parseRmMultiSheetWorkbook(workbook) {
   const rows = [];
   for (const worksheet of workbook.worksheets || []) {
     if (!isRmCategoryImportSheet(worksheet.name)) continue;
+    const fillLayout = detectRmFillWorkbookLayout(worksheet);
+    if (fillLayout) {
+      rows.push(...parseRmFillWorksheet(worksheet, fillLayout));
+      continue;
+    }
     const layout = detectWorksheetLayout(worksheet);
     if (!layout) continue;
     rows.push(
@@ -117,7 +125,10 @@ async function extractRowsFromBuffer(buffer) {
 
   if (workbookHasRmCategoryTabs(workbook)) {
     const rows = parseRmMultiSheetWorkbook(workbook);
-    return { rows, format: 'multi_sheet', packagingRowsSkipped: 0 };
+    const format = rows.some((r) => r.import_profile === 'rm_raw_materials_worksheet')
+      ? 'raw_materials_worksheet'
+      : 'multi_sheet';
+    return { rows, format, packagingRowsSkipped: 0 };
   }
 
   const hasItemRef =
@@ -159,9 +170,11 @@ async function postRmMasterExcelUpload(req, res) {
 
     if (!rows.length) {
       const hint =
-        format === 'multi_sheet'
-          ? 'No data rows found under RM category tabs (data should start on row 5).'
-          : `No Raw Material rows in "${ITEM_REFERENCE_SHEET}" (type column C, from row 2).`;
+        format === 'raw_materials_worksheet'
+          ? 'No data rows in RM fill sheets (headers row 4, data from row 5: SKU, Item Name as INCI and trade name, Sub-Category, UOM, HSN, GST%). BOM Name column is ignored.'
+          : format === 'multi_sheet'
+            ? 'No data rows found under RM category tabs (data should start on row 5).'
+            : `No Raw Material rows in "${ITEM_REFERENCE_SHEET}" (type column C, from row 2).`;
       return res.status(400).json({
         error: hint,
         format,

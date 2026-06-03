@@ -1,5 +1,10 @@
 /**
- * RM primary UoM (KG, GM, L, ML) ↔ kilograms for planning vs procurement/PO.
+ * RM primary UoM (KG, GM, L, ML) ↔ kilograms.
+ *
+ * Unit policy:
+ * - Planning / BOM / production / batch math: always kg (L/ML → kg via specific_gravity).
+ * - Warehouse inventory (SIH, reserved, in_transit): stored in RM standard UoM (wh_unit / master uom).
+ * - Procurement / PO / Items Involved display: RM standard UoM; lines from planning converted via applyProcurementRmPrimaryUnits.
  * Volume: kg = litres × specific_gravity; litres = kg / specific_gravity.
  */
 
@@ -119,12 +124,47 @@ function applyProcurementRmPrimaryUnits(items, rmMap) {
 }
 
 function procurementMoqUnitLabel(line) {
-  const u = normRmPrimaryUom(line?.unit);
+  const u = normRmPrimaryUom(line?.unit ?? line?.uom);
   if (u === 'KG') return 'kg';
   if (u === 'GM') return 'g';
   if (u === 'L') return 'L';
   if (u === 'ML') return 'ml';
-  return 'units';
+  if (u === 'PCS') return 'pcs';
+  return u.toLowerCase();
+}
+
+/**
+ * RM master / line unit for procurement & quotations (not default KG).
+ * @param {object} line
+ * @param {Map<number, string>} [rmUomById] id → normalized uom
+ */
+function resolveProcurementLineUnit(line, rmUomById) {
+  const type = String(line?.type ?? '').trim().toUpperCase();
+  if (type === 'PM' || line?.pack_material_id != null) return 'PCS';
+  const rmId = line?.raw_material_id != null ? Number(line.raw_material_id) : NaN;
+  if (Number.isFinite(rmId) && rmId > 0 && rmUomById?.has(rmId)) {
+    return rmUomById.get(rmId);
+  }
+  const u = line?.unit ?? line?.uom;
+  return u ? normRmPrimaryUom(u) : 'KG';
+}
+
+/**
+ * Line quantity in RM primary UoM (for MOQ compare). Planning kg lines converted via SG.
+ * @param {object} line
+ * @param {{ uom?: string, specific_gravity?: number } | null} rmMeta
+ */
+function procurementLineQtyInPrimary(line, rmMeta) {
+  const qty = Number(line.quantity_requested ?? line.orderQty ?? line.shortage ?? 0) || 0;
+  if (!(qty > 0)) return 0;
+  const primary = normRmPrimaryUom(rmMeta?.uom ?? line?.unit ?? line?.uom);
+  const sg = parseSpecificGravity(line.specific_gravity ?? rmMeta?.specific_gravity);
+  if (procurementLineQtyIsCanonicalKg(line, primary)) {
+    return kgToRmPrimaryQty(qty, primary, sg);
+  }
+  const lineU = normRmPrimaryUom(line.unit ?? line.uom);
+  if (lineU === primary) return qty;
+  return kgToRmPrimaryQty(rmPrimaryQtyToKg(qty, lineU, sg), primary, sg);
 }
 
 module.exports = {
@@ -137,4 +177,6 @@ module.exports = {
   procurementLineQtyIsCanonicalKg,
   applyProcurementRmPrimaryUnits,
   procurementMoqUnitLabel,
+  resolveProcurementLineUnit,
+  procurementLineQtyInPrimary,
 };

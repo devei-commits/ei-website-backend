@@ -149,9 +149,9 @@ ProductionBatch.init(
      */
     mu_dispensing_bundles: { type: DataTypes.JSON, allowNull: true },
 
-    bulk_yield: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
-    fill_yield: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
-    fg_yield: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+    bulk_yield: { type: DataTypes.DECIMAL(12, 3), allowNull: true },
+    fill_yield: { type: DataTypes.DECIMAL(12, 3), allowNull: true },
+    fg_yield: { type: DataTypes.DECIMAL(12, 3), allowNull: true },
 
     bulk_batch_accepted: { type: DataTypes.BOOLEAN, allowNull: true },
     fill_batch_accepted: { type: DataTypes.BOOLEAN, allowNull: true },

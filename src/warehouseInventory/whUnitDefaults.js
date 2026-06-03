@@ -7,9 +7,14 @@ function defaultWhUnitForItemType(itemType) {
   return 'KG';
 }
 
-function resolveWhUnit(whUnit, itemType) {
+function resolveWhUnit(whUnit, itemType, masterUom) {
   const u = whUnit != null ? String(whUnit).trim() : '';
-  return u || defaultWhUnitForItemType(itemType);
+  if (u) return u;
+  const t = String(itemType || '').trim().toUpperCase();
+  if (t === 'PM') return defaultWhUnitForItemType('PM');
+  const { normRmPrimaryUom } = require('../lib/rmUnitConversion');
+  const primary = normRmPrimaryUom(masterUom);
+  return primary || defaultWhUnitForItemType('RM');
 }
 
 /** Canonical count UOM for all packaging materials (master, warehouse, production). */

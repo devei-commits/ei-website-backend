@@ -1,8 +1,14 @@
 const { ItemsList, ItemListVendorRate, ItemListTier } = require('../itemsList/models');
-const { normRmPrimaryUom, procurementMoqUnitLabel } = require('../lib/rmUnitConversion');
+const RawMaterial = require('../rawMaterials/models');
+const {
+  procurementMoqUnitLabel,
+  procurementLineQtyInPrimary,
+  resolveProcurementLineUnit,
+} = require('../lib/rmUnitConversion');
+const { buildRmUomById } = require('../lib/procurementQuotationUnits');
 const { partyWhereForItemsListRowType } = require('../itemsList/partyTypeWhere');
 
-const EPS_KG = 1e-4;
+const EPS = 1e-6;
 
 function tierMinMoq(tiersPlain) {
   if (!Array.isArray(tiersPlain) || !tiersPlain.length) return null;
@@ -12,6 +18,7 @@ function tierMinMoq(tiersPlain) {
 
 /**
  * Vendor MOQ for procurement: default_moq on the rate, else smallest tier moq_min (Items List).
+ * MOQ tiers are stored in the material's standard UoM (same as quotation order qty).
  */
 function effectiveMoqForRate(ratePlain, tiersForRate) {
   const fromDefault = Number(ratePlain.default_moq);
@@ -77,23 +84,48 @@ async function findItemsListIdForLine(line) {
   return null;
 }
 
-function lineIsKg(line) {
-  const u = normRmPrimaryUom(line.unit);
-  return u === 'KG' || u === 'GM';
+async function buildRmMetaByIdForLines(items) {
+  const rmIds = (items || [])
+    .map((line) => (line.raw_material_id != null ? Number(line.raw_material_id) : NaN))
+    .filter((id) => Number.isFinite(id) && id > 0);
+  const map = new Map();
+  if (!rmIds.length) return map;
+  const rows = await RawMaterial.findAll({
+    where: { id: [...new Set(rmIds)] },
+    attributes: ['id', 'uom', 'specific_gravity'],
+  });
+  for (const r of rows) {
+    const plain = r.get ? r.get({ plain: true }) : r;
+    map.set(Number(plain.id), {
+      uom: plain.uom,
+      specific_gravity: plain.specific_gravity,
+    });
+  }
+  return map;
 }
 
 /**
- * Validates procurement line quantities against Items List MOQ.
- * Optional line.moq_min / line.moqMin = vendor tier MOQ from Planning (Release to Planning); otherwise uses
- * minimum effective MOQ across vendors for that material.
+ * Validates procurement line quantities against Items List MOQ (standard UoM per material).
+ * Optional line.moq_min / line.moqMin = vendor tier MOQ from Planning (Release to Planning).
  */
 async function validateProcurementItemsMoq(items) {
   if (!Array.isArray(items)) return { ok: true, errors: [] };
   const errors = [];
+  const rmMetaById = await buildRmMetaByIdForLines(items);
+  const rmUomById = await buildRmUomById([...rmMetaById.keys()]);
+
   for (let index = 0; index < items.length; index += 1) {
     const line = items[index] || {};
-    const qty = Number(line.quantity_requested);
-    if (!Number.isFinite(qty) || qty <= 0) {
+    const lineType = String(line.type ?? '').trim().toUpperCase();
+    const isRm =
+      lineType === 'RM' ||
+      (line.raw_material_id != null && Number(line.raw_material_id) > 0 && lineType !== 'PM');
+
+    const qtyPrimary = isRm
+      ? procurementLineQtyInPrimary(line, rmMetaById.get(Number(line.raw_material_id)))
+      : Number(line.quantity_requested) || 0;
+
+    if (!Number.isFinite(qtyPrimary) || qtyPrimary <= 0) {
       errors.push({ index, message: 'Each line needs a positive quantity_requested.' });
       // eslint-disable-next-line no-continue
       continue;
@@ -111,19 +143,18 @@ async function validateProcurementItemsMoq(items) {
     }
 
     if (requiredMoq == null || !(requiredMoq > 0)) {
-      // No Items List row or no MOQ configured — allow.
       // eslint-disable-next-line no-continue
       continue;
     }
 
-    const isKg = lineIsKg(line);
-    const ok = isKg ? qty + EPS_KG >= requiredMoq : qty + 1e-6 >= requiredMoq;
+    const unitLine = { unit: resolveProcurementLineUnit(line, rmUomById) };
+    const ok = qtyPrimary + EPS >= requiredMoq;
     if (!ok) {
       const label = line.code || line.name || `Line ${index + 1}`;
-      const u = procurementMoqUnitLabel(line);
+      const u = procurementMoqUnitLabel(unitLine);
       errors.push({
         index,
-        message: `MOQ not met for ${label}: quantity ${qty} is below minimum ${requiredMoq} ${u} (Items List / vendor tier).`,
+        message: `MOQ not met for ${label}: quantity ${qtyPrimary} is below minimum ${requiredMoq} ${u} (Items List / vendor tier).`,
       });
     }
   }

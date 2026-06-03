@@ -40,23 +40,59 @@ const INCLUDE_FULL = [
 
 /* ── Helpers ── */
 
+/**
+ * FG units produced for a batch (from QC yields). Matches production applyBprFgReadyToInventory logic.
+ * @param {object} plain production_batches row (plain object)
+ * @returns {number|null}
+ */
+function resolveFgReadyProducedQty(plain) {
+  if (!plain) return null;
+  const fgYieldQty = Number(plain.fg_yield);
+  const fillYieldQty = Number(plain.fill_yield);
+  const plannedFallback = Math.max(0, parseInt(plain.batch_size || plain.order_qty || 0, 10) || 0);
+  if (Number.isFinite(fgYieldQty) && fgYieldQty >= 0) return Math.max(0, Math.round(fgYieldQty * 1000) / 1000);
+  if (Number.isFinite(fillYieldQty) && fillYieldQty > 0) return Math.max(0, Math.round(fillYieldQty * 1000) / 1000);
+  return plannedFallback;
+}
+
+/** Units to show / invoice for a split when production batch is linked. */
+function resolveSplitFgOutput(splitPlain, batchMeta) {
+  const fgQtyStored = Number(splitPlain.fg_qty) || 0;
+  const plannedQty = Number(splitPlain.planned_qty) || 0;
+  if (batchMeta && batchMeta.id != null) {
+    const bpr = String(batchMeta.bpr_status || '').toLowerCase();
+    if (bpr === 'fg_ready') {
+      const produced = resolveFgReadyProducedQty(batchMeta);
+      if (produced != null) return Math.min(plannedQty > 0 ? plannedQty : produced, produced);
+    }
+    if (batchMeta.fg_yield != null) {
+      const y = Number(batchMeta.fg_yield);
+      if (Number.isFinite(y) && y >= 0) return Math.min(plannedQty > 0 ? plannedQty : y, y);
+    }
+  }
+  return fgQtyStored;
+}
+
 /** Build map production_batch_id -> production status/yield fields used by Fulfillment timeline. */
 async function getBatchStatusMap(productionBatchIds) {
   const ids = [...new Set((productionBatchIds || []).filter(Boolean))];
   if (ids.length === 0) return {};
   const rows = await ProductionBatch.findAll({
     where: { id: ids },
-    attributes: ['id', 'bmr_status', 'bpr_status', 'bulk_yield', 'fill_yield', 'fg_yield'],
+    attributes: ['id', 'bmr_status', 'bpr_status', 'bulk_yield', 'fill_yield', 'fg_yield', 'batch_size', 'order_qty'],
   });
   const map = {};
   rows.forEach((r) => {
     const d = r.get ? r.get({ plain: true }) : r;
     map[d.id] = {
+      id: d.id,
       bmr_status: d.bmr_status || null,
       bpr_status: d.bpr_status || null,
       bulk_yield: d.bulk_yield != null ? Number(d.bulk_yield) : null,
       fill_yield: d.fill_yield != null ? Number(d.fill_yield) : null,
       fg_yield: d.fg_yield != null ? Number(d.fg_yield) : null,
+      batch_size: d.batch_size != null ? Number(d.batch_size) : null,
+      order_qty: d.order_qty != null ? Number(d.order_qty) : null,
     };
   });
   return map;
@@ -124,7 +160,7 @@ function formatSplit(d, batchMap = {}) {
   const plannedQty = Number(d.planned_qty) || 0;
   const fgQty = Number(d.fg_qty) || 0;
   const fgYield = pb.fg_yield != null ? Number(pb.fg_yield) : null;
-  const fgOutput = fgQty > 0 ? fgQty : (fgYield != null ? fgYield : 0);
+  const fgOutput = resolveSplitFgOutput(d, pb);
   const remainingQty = Math.max(0, plannedQty - fgOutput);
   const completionPercent = plannedQty > 0 ? Math.min(100, Math.round((fgOutput / plannedQty) * 100)) : 0;
   return {
@@ -230,7 +266,7 @@ async function syncOrderSplitsFromProduction(orderRow) {
 
   const prodBatches = await ProductionBatch.findAll({
     where: { so_no: soNo },
-    attributes: ['id', 'bmr_no', 'bpr_no', 'sku', 'product_name', 'batch_size', 'order_qty', 'total_batches', 'bpr_status'],
+    attributes: ['id', 'bmr_no', 'bpr_no', 'sku', 'product_name', 'batch_size', 'order_qty', 'total_batches', 'bpr_status', 'fg_yield', 'fill_yield'],
     order: [['batch_index', 'ASC'], ['id', 'ASC']],
   });
   if (!prodBatches.length) return;
@@ -256,8 +292,8 @@ async function syncOrderSplitsFromProduction(orderRow) {
       if (existingSplitBatchIds.has(plain.id)) continue;
 
       const plannedQty = Math.max(0, Number(plain.batch_size) || 0) || Math.max(0, Math.floor((Number(plain.order_qty) || 0) / (Number(plain.total_batches) || 1)));
-      const producedQty = Math.max(0, parseInt(plain.batch_size || plain.order_qty || 0, 10) || 0);
       const isFgReady = plain.bpr_status === 'fg_ready';
+      const producedQty = isFgReady ? resolveFgReadyProducedQty(plain) : 0;
       const fgQty = isFgReady ? Math.min(plannedQty, producedQty) : 0;
 
       // Prefer updating an existing placeholder split (production_batch_id is null) to avoid duplicates.
@@ -296,7 +332,7 @@ async function syncOrderSplitsFromProduction(orderRow) {
   prodBatches.forEach((pb) => {
     const plain = pb.get ? pb.get({ plain: true }) : pb;
     if (plain.bpr_status === 'fg_ready') {
-      batchIdToProduced[plain.id] = Math.max(0, parseInt(plain.batch_size || plain.order_qty || 0, 10) || 0);
+      batchIdToProduced[plain.id] = resolveFgReadyProducedQty(plain);
     }
   });
   const batchIdsToBackfill = Object.keys(batchIdToProduced).map(Number).filter(Boolean);
@@ -319,6 +355,25 @@ async function syncOrderSplitsFromProduction(orderRow) {
     if (qty > 0) {
       await split.update({ fg_qty: qty, ff_status: 'fg_ready' });
       remainingByBatch[bid] = produced - qty;
+    }
+  }
+
+  // Repair splits that still store planned qty while production QC yields are lower (or higher).
+  for (const pb of prodBatches) {
+    const plain = pb.get ? pb.get({ plain: true }) : pb;
+    if (plain.bpr_status !== 'fg_ready') continue;
+    const produced = resolveFgReadyProducedQty(plain);
+    if (!(produced >= 0)) continue;
+    const splits = await FulfillmentBatchSplit.findAll({
+      where: { fulfillment_order_id: orderId, production_batch_id: plain.id },
+    });
+    for (const split of splits) {
+      const planned = Number(split.planned_qty) || 0;
+      const correct = Math.min(planned > 0 ? planned : produced, produced);
+      const stored = Number(split.fg_qty) || 0;
+      if (correct >= 0 && stored !== correct) {
+        await split.update({ fg_qty: correct, ff_status: 'fg_ready' });
+      }
     }
   }
 }
@@ -1542,6 +1597,23 @@ async function listInvoices(req, res) {
   }
 }
 
+/** Parse planning_extracted order_qty_display / total_kg_display for unit-based PM math. */
+function parsePlanningOrderQtyContext(planPlain) {
+  const orderQty = parseInt(String(planPlain.order_qty_display || '0').replace(/\D/g, ''), 10) || 0;
+  const totalKg = parseFloat(String(planPlain.total_kg_display || '0').replace(/[^\d.]/g, '')) || 0;
+  const kgPerUnit = orderQty > 0 && totalKg > 0 ? totalKg / orderQty : 0;
+  return { orderQty, totalKg, kgPerUnit };
+}
+
+/** Finished units for one planning batch (qty_per_unit is per FG unit, not per kg). */
+function batchOutputUnits(sizeKg, qtyCtx) {
+  const size = Number(sizeKg) || 0;
+  if (size <= 0) return 0;
+  if (qtyCtx.kgPerUnit > 0) return size / qtyCtx.kgPerUnit;
+  const rounded = Math.round(size);
+  return rounded > 0 ? rounded : 1;
+}
+
 /**
  * GET /api/v1/fulfillment/so-planning-availability?so_no=EI-SO-YYYY-XXX
  *
@@ -1572,7 +1644,7 @@ async function getSoPlanningAvailability(req, res) {
 
     const planningRows = await PlanningExtracted.findAll({
       where: { sales_order_id: salesOrder.id },
-      attributes: ['id', 'batch_count', 'order_qty_display', 'sent_batch_indices'],
+      attributes: ['id', 'batch_count', 'order_qty_display', 'total_kg_display', 'sent_batch_indices'],
       include: [
         { model: ProductModel, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'zoho_sku_code'] },
       ],
@@ -1590,6 +1662,7 @@ async function getSoPlanningAvailability(req, res) {
       const planId = planPlain.id;
       const totalBatches = Number(planPlain.batch_count ?? 0) || 0;
       const sentIndices = Array.isArray(planPlain.sent_batch_indices) ? planPlain.sent_batch_indices : [];
+      const qtyCtx = parsePlanningOrderQtyContext(planPlain);
 
       const planningBatches = await PlanningBatch.findAll({
         where: { planning_extracted_id: planId },
@@ -1613,6 +1686,7 @@ async function getSoPlanningAvailability(req, res) {
       const requiredPmIds = new Set();
       const requiredRmCodes = new Set();
       const requiredPmCodes = new Set();
+      const requiredPmNameKeys = new Set();
       for (const b of planningBatches) {
         const plain = b.get ? b.get({ plain: true }) : b;
         const rmLines = Array.isArray(plain.rm_lines) ? plain.rm_lines : [];
@@ -1634,7 +1708,12 @@ async function getSoPlanningAvailability(req, res) {
             if (!Number.isNaN(n)) requiredPmIds.add(n);
           } else {
             const code = line.pm_code || line.pmCode || line.code;
-            if (code) requiredPmCodes.add(code);
+            if (code) {
+              requiredPmCodes.add(code);
+            } else {
+              const desc = line.description || line.name;
+              if (desc) requiredPmNameKeys.add(String(desc).trim().toLowerCase());
+            }
           }
         }
       }
@@ -1651,9 +1730,18 @@ async function getSoPlanningAvailability(req, res) {
         ? await PackMaterial.findAll({ where: { id: { [Op.in]: [...requiredPmIds] } }, attributes: ['id', 'code'] })
         : [];
       const pmListByCode = requiredPmCodes.size
-        ? await PackMaterial.findAll({ where: { code: { [Op.in]: [...requiredPmCodes] } }, attributes: ['id', 'code'] })
+        ? await PackMaterial.findAll({ where: { code: { [Op.in]: [...requiredPmCodes] } }, attributes: ['id', 'code', 'description'] })
         : [];
-      const pmList = [...pmListById, ...pmListByCode].filter((v, i, arr) => arr.findIndex((x) => x.id === v.id) === i);
+      const pmListByDesc = requiredPmNameKeys.size
+        ? await PackMaterial.findAll({
+          where: PackMaterial.sequelize.where(
+            PackMaterial.sequelize.fn('lower', PackMaterial.sequelize.col('description')),
+            { [Op.in]: [...requiredPmNameKeys] }
+          ),
+          attributes: ['id', 'code', 'description'],
+        })
+        : [];
+      const pmList = [...pmListById, ...pmListByCode, ...pmListByDesc].filter((v, i, arr) => arr.findIndex((x) => x.id === v.id) === i);
       console.log('[FULFILLMENT-AVAIL] REQUIRED_ITEMS', {
         soNo,
         planningExtractedId: planId,
@@ -1673,6 +1761,12 @@ async function getSoPlanningAvailability(req, res) {
         const d = p.get ? p.get({ plain: true }) : p;
         return [d.code, d.id];
       }));
+      const pmByName = new Map();
+      pmList.forEach((p) => {
+        const d = p.get ? p.get({ plain: true }) : p;
+        const key = String(d.description || '').trim().toLowerCase();
+        if (key) pmByName.set(key, d.id);
+      });
 
       // Fetch current warehouse availability for these RM/PM codes.
       const rmIds = rmList.map((r) => (r.get ? r.get({ plain: true }).id : r.id));
@@ -1718,6 +1812,7 @@ async function getSoPlanningAvailability(req, res) {
         'dispensing', 'in_production', 'bulk_qc', 'cleared',
       ]);
       const BPR_PM_FULFILLED = new Set([
+        'pm_reserved', 'scheduled', 'pm_connected',
         'pm_dispensing', 'filling', 'fill_qc', 'packaging', 'pack_qc', 'fg_ready',
       ]);
       prodBatches.forEach((pb) => {
@@ -1775,13 +1870,17 @@ async function getSoPlanningAvailability(req, res) {
 
         const pmReqById = {};
         let pmNeededTotal = 0;
-        const batchSizeUnits = Math.round(sizeKg) || 0;
+        const batchSizeUnits = batchOutputUnits(sizeKg, qtyCtx);
         for (const line of pmLines) {
           let pid = line.pack_material_id ?? line.packMaterialId;
           if (pid == null) {
             const code = line.pm_code || line.pmCode || line.code;
-            if (!code) continue;
-            pid = pmCodeToId.get(code);
+            if (code) pid = pmCodeToId.get(code);
+            if (pid == null) {
+              const nameKey = String(line.description || line.name || '').trim().toLowerCase();
+              if (nameKey) pid = pmByName.get(nameKey);
+            }
+            if (pid == null) continue;
           }
           const pidNum = pid != null ? Number(pid) : null;
           if (pidNum == null || Number.isNaN(pidNum)) continue;

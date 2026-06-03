@@ -24,6 +24,7 @@ const {
 } = require('./destroyProductWithDependents');
 const { productActiveWhere, softDeleteInstance } = require('../lib/softDelete');
 const { linkMaterialMastersToProductCode } = require('./linkMaterialMastersToProduct');
+const { normalizePmSubCategorySlug, pmLevelForSubCategorySlug } = require('../lib/pmSubCategoryRules');
 const { nextNumericSuffixAfterMax } = require('../lib/nextNumericMasterCode');
 const {
   resolveWebsiteClientId,
@@ -1088,17 +1089,64 @@ const getProductDetail = async (req, res) => {
         if (row.pm_id == null && row.pm_code) row.pm_id = codeToId.get(row.pm_code) ?? null;
       });
     }
-    const packBom = packBomSource.map((row, idx) => ({
-      row_number: idx + 1,
-      pm_id: row.pm_id ?? null,
-      pack_material_id: row.pack_material_id ?? row.packMaterialId ?? row.pm_id ?? null,
-      pm_description: row.pm_description || row.description,
-      pm_code: row.pm_code || row.code,
-      zoho_sku_code: row.zoho_sku_code ?? null,
-      pack_type: row.pack_type || row.level,
-      qty_per_unit: row.qty_per_unit != null ? row.qty_per_unit : (row.qty != null ? row.qty : 1),
-      uom: row.uom || 'pc/unit',
-    }));
+    const packPmByCode = new Map(
+      packMaterials.map((pm) => {
+        const plainPm = pm.get ? pm.get({ plain: true }) : pm;
+        return [String(plainPm.code || '').trim(), plainPm];
+      })
+    );
+    const packBom = packBomSource.map((row, idx) => {
+      const pmCode = String(row.pm_code || row.code || '').trim();
+      const linkedPm = pmCode ? packPmByCode.get(pmCode) : null;
+      const pmSkuFromRow = normalizePmSubCategorySlug(
+        row.pm_sku_category || row.pmSkuCategory || ''
+      );
+      const pmSkuFromMaster = linkedPm
+        ? normalizePmSubCategorySlug(linkedPm.group || linkedPm.material || '')
+        : '';
+      const pm_sku_category = pmSkuFromRow || pmSkuFromMaster || '';
+      const subCategoryRaw =
+        row.pm_sub_category ||
+        row.optional_pm_sub_category ||
+        row.optionalPmSubCategory ||
+        '';
+      const pm_sub_category =
+        String(subCategoryRaw || '').trim() ||
+        (linkedPm && String(linkedPm.material || '').trim() !== pm_sku_category
+          ? String(linkedPm.material || '').trim()
+          : '');
+      const subSubRaw =
+        row.pm_sub_sub_category ||
+        row.optional_pm_sub_sub_category ||
+        row.optionalPmSubSubCategory ||
+        '';
+      const linkedFd =
+        linkedPm?.form_data && typeof linkedPm.form_data === 'object' ? linkedPm.form_data : {};
+      const pm_sub_sub_category =
+        String(subSubRaw || '').trim() ||
+        String(linkedFd.optionalPmSubSubCategory || linkedFd.pm_sub_sub_category || '').trim() ||
+        '';
+      const pack_type =
+        row.pack_type ||
+        row.level ||
+        (pm_sku_category ? pmLevelForSubCategorySlug(pm_sku_category) : '') ||
+        (linkedPm ? linkedPm.level : '') ||
+        'Primary';
+      return {
+        row_number: idx + 1,
+        pm_id: row.pm_id ?? null,
+        pack_material_id: row.pack_material_id ?? row.packMaterialId ?? row.pm_id ?? null,
+        pm_description: row.pm_description || row.description,
+        pm_code: pmCode,
+        zoho_sku_code: row.zoho_sku_code ?? null,
+        pm_sku_category,
+        pm_sub_category,
+        pm_sub_sub_category,
+        pack_type,
+        qty_per_unit: row.qty_per_unit != null ? row.qty_per_unit : row.qty != null ? row.qty : 1,
+        uom: row.uom || 'pc/unit',
+      };
+    });
 
     const salesOrders = allOpenSo.filter((so) => {
       const items = Array.isArray(so.items) ? so.items : [];

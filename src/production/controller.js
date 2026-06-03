@@ -715,6 +715,33 @@ async function createRworkBatch(req, res) {
  * After BPR QC: reduce RM/PM (consumed), add FG to warehouse, set fulfillment split fg_qty for invoicing.
  * Called when BPR status transitions to fg_ready.
  */
+/** Keep fulfillment_batch_splits.fg_qty aligned with QC yields (no warehouse side effects). */
+async function syncFulfillmentFgQtyFromBatch(batchRow) {
+  const d = batchRow.get ? batchRow.get({ plain: true }) : batchRow;
+  if (String(d.bpr_status || '').toLowerCase() !== 'fg_ready') return;
+  const fgYieldQty = Number(d.fg_yield);
+  const fillYieldQty = Number(d.fill_yield);
+  const plannedQty = Number(d.batch_size || d.order_qty || 0);
+  const producedQtyRaw = Number.isFinite(fgYieldQty) && fgYieldQty >= 0
+    ? fgYieldQty
+    : (Number.isFinite(fillYieldQty) && fillYieldQty > 0 ? fillYieldQty : plannedQty);
+  const producedQty = Math.max(0, Math.round(producedQtyRaw) || 0);
+  if (producedQty <= 0) return;
+  const { FulfillmentBatchSplit } = require('../fulfillment/models');
+  const splits = await FulfillmentBatchSplit.findAll({
+    where: { production_batch_id: d.id },
+    order: [['id', 'ASC']],
+  });
+  let remaining = producedQty;
+  for (const split of splits) {
+    const planned = Number(split.planned_qty) || 0;
+    const qty = Math.min(planned > 0 ? planned : remaining, remaining);
+    if (qty >= 0) await split.update({ fg_qty: qty, ff_status: 'fg_ready' });
+    remaining -= qty;
+    if (remaining <= 0) break;
+  }
+}
+
 async function applyBprFgReadyToInventory(batchRow) {
   const d = batchRow.get ? batchRow.get({ plain: true }) : batchRow;
 
@@ -889,19 +916,7 @@ async function applyBprFgReadyToInventory(batchRow) {
         console.log('[production] BPR fg_ready: created PR warehouse_inventory product_id=%d wh_stock=%s', productId, producedQty);
       }
 
-      // 4. Set fulfillment split fg_qty (final FG quantity = what is invoiced)
-      const splits = await FulfillmentBatchSplit.findAll({
-        where: { production_batch_id: d.id },
-        order: [['id', 'ASC']],
-      });
-      let remaining = producedQty;
-      for (const split of splits) {
-        const planned = Number(split.planned_qty) || 0;
-        const qty = Math.min(planned, remaining);
-        if (qty > 0) await split.update({ fg_qty: qty });
-        remaining -= qty;
-        if (remaining <= 0) break;
-      }
+      await syncFulfillmentFgQtyFromBatch(batchRow);
     }
   }
 }
@@ -2160,6 +2175,11 @@ async function updateBatch(req, res) {
     }
     if (prevBprStatus !== 'fg_ready' && nextPlain.bpr_status === 'fg_ready') {
       await applyBprFgReadyToInventory(row);
+    } else if (nextPlain.bpr_status === 'fg_ready') {
+      const yieldChanged =
+        Number(prevPlain.fg_yield) !== Number(nextPlain.fg_yield)
+        || Number(prevPlain.fill_yield) !== Number(nextPlain.fill_yield);
+      if (yieldChanged) await syncFulfillmentFgQtyFromBatch(row);
     }
 
     // Update website order pipeline stage when Production/BPR changes.

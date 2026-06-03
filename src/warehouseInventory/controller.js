@@ -898,7 +898,7 @@ async function listPayload() {
         zone: wh.zone || '—',
         rack: wh.rack || '—',
         whStock,
-        whUnit: resolveWhUnit(wh.wh_unit, 'RM'),
+        whUnit: resolveWhUnit(wh.wh_unit, 'RM', m.uom),
         ml1Stock,
         ml2Stock,
         stockInHand,

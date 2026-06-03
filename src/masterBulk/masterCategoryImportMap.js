@@ -9,6 +9,42 @@ function trim(s) {
   return String(s || '').trim();
 }
 
+/** Excel Sub-Category cell → persisted RM `category` (matches admin dropdown). */
+function rmCategoryFromExcelSubCategory(subCategoryCol) {
+  const k = trim(subCategoryCol)
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+  if (!k) return 'Bulk raw materials';
+  if (k === 'raw material' || k === 'raw materials' || k.includes('bulk raw')) return 'Bulk raw materials';
+  if (k === 'fragrance' || k === 'fragrances') return 'Fragrance';
+  if (k === 'colors & pigments' || k === 'color & pigments') return 'Colors & Pigments';
+  if (k === 'club items' || k === 'club item') return 'Club Items';
+  if (k === 'solvents & carriers') return 'Bulk raw materials';
+  if (k === 'pre-mixed bases' || k === 'pre-mixed based') return 'Bulk raw materials';
+  return trim(subCategoryCol);
+}
+
+/**
+ * "Raw Materials" fill workbook: skip Category column; Sub-Category → RM category.
+ * @returns {{ subCategory: string, categoryDb: string, rmType: string|null, formDataPatch: object }}
+ */
+function mapRmRawMaterialsWorksheetCategories({ subCategoryCol }) {
+  const subCategory = trim(subCategoryCol);
+  const categoryDb = rmCategoryFromExcelSubCategory(subCategory);
+
+  return {
+    subCategory,
+    categoryDb,
+    rmType: null,
+    formDataPatch: {
+      subCategory,
+      rmCategory: categoryDb,
+      excelCategory: categoryDb,
+      excelSubCategory: subCategory,
+    },
+  };
+}
+
 /**
  * @returns {{ subCategory: string, categoryDb: string, rmType: string|null, formDataPatch: object }}
  */
@@ -25,6 +61,28 @@ function mapRmImportCategories({ sheetName, categoryCol, subCategoryCol }) {
       rmCategory: category,
       excelCategory: category,
       excelSubCategory: subCategory,
+    },
+  };
+}
+
+/**
+ * PM fill workbook (Primary Packaging, …): skip Category column; Sub-Category → `group` (PM category slug).
+ * @returns {{ subCategory: string, pmCategory: string, groupDb: string, materialDb: string|null, levelDb: string|null, formDataPatch: object }}
+ */
+function mapPmFillWorksheetCategories({ subCategoryCol, sheetName }) {
+  const subCategory = trim(subCategoryCol) || trim(sheetName);
+  const mapped = mapPmImportCategories({
+    sheetName,
+    categoryCol: '',
+    subCategoryCol: subCategory,
+  });
+  return {
+    ...mapped,
+    formDataPatch: {
+      ...mapped.formDataPatch,
+      excelCategory: subCategory,
+      excelSubCategory: subCategory,
+      pmCategory: subCategory,
     },
   };
 }
@@ -83,7 +141,10 @@ function resolvePmEditFromDb(row) {
 }
 
 module.exports = {
+  rmCategoryFromExcelSubCategory,
+  mapRmRawMaterialsWorksheetCategories,
   mapRmImportCategories,
+  mapPmFillWorksheetCategories,
   mapPmImportCategories,
   resolveRmEditFromDb,
   resolvePmEditFromDb,
