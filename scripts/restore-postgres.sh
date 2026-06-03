@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-CONTAINER="${POSTGRES_CONTAINER:-sprdlx_postgres_temp}"
+CONTAINER="${POSTGRES_CONTAINER:-orders_postgres}"
 FORCE=0
 
 usage() {

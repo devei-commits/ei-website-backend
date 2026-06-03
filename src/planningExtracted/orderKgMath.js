@@ -3,8 +3,7 @@
  * Used by planning_extracted sync and fulfillment SO → planning row creation.
  */
 
-/** RM kg, PM counts, and related snapshot qtys through SO lifecycle (planning → reserve). */
-const PLANNING_MATERIAL_QTY_DECIMALS = 16;
+const { MATERIAL_QTY_MAX_DECIMALS: PLANNING_MATERIAL_QTY_DECIMALS } = require('../utils/materialQtyCompare');
 
 /**
  * @param {unknown} q
@@ -13,7 +12,6 @@ const PLANNING_MATERIAL_QTY_DECIMALS = 16;
 function roundPlanningMaterialQty(q) {
   const n = Number(q);
   if (!Number.isFinite(n)) return n;
-  // Avoid 10**16 integer scaling (unsafe for typical kg totals); toFixed is stable to 16 dp.
   return Number(n.toFixed(PLANNING_MATERIAL_QTY_DECIMALS));
 }
 

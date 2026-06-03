@@ -1,8 +1,9 @@
 /**
- * Exact material qty compare (up to 16 dp) — transfers/MTR/dispensing use DB precision.
+ * Exact material qty compare (up to 8 dp) — planning, BMR, warehouse transfers/MTR/dispensing.
  * Uses integer scaling so transferred qty equals received qty (no float drift).
  */
-const SCALE = 16;
+const SCALE = 8;
+const MATERIAL_QTY_MAX_DECIMALS = SCALE;
 const SCALE_POW = 10n ** BigInt(SCALE);
 /** Snap JS number inputs at 10 dp to kill BOM float noise (44.799999… vs 44.800000…0001). */
 const FLOAT_SNAP_SCALE = 10;
@@ -175,6 +176,7 @@ function capPmDispenseConsumption(requested, atMu) {
 
 module.exports = {
   SCALE,
+  MATERIAL_QTY_MAX_DECIMALS,
   compareMaterialQty,
   materialQtyGte,
   materialQtyLte,

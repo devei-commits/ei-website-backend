@@ -22,8 +22,8 @@ function getCreatedAndRemainingUnitsFromPlanningRow(row) {
   const plannedKg = customBatchKg > 0 ? customBatchKg : fallbackBatchKg;
 
   const createdUnitsRaw = kgPerUnit > 0 ? Math.round(plannedKg / kgPerUnit) : 0;
-  const createdUnits = Math.min(orderUnits, Math.max(0, createdUnitsRaw));
-  const remainingUnits = Math.max(0, orderUnits - createdUnits);
+  const createdUnits = Math.max(0, createdUnitsRaw);
+  const remainingUnits = Math.max(0, orderUnits - Math.min(createdUnits, orderUnits));
   return { createdUnits, remainingUnits };
 }
 

@@ -11,6 +11,26 @@ Each run creates **two** files in this folder:
 
 ---
 
+## Auto-restore on `docker compose up` (app entrypoint)
+
+When the **app** container starts, `entrypoint.sh` installs **PostgreSQL 16** client tools (must match `postgres:16` dumps) and runs `scripts/db-auto-restore.sh`:
+
+- **Default** (`DB_AUTO_RESTORE=if_empty`): restores the newest `backups/*.dump` only if the target database has **no** public tables (first boot or empty DB).
+- **`DB_AUTO_RESTORE=always`**: drops and restores on every app start (overwrites the DB).
+- **`DB_AUTO_RESTORE=off`**: skip restore.
+
+Pin a specific file:
+
+```bash
+DB_BACKUP_FILE=backups/ei_pg_backup_20260603_225923.dump
+```
+
+Set in `docker-compose.yml` under `app.environment` or in `.env`.
+
+To refresh an existing volume, either set `DB_AUTO_RESTORE=always` once, run `npm run db:restore`, or `docker volume rm` the Postgres volume.
+
+---
+
 ## Create a backup (current data)
 
 From `ei-website-backend`, with Docker DB running (`orders_postgres`):

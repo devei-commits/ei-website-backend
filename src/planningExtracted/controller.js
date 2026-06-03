@@ -1443,7 +1443,8 @@ async function getBatchById(req, res) {
 /**
  * POST /:id/batches/add-one — add one new batch with BOM copied from product master (not override).
  * New batch gets sequence = max(sequence)+1, batch_code = PE-{id}-B{seq}.
- * size_kg defaults to min(remaining order kg, product batch_size_kg) when order total is known, else batch_size_kg.
+ * size_kg defaults to min(remaining order kg, product batch_size_kg) when order total is known;
+ * when the order is fully allocated, defaults to 0 so the planner can set buffer/over-production units.
  */
 async function addOneBatchFromMaster(req, res) {
   try {
@@ -1483,8 +1484,8 @@ async function addOneBatchFromMaster(req, res) {
     }, 0);
     const remainingKg = Math.max(0, totalKgPlan - sumAllocatedKg);
     let newSizeKg = defaultSizeKg;
-    if (totalKgPlan > 0 && remainingKg > 0) {
-      newSizeKg = Math.min(remainingKg, defaultSizeKg);
+    if (totalKgPlan > 0) {
+      newSizeKg = remainingKg > 0 ? Math.min(remainingKg, defaultSizeKg) : 0;
     }
 
     let rmLines = [];

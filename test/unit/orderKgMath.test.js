@@ -13,10 +13,10 @@ const {
 } = orderKgMath;
 
 describe('orderKgMath', () => {
-  it('roundPlanningMaterialQty keeps up to 16 decimal places', () => {
-    expect(PLANNING_MATERIAL_QTY_DECIMALS).toBe(16);
+  it('roundPlanningMaterialQty keeps up to 8 decimal places', () => {
+    expect(PLANNING_MATERIAL_QTY_DECIMALS).toBe(8);
     const tiny = 0.12345678901234567;
-    expect(roundPlanningMaterialQty(tiny)).toBe(Number(tiny.toFixed(16)));
+    expect(roundPlanningMaterialQty(tiny)).toBe(Number(tiny.toFixed(8)));
   });
 
   it('50 ml per unit × SG 1 → 0.05 kg/unit; 1000 units → 50 kg FG', () => {
