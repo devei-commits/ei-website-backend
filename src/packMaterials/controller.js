@@ -8,6 +8,7 @@ const { zohoSyncIsMandatoryFailure } = require('../services/zohoSyncHelpers');
 const { compensateZohoItemIfAny } = require('../lib/zohoDbTransaction');
 const { Op } = require('sequelize');
 const { findConflictingMasterRow } = require('../lib/itemCodeUniqueness');
+const { parseMasterProductsFromPayload } = require('../lib/parseMasterProductsFromPayload');
 const WarehouseInventory = require('../warehouseInventory/models');
 const WarehouseInventoryLocationHistory = require('../warehouseInventory/locationHistoryModel');
 const { ReservedBatchItem } = require('../fulfillment/models');
@@ -291,13 +292,14 @@ async function getNextCode(req, res) {
 }
 
 /** Map request body (camelCase or snake_case) to pack_materials columns. */
-function bodyToPackMaterial(b) {
+function bodyToPackMaterial(b, preserveUnsetProducts = false) {
   const fd = b.form_data != null && typeof b.form_data === 'object' && !Array.isArray(b.form_data) ? b.form_data : {};
   const subRaw = fd.subCategory ?? b.subCategory ?? b.group ?? fd.pmSkuCategory ?? '';
   const subSlug = normalizePmSubCategorySlug(subRaw) || String(subRaw || '').trim().toLowerCase();
   const levelFromSub = subSlug ? pmLevelForSubCategorySlug(subSlug) : null;
   const levelExplicit = b.level ?? fd.level ?? null;
-  return {
+  const products = parseMasterProductsFromPayload(b, { preserveWhenUnset: preserveUnsetProducts });
+  const base = {
     code: b.code ?? b.itemCode ?? '',
     description: fd.tradeCommercialName ?? b.description ?? b.name ?? null,
     type: b.type ?? b.itemCategory ?? null,
@@ -309,7 +311,6 @@ function bodyToPackMaterial(b) {
     moq: b.moq != null ? Number(b.moq) : null,
     lead_time_days: b.lead_time_days != null ? Number(b.lead_time_days) : (b.leadTimeDays != null ? Number(b.leadTimeDays) : null),
     print_status: b.print_status ?? b.printStatus ?? null,
-    products: Array.isArray(b.products) ? b.products : [],
     zoho_id: b.zoho_id ?? b.zohoId ?? null,
     // Accept both the new `zoho_sku_code` field and legacy `sku` (backward compat).
     zoho_sku_code:
@@ -323,6 +324,10 @@ function bodyToPackMaterial(b) {
     sales_purchase_account: b.sales_purchase_account ?? b.salesPurchaseAccount ?? null,
     ...(b.form_data !== undefined ? { form_data: b.form_data } : {}),
   };
+  if (products !== undefined) {
+    base.products = products;
+  }
+  return base;
 }
 
 async function destroyPackMaterialDraft(row) {
@@ -706,7 +711,7 @@ async function updatePackMaterial(req, res) {
     const row = await PackMaterial.findByPk(id);
     if (!row) return res.status(404).json({ error: 'Pack material not found' });
     const b = req.body || {};
-    const fields = bodyToPackMaterial(b);
+    const fields = bodyToPackMaterial(b, true);
     const nextCode = String(row.code || '').trim();
     if (!nextCode) {
       return res.status(400).json({ error: 'Existing pack material has no internal code' });

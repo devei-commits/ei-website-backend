@@ -132,13 +132,15 @@ function countMeaningfulRmLines(lines) {
   return lines.filter((line) => {
     const inci = String(line?.inci_name ?? line?.inciName ?? '').trim();
     const code = String(line?.rm_code ?? line?.rmCode ?? '').trim();
+    const groupId = line?.item_group_id ?? line?.itemGroupId;
+    const hasGroup = groupId != null && String(groupId).trim() !== '' && !Number.isNaN(Number(groupId));
     const pctRaw = line?.pct_w_w ?? line?.pctWw ?? line?.pct;
     const pct =
       pctRaw != null && pctRaw !== ''
         ? parseFloat(String(pctRaw).replace(/[^\d.-]/g, ''))
         : NaN;
     const hasPct = !Number.isNaN(pct) && pct > 0;
-    return Boolean(inci || code || hasPct);
+    return Boolean(inci || code || hasGroup || hasPct);
   }).length;
 }
 
@@ -1039,12 +1041,17 @@ const getProductDetail = async (req, res) => {
       const phase = line.phase || 'Other';
       if (!phases[phase]) phases[phase] = [];
       const lineSg = Number(line.specific_gravity ?? line.specificGravity);
+      const itemGroupId = line.item_group_id ?? line.itemGroupId ?? null;
+      const itemGroupName = line.item_group_name ?? line.itemGroupName ?? null;
       phases[phase].push({
         inci_name: line.inci_name || line.inciName || line.name,
         rm_code: line.rm_code || line.rmCode,
         raw_material_id: line.raw_material_id ?? line.rawMaterialId ?? null,
         pct_w_w: line.pct_w_w != null ? line.pct_w_w : (line.pctWw != null ? line.pctWw : line.pct),
         uom: line.uom || 'kg',
+        ...(itemGroupId != null && !Number.isNaN(Number(itemGroupId))
+          ? { item_group_id: Number(itemGroupId), item_group_name: itemGroupName ? String(itemGroupName) : null }
+          : {}),
         ...(Number.isFinite(lineSg) && lineSg > 0 ? { specific_gravity: lineSg } : {}),
       });
     });

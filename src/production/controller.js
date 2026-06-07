@@ -3,6 +3,7 @@ const { ProductionEquipment, ProductionTeamMember, ProductionBatch } = require('
 const { Order } = require('../orders/models');
 const WarehouseInventory = require('../warehouseInventory/models');
 const { FulfillmentBatchSplit, ReservedBatchItem } = require('../fulfillment/models');
+const MaterialRequestNote = require('../mrn/models');
 const { Product } = require('../products/models');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
@@ -932,6 +933,135 @@ const DISPENDING_MU_ERR_TAG = '[dispending-mu-error]';
  * Idempotent: removes any existing RM reservations for this batch first so repeat runs don't double-count.
  * Inventory: available = SIH - reserved; after reserve X, reserved_new = R + X, available_new = SIH - reserved_new.
  */
+/** Sum reserved_batch_items for the same material held by other production batches (exclusive pool). */
+async function sumReservedQtyOtherBatches(productionBatchId, kind, materialId) {
+  const bid = Number(productionBatchId);
+  const mid = Number(materialId);
+  if (!Number.isFinite(bid) || bid <= 0 || !Number.isFinite(mid) || mid <= 0) return 0;
+  const where = {
+    production_batch_id: { [Op.ne]: bid },
+    ...(kind === 'rm'
+      ? { raw_material_id: mid, pack_material_id: null }
+      : { pack_material_id: mid, raw_material_id: null }),
+  };
+  const sum = await ReservedBatchItem.sum('quantity_reserved', { where });
+  return sum != null ? Number(sum) : 0;
+}
+
+function warehouseSihFromPlain(plainWh) {
+  if (!plainWh) return 0;
+  const direct = Number(plainWh.stock_in_hand);
+  if (Number.isFinite(direct) && direct >= 0) return direct;
+  return (
+    (Number(plainWh.wh_stock) || 0)
+    + (Number(plainWh.ml1_stock) || 0)
+    + (Number(plainWh.ml2_stock) || 0)
+  );
+}
+
+/**
+ * Block reserve when other batches already hold RBI — free stock = SIH − other batches' reserved.
+ * This batch's own prior RBI rows are rebuilt on force/idempotent paths before this runs.
+ */
+async function assertExclusiveBatchReserveAvailability(batchId, rmQuantities, pmQuantities) {
+  const shortages = [];
+
+  for (const [rmId, { quantity, code, unit }] of rmQuantities) {
+    const need = Number(quantity) || 0;
+    if (need <= 0) continue;
+    const wh = await WarehouseInventory.findOne({ where: { item_type: 'RM', raw_material_id: rmId } });
+    const plain = wh?.get ? wh.get({ plain: true }) : wh;
+    const sih = warehouseSihFromPlain(plain);
+    const otherReserved = await sumReservedQtyOtherBatches(batchId, 'rm', rmId);
+    const free = Math.max(0, sih - otherReserved);
+    if (need > free + 1e-6) {
+      shortages.push({
+        type: 'RM',
+        code: code || `RM#${rmId}`,
+        unit: unit || 'KG',
+        need,
+        free,
+        otherBatchesReserved: otherReserved,
+        sih,
+      });
+    }
+  }
+
+  for (const [pmId, { quantity, code, unit }] of pmQuantities) {
+    const need = Number(quantity) || 0;
+    if (need <= 0) continue;
+    const wh = await WarehouseInventory.findOne({ where: { item_type: 'PM', pack_material_id: pmId } });
+    const plain = wh?.get ? wh.get({ plain: true }) : wh;
+    const sih = warehouseSihFromPlain(plain);
+    const otherReserved = await sumReservedQtyOtherBatches(batchId, 'pm', pmId);
+    const free = Math.max(0, sih - otherReserved);
+    if (need > free + 1e-6) {
+      shortages.push({
+        type: 'PM',
+        code: code || `PM#${pmId}`,
+        unit: unit || 'PCS',
+        need,
+        free,
+        otherBatchesReserved: otherReserved,
+        sih,
+      });
+    }
+  }
+
+  if (shortages.length === 0) return;
+
+  const summary = shortages
+    .slice(0, 4)
+    .map(
+      (s) =>
+        `${s.code} (need ${s.need} ${s.unit}, free ${s.free} ${s.unit} after ${s.otherBatchesReserved} ${s.unit} reserved by other batches)`,
+    )
+    .join('; ');
+  const more = shortages.length > 4 ? ` (+${shortages.length - 4} more)` : '';
+  const err = new Error(
+    `Cannot reserve — stock is already allocated to other production batches. ${summary}${more}`,
+  );
+  err.statusCode = 409;
+  err.reserveShortages = shortages;
+  throw err;
+}
+
+/** Completed outbound MTR (WH→MU) qty for this BMR — caps batch-exclusive dispensing at MU. */
+async function sumCompletedOutboundMtrQtyForBatch(bmrNo, kind, materialId) {
+  const bmr = String(bmrNo || '').trim();
+  const mid = Number(materialId);
+  if (!bmr || !Number.isFinite(mid) || mid <= 0) return 0;
+  const rows = await MaterialRequestNote.findAll({
+    where: {
+      bmr_no: bmr,
+      source: 'MTR',
+      is_inbound_from_mu: { [Op.not]: true },
+      status: 'Completed',
+    },
+    attributes: ['line_items'],
+  });
+  let total = 0;
+  for (const row of rows) {
+    const plain = row.get ? row.get({ plain: true }) : row;
+    const lines = Array.isArray(plain.line_items) ? plain.line_items : [];
+    for (const li of lines) {
+      const qty = Number(li.quantity) || 0;
+      if (qty <= 0) continue;
+      if (kind === 'RM' && Number(li.raw_material_id) === mid) total += qty;
+      if (kind === 'PM' && Number(li.pack_material_id) === mid) total += qty;
+    }
+  }
+  return total;
+}
+
+function formatBatchExclusiveDispenseShortageMessage(type, code, nextDispensed, muTransferred, unit) {
+  return (
+    `Dispensing blocked — ${type} ${code} exceeds qty transferred to MU for this batch `
+    + `(dispensed ${nextDispensed} ${unit}, MTR to MU ${muTransferred} ${unit}). `
+    + 'Other batches cannot use this batch\'s reserved allocation.'
+  );
+}
+
 /** Re-sync warehouse_inventory.reserved when RBI rows already exist (idempotent reserve re-run). */
 async function syncWarehouseReservedForExistingBatchRbi(batchId, kind) {
   const where =
@@ -994,6 +1124,7 @@ async function applyRmReservedToInventory(batchRow, options = {}) {
   }
   const affectedRmIds = new Set(rmQuantities.keys());
   if (affectedRmIds.size === 0) return;
+  await assertExclusiveBatchReserveAvailability(d.id, rmQuantities, new Map());
   for (const [rmId, { quantity, unit }] of rmQuantities) {
     await ReservedBatchItem.create({
       production_batch_id: d.id,
@@ -1144,6 +1275,7 @@ async function applyPmReservedToInventory(batchRow, options = {}) {
       missingPmCodes,
     });
   }
+  await assertExclusiveBatchReserveAvailability(d.id, new Map(), pmQuantities);
   for (const [pmId, { quantity, unit }] of pmQuantities) {
     await ReservedBatchItem.create({
       production_batch_id: d.id,
@@ -1185,6 +1317,132 @@ async function applyPmReservedToInventory(batchRow, options = {}) {
       actionType: 'BPR_RESERVED',
     });
   }
+}
+
+const MTR_CANCELLED_STATUSES = new Set(['cancelled', 'rejected', 'canceled']);
+
+async function hasOutboundMtrForBatch(bmrNo, kind) {
+  const bmr = String(bmrNo || '').trim();
+  if (!bmr) return false;
+  const rows = await MaterialRequestNote.findAll({
+    where: {
+      bmr_no: bmr,
+      source: 'MTR',
+      [Op.or]: [{ is_inbound_from_mu: false }, { is_inbound_from_mu: null }],
+    },
+    attributes: ['status', 'line_items'],
+  });
+  for (const row of rows) {
+    const plain = row.get ? row.get({ plain: true }) : row;
+    const status = String(plain.status || '').trim().toLowerCase();
+    if (MTR_CANCELLED_STATUSES.has(status)) continue;
+    const lines = Array.isArray(plain.line_items) ? plain.line_items : [];
+    for (const li of lines) {
+      if (kind === 'rm' && li.raw_material_id != null) return true;
+      if (kind === 'pm' && li.pack_material_id != null) return true;
+    }
+  }
+  return false;
+}
+
+function dispensingHasPositiveQty(lines) {
+  if (!Array.isArray(lines)) return false;
+  return lines.some((l) => (Number(l?.dispensed) || 0) > 1e-9);
+}
+
+async function assertCanReleaseBatchReserve(batchPlain, kind) {
+  const label = kind === 'rm' ? 'RM' : 'PM';
+  const bmrNo = String(batchPlain.bmr_no || '').trim();
+  if (kind === 'rm' && batchPlain.rm_connected) {
+    const err = new Error(`Cannot remove ${label} reservation — material is already connected or transferred for this batch.`);
+    err.statusCode = 409;
+    throw err;
+  }
+  if (kind === 'pm' && batchPlain.pm_connected) {
+    const err = new Error(`Cannot remove ${label} reservation — packaging is already connected or transferred for this batch.`);
+    err.statusCode = 409;
+    throw err;
+  }
+  const dispensing = kind === 'rm' ? batchPlain.dispensing_rm : batchPlain.dispensing_pm;
+  if (dispensingHasPositiveQty(dispensing)) {
+    const err = new Error(`Cannot remove ${label} reservation — dispensing has already been recorded for this batch.`);
+    err.statusCode = 409;
+    throw err;
+  }
+  if (await hasOutboundMtrForBatch(bmrNo, kind)) {
+    const err = new Error(
+      `Cannot remove ${label} reservation — an outbound MTR exists for ${bmrNo}. Cancel or complete the transfer first.`,
+    );
+    err.statusCode = 409;
+    throw err;
+  }
+}
+
+async function releaseBatchReservedFromInventory(batchRow, kind) {
+  const d = batchRow.get ? batchRow.get({ plain: true }) : batchRow;
+  await assertCanReleaseBatchReserve(d, kind);
+  const where =
+    kind === 'rm'
+      ? { production_batch_id: d.id, pack_material_id: null, raw_material_id: { [Op.ne]: null } }
+      : { production_batch_id: d.id, raw_material_id: null, pack_material_id: { [Op.ne]: null } };
+  const rows = await ReservedBatchItem.findAll({ where });
+  if (rows.length === 0) return;
+
+  const affectedRmIds = new Set();
+  const affectedPmIds = new Set();
+  const batchNo = kind === 'rm' ? (d.bmr_no || '') : (d.bpr_no || d.bmr_no || '');
+  const actionType = kind === 'rm' ? 'BMR_UNRESERVED' : 'BPR_UNRESERVED';
+  const itemType = kind === 'rm' ? 'RM' : 'PM';
+
+  for (const rbi of rows) {
+    const plain = rbi.get ? rbi.get({ plain: true }) : rbi;
+    const qty = Number(plain.quantity_reserved) || 0;
+    const rmId = plain.raw_material_id != null ? Number(plain.raw_material_id) : null;
+    const pmId = plain.pack_material_id != null ? Number(plain.pack_material_id) : null;
+    const materialId = kind === 'rm' ? rmId : pmId;
+    if (!materialId || qty <= 0) {
+      await rbi.destroy();
+      continue;
+    }
+    if (kind === 'rm') affectedRmIds.add(materialId);
+    else affectedPmIds.add(materialId);
+
+    const wh = await WarehouseInventory.findOne({
+      where: kind === 'rm'
+        ? { item_type: 'RM', raw_material_id: materialId }
+        : { item_type: 'PM', pack_material_id: materialId },
+    });
+    if (wh) {
+      const whPlain = wh.get ? wh.get({ plain: true }) : wh;
+      const reservedBefore = Number(whPlain.reserved) || 0;
+      const reservedAfter = Math.max(0, reservedBefore - qty);
+      await logReservedChange({
+        warehouseInventoryId: whPlain.id,
+        itemType,
+        rawMaterialId: kind === 'rm' ? materialId : null,
+        packMaterialId: kind === 'pm' ? materialId : null,
+        productId: null,
+        reservedDelta: -qty,
+        reservedAfter,
+        productionBatchId: d.id,
+        batchNo,
+        actionType,
+      });
+    }
+    await rbi.destroy();
+  }
+
+  if (affectedRmIds.size > 0 || affectedPmIds.size > 0) {
+    await syncWarehouseReserved([...affectedRmIds], [...affectedPmIds]);
+  }
+}
+
+async function releaseRmReservedFromInventory(batchRow) {
+  return releaseBatchReservedFromInventory(batchRow, 'rm');
+}
+
+async function releasePmReservedFromInventory(batchRow) {
+  return releaseBatchReservedFromInventory(batchRow, 'pm');
 }
 
 /** Master codes seeded as EI-… on dispensing line text (e.g. inci "Niacinamide (EI-RM-ACT-002)"). */
@@ -1578,6 +1836,36 @@ async function applyDispensingDeltaToWarehouseInventory({
     if (!muZone) {
       const err = new Error(formatDispensingMuZoneShortageMessage([{ reason: 'no_scheduled_mu' }], ''));
       err.statusCode = 400;
+      throw err;
+    }
+
+    const nextDispensed = Number(sampleLine?.dispensed) || 0;
+    const muTransferred = await sumCompletedOutboundMtrQtyForBatch(
+      batchPlain?.bmr_no,
+      type,
+      rmOrPmRow.id,
+    );
+    const unitLabel = type === 'RM' ? 'KG' : 'PCS';
+    if (muTransferred > 0 && nextDispensed > muTransferred + 1e-6) {
+      const err = new Error(
+        formatBatchExclusiveDispenseShortageMessage(
+          type,
+          rmOrPmRow.code || code,
+          nextDispensed,
+          muTransferred,
+          unitLabel,
+        ),
+      );
+      err.statusCode = 400;
+      err.dispensingFacilityShortages = [{
+        type,
+        code: rmOrPmRow.code || code,
+        delta,
+        nextDispensed,
+        muTransferred,
+        muZone,
+        reason: 'batch_exclusive_mtr_cap',
+      }];
       throw err;
     }
 
@@ -2157,18 +2445,26 @@ async function updateBatch(req, res) {
       await persistMuDispensingBundleSnapshot(id, muDispensingBundleTagId, consumedForBundle, peId);
       await row.reload();
     }
+    const rmUnreserveTriggered = !!prevPlain.rm_reserved && !nextPlain.rm_reserved;
     const rmReserveTriggered =
-      (prevBmrStatus !== 'rm_reserved' && nextPlain.bmr_status === 'rm_reserved') ||
-      (!prevPlain.rm_reserved && !!nextPlain.rm_reserved);
-    if (rmReserveTriggered) {
+      !rmUnreserveTriggered &&
+      ((prevBmrStatus !== 'rm_reserved' && nextPlain.bmr_status === 'rm_reserved') ||
+        (!prevPlain.rm_reserved && !!nextPlain.rm_reserved));
+    if (rmUnreserveTriggered) {
+      await releaseRmReservedFromInventory(row);
+    } else if (rmReserveTriggered) {
       await applyRmReservedToInventory(row);
     } else if (await needsRmReserveRepair(id, nextPlain)) {
       await applyRmReservedToInventory(row, { force: true });
     }
+    const pmUnreserveTriggered = !!prevPlain.pm_reserved && !nextPlain.pm_reserved;
     const pmReserveTriggered =
-      (prevBprStatus !== 'pm_reserved' && nextPlain.bpr_status === 'pm_reserved') ||
-      (!prevPlain.pm_reserved && !!nextPlain.pm_reserved);
-    if (pmReserveTriggered) {
+      !pmUnreserveTriggered &&
+      ((prevBprStatus !== 'pm_reserved' && nextPlain.bpr_status === 'pm_reserved') ||
+        (!prevPlain.pm_reserved && !!nextPlain.pm_reserved));
+    if (pmUnreserveTriggered) {
+      await releasePmReservedFromInventory(row);
+    } else if (pmReserveTriggered) {
       await applyPmReservedToInventory(row);
     } else if (await needsPmReserveRepair(id, nextPlain)) {
       await applyPmReservedToInventory(row, { force: true });
@@ -2205,6 +2501,12 @@ async function updateBatch(req, res) {
       return res.status(400).json({
         error: err.message || 'Dispensing blocked — insufficient stock at production facility',
         shortages: err.dispensingFacilityShortages || undefined,
+      });
+    }
+    if (err && err.statusCode === 409) {
+      return res.status(409).json({
+        error: err.message || 'Cannot reserve — insufficient free stock for this batch',
+        shortages: err.reserveShortages || undefined,
       });
     }
     res.status(500).json({ error: 'Failed to update batch' });
@@ -2782,29 +3084,43 @@ async function getBatchMtrReserved(req, res) {
       where: { production_batch_id: id },
       attributes: ['raw_material_id', 'pack_material_id', 'quantity_reserved'],
     });
-    const rmIds = new Set();
-    const pmIds = new Set();
+    const otherRows = await ReservedBatchItem.findAll({
+      where: { production_batch_id: { [Op.ne]: id } },
+      attributes: ['raw_material_id', 'pack_material_id', 'quantity_reserved'],
+    });
+    const syncRmIds = new Set();
+    const syncPmIds = new Set();
     const byCode = {};
-    for (const row of rows) {
-      const plain = row.get ? row.get({ plain: true }) : row;
+    const otherBatchesByCode = {};
+
+    const accumulateByCode = async (target, plain, trackSync) => {
       const qty = Number(plain.quantity_reserved) || 0;
-      if (qty <= 0) continue;
+      if (qty <= 0) return;
       if (plain.raw_material_id != null) {
-        rmIds.add(plain.raw_material_id);
+        if (trackSync) syncRmIds.add(plain.raw_material_id);
         const rm = await RawMaterial.findByPk(plain.raw_material_id, { attributes: ['code'] });
         const code = String(rm?.code || '').trim();
-        if (code) byCode[code] = (byCode[code] ?? 0) + qty;
+        if (code) target[code] = (target[code] ?? 0) + qty;
       } else if (plain.pack_material_id != null) {
-        pmIds.add(plain.pack_material_id);
+        if (trackSync) syncPmIds.add(plain.pack_material_id);
         const pm = await PackMaterial.findByPk(plain.pack_material_id, { attributes: ['code'] });
         const code = String(pm?.code || '').trim();
-        if (code) byCode[code] = (byCode[code] ?? 0) + qty;
+        if (code) target[code] = (target[code] ?? 0) + qty;
       }
+    };
+
+    for (const row of rows) {
+      const plain = row.get ? row.get({ plain: true }) : row;
+      await accumulateByCode(byCode, plain, true);
     }
-    if (rmIds.size > 0 || pmIds.size > 0) {
-      await syncWarehouseReserved([...rmIds], [...pmIds]);
+    for (const row of otherRows) {
+      const plain = row.get ? row.get({ plain: true }) : row;
+      await accumulateByCode(otherBatchesByCode, plain, false);
     }
-    res.json({ success: true, byCode });
+    if (syncRmIds.size > 0 || syncPmIds.size > 0) {
+      await syncWarehouseReserved([...syncRmIds], [...syncPmIds]);
+    }
+    res.json({ success: true, byCode, otherBatchesByCode });
   } catch (err) {
     console.error('getBatchMtrReserved error:', err);
     res.status(500).json({ success: false, error: 'Failed to fetch batch reserved qty' });

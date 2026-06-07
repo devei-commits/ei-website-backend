@@ -15,6 +15,7 @@ const {
   maxRmClubNumericSuffix,
   maxRmDigitSeriesNumericSuffix,
 } = require('../lib/rmSkuCodeAllocation');
+const { parseMasterProductsFromPayload } = require('../lib/parseMasterProductsFromPayload');
 const WarehouseInventory = require('../warehouseInventory/models');
 const WarehouseInventoryLocationHistory = require('../warehouseInventory/locationHistoryModel');
 const { ReservedBatchItem } = require('../fulfillment/models');
@@ -259,7 +260,6 @@ function payloadToListFields(b, omitGroupIfUnset = false) {
     gst: fd.gst != null ? Number(fd.gst) : null,
     shelf: fd.shelfLife ?? fd.retestPeriod ?? fd.shelf ?? null,
     status: (fd.status && String(fd.status).toLowerCase() === 'inactive') ? 'inactive' : 'active',
-    products: Array.isArray(fd.products) ? fd.products : [],
     ...(omitGroupIfUnset && !hasGroup
       ? {}
       : { group: fd.subCategory ?? fd.group ?? b.group ?? b.subCategory ?? null }),
@@ -309,7 +309,13 @@ function payloadToListFields(b, omitGroupIfUnset = false) {
       }
     : {};
   const form_data = b.form_data !== undefined ? b.form_data : (typeof fd.rmSku !== 'undefined' || typeof fd.inciName !== 'undefined' ? fd : null);
-  return { ...listFields, ...leadPatch, form_data };
+  const products = parseMasterProductsFromPayload(b, { preserveWhenUnset: omitGroupIfUnset });
+  return {
+    ...listFields,
+    ...leadPatch,
+    ...(products !== undefined ? { products } : {}),
+    form_data,
+  };
 }
 
 async function destroyRawMaterialDraft(row) {
