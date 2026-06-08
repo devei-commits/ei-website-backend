@@ -3215,10 +3215,89 @@ async function getBatchDispensingMuStock(req, res) {
   }
 }
 
+const {
+  reserveProductionBatchLines,
+  unreserveProductionBatchLines,
+  listProductionReservedItems,
+  computeBatchMaterialCoverage,
+} = require('./batchLineReserve');
+
+async function listReservedItems(req, res) {
+  try {
+    const items = await listProductionReservedItems();
+    res.json({ success: true, data: items });
+  } catch (err) {
+    console.error('listReservedItems error:', err);
+    res.status(500).json({ success: false, error: 'Failed to list reserved items' });
+  }
+}
+
+async function reserveBatchLines(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const kind = String(req.body?.kind || '').toLowerCase() === 'pm' ? 'pm' : 'rm';
+    const codes = Array.isArray(req.body?.codes) ? req.body.codes : null;
+    const batch = await ProductionBatch.findByPk(id);
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    const bomMeta = await getBomLinesForBatch(batch.get ? batch.get({ plain: true }) : batch);
+    await reserveProductionBatchLines(batch, kind, codes, bomMeta);
+    await batch.reload();
+    res.json({ success: true, data: formatBatch(batch), coverage: await computeBatchMaterialCoverage(batch.get({ plain: true }), kind, bomMeta) });
+  } catch (err) {
+    console.error('reserveBatchLines error:', err);
+    if (err?.statusCode === 409) {
+      return res.status(409).json({ error: err.message, shortages: err.reserveShortages });
+    }
+    if (err?.statusCode === 400) return res.status(400).json({ error: err.message });
+    res.status(500).json({ error: 'Failed to reserve batch lines' });
+  }
+}
+
+async function unreserveBatchLines(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const kind = String(req.body?.kind || '').toLowerCase() === 'pm' ? 'pm' : 'rm';
+    const codes = Array.isArray(req.body?.codes) ? req.body.codes : [];
+    const batch = await ProductionBatch.findByPk(id);
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    const bomMeta = await getBomLinesForBatch(batch.get ? batch.get({ plain: true }) : batch);
+    await unreserveProductionBatchLines(batch, kind, codes, bomMeta);
+    await batch.reload();
+    res.json({ success: true, data: formatBatch(batch), coverage: await computeBatchMaterialCoverage(batch.get({ plain: true }), kind, bomMeta) });
+  } catch (err) {
+    console.error('unreserveBatchLines error:', err);
+    if (err?.statusCode === 409) return res.status(409).json({ error: err.message });
+    if (err?.statusCode === 400) return res.status(400).json({ error: err.message });
+    res.status(500).json({ error: 'Failed to unreserve batch lines' });
+  }
+}
+
+async function getBatchReservationCoverage(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const batch = await ProductionBatch.findByPk(id);
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    const d = batch.get({ plain: true });
+    const bomMeta = await getBomLinesForBatch(d);
+    const [rm, pm] = await Promise.all([
+      computeBatchMaterialCoverage(d, 'rm', bomMeta),
+      computeBatchMaterialCoverage(d, 'pm', bomMeta),
+    ]);
+    res.json({ success: true, data: { rm, pm } });
+  } catch (err) {
+    console.error('getBatchReservationCoverage error:', err);
+    res.status(500).json({ error: 'Failed to fetch reservation coverage' });
+  }
+}
+
 module.exports = {
   listEquipment, getEquipmentById, createEquipment, updateEquipment, deleteEquipment,
   listTeam, getTeamMemberById, createTeamMember, updateTeamMember, deleteTeamMember,
   listBatches, getBatchById, createBatch, createRworkBatch, updateBatch, deleteBatch, getBatchBom, getBatchMtrReserved, getBatchDispensingMuStock, syncBatchesFromPlanning,
+  listReservedItems, reserveBatchLines, unreserveBatchLines, getBatchReservationCoverage,
   computeRequiredVolumeLiters,
   applyRmReservedToInventory,
   applyPmReservedToInventory,

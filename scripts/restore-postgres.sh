@@ -98,7 +98,7 @@ if [[ "$ext_lower" == "dump" ]]; then
   remote="/tmp/restore.dump"
   docker cp "$BACKUP_PATH" "${CONTAINER}:${remote}"
   docker exec "$CONTAINER" pg_restore -U "$user" -d "$db" --no-owner --no-acl --clean --if-exists "$remote"
-  docker exec "$CONTAINER" rm -f "$remote"
+  docker exec "$CONTAINER" rm -f "$remote"b v
 elif [[ "$ext_lower" == "sql" ]]; then
   docker exec -i "$CONTAINER" psql -U "$user" -d "$db" -v ON_ERROR_STOP=1 < "$BACKUP_PATH"
 else
