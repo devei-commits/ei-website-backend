@@ -24,6 +24,7 @@ const {
   getStockQtyAtMuZone,
   getStockQtyStrAtMuZone,
 } = require('../facilityAreas/defaultLocationService');
+const { buildSchedulePatchFromPlanning } = require('./scheduleFromPlanning');
 
 function toNum(x) {
   if (x == null) return 0;
@@ -457,6 +458,27 @@ async function listBatches(req, res) {
   }
 }
 
+async function loadEquipmentGrouped() {
+  const rows = await ProductionEquipment.findAll({
+    where: activeRowWhere(),
+    order: [['category', 'ASC'], ['equipment_id', 'ASC']],
+  });
+  const grouped = { manufacturing: [], filling: [], packaging: [] };
+  for (const r of rows) {
+    const cat = r.category;
+    if (grouped[cat]) grouped[cat].push(formatEquipment(r));
+  }
+  return grouped;
+}
+
+/** Seed MFG/Fill/Pack/FG stage dates from planning planned_start_date when batch has no mfg_date yet. */
+async function applyPlanningScheduleIfNeeded(batchRow, planPlain, sequence, allBatches, equipmentGrouped) {
+  const patch = buildSchedulePatchFromPlanning(planPlain, sequence, batchRow, allBatches, equipmentGrouped);
+  if (!patch) return false;
+  await batchRow.update(patch);
+  return true;
+}
+
 /**
  * POST /batches/sync-from-planning — ensure a production batch exists for each sent planning batch.
  * For every PlanningExtracted with sent_batch_indices, and each index i, finds PlanningBatch (sequence i+1).
@@ -464,6 +486,10 @@ async function listBatches(req, res) {
  */
 async function syncBatchesFromPlanning(req, res) {
   try {
+    const equipmentGrouped = await loadEquipmentGrouped();
+    const allBatches = await ProductionBatch.findAll({ where: activeRowWhere() });
+    let scheduleSeeded = 0;
+
     const planRows = await PlanningExtracted.findAll({
       include: [
         { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id'], required: true },
@@ -516,12 +542,15 @@ async function syncBatchesFromPlanning(req, res) {
           if (!matchPlain.planning_batch_id) {
             await match.update({ planning_batch_id: planningBatch.id });
           }
+          if (await applyPlanningScheduleIfNeeded(match, plan, sequence, allBatches, equipmentGrouped)) {
+            scheduleSeeded += 1;
+          }
           continue;
         }
 
         const { bmrNo, bprNo } = await getNextBMRBPRSequence(year);
         const skuValue = productSku || productName || String(product.product_id ?? 'sync');
-        await ProductionBatch.create({
+        const createdRow = await ProductionBatch.create({
           bmr_no: bmrNo,
           bpr_no: bprNo,
           product_name: productName || 'Unknown',
@@ -537,6 +566,10 @@ async function syncBatchesFromPlanning(req, res) {
           bpr_status: 'draft',
         });
         created++;
+        allBatches.push(createdRow);
+        if (await applyPlanningScheduleIfNeeded(createdRow, plan, sequence, allBatches, equipmentGrouped)) {
+          scheduleSeeded += 1;
+        }
       }
     }
 
@@ -583,9 +616,13 @@ async function syncBatchesFromPlanning(req, res) {
       if (!pb) continue;
       await row.update({ planning_batch_id: pb.id });
       repaired++;
+      const seqForSchedule = d.batch_index != null ? Number(d.batch_index) : 1;
+      if (await applyPlanningScheduleIfNeeded(row, plan, seqForSchedule, allBatches, equipmentGrouped)) {
+        scheduleSeeded += 1;
+      }
     }
 
-    res.json({ success: true, created, repaired });
+    res.json({ success: true, created, repaired, scheduleSeeded });
   } catch (err) {
     console.error('syncBatchesFromPlanning error', err);
     res.status(500).json({ success: false, error: 'Failed to sync batches from planning' });
