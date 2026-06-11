@@ -35,6 +35,11 @@ const {
   addDaysToIndiaDateOnly,
   daysLeftFromDueDateIndia,
 } = require('../lib/indiaTime');
+const { ProductionBatch } = require('../production/models');
+const {
+  isPlanningBatchEditableByProduction,
+  planningBatchEditLockReason,
+} = require('./planningBatchEditLock');
 
 /** Idempotent schema patch: adds bom_specific_gravity on Postgres if missing. Lazy, safe to call repeatedly. */
 let bomSgColumnEnsured = false;
@@ -1264,12 +1269,22 @@ async function listAllBatches(req, res) {
       }],
       order: [[{ model: PlanningExtracted, as: 'planningExtracted' }, 'due_date', 'ASC'], ['sequence', 'ASC']],
     });
+    const prodBmrByPlanningBatchId = await loadProductionBmrStatusByPlanningBatchIds(
+      rows.map((r) => {
+        const d = r.get ? r.get({ plain: true }) : r;
+        return d.id;
+      })
+    );
     const list = rows.map((r) => {
       const d = r.get ? r.get({ plain: true }) : r;
       const plan = d.planningExtracted || {};
       const sentIndices = Array.isArray(plan.sent_batch_indices) ? plan.sent_batch_indices : [];
       // Type-safe sent check (handles JSON arrays containing "1" and 1 consistently).
       const sent = isBatchIndexSent(sentIndices, (Number(d.sequence) || 0) - 1);
+      const productionBmrStatus = prodBmrByPlanningBatchId.has(d.id)
+        ? prodBmrByPlanningBatchId.get(d.id)
+        : null;
+      const editable = isPlanningBatchEditableByProduction(productionBmrStatus);
       return {
         id: d.id,
         planningExtractedId: d.planning_extracted_id,
@@ -1288,6 +1303,8 @@ async function listAllBatches(req, res) {
         bomStatus: plan.bom_status || '',
         rmLines: d.rm_lines || [],
         pmLines: d.pm_lines || [],
+        productionBmrStatus,
+        editable,
       };
     });
     res.json(list);
@@ -1332,7 +1349,10 @@ async function listBatches(req, res) {
       where: { planning_extracted_id: id },
       order: [['sequence', 'ASC']],
     });
-    res.json(rows.map(formatBatchRow));
+    const prodBmrByPlanningBatchId = await loadProductionBmrStatusByPlanningBatchIds(
+      rows.map((r) => (r.get ? r.get('id') : r.id))
+    );
+    res.json(rows.map((r) => formatBatchRow(r, prodBmrByPlanningBatchId)));
   } catch (err) {
     console.error('listBatches error', err);
     res.status(500).json({ error: 'Failed to list batches' });
@@ -1370,6 +1390,15 @@ async function createOrUpdateBatches(req, res) {
       const sizeKg = batches[i].sizeKg != null ? Number(batches[i].sizeKg) : (batches[i].size_kg != null ? Number(batches[i].size_kg) : null);
       const existingRow = existing[i];
       if (existingRow) {
+        const existingId = existingRow.get ? existingRow.get('id') : existingRow.id;
+        try {
+          await assertPlanningBatchEditable(existingId);
+        } catch (lockErr) {
+          if (lockErr.status === 403) {
+            return res.status(403).json({ error: lockErr.message, code: lockErr.code || 'BATCH_LOCKED_BY_PRODUCTION' });
+          }
+          throw lockErr;
+        }
         existingRow.batch_code = batchCode;
         if (sizeKg != null) existingRow.size_kg = sizeKg;
 
@@ -1392,23 +1421,43 @@ async function createOrUpdateBatches(req, res) {
       }
     }
     if (existing.length > batches.length) {
+      for (let i = batches.length; i < existing.length; i += 1) {
+        const rowToRemove = existing[i];
+        const removeId = rowToRemove.get ? rowToRemove.get('id') : rowToRemove.id;
+        try {
+          await assertPlanningBatchEditable(removeId);
+        } catch (lockErr) {
+          if (lockErr.status === 403) {
+            return res.status(403).json({ error: lockErr.message, code: lockErr.code || 'BATCH_LOCKED_BY_PRODUCTION' });
+          }
+          throw lockErr;
+        }
+      }
       await PlanningBatch.destroy({
         where: { planning_extracted_id: id, sequence: { [Op.gt]: batches.length } },
       });
     }
     const updated = await PlanningBatch.findAll({ where: { planning_extracted_id: id }, order: [['sequence', 'ASC']] });
     await planRow.update({ batch_count: updated.length });
+    const prodBmrByPlanningBatchId = await loadProductionBmrStatusByPlanningBatchIds(
+      updated.map((r) => (r.get ? r.get('id') : r.id))
+    );
     // Planned batches are saved, but reserved stock is not auto-updated here.
     // Reserved updates only on explicit BMR/BPR reserve transitions.
-    res.json(updated.map((r) => formatBatchRow(r)));
+    res.json(updated.map((r) => formatBatchRow(r, prodBmrByPlanningBatchId)));
   } catch (err) {
     console.error('createOrUpdateBatches error', err);
     res.status(500).json({ error: 'Failed to save batches' });
   }
 }
 
-function formatBatchRow(r) {
+function formatBatchRow(r, prodBmrByPlanningBatchId) {
   const d = r.get ? r.get({ plain: true }) : r;
+  const productionBmrStatus =
+    prodBmrByPlanningBatchId && prodBmrByPlanningBatchId.has(d.id)
+      ? prodBmrByPlanningBatchId.get(d.id)
+      : null;
+  const editable = isPlanningBatchEditableByProduction(productionBmrStatus);
   return {
     id: d.id,
     planningExtractedId: d.planning_extracted_id,
@@ -1417,7 +1466,43 @@ function formatBatchRow(r) {
     sizeKg: d.size_kg != null ? Number(d.size_kg) : null,
     rmLines: d.rm_lines || [],
     pmLines: d.pm_lines || [],
+    productionBmrStatus,
+    editable,
   };
+}
+
+/** Map planning_batches.id → production_batches.bmr_status (when linked). */
+async function loadProductionBmrStatusByPlanningBatchIds(batchIds) {
+  const ids = [...new Set((batchIds || []).map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0))];
+  const map = new Map();
+  if (ids.length === 0) return map;
+  const prodRows = await ProductionBatch.findAll({
+    where: { planning_batch_id: { [Op.in]: ids } },
+    attributes: ['planning_batch_id', 'bmr_status'],
+  });
+  for (const row of prodRows) {
+    const d = row.get ? row.get({ plain: true }) : row;
+    if (d.planning_batch_id != null) {
+      map.set(Number(d.planning_batch_id), d.bmr_status || null);
+    }
+  }
+  return map;
+}
+
+async function assertPlanningBatchEditable(batchId) {
+  const prod = await ProductionBatch.findOne({
+    where: { planning_batch_id: batchId },
+    attributes: ['bmr_status'],
+  });
+  if (!prod) return null;
+  const bmr = prod.get ? prod.get('bmr_status') : prod.bmr_status;
+  if (!isPlanningBatchEditableByProduction(bmr)) {
+    const err = new Error(planningBatchEditLockReason(bmr));
+    err.status = 403;
+    err.code = 'BATCH_LOCKED_BY_PRODUCTION';
+    throw err;
+  }
+  return null;
 }
 
 /**
@@ -1433,7 +1518,8 @@ async function getBatchById(req, res) {
       where: { id: batchId, planning_extracted_id: planningId },
     });
     if (!batch) return res.status(404).json({ error: 'Batch not found' });
-    res.json(formatBatchRow(batch));
+    const prodBmrByPlanningBatchId = await loadProductionBmrStatusByPlanningBatchIds([batchId]);
+    res.json(formatBatchRow(batch, prodBmrByPlanningBatchId));
   } catch (err) {
     console.error('getBatchById error', err);
     res.status(500).json({ error: 'Failed to fetch batch' });
@@ -1613,6 +1699,14 @@ async function updateBatch(req, res) {
       where: { id: batchId, planning_extracted_id: planningId },
     });
     if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    try {
+      await assertPlanningBatchEditable(batchId);
+    } catch (lockErr) {
+      if (lockErr.status === 403) {
+        return res.status(403).json({ error: lockErr.message, code: lockErr.code || 'BATCH_LOCKED_BY_PRODUCTION' });
+      }
+      throw lockErr;
+    }
     const body = req.body || {};
     if (Array.isArray(body.rmLines)) batch.rm_lines = normalizeRmLines(body.rmLines);
     if (Array.isArray(body.pmLines)) batch.pm_lines = normalizePmLines(body.pmLines);

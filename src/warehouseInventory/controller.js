@@ -1105,6 +1105,65 @@ async function listUsageStats(req, res) {
   }
 }
 
+/**
+ * GET /api/v1/warehouse-inventory/consumption-between
+ * Outbound qty (sum of -qty_delta) for an item between two dates (inclusive, UTC calendar days).
+ * Query: item_type=RM|PM|PR, raw_material_id | pack_material_id | product_id, from=YYYY-MM-DD, to=YYYY-MM-DD
+ */
+async function getConsumptionBetween(req, res) {
+  try {
+    const itemType = String(req.query.item_type ?? req.query.itemType ?? 'RM').trim().toUpperCase();
+    const rawMaterialId = req.query.raw_material_id != null ? Number(req.query.raw_material_id) : null;
+    const packMaterialId = req.query.pack_material_id != null ? Number(req.query.pack_material_id) : null;
+    const productId = req.query.product_id != null ? Number(req.query.product_id) : null;
+    const fromStr = String(req.query.from ?? '').trim().slice(0, 10);
+    const toStr = String(req.query.to ?? '').trim().slice(0, 10);
+    if (!fromStr || !toStr) {
+      return res.status(400).json({ error: 'from and to (YYYY-MM-DD) are required' });
+    }
+    const fromAt = new Date(`${fromStr}T00:00:00.000Z`);
+    const toAt = new Date(`${toStr}T23:59:59.999Z`);
+    if (!Number.isFinite(fromAt.getTime()) || !Number.isFinite(toAt.getTime())) {
+      return res.status(400).json({ error: 'Invalid from or to date' });
+    }
+
+    const where = {
+      item_type: itemType,
+      qty_delta: { [Op.lt]: 0 },
+      moved_at: { [Op.between]: [fromAt, toAt] },
+    };
+    if (itemType === 'RM' && Number.isFinite(rawMaterialId) && rawMaterialId > 0) {
+      where.raw_material_id = rawMaterialId;
+    } else if (itemType === 'PM' && Number.isFinite(packMaterialId) && packMaterialId > 0) {
+      where.pack_material_id = packMaterialId;
+    } else if (itemType === 'PR' && Number.isFinite(productId) && productId > 0) {
+      where.product_id = productId;
+    } else {
+      return res.status(400).json({ error: 'Item id required for item_type' });
+    }
+
+    const rows = await WarehouseInventoryLocationHistory.findAll({
+      where,
+      attributes: ['qty_delta'],
+    });
+    let total = 0;
+    for (const r of rows) {
+      const h = r.get ? r.get({ plain: true }) : r;
+      total += -toNum(h.qty_delta);
+    }
+    const consumption = Math.round(total * 1000) / 1000;
+    return res.json({ consumption, from: fromStr, to: toStr, item_type: itemType });
+  } catch (err) {
+    const msg = err && err.message ? String(err.message) : '';
+    const code = err && err.original && err.original.code ? String(err.original.code) : '';
+    if (code === '42P01' || /warehouse_inventory_location_history/i.test(msg)) {
+      return res.json({ consumption: 0, from: String(req.query.from ?? '').slice(0, 10), to: String(req.query.to ?? '').slice(0, 10) });
+    }
+    console.error('[warehouse-inventory] getConsumptionBetween error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to fetch consumption' });
+  }
+}
+
 module.exports = {
   list,
   listPayload,
@@ -1115,4 +1174,5 @@ module.exports = {
   getStockByLocation,
   listLowThresholdAlerts,
   listUsageStats,
+  getConsumptionBetween,
 };
