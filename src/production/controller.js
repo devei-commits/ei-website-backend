@@ -25,6 +25,13 @@ const {
   getStockQtyStrAtMuZone,
 } = require('../facilityAreas/defaultLocationService');
 const { buildSchedulePatchFromPlanning } = require('./scheduleFromPlanning');
+const {
+  flattenPrQualitySpecRowsForDisplay,
+  hydratePrQualitySpecRowsBySectionFromBom,
+  hydratePrQualityBulkSubSpecRowsByPathFromBom,
+  hydratePrQualityFinalSubSpecRowsByPathFromBom,
+  hydratePrQualityDispatchSubSpecRowsByPathFromBom,
+} = require('../products/prQualitySpecStorage');
 
 function toNum(x) {
   if (x == null) return 0;
@@ -3047,6 +3054,20 @@ async function buildFgProductSpecsForBatch(batchPlain) {
   }
   if (!product) return {};
   const p = product.get ? product.get({ plain: true }) : product;
+  const bom = await BOM.findOne({ where: { product_id: p.product_id } });
+  const bomPlain = bom ? (bom.get ? bom.get({ plain: true }) : bom) : null;
+  const bySection = hydratePrQualitySpecRowsBySectionFromBom(bomPlain);
+  const bulkSubByPath = hydratePrQualityBulkSubSpecRowsByPathFromBom(bomPlain);
+  const finalSubByPath = hydratePrQualityFinalSubSpecRowsByPathFromBom(bomPlain);
+  const dispatchSubByPath = hydratePrQualityDispatchSubSpecRowsByPathFromBom(bomPlain);
+  const tabular = flattenPrQualitySpecRowsForDisplay(
+    bySection,
+    bulkSubByPath,
+    finalSubByPath,
+    dispatchSubByPath
+  );
+  if (Object.keys(tabular).length > 0) return tabular;
+
   const pairs = [
     ['pH range', p.ph_range],
     ['Viscosity (cPs)', p.viscosity_range],

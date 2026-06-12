@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict Hw0xPcyac5lGpNh48k6ZugFR0OSxaYGpklP7JjAlkAX9G6Cf2EQaHIa0aLFB0PW
+\restrict ZfcUntXfLrCwhd1m4JTVspD9Bn0Mrh4HHvxdRThEueD7ir1jWGAhjjgichtyg5P
 
 -- Dumped from database version 16.14 (Debian 16.14-1.pgdg13+1)
 -- Dumped by pg_dump version 16.14 (Debian 16.14-1.pgdg12+1)
@@ -4273,7 +4273,9 @@ COPY public.facility_areas (id, code, name, area_type, icon, description, create
 --
 
 COPY public.fulfillment_batch_splits (id, fulfillment_order_item_id, fulfillment_order_id, production_batch_id, bmr_no, bpr_no, planned_qty, fg_qty, fg_location, ff_status, picked_qty, picker_name, pick_date, pick_slip_no, remarks, invoice_no, awb_no, courier, dispatch_date, eta_date, delivery_date, received_by, delivery_remarks, created_at, updated_at, deleted_at, lifecycle_status) FROM stdin;
-47	1860	1375	\N	\N	\N	1000	0	\N	fg_pending	0	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	2026-06-10 09:32:22.958+00	2026-06-10 09:32:22.958+00	\N	active
+47	1860	1375	31	BMR-2026-001	BPR-2026-001	100	0	\N	fg_pending	0	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	2026-06-10 09:32:22.958+00	2026-06-11 11:09:51.416+00	\N	active
+49	1860	1375	33	BMR-2026-003	BPR-2026-003	500	0	\N	fg_pending	0	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	2026-06-11 12:38:32.688+00	2026-06-11 12:38:32.688+00	\N	active
+48	1861	1376	32	BMR-2026-002	BPR-2026-002	50	0	\N	fg_pending	0	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	2026-06-11 11:10:16.807+00	2026-06-11 12:38:32.717+00	\N	active
 \.
 
 
@@ -4291,6 +4293,7 @@ COPY public.fulfillment_invoices (id, invoice_no, fulfillment_order_id, invoice_
 
 COPY public.fulfillment_order_items (id, fulfillment_order_id, item_no, sku, product_name, pack, ordered_qty, rate, unit_price, created_at, updated_at, deleted_at, lifecycle_status) FROM stdin;
 1860	1375	001	PR0006814	DERMIQ DAILY CLEANSER 100ML	100 ML	1000	90.00	90.00	2026-06-10 09:32:22.953+00	2026-06-10 09:32:22.953+00	\N	active
+1861	1376	001	PR0006524	DERMASONIQUE ANTI WASH HAIR SERUM 50ML	50 ML	1000	200.00	200.00	2026-06-11 11:10:16.804+00	2026-06-11 11:10:16.804+00	\N	active
 \.
 
 
@@ -4300,6 +4303,7 @@ COPY public.fulfillment_order_items (id, fulfillment_order_id, item_no, sku, pro
 
 COPY public.fulfillment_orders (id, so_no, sales_order_id, customer_name, customer_city, order_date, due_date, priority, so_status, so_value, ship_address, payment_terms, notes, zoho_invoice_id, invoice_no, invoice_date, awb_no, dispatch_date, courier, created_at, updated_at, deleted_at, lifecycle_status) FROM stdin;
 1375	EI-SO-2026-001	1375	ADVAYA SKIN CLINIC	Bengaluru	2026-06-10	2026-07-25	normal	planned	90000.00	ADVAYA SKIN CLINIC\nADVAYA SKIN CLINIC, #224, 1st Floor, 1st Main Rd,, Arekere MICO Layout 2nd stage, Bengaluru, Karnataka, India, 560076.0\nBengaluru, Karnataka, 560076\nIndia	{"advance_pct":50,"pre_shipment_pct":50,"post_shipment_pct":0,"credit_days":0}	\N	\N	\N	\N	\N	\N	\N	2026-06-10 09:32:22.938+00	2026-06-10 09:32:22.938+00	\N	active
+1376	EI-SO-2026-002	1376	BEST MED AESTHETIQUE PRIVATE LIMITED	Thrissur	2026-06-11	2026-07-26	normal	planned	200000.00	Aesthetic Artistry Pvt Ltd (GlowYoung Skin Clinic) 1st Floor,\nPottakkal, Vincent Tower Above Federal Bank, Punkunnam Thrissur,, Thrissur, Kerala, India, 680002.0\nThrissur, Kerala, 680002\nIndia	{"advance_pct":50,"pre_shipment_pct":50,"post_shipment_pct":0,"credit_days":0}	\N	\N	\N	\N	\N	\N	\N	2026-06-11 11:10:16.727+00	2026-06-11 11:10:16.727+00	\N	active
 \.
 
 
@@ -4360,6 +4364,10 @@ COPY public.item_list_tiers (id, item_list_vendor_rate_id, moq_min, moq_max, pri
 1148	1145	1.0000	\N	100.00	\N	Synced from Sale Order	2026-06-05 18:34:50.82+00	2026-06-05 18:34:50.82+00	\N	active
 1149	1146	1000.0000	\N	90.00	\N	Synced from Sale Order	2026-06-10 09:32:22.93+00	2026-06-10 09:32:22.93+00	\N	active
 1150	1147	1.0000	\N	12.00	\N	Recorded from Procurement → Quotations	2026-06-10 09:39:10.988+00	2026-06-10 09:39:10.988+00	\N	active
+1151	1148	1.0000	\N	80.00	\N	Recorded from Procurement → Quotations	2026-06-11 10:44:11.889+00	2026-06-11 10:44:11.889+00	\N	active
+1152	1149	10.0000	\N	80.00	\N	Recorded from Procurement → Quotations	2026-06-11 10:44:19.271+00	2026-06-11 10:44:19.271+00	\N	active
+1153	1150	90.0000	\N	66.00	\N	Recorded from Procurement → Quotations	2026-06-11 10:44:28.347+00	2026-06-11 10:44:28.347+00	\N	active
+1154	1151	1000.0000	\N	200.00	\N	Synced from Sale Order	2026-06-11 11:10:16.717+00	2026-06-11 11:10:16.717+00	\N	active
 \.
 
 
@@ -4392,6 +4400,10 @@ COPY public.item_list_vendor_rates (id, items_list_id, vendor_id, party_type, de
 1145	1122	1739	client	\N	\N	\N	INR	\N	active	2026-06-05 18:34:50.817+00	2026-06-05 18:34:50.817+00	\N	active
 1146	1123	1712	client	\N	\N	\N	INR	\N	active	2026-06-10 09:32:22.927+00	2026-06-10 09:32:22.927+00	\N	active
 1147	86	1491	vendor	12.00	1.0000	\N	INR	Due on Receipt	active	2026-06-10 09:39:10.901+00	2026-06-10 09:39:10.901+00	\N	active
+1148	1106	1489	vendor	80.00	1.0000	9	INR	Adv 0% · Pre 100% · Post 0% · Net 60d	active	2026-06-11 10:44:11.806+00	2026-06-11 10:44:11.806+00	\N	active
+1149	272	1489	vendor	80.00	10.0000	7	INR	Adv 0% · Pre 100% · Post 0% · Net 60d	active	2026-06-11 10:44:19.135+00	2026-06-11 10:44:19.135+00	\N	active
+1150	1124	1489	vendor	66.00	90.0000	4	INR	Adv 0% · Pre 100% · Post 0% · Net 60d	active	2026-06-11 10:44:28.219+00	2026-06-11 10:44:28.219+00	\N	active
+1151	1125	1721	client	\N	\N	\N	INR	\N	active	2026-06-11 11:10:16.715+00	2026-06-11 11:10:16.715+00	\N	active
 \.
 
 
@@ -5490,6 +5502,8 @@ COPY public.items_list (id, type, raw_material_id, pack_material_id, product_id,
 1108	RM	3784	\N	\N	Active	2026-05-26 17:43:53.176+00	2026-05-26 17:43:53.176+00	\N	active
 1122	PR	\N	\N	8380	Active	2026-06-05 18:34:50.809+00	2026-06-05 18:34:50.809+00	\N	active
 1123	PR	\N	\N	8244	Active	2026-06-10 09:32:22.921+00	2026-06-10 09:32:22.921+00	\N	active
+1124	PM	\N	7025	\N	Active	2026-06-11 10:44:28.093+00	2026-06-11 10:44:28.093+00	\N	active
+1125	PR	\N	\N	8350	Active	2026-06-11 11:10:16.711+00	2026-06-11 11:10:16.711+00	\N	active
 \.
 
 
@@ -8762,7 +8776,10 @@ COPY public.permissions (permission_id, resource, action, created_at, updated_at
 --
 
 COPY public.planning_batches (id, planning_extracted_id, sequence, batch_code, size_kg, rm_lines, pm_lines, created_at, updated_at, deleted_at, lifecycle_status) FROM stdin;
-44	1842	1	PE-1842-B1	100.00	[{"phase":"Main","inci_name":"ALPHA CAPB","rm_code":"1000019","pct_w_w":30,"uom":"KG","specific_gravity":1,"raw_material_id":2984},{"phase":"Main","inci_name":"SODIUM LAURYL SARCOSINATE (ANKUSH)","rm_code":"1001041","pct_w_w":5,"uom":"KG","specific_gravity":1,"raw_material_id":3780},{"phase":"Main","inci_name":"GLYCERINE IP - GODREJ","rm_code":"1001427","pct_w_w":3,"uom":"KG","specific_gravity":1,"raw_material_id":3749},{"phase":"Main","inci_name":"DECYL GLUCOSIDE 50% (APG 2000)","rm_code":"1001381","pct_w_w":3,"uom":"KG","specific_gravity":1,"raw_material_id":3756},{"phase":"Main","inci_name":"INNOCARE ST100","rm_code":"1000536","pct_w_w":3,"uom":"KG","specific_gravity":1,"raw_material_id":3373},{"phase":"Main","inci_name":"EMPIGEN CDR 40","rm_code":"1000172","pct_w_w":2,"uom":"KG","specific_gravity":1,"raw_material_id":3091},{"phase":"Main","inci_name":"LAURYL GLUCOSIDE 50% (APG 1200)","rm_code":"1001379","pct_w_w":2,"uom":"KG","specific_gravity":1,"raw_material_id":3757},{"phase":"Main","inci_name":"ALOE BARBADENSIS (ALOE VERA) LEAF EXTRACT (ROMAT)","rm_code":"1001310","pct_w_w":1,"uom":"KG","specific_gravity":1,"raw_material_id":3755},{"phase":"Main","inci_name":"GALSOFT SCT 40","rm_code":"1001082","pct_w_w":1,"uom":"KG","specific_gravity":1,"raw_material_id":3438},{"phase":"Main","inci_name":"KOPCERIN PE","rm_code":"1001312","pct_w_w":0.5,"uom":"KG","specific_gravity":1,"raw_material_id":3559},{"phase":"Main","inci_name":"Disodium EDTA","rm_code":"1000153","pct_w_w":0.2,"uom":"KG","specific_gravity":1,"raw_material_id":3074},{"phase":"Main","inci_name":"Sodium Hydroxide","rm_code":"1000425","pct_w_w":0.1,"uom":"KG","specific_gravity":1,"raw_material_id":3286},{"phase":"Main","inci_name":"AQUA","rm_code":"1000612","pct_w_w":49.2,"uom":"KG","specific_gravity":1,"raw_material_id":3411}]	[{"pm_code":"5L00055","description":"FRAGILE STICKER","pack_type":"Primary","qty_per_unit":0.031,"uom":"PCS"},{"pm_code":"","description":"200 ML SHIPPER 500x250x200 mm with printing and 2 pads","pack_type":"Primary","qty_per_unit":0.031,"uom":"PCS"},{"pm_code":"5M00942","description":"DERMIQ  DAILY CLEANSER 100 ML MONOCARTON","pack_type":"Primary","qty_per_unit":1,"uom":"PCS"},{"pm_code":"4001099","description":"100 ML PET SLEEK PRINTED BOTTLE 24 MM NECK - LIGHT BLUE ( PANTONE 7457C )","pack_type":"Primary","qty_per_unit":1,"uom":"PCS"},{"pm_code":"4001100","description":"24/410 ON/OFF PUMP - LIGHT BLUE","pack_type":"Primary","qty_per_unit":1,"uom":"PCS"},{"pm_code":"","description":"TRANSPARENT VOID TAMPER STICKER","pack_type":"Primary","qty_per_unit":2,"uom":"PCS"}]	2026-06-10 09:33:36.799+00	2026-06-10 09:33:46.968+00	\N	active
+45	1842	2	PE-1842-B2	98.20	[{"phase":"Main","inci_name":"ALPHA CAPB","rm_code":"1000019","zoho_sku_code":"1000019","raw_material_id":2984,"pct_w_w":30,"uom":"KG"},{"phase":"Main","inci_name":"SODIUM LAURYL SARCOSINATE (ANKUSH)","rm_code":"1001041","zoho_sku_code":"1001041","raw_material_id":3780,"pct_w_w":5,"uom":"KG"},{"phase":"Main","inci_name":"GLYCERINE IP - GODREJ","rm_code":"1001427","zoho_sku_code":"1001427","raw_material_id":3749,"pct_w_w":3,"uom":"KG"},{"phase":"Main","inci_name":"DECYL GLUCOSIDE 50% (APG 2000)","rm_code":"1001381","zoho_sku_code":"1001381","raw_material_id":3756,"pct_w_w":3,"uom":"KG"},{"phase":"Main","inci_name":"INNOCARE ST100","rm_code":"1000536","zoho_sku_code":"1000536","raw_material_id":3373,"pct_w_w":3,"uom":"KG"},{"phase":"Main","inci_name":"EMPIGEN CDR 40","rm_code":"1000172","zoho_sku_code":"1000172","raw_material_id":3091,"pct_w_w":2,"uom":"KG"},{"phase":"Main","inci_name":"LAURYL GLUCOSIDE 50% (APG 1200)","rm_code":"1001379","zoho_sku_code":"1001379","raw_material_id":3757,"pct_w_w":2,"uom":"KG"},{"phase":"Main","inci_name":"ALOE BARBADENSIS (ALOE VERA) LEAF EXTRACT (ROMAT)","rm_code":"1001310","zoho_sku_code":"1001310","raw_material_id":3755,"pct_w_w":1,"uom":"KG"},{"phase":"Main","inci_name":"GALSOFT SCT 40","rm_code":"1001082","zoho_sku_code":"1001082","raw_material_id":3438,"pct_w_w":1,"uom":"KG"},{"phase":"Main","inci_name":"KOPCERIN PE","rm_code":"1001312","zoho_sku_code":"1001312","raw_material_id":3559,"pct_w_w":0.5,"uom":"KG"},{"phase":"Main","inci_name":"Disodium EDTA","rm_code":"1000153","zoho_sku_code":"1000153","raw_material_id":3074,"pct_w_w":0.2,"uom":"KG"},{"phase":"Main","inci_name":"Sodium Hydroxide","rm_code":"1000425","zoho_sku_code":"1000425","raw_material_id":3286,"pct_w_w":0.1,"uom":"KG"},{"phase":"Main","inci_name":"AQUA","rm_code":"1000612","zoho_sku_code":"1000612","raw_material_id":3411,"pct_w_w":49.2,"uom":"KG"}]	[{"pm_code":"5L00055","zoho_sku_code":"5L00055","description":"FRAGILE STICKER","pm_description":"FRAGILE STICKER","pack_material_id":7156,"pack_type":"Primary","qty_per_unit":0.031,"uom":"nos"},{"pm_code":"","zoho_sku_code":"5S00002","description":"200 ML SHIPPER 500x250x200 mm with printing and 2 pads","pm_description":"200 ML SHIPPER 500x250x200 mm with printing and 2 pads","pack_material_id":null,"pack_type":"Primary","qty_per_unit":0.031,"uom":"nos"},{"pm_code":"5M00942","zoho_sku_code":"5M00942","description":"DERMIQ  DAILY CLEANSER 100 ML MONOCARTON","pm_description":"DERMIQ  DAILY CLEANSER 100 ML MONOCARTON","pack_material_id":8745,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"4001099","zoho_sku_code":"4001099","description":"100 ML PET SLEEK PRINTED BOTTLE 24 MM NECK - LIGHT BLUE ( PANTONE 7457C )","pm_description":"100 ML PET SLEEK PRINTED BOTTLE 24 MM NECK - LIGHT BLUE ( PANTONE 7457C )","pack_material_id":7024,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"4001100","zoho_sku_code":"4001100","description":"24/410 ON/OFF PUMP - LIGHT BLUE","pm_description":"24/410 ON/OFF PUMP - LIGHT BLUE","pack_material_id":7025,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"","zoho_sku_code":"5000127","description":"TRANSPARENT VOID TAMPER STICKER","pm_description":"TRANSPARENT VOID TAMPER STICKER","pack_material_id":null,"pack_type":"Primary","qty_per_unit":2,"uom":"nos"}]	2026-06-11 10:34:39.506+00	2026-06-11 11:47:01.967+00	\N	active
+46	1843	1	PE-1843-B1	50.00	[{"phase":"Main","inci_name":"LK 145 D","rm_code":"1000520","pct_w_w":20,"uom":"KG","specific_gravity":0.995,"raw_material_id":3362},{"phase":"Main","inci_name":"Aqua","rm_code":"1001149","pct_w_w":10,"uom":"KG","specific_gravity":0.995,"raw_material_id":3471},{"phase":"Main","inci_name":"Butylene Glycol","rm_code":"1000092","pct_w_w":5,"uom":"KG","specific_gravity":0.995,"raw_material_id":3037},{"phase":"Main","inci_name":"Behentrimonium Chloride","rm_code":"1001081","pct_w_w":3,"uom":"KG","specific_gravity":0.995,"raw_material_id":3437},{"phase":"Main","inci_name":"Propylene Glycol","rm_code":"1000358","pct_w_w":2,"uom":"KG","specific_gravity":0.995,"raw_material_id":3230},{"phase":"Main","inci_name":"MERQUAT 740","rm_code":"1000280","pct_w_w":1,"uom":"KG","specific_gravity":0.995,"raw_material_id":3175},{"phase":"Main","inci_name":"XYLISHINE","rm_code":"1000496","pct_w_w":1,"uom":"KG","specific_gravity":0.995,"raw_material_id":3345},{"phase":"Main","inci_name":"DIASLEEK C 802","rm_code":"1000151","pct_w_w":0.5,"uom":"KG","specific_gravity":0.995,"raw_material_id":3073},{"phase":"Main","inci_name":"VEGAROL 1698","rm_code":"1000473","pct_w_w":0.5,"uom":"KG","specific_gravity":0.995,"raw_material_id":3327},{"phase":"Main","inci_name":"Disodium EDTA","rm_code":"1000153","pct_w_w":0.2,"uom":"KG","specific_gravity":0.995,"raw_material_id":3074},{"phase":"Main","inci_name":"BURBERRY FRESH","rm_code":"2000015","pct_w_w":0.05,"uom":"KG","specific_gravity":0.995,"raw_material_id":3663},{"phase":"Main","inci_name":"AQUA","rm_code":"1000612","pct_w_w":56.75,"uom":"KG","specific_gravity":0.995,"raw_material_id":3411}]	[{"pm_code":"5L00055","description":"FRAGILE STICKER","pack_type":"Primary","qty_per_unit":1,"uom":"PCS"},{"pm_code":"","description":"200 ML SHIPPER 500x250x200 mm with printing and 2 pads","pack_type":"Primary","qty_per_unit":1,"uom":"PCS"},{"pm_code":"","description":"TRANSPARENT VOID TAMPER STICKER","pack_type":"Primary","qty_per_unit":2,"uom":"PCS"},{"pm_code":"4000518","description":"18/410 OIL PUMP-WHITE-RIBBED WITH WHITE DUST CAP(I)","pack_type":"Primary","qty_per_unit":1,"uom":"PCS"},{"pm_code":"4000715","description":"SM11 - 30ML GLOSSY WHITE PET BOTTLE","pack_type":"Primary","qty_per_unit":1,"uom":"PCS"},{"pm_code":"5M00996","description":"DERMASONIQUE ANTI WASH HAIR SERUM 50ML MONOCARTON","pack_type":"Primary","qty_per_unit":1,"uom":"PCS"},{"pm_code":"5L01641","description":"DERMASONIQUE ANTI WASH HAIR SERUM 50ML LABEL","pack_type":"Primary","qty_per_unit":1,"uom":"PCS"}]	2026-06-11 11:14:28.563+00	2026-06-11 11:14:50.616+00	\N	active
+47	1842	3	PE-1842-B3	99.60	[{"phase":"Main","inci_name":"ALPHA CAPB","rm_code":"1000019","zoho_sku_code":"1000019","raw_material_id":2984,"pct_w_w":30,"uom":"KG"},{"phase":"Main","inci_name":"SODIUM LAURYL SARCOSINATE (ANKUSH)","rm_code":"1001041","zoho_sku_code":"1001041","raw_material_id":3780,"pct_w_w":5,"uom":"KG"},{"phase":"Main","inci_name":"GLYCERINE IP - GODREJ","rm_code":"1001427","zoho_sku_code":"1001427","raw_material_id":3749,"pct_w_w":3,"uom":"KG"},{"phase":"Main","inci_name":"DECYL GLUCOSIDE 50% (APG 2000)","rm_code":"1001381","zoho_sku_code":"1001381","raw_material_id":3756,"pct_w_w":3,"uom":"KG"},{"phase":"Main","inci_name":"INNOCARE ST100","rm_code":"1000536","zoho_sku_code":"1000536","raw_material_id":3373,"pct_w_w":3,"uom":"KG"},{"phase":"Main","inci_name":"EMPIGEN CDR 40","rm_code":"1000172","zoho_sku_code":"1000172","raw_material_id":3091,"pct_w_w":2,"uom":"KG"},{"phase":"Main","inci_name":"LAURYL GLUCOSIDE 50% (APG 1200)","rm_code":"1001379","zoho_sku_code":"1001379","raw_material_id":3757,"pct_w_w":2,"uom":"KG"},{"phase":"Main","inci_name":"ALOE BARBADENSIS (ALOE VERA) LEAF EXTRACT (ROMAT)","rm_code":"1001310","zoho_sku_code":"1001310","raw_material_id":3755,"pct_w_w":1,"uom":"KG"},{"phase":"Main","inci_name":"GALSOFT SCT 40","rm_code":"1001082","zoho_sku_code":"1001082","raw_material_id":3438,"pct_w_w":1,"uom":"KG"},{"phase":"Main","inci_name":"KOPCERIN PE","rm_code":"1001312","zoho_sku_code":"1001312","raw_material_id":3559,"pct_w_w":0.5,"uom":"KG"},{"phase":"Main","inci_name":"Disodium EDTA","rm_code":"1000153","zoho_sku_code":"1000153","raw_material_id":3074,"pct_w_w":0.2,"uom":"KG"},{"phase":"Main","inci_name":"Sodium Hydroxide","rm_code":"1000425","zoho_sku_code":"1000425","raw_material_id":3286,"pct_w_w":0.1,"uom":"KG"},{"phase":"Main","inci_name":"AQUA","rm_code":"1000612","zoho_sku_code":"1000612","raw_material_id":3411,"pct_w_w":49.2,"uom":"KG"}]	[{"pm_code":"5L00055","zoho_sku_code":"5L00055","description":"FRAGILE STICKER","pm_description":"FRAGILE STICKER","pack_material_id":7156,"pack_type":"Primary","qty_per_unit":0.031,"uom":"nos"},{"pm_code":"","zoho_sku_code":"5S00002","description":"200 ML SHIPPER 500x250x200 mm with printing and 2 pads","pm_description":"200 ML SHIPPER 500x250x200 mm with printing and 2 pads","pack_material_id":null,"pack_type":"Primary","qty_per_unit":0.031,"uom":"nos"},{"pm_code":"5M00942","zoho_sku_code":"5M00942","description":"DERMIQ  DAILY CLEANSER 100 ML MONOCARTON","pm_description":"DERMIQ  DAILY CLEANSER 100 ML MONOCARTON","pack_material_id":8745,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"4001099","zoho_sku_code":"4001099","description":"100 ML PET SLEEK PRINTED BOTTLE 24 MM NECK - LIGHT BLUE ( PANTONE 7457C )","pm_description":"100 ML PET SLEEK PRINTED BOTTLE 24 MM NECK - LIGHT BLUE ( PANTONE 7457C )","pack_material_id":7024,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"4001100","zoho_sku_code":"4001100","description":"24/410 ON/OFF PUMP - LIGHT BLUE","pm_description":"24/410 ON/OFF PUMP - LIGHT BLUE","pack_material_id":7025,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"","zoho_sku_code":"5000127","description":"TRANSPARENT VOID TAMPER STICKER","pm_description":"TRANSPARENT VOID TAMPER STICKER","pack_material_id":null,"pack_type":"Primary","qty_per_unit":2,"uom":"nos"}]	2026-06-11 11:46:26.06+00	2026-06-11 11:47:01.97+00	\N	active
+44	1842	1	PE-1842-B1	100.00	[{"phase":"Main","inci_name":"ALPHA CAPB","rm_code":"1000019","pct_w_w":30,"uom":"KG","specific_gravity":1,"raw_material_id":2984},{"phase":"Main","inci_name":"SODIUM LAURYL SARCOSINATE (ANKUSH)","rm_code":"1001041","pct_w_w":5,"uom":"KG","specific_gravity":1,"raw_material_id":3780},{"phase":"Main","inci_name":"GLYCERINE IP - GODREJ","rm_code":"1001427","pct_w_w":3,"uom":"KG","specific_gravity":1,"raw_material_id":3749},{"phase":"Main","inci_name":"DECYL GLUCOSIDE 50% (APG 2000)","rm_code":"1001381","pct_w_w":3,"uom":"KG","specific_gravity":1,"raw_material_id":3756},{"phase":"Main","inci_name":"INNOCARE ST100","rm_code":"1000536","pct_w_w":3,"uom":"KG","specific_gravity":1,"raw_material_id":3373},{"phase":"Main","inci_name":"EMPIGEN CDR 40","rm_code":"1000172","pct_w_w":2,"uom":"KG","specific_gravity":1,"raw_material_id":3091},{"phase":"Main","inci_name":"LAURYL GLUCOSIDE 50% (APG 1200)","rm_code":"1001379","pct_w_w":2,"uom":"KG","specific_gravity":1,"raw_material_id":3757},{"phase":"Main","inci_name":"ALOE BARBADENSIS (ALOE VERA) LEAF EXTRACT (ROMAT)","rm_code":"1001310","pct_w_w":1,"uom":"KG","specific_gravity":1,"raw_material_id":3755},{"phase":"Main","inci_name":"GALSOFT SCT 40","rm_code":"1001082","pct_w_w":1,"uom":"KG","specific_gravity":1,"raw_material_id":3438},{"phase":"Main","inci_name":"KOPCERIN PE","rm_code":"1001312","pct_w_w":0.5,"uom":"KG","specific_gravity":1,"raw_material_id":3559},{"phase":"Main","inci_name":"Disodium EDTA","rm_code":"1000153","pct_w_w":0.2,"uom":"KG","specific_gravity":1,"raw_material_id":3074},{"phase":"Main","inci_name":"Sodium Hydroxide","rm_code":"1000425","pct_w_w":0.1,"uom":"KG","specific_gravity":1,"raw_material_id":3286},{"phase":"Main","inci_name":"AQUA","rm_code":"1000612","pct_w_w":49.2,"uom":"KG","specific_gravity":1,"raw_material_id":3411}]	[{"pm_code":"5L00055","description":"FRAGILE STICKER","pack_type":"Primary","qty_per_unit":0.031,"uom":"PCS"},{"pm_code":"","description":"200 ML SHIPPER 500x250x200 mm with printing and 2 pads","pack_type":"Primary","qty_per_unit":0.031,"uom":"PCS"},{"pm_code":"5M00942","description":"DERMIQ  DAILY CLEANSER 100 ML MONOCARTON","pack_type":"Primary","qty_per_unit":1,"uom":"PCS"},{"pm_code":"4001099","description":"100 ML PET SLEEK PRINTED BOTTLE 24 MM NECK - LIGHT BLUE ( PANTONE 7457C )","pack_type":"Primary","qty_per_unit":1,"uom":"PCS"},{"pm_code":"4001100","description":"24/410 ON/OFF PUMP - LIGHT BLUE","pack_type":"Primary","qty_per_unit":1,"uom":"PCS"},{"pm_code":"","description":"TRANSPARENT VOID TAMPER STICKER","pack_type":"Primary","qty_per_unit":2,"uom":"PCS"}]	2026-06-10 09:33:36.799+00	2026-06-11 11:47:01.964+00	\N	active
 \.
 
 
@@ -8772,6 +8789,7 @@ COPY public.planning_batches (id, planning_extracted_id, sequence, batch_code, s
 
 COPY public.planning_bom_override (id, planning_extracted_id, rm_lines, pm_lines, created_at, updated_at, deleted_at, lifecycle_status) FROM stdin;
 29	1842	[{"phase":"Main","inci_name":"ALPHA CAPB","rm_code":"1000019","pct_w_w":30,"uom":"KG","specific_gravity":1,"raw_material_id":2984},{"phase":"Main","inci_name":"SODIUM LAURYL SARCOSINATE (ANKUSH)","rm_code":"1001041","pct_w_w":5,"uom":"KG","specific_gravity":1,"raw_material_id":3780},{"phase":"Main","inci_name":"GLYCERINE IP - GODREJ","rm_code":"1001427","pct_w_w":3,"uom":"KG","specific_gravity":1,"raw_material_id":3749},{"phase":"Main","inci_name":"DECYL GLUCOSIDE 50% (APG 2000)","rm_code":"1001381","pct_w_w":3,"uom":"KG","specific_gravity":1,"raw_material_id":3756},{"phase":"Main","inci_name":"INNOCARE ST100","rm_code":"1000536","pct_w_w":3,"uom":"KG","specific_gravity":1,"raw_material_id":3373},{"phase":"Main","inci_name":"EMPIGEN CDR 40","rm_code":"1000172","pct_w_w":2,"uom":"KG","specific_gravity":1,"raw_material_id":3091},{"phase":"Main","inci_name":"LAURYL GLUCOSIDE 50% (APG 1200)","rm_code":"1001379","pct_w_w":2,"uom":"KG","specific_gravity":1,"raw_material_id":3757},{"phase":"Main","inci_name":"ALOE BARBADENSIS (ALOE VERA) LEAF EXTRACT (ROMAT)","rm_code":"1001310","pct_w_w":1,"uom":"KG","specific_gravity":1,"raw_material_id":3755},{"phase":"Main","inci_name":"GALSOFT SCT 40","rm_code":"1001082","pct_w_w":1,"uom":"KG","specific_gravity":1,"raw_material_id":3438},{"phase":"Main","inci_name":"KOPCERIN PE","rm_code":"1001312","pct_w_w":0.5,"uom":"KG","specific_gravity":1,"raw_material_id":3559},{"phase":"Main","inci_name":"Disodium EDTA","rm_code":"1000153","pct_w_w":0.2,"uom":"KG","specific_gravity":1,"raw_material_id":3074},{"phase":"Main","inci_name":"Sodium Hydroxide","rm_code":"1000425","pct_w_w":0.1,"uom":"KG","specific_gravity":1,"raw_material_id":3286},{"phase":"Main","inci_name":"AQUA","rm_code":"1000612","pct_w_w":49.2,"uom":"KG","specific_gravity":1,"raw_material_id":3411}]	[{"pm_code":"5L00055","description":"FRAGILE STICKER","pack_type":"Primary","qty_per_unit":0.031,"uom":"PCS"},{"pm_code":"","description":"200 ML SHIPPER 500x250x200 mm with printing and 2 pads","pack_type":"Primary","qty_per_unit":0.031,"uom":"PCS"},{"pm_code":"5M00942","description":"DERMIQ  DAILY CLEANSER 100 ML MONOCARTON","pack_type":"Primary","qty_per_unit":1,"uom":"PCS"},{"pm_code":"4001099","description":"100 ML PET SLEEK PRINTED BOTTLE 24 MM NECK - LIGHT BLUE ( PANTONE 7457C )","pack_type":"Primary","qty_per_unit":1,"uom":"PCS"},{"pm_code":"4001100","description":"24/410 ON/OFF PUMP - LIGHT BLUE","pack_type":"Primary","qty_per_unit":1,"uom":"PCS"},{"pm_code":"","description":"TRANSPARENT VOID TAMPER STICKER","pack_type":"Primary","qty_per_unit":2,"uom":"PCS"}]	2026-06-10 09:33:42.399+00	2026-06-10 09:33:42.399+00	\N	active
+30	1843	[{"phase":"Main","inci_name":"LK 145 D","rm_code":"1000520","pct_w_w":20,"uom":"KG","specific_gravity":0.995,"raw_material_id":3362},{"phase":"Main","inci_name":"Aqua","rm_code":"1001149","pct_w_w":10,"uom":"KG","specific_gravity":0.995,"raw_material_id":3471},{"phase":"Main","inci_name":"Butylene Glycol","rm_code":"1000092","pct_w_w":5,"uom":"KG","specific_gravity":0.995,"raw_material_id":3037},{"phase":"Main","inci_name":"Behentrimonium Chloride","rm_code":"1001081","pct_w_w":3,"uom":"KG","specific_gravity":0.995,"raw_material_id":3437},{"phase":"Main","inci_name":"Propylene Glycol","rm_code":"1000358","pct_w_w":2,"uom":"KG","specific_gravity":0.995,"raw_material_id":3230},{"phase":"Main","inci_name":"MERQUAT 740","rm_code":"1000280","pct_w_w":1,"uom":"KG","specific_gravity":0.995,"raw_material_id":3175},{"phase":"Main","inci_name":"XYLISHINE","rm_code":"1000496","pct_w_w":1,"uom":"KG","specific_gravity":0.995,"raw_material_id":3345},{"phase":"Main","inci_name":"DIASLEEK C 802","rm_code":"1000151","pct_w_w":0.5,"uom":"KG","specific_gravity":0.995,"raw_material_id":3073},{"phase":"Main","inci_name":"VEGAROL 1698","rm_code":"1000473","pct_w_w":0.5,"uom":"KG","specific_gravity":0.995,"raw_material_id":3327},{"phase":"Main","inci_name":"Disodium EDTA","rm_code":"1000153","pct_w_w":0.2,"uom":"KG","specific_gravity":0.995,"raw_material_id":3074},{"phase":"Main","inci_name":"BURBERRY FRESH","rm_code":"2000015","pct_w_w":0.05,"uom":"KG","specific_gravity":0.995,"raw_material_id":3663},{"phase":"Main","inci_name":"AQUA","rm_code":"1000612","pct_w_w":56.75,"uom":"KG","specific_gravity":0.995,"raw_material_id":3411}]	[{"pm_code":"5L00055","description":"FRAGILE STICKER","pack_type":"Primary","qty_per_unit":1,"uom":"PCS"},{"pm_code":"","description":"200 ML SHIPPER 500x250x200 mm with printing and 2 pads","pack_type":"Primary","qty_per_unit":1,"uom":"PCS"},{"pm_code":"","description":"TRANSPARENT VOID TAMPER STICKER","pack_type":"Primary","qty_per_unit":2,"uom":"PCS"},{"pm_code":"4000518","description":"18/410 OIL PUMP-WHITE-RIBBED WITH WHITE DUST CAP(I)","pack_type":"Primary","qty_per_unit":1,"uom":"PCS"},{"pm_code":"4000715","description":"SM11 - 30ML GLOSSY WHITE PET BOTTLE","pack_type":"Primary","qty_per_unit":1,"uom":"PCS"},{"pm_code":"5M00996","description":"DERMASONIQUE ANTI WASH HAIR SERUM 50ML MONOCARTON","pack_type":"Primary","qty_per_unit":1,"uom":"PCS"},{"pm_code":"5L01641","description":"DERMASONIQUE ANTI WASH HAIR SERUM 50ML LABEL","pack_type":"Primary","qty_per_unit":1,"uom":"PCS"}]	2026-06-11 11:14:39.132+00	2026-06-11 11:14:39.132+00	\N	active
 \.
 
 
@@ -8780,7 +8798,8 @@ COPY public.planning_bom_override (id, planning_extracted_id, rm_lines, pm_lines
 --
 
 COPY public.planning_extracted (id, sales_order_id, product_id, order_qty_display, total_kg_display, order_date, due_date, batch_size_display, batches_required, bom_status, approved_by, raw_materials, packaging_materials, color, batch_count, batch_size_kg, planned_start_date, production_line, bom_confirmed_at, bom_specific_gravity, custom_batches, sent_batch_indices, created_at, updated_at, deleted_at, lifecycle_status) FROM stdin;
-1842	1375	8244	1000 units	100 KG	2026-06-10	2026-07-25	100 KG	1	Production Released	Super Admin	[{"raw_material_id":2984,"name":"ALPHA CAPB","quantity":30,"unit":"KG","code":"1000019"},{"raw_material_id":3780,"name":"SODIUM LAURYL SARCOSINATE (ANKUSH)","quantity":5,"unit":"KG","code":"1001041"},{"raw_material_id":3749,"name":"GLYCERINE IP - GODREJ","quantity":3,"unit":"KG","code":"1001427"},{"raw_material_id":3756,"name":"DECYL GLUCOSIDE 50% (APG 2000)","quantity":3,"unit":"KG","code":"1001381"},{"raw_material_id":3373,"name":"INNOCARE ST100","quantity":3,"unit":"KG","code":"1000536"},{"raw_material_id":3091,"name":"EMPIGEN CDR 40","quantity":2,"unit":"KG","code":"1000172"},{"raw_material_id":3757,"name":"LAURYL GLUCOSIDE 50% (APG 1200)","quantity":2,"unit":"KG","code":"1001379"},{"raw_material_id":3755,"name":"ALOE BARBADENSIS (ALOE VERA) LEAF EXTRACT (ROMAT)","quantity":1,"unit":"KG","code":"1001310"},{"raw_material_id":3438,"name":"GALSOFT SCT 40","quantity":1,"unit":"KG","code":"1001082"},{"raw_material_id":3559,"name":"KOPCERIN PE","quantity":0.5,"unit":"KG","code":"1001312"},{"raw_material_id":3074,"name":"Disodium EDTA","quantity":0.2,"unit":"KG","code":"1000153"},{"raw_material_id":3286,"name":"Sodium Hydroxide","quantity":0.1,"unit":"KG","code":"1000425"},{"raw_material_id":3411,"name":"AQUA","quantity":49.2,"unit":"KG","code":"1000612"}]	[{"pack_material_id":7156,"name":"FRAGILE STICKER","quantity":31,"unit":"PCS","code":"5L00055"},{"pack_material_id":null,"name":"200 ML SHIPPER 500x250x200 mm with printing and 2 pads","quantity":31,"unit":"PCS","code":""},{"pack_material_id":8745,"name":"DERMIQ  DAILY CLEANSER 100 ML MONOCARTON","quantity":1000,"unit":"PCS","code":"5M00942"},{"pack_material_id":7024,"name":"100 ML PET SLEEK PRINTED BOTTLE 24 MM NECK - LIGHT BLUE ( PANTONE 7457C )","quantity":1000,"unit":"PCS","code":"4001099"},{"pack_material_id":7025,"name":"24/410 ON/OFF PUMP - LIGHT BLUE","quantity":1000,"unit":"PCS","code":"4001100"},{"pack_material_id":null,"name":"TRANSPARENT VOID TAMPER STICKER","quantity":2000,"unit":"PCS","code":""}]	\N	1	100.00	2026-06-10	Line 1 — Primary Mixer	2026-06-10 09:33:42.461+00	1.000	[{"sizeKg":100}]	[0]	2026-06-10 09:32:22.936+00	2026-06-10 12:15:15.329+00	\N	active
+1843	1376	8350	1000 units	50 KG	2026-06-11	2026-07-26	100 KG	1	Production Released	Super Admin	[{"raw_material_id":3362,"name":"LK 145 D","quantity":10,"unit":"KG","code":"1000520"},{"raw_material_id":3471,"name":"Aqua","quantity":5,"unit":"KG","code":"1001149"},{"raw_material_id":3037,"name":"Butylene Glycol","quantity":2.5,"unit":"KG","code":"1000092"},{"raw_material_id":3437,"name":"Behentrimonium Chloride","quantity":1.5,"unit":"KG","code":"1001081"},{"raw_material_id":3230,"name":"Propylene Glycol","quantity":1,"unit":"KG","code":"1000358"},{"raw_material_id":3175,"name":"MERQUAT 740","quantity":0.5,"unit":"KG","code":"1000280"},{"raw_material_id":3345,"name":"XYLISHINE","quantity":0.5,"unit":"KG","code":"1000496"},{"raw_material_id":3073,"name":"DIASLEEK C 802","quantity":0.25,"unit":"KG","code":"1000151"},{"raw_material_id":3327,"name":"VEGAROL 1698","quantity":0.25,"unit":"KG","code":"1000473"},{"raw_material_id":3074,"name":"Disodium EDTA","quantity":0.1,"unit":"KG","code":"1000153"},{"raw_material_id":3663,"name":"BURBERRY FRESH","quantity":0.025,"unit":"KG","code":"2000015"},{"raw_material_id":3411,"name":"AQUA","quantity":28.375,"unit":"KG","code":"1000612"}]	[{"pack_material_id":7156,"name":"FRAGILE STICKER","quantity":1000,"unit":"PCS","code":"5L00055"},{"pack_material_id":null,"name":"200 ML SHIPPER 500x250x200 mm with printing and 2 pads","quantity":1000,"unit":"PCS","code":""},{"pack_material_id":null,"name":"TRANSPARENT VOID TAMPER STICKER","quantity":2000,"unit":"PCS","code":""},{"pack_material_id":6789,"name":"18/410 OIL PUMP-WHITE-RIBBED WITH WHITE DUST CAP(I)","quantity":1000,"unit":"PCS","code":"4000518"},{"pack_material_id":6867,"name":"SM11 - 30ML GLOSSY WHITE PET BOTTLE","quantity":1000,"unit":"PCS","code":"4000715"},{"pack_material_id":8769,"name":"DERMASONIQUE ANTI WASH HAIR SERUM 50ML MONOCARTON","quantity":1000,"unit":"PCS","code":"5M00996"},{"pack_material_id":8016,"name":"DERMASONIQUE ANTI WASH HAIR SERUM 50ML LABEL","quantity":1000,"unit":"PCS","code":"5L01641"}]	\N	1	100.00	2026-06-11	Line 1 — Primary Mixer	2026-06-11 11:14:39.217+00	0.995	[{"sizeKg":50}]	[0]	2026-06-11 11:10:16.725+00	2026-06-11 14:24:52.806+00	\N	active
+1842	1375	8244	1000 units	100 KG	2026-06-10	2026-07-25	100 KG	1	Production Released	Super Admin	[{"raw_material_id":2984,"name":"ALPHA CAPB","quantity":30,"unit":"KG","code":"1000019"},{"raw_material_id":3780,"name":"SODIUM LAURYL SARCOSINATE (ANKUSH)","quantity":5,"unit":"KG","code":"1001041"},{"raw_material_id":3749,"name":"GLYCERINE IP - GODREJ","quantity":3,"unit":"KG","code":"1001427"},{"raw_material_id":3756,"name":"DECYL GLUCOSIDE 50% (APG 2000)","quantity":3,"unit":"KG","code":"1001381"},{"raw_material_id":3373,"name":"INNOCARE ST100","quantity":3,"unit":"KG","code":"1000536"},{"raw_material_id":3091,"name":"EMPIGEN CDR 40","quantity":2,"unit":"KG","code":"1000172"},{"raw_material_id":3757,"name":"LAURYL GLUCOSIDE 50% (APG 1200)","quantity":2,"unit":"KG","code":"1001379"},{"raw_material_id":3755,"name":"ALOE BARBADENSIS (ALOE VERA) LEAF EXTRACT (ROMAT)","quantity":1,"unit":"KG","code":"1001310"},{"raw_material_id":3438,"name":"GALSOFT SCT 40","quantity":1,"unit":"KG","code":"1001082"},{"raw_material_id":3559,"name":"KOPCERIN PE","quantity":0.5,"unit":"KG","code":"1001312"},{"raw_material_id":3074,"name":"Disodium EDTA","quantity":0.2,"unit":"KG","code":"1000153"},{"raw_material_id":3286,"name":"Sodium Hydroxide","quantity":0.1,"unit":"KG","code":"1000425"},{"raw_material_id":3411,"name":"AQUA","quantity":49.2,"unit":"KG","code":"1000612"}]	[{"pack_material_id":7156,"name":"FRAGILE STICKER","quantity":31,"unit":"PCS","code":"5L00055"},{"pack_material_id":null,"name":"200 ML SHIPPER 500x250x200 mm with printing and 2 pads","quantity":31,"unit":"PCS","code":""},{"pack_material_id":8745,"name":"DERMIQ  DAILY CLEANSER 100 ML MONOCARTON","quantity":1000,"unit":"PCS","code":"5M00942"},{"pack_material_id":7024,"name":"100 ML PET SLEEK PRINTED BOTTLE 24 MM NECK - LIGHT BLUE ( PANTONE 7457C )","quantity":1000,"unit":"PCS","code":"4001099"},{"pack_material_id":7025,"name":"24/410 ON/OFF PUMP - LIGHT BLUE","quantity":1000,"unit":"PCS","code":"4001100"},{"pack_material_id":null,"name":"TRANSPARENT VOID TAMPER STICKER","quantity":2000,"unit":"PCS","code":""}]	\N	3	100.00	2026-06-10	Line 1 — Primary Mixer	2026-06-10 09:33:42.461+00	1.000	[{"sizeKg":100},{"sizeKg":0}]	[0,1]	2026-06-10 09:32:22.936+00	2026-06-11 14:24:52.775+00	\N	active
 \.
 
 
@@ -8790,6 +8809,9 @@ COPY public.planning_extracted (id, sales_order_id, product_id, order_qty_displa
 
 COPY public.planning_quotation_asks (id, planning_extracted_id, item_type, raw_material_id, pack_material_id, item_code, item_name, quantity_requested, unit, vendor_hint, moq_hint, status, notes, requested_by, fulfilled_at, created_at, updated_at, deleted_at, lifecycle_status) FROM stdin;
 19	1842	RM	3074	\N	1000153	DISODIUM EDTA	0.200000	KG	\N	\N	fulfilled	Quotation requested from Planning · Qty: 0.2 KG · Procurement to set vendor, price, MOQ, and lead time	superadmin@example.com	2026-06-10 09:39:11.257+00	2026-06-10 09:34:44.446+00	2026-06-10 09:39:11.257+00	\N	active
+22	1842	RM	3756	\N	1001381	DECYL GLUCOSIDE 50% (APG 2000)	1.000000	KG	\N	\N	fulfilled	Quotation requested from Planning · Qty: 1 KG · Procurement to set vendor, price, MOQ, and lead time	superadmin@example.com	2026-06-11 10:44:12.256+00	2026-06-11 10:43:44.996+00	2026-06-11 10:44:12.256+00	\N	active
+21	1842	PM	\N	7156	5L00055	FRAGILE STICKER	10.000000	PCS	\N	\N	fulfilled	Quotation requested from Planning · Qty: 10 PCS · Procurement to set vendor, price, MOQ, and lead time	superadmin@example.com	2026-06-11 10:44:19.695+00	2026-06-11 10:43:34.421+00	2026-06-11 10:44:19.696+00	\N	active
+20	1842	PM	\N	7025	4001100	24/410 ON/OFF PUMP - LIGHT BLUE	90.000000	PCS	\N	\N	fulfilled	Quotation requested from Planning · Qty: 90 PCS · Procurement to set vendor, price, MOQ, and lead time	superadmin@example.com	2026-06-11 10:44:28.828+00	2026-06-11 10:43:18.884+00	2026-06-11 10:44:28.829+00	\N	active
 \.
 
 
@@ -8814,7 +8836,11 @@ COPY public.procurement_quotations (id, procurement_request_id, vendor_id, quote
 --
 
 COPY public.procurement_requests (id, planning_extracted_id, planning_batch_id, priority, required_by_date, notes, items, status, preferred_vendor, requested_by, stock_check_assigned_to, stock_check_status, stock_check_due_date, stock_check_notes, created_at, updated_at, deleted_at, lifecycle_status) FROM stdin;
+48	1842	\N	High	2026-06-25	Planned group: akira advisors llp|||As per contract|||1	[{"type":"RM","code":"1000612","name":"AQUA","required":77.575,"sih":0,"shortage":77.575,"quantity_requested":77.575,"unit":"KG","line_notes":"Planned rate ₹10.00 | Terms: As per contract | Lead: 1d","planned_unit_price":10,"required_by_date":"2026-06-25","lead_time_days":1,"raw_material_id":3411,"moq_min":50}]	PO Draft	AKIRA ADVISORS LLP	superadmin@example.com	\N	\N	\N	\N	2026-06-11 14:04:21.393+00	2026-06-11 14:11:01.124+00	2026-06-11 14:11:01.124+00	deleted
+49	1842	\N	High	2026-06-25	Planned group: akira advisors llp|||As per contract|||1	[{"type":"RM","code":"1000612","name":"AQUA","required":61.94748187,"sih":0,"shortage":61.94748187,"quantity_requested":61.94748187,"unit":"KG","line_notes":"Planned rate ₹10.00 | Terms: As per contract | Lead: 1d","planned_unit_price":10,"required_by_date":"2026-06-25","lead_time_days":1,"raw_material_id":3411,"moq_min":50}]	Pending	AKIRA ADVISORS LLP	superadmin@example.com	\N	\N	\N	\N	2026-06-11 14:13:24.05+00	2026-06-11 14:13:24.077+00	\N	active
 46	1842	44	High	2026-06-24	Planned group: adobe systems software ireland ltd|||As per contract|||0 · planning_batch #44	[{"type":"RM","code":"1000153","name":"DISODIUM EDTA","required":4.2,"sih":0,"shortage":4.2,"quantity_requested":4.2,"unit":"KG","line_notes":"Planned rate ₹12.00 | Terms: As per contract | Lead: 0d","planned_unit_price":12,"raw_material_id":3074,"moq_min":1,"lead_time_days":0}]	Pending	Adobe Systems Software Ireland Ltd	superadmin@example.com	Warehouse Team	Completed	\N	{"version":1,"outcome":"all_ok","updatedAt":"2026-06-10T11:43:01.921Z","updatedBy":"Warehouse Team","lines":[{"itemCode":"1000153","itemName":"DISODIUM EDTA","systemQty":9,"physicalQty":7,"consumptionQty":0,"gapQty":2,"location":"RM Store","zone":"RM Store","updatedStockQty":9,"gapApproved":true,"gapApprovedAt":"2026-06-10T11:46:02.872Z","gapApprovedBy":"Super Admin","gapAppliedQty":2}],"gapApprovalAt":"2026-06-10T11:46:02.872Z","gapApprovalBy":"Super Admin"}	2026-06-10 09:43:30.453+00	2026-06-10 11:46:02.93+00	\N	active
+50	1842	46	High	2026-06-30	Planned group: akira advisors llp|||As per contract|||1 · planning_batch #46	[{"type":"RM","code":"1000612","name":"AQUA","required":15.62751813,"sih":0,"shortage":15.62751813,"quantity_requested":15.62751813,"unit":"KG","line_notes":"Planned rate ₹10.00 | Terms: As per contract | Lead: 1d","planned_unit_price":10,"required_by_date":"2026-06-30","lead_time_days":1,"raw_material_id":3411,"moq_min":50}]	Pending	AKIRA ADVISORS LLP	superadmin@example.com	\N	\N	\N	\N	2026-06-11 14:13:24.182+00	2026-06-11 14:13:24.22+00	\N	active
+47	1842	\N	High	2026-06-25	Planned group: akira advisors llp|||As per contract|||1	[{"type":"RM","code":"1000612","name":"AQUA","required":77.575,"sih":0,"shortage":77.575,"quantity_requested":77.575,"unit":"KG","line_notes":"Planned rate ₹10.00 | Terms: As per contract | Lead: 1d","planned_unit_price":10,"required_by_date":"2026-06-25","lead_time_days":1,"raw_material_id":3411,"moq_min":50}]	PO Draft	AKIRA ADVISORS LLP	superadmin@example.com	\N	\N	\N	\N	2026-06-11 14:02:48.287+00	2026-06-11 14:03:31.741+00	2026-06-11 14:03:31.741+00	deleted
 \.
 
 
@@ -8831,6 +8857,9 @@ COPY public.product_customizations (customization_id, user_id, product_id, categ
 --
 
 COPY public.production_batches (id, bmr_no, bpr_no, product_name, sku, so_no, order_qty, batch_size, batch_no, batch_index, total_batches, planning_batch_id, bmr_status, bpr_status, color, process_type, homogenizer, main_vessel, supporting_tanks, filling_line, filling_type, packaging_line, monocarton, shrink, team_bmr, team_bpr, qc_officer_bmr, qc_officer_bpr, mfg_date, fill_date, pack_date, fg_date, rm_connect_date, pm_connect_date, rm_reserved, pm_reserved, rm_connected, pm_connected, dispensing_rm, dispensing_pm, mu_dispensing_bundle_id, mu_dispensing_bundles, bulk_yield, fill_yield, fg_yield, bulk_batch_accepted, fill_batch_accepted, fg_batch_accepted, qc_specs, remarks, due_date, compatible_vessels, compatible_fill_lines, compatible_pack_lines, required_volume_liters, created_at, updated_at, scheduled_mu_zone, schedule_remarks, deleted_at, lifecycle_status) FROM stdin;
+31	BMR-2026-001	BPR-2026-001	DERMIQ DAILY CLEANSER 100ML	PR0006814	EI-SO-2026-001	1000	100	B-01	1	1	44	draft	draft	\N	\N	f	\N	\N	\N	\N	\N	f	f	\N	\N	\N	\N	2026-06-10	2026-06-13	2026-06-14	2026-06-15	2026-06-08	2026-06-11	f	f	f	f	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	2026-06-11 10:13:45.985+00	2026-06-11 10:13:46.061+00	\N	\N	\N	active
+32	BMR-2026-002	BPR-2026-002	DERMASONIQUE ANTI WASH HAIR SERUM 50ML	PR0006524	EI-SO-2026-002	1000	50	B-01	1	1	46	draft	draft	\N	\N	f	\N	\N	\N	\N	\N	f	f	\N	\N	\N	\N	2026-06-11	2026-06-14	2026-06-15	2026-06-16	2026-06-09	2026-06-12	f	f	f	f	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	2026-06-11 11:14:48.23+00	2026-06-11 11:14:48.296+00	\N	\N	\N	active
+33	BMR-2026-003	BPR-2026-003	DERMIQ DAILY CLEANSER 100ML	PR0006814	EI-SO-2026-001	1000	0	B-02	2	2	45	draft	draft	\N	\N	f	\N	\N	\N	\N	\N	f	f	\N	\N	\N	\N	2026-06-17	2026-06-20	2026-06-21	2026-06-22	2026-06-15	2026-06-18	f	f	f	f	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	2026-06-11 11:20:43.854+00	2026-06-11 11:20:43.877+00	\N	\N	\N	active
 \.
 
 
@@ -9046,6 +9075,8 @@ COPY public.products (product_id, status, availability, deleted_at, product_code
 --
 
 COPY public.purchase_orders (id, order_id, vendor_name, branch, order_date, expected_shipment_date, reference, payment_terms, status, order_status, form_data, items, zoho_purchase_order_id, zoho_bill_id, created_at, updated_at, deleted_at, lifecycle_status) FROM stdin;
+537	DPO-001	AKIRA ADVISORS LLP	\N	2026-06-11	2026-06-12	PR-REQ-047	NEFT 60	Draft	{}	{"requestId":"47","requestCode":"PR-REQ-047","vendorClientId":"1495","vendorEntityCode":"EI-VEN-00007"}	[{"itemName":"AQUA","itemCode":"1000612","quantity":"77.575","rate":"10","tax":"18","lead_time_days":1,"raw_material_id":3411}]	\N	\N	2026-06-11 14:03:28.098+00	2026-06-11 14:03:31.771+00	2026-06-11 14:03:31.771+00	deleted
+538	DPO-001	AKIRA ADVISORS LLP	\N	2026-06-11	2026-06-12	PR-REQ-048	NEFT 60	Draft	{}	{"requestId":"48","requestCode":"PR-REQ-048","vendorClientId":"1495","vendorEntityCode":"EI-VEN-00007"}	[{"itemName":"AQUA","itemCode":"1000612","quantity":"77.575","rate":"10","tax":"18","lead_time_days":1,"raw_material_id":3411}]	\N	\N	2026-06-11 14:10:55.417+00	2026-06-11 14:11:01.148+00	2026-06-11 14:11:01.148+00	deleted
 \.
 
 
@@ -9909,8 +9940,8 @@ COPY public.raw_materials (id, code, name, inci, category, rm_type, uom, price_p
 3257	1000392	SALICYLIC ACID	Salicylic Acid	Bulk raw materials	Bulk Raw Materials	L	\N	18.00	12	0.900	\N	active	["TPR00301"]	Acids	1252231000000888813	1000392	33021090	Taxable		{"zohoId":"1252231000000888813","rmTaxPreference":"Taxable","rmReturnable":"No","rmAssociateItems":"AC2303CMDS\\nCM2302AAMG\\nDD2210SPED\\nDP2112ZFF\\nDSN2301FC\\nDSN2301MOM\\nDSN2301SLC\\nHW2202SBC\\nME2206BFFW\\nMM2207TBS\\nMM2207TBSs\\nMM2207TOS\\nMM2207TOSs\\nMO2208ASGS\\nMS2212NR\\nMS2212NR(EIMFR)\\nOL2207TSNO\\nPB2108DCS\\nPB2201HRM\\nPP2109DNM\\nPP2204CDT\\nPR0000806\\nPR0000809\\nPR0001070\\nPR0002001\\nPR0002005\\nPR0002317\\nPR0002540\\nPR0002557\\nPR0002783\\nPR0002841\\nPR0002875\\nPR0002889\\nPR0002935\\nPR0002965\\nPR0003012\\nPR0003146\\nPR0003203\\nPR0003374\\nPR0003400\\nPR0003507\\nPR0003543\\nPR0003616\\nPR0003749\\nPR0003805\\nPR0003861\\nPR0003870\\nPR0003924\\nPR0004036\\nPR0004037\\nPR0004038\\nPR0004143\\nPR0004145\\nPR0004162\\nPR0004166\\nPR0004188\\nPR0004211\\nPR0004241\\nPR0004312\\nPR0004313\\nPR0004345\\nPR0004386\\nPR0004389\\nPR0004391\\nPR0004392\\nPR0004485\\nPR0004570\\nPR0004585\\nPR0004609\\nPR0004614\\nPR0004628\\nPR0004630\\nPR0004647\\nPR0004704\\nPR0004716\\nPR0004735\\nPR0004787\\nPR0004828\\nPR0004869\\nPR0004950\\nPR0005005\\nPR0005009\\nPR0005020\\nPR0005021\\nPR0005028\\nPR0005032\\nPR0005043\\nPR0005044\\nPR0005063\\nPR0005086\\nPR0005087\\nPR0005126\\nPR0005177\\nPR0005235\\nPR0005378\\nPR0005380\\nPR0005418\\nPR0005452\\nPR0005485\\nPR0005588\\nPR0005652\\nPR0005689\\nPR0005781\\nPR0005784\\nPR0005785\\nPR0005798\\nPR0005978\\nPR0005979\\nPR0006084\\nPR0006089\\nPR0006090\\nPR0006112\\nPR0006159\\nPR0006213\\nPR0006353\\nPR0006385\\nPR0006411\\nPR0006413\\nPR0006437\\nPR0006448\\nPR0006454\\nPR0006462\\nPR0006496\\nPR0006519\\nPR0006522\\nPR0006542\\nPR0006574\\nPR0006597\\nPR0006647\\nPR0006651\\nPR0006665\\nPR0006700\\nPR0006736\\nPR0006740\\nPR0006746\\nPR0006775\\nPR0006781\\nPR0006791\\nPR0006792\\nPR0006894\\nPR0006895\\nPR0006911\\nPR0006920\\nPR0006925\\nPR0006944\\nPR0007035\\nPR0007039\\nPR0007100\\nPR0007103\\nSK2110SNFM\\nSK2202ASFT\\nSK2202ATD\\nSK2202RADS\\nSK2202RFSD\\nSK2202STADS\\nSN2203LW\\nSN2304GRFW\\nSQ2212ACMT\\nSS2206AAFW\\nSS2206AAPS\\nSS2206AAT\\nSS2206ABP\\nSS2209ABPS\\nSS2303ACFW\\nSV2305ISBC\\nPR0007380","rmCategoryKey":"MISC","rmCategory":"Bulk raw materials","qcInspectionGroup":"","subCategory":"Bulk raw materials","optionalRmSubCategory":"","optionalRmSubSubCategory":"","hazardHandlingClass":"","seriesPrefix":"EI-RM-MISC","rmDefaultStorageType":"","inciName":"Salicylic Acid","tradeCommercialName":"SALICYLIC ACID","functionRole":"","rmType":"Bulk Raw Materials","casNo":"","einecs":"","countryOfOrigin":"","manufacturer":"","synonyms":"","internalNotes":"","primaryUom":"L","issueUom":"","standardPackSize":"","hsnCode":"33021090","gst":"18","preferredCurrency":"INR","grade":"IP","bisCompliance":"","animalOrigin":"","compliance":"","allergenRequired":false,"gmoRequired":false,"sdsAvailable":false,"coaAvailable":false,"regulatoryNotes":"","regMaxUseLevelPct":"","regAllergenDeclarationEu26":"","regIfraCategoryLimit":"","regCiNumber":"","regApprovedArea":"","rmState":"Liquid","appearance":"white","odour":"","activeContentPurityPct":"","viscosityP":"","meltingPointC":"","boilingPointC":"","flashPointC":"","specificGravity":"0.9","refractiveIndex":"","chargeType":"","activeMatterPct":"","hlbValue":"","residualSolventsPpm":"","pathogen":"","moistureContentPct":"","doseUseLevel":"","ph":"","vocPct":"","opticalSpectroscopy":"","colourImpartToFormulation":"","msdsSdsNotesLink":"NA","storageCondition":"below 30","dispensingDirection":"","arNumber":"11223","coaRequired":"No","acceptanceSpecMin":"","acceptanceSpecMax":"","physicalFormSolid":"","physicalFormLiquid":"","preferredVendor":"","preferredVendorClientId":"","alternateVendors":"","alternateVendorClientId":"","sourcingCountryOfOrigin":"","sourcingMoq":"","sourcingLeadTimeDays":"","sourcingStandardUom":"L","sourcingCurrency":"INR","assayPurity":"","appearanceSpec":"","phSpec":"","moistureLod":"","heavyMetalsSpec":"","microbialSpec":"","odorColorSpec":"","otherSpecs":"","recommendedUseLevel":"","maxUseLevel":"","solubility":"","processingGuidance":"","incompatibilities":"","stabilityNotes":"","claims":"","storageConditions":"","shelfLife":"12","retestPeriod":"","warehouseLocation":"","batchTracking":"","fifoFefo":"","minimumStock":"","reorderLevel":"","dispensingBatchNo":"","masterLifecycleStatus":"Active","rmOwner":"","universalSwapEligibility":"","functionalEquivalents":"","handlingNotes":"","vendors":[{"id":"1780652750719","name":"ASHIRWAD POLYMERS","location":"India","moq":10,"unitPrice":20,"leadTime":0,"approved":"","priceValidTill":"","currency":"INR","advancePct":"0","preShipmentPct":"0","postShipmentPct":"0","creditDays":"","tiers":[{"moq":"10","price":"20","validTill":"2026-06-06","note":""}]}],"documents":[],"tests":[],"accountingCategory":"","category":"Bulk raw materials"}	2026-05-10 10:44:31.355+00	2026-06-05 18:33:41.49+00	\N	active	Active		\N	
 3578	1001357	VITAMIN F-WATER SOLUABLE	Aqua	Bulk Raw Materials	\N	KG	4908.86	18.00	\N	1.000	\N	active	["PR0003689","PR0003771","PR0003788","PR0003820","PR0003830","PR0003836","PR0003852","PR0006726","SK2108BSFS","SK2201MBFS","SS2208SS","SS2209RNS","SV2305DND","VB2206BFS","VB2206HMOM","VB2206MNM","VB2206RBS","VB2206SCFM","VB2206WRS","MM2210THSV","PR0002022","PR0003891","PR0003920","OL2207TCD","PR0003985","PR0004054","PR0004055","PR0004056","PR0004057","PR0004087","PR0004101","PR0004164","PR0004229","PR0004239","PR0004265","PR0004272","PR0004277","PR0004282","PR0004287","PR0004295","PR0004351","PR0004376","PR0004408","PR0004455","PR0004468","PR0004641","PR0004647","PR0004682","PR0004693","PR0004827"]	Actives & Vitamins	1252231000013723108	1001357	33021090	Taxable	\N	{"subCategory":"Actives & Vitamins","rmCategoryKey":"MISC","rmCategory":"Bulk Raw Materials","rmType":"Bulk Raw Materials","excelCategory":"Bulk Raw Materials","excelSubCategory":"Actives & Vitamins"}	2026-05-10 10:44:44.765+00	2026-05-28 11:55:50.2+00	\N	active	\N	\N	\N	\N
 3667	2000030	COOL WATER W 3415	Aqua	Pre-mixed Bases	\N	kg	2423.00	18.00	\N	1.000	\N	active	["KD2203DGC","PR0003517","PR0003546","PR0003759","PR0004150","PR0004158","PR0004164","PR0004229","PR0004259","PR0004408","PR0004411","PR0004792","PR0004847","PR0006015","PR0006909","PR0006915","PR0006926","PR0006954","PR0007050","N2201NS","PR0002711","PR0003985","OL2207TSD","PR0004828","PR0004874","PR0004897","PR0004905","PR0004913","PR0004927","PR0005139","PR0005340","PR0005344","PR0005348","PR0005352","PR0005788","PR0005979","PR0005980","PR0006082","PR0006222","PR0006224","PR0006229","PR0006276","PR0006352","PR0006736","PR0007194","PRINB0005","RD2211UNHS","RP2108NGNS","RP2111UES","SN0201CM","SN2203YCS","SN2207GLYA","SOS2312FHL","SOS2312HSS","SS2208BFWS","SS2208HGC","SS2208HGCS","SS2208HS","SS2209RNS","TPR0003276","VB2206BFS"]	Pre-mixed Bases	1252231000000896429	2000030	33012990	Taxable	\N	{"subCategory":"Pre-mixed Bases","rmCategoryKey":"MISC","rmCategory":"Pre-mixed Bases","rmType":"Pre-mixed Bases","excelCategory":"Pre-mixed Bases","excelSubCategory":"Pre-mixed Bases"}	2026-05-10 10:44:48.31+00	2026-05-28 11:56:07.987+00	\N	active	\N	\N	\N	\N
-2969	1000002	AC 224 LENOCARE SMCT	Salicylic Acid	Bulk raw materials	Bulk Raw Materials	kg	\N	18.00	8	1.000	\N	active	["AC2303DRPM","LJ2203GGL","PR0006276","SS2208AFFS","SS2208BFW","SS2208BFWS","TPR000999","TPR00301"]	General	1252231000000893607	1000002	33021090	Taxable	\N	{"zohoId":"1252231000000893607","rmTaxPreference":"Taxable","rmReturnable":"No","rmAssociateItems":"AC2303DRPM\\nLJ2203GGL\\nPR0006276\\nSS2208AFFS\\nSS2208BFW\\nSS2208BFWS\\nTPR000999","products":["AC2303DRPM","LJ2203GGL","PR0006276","SS2208AFFS","SS2208BFW","SS2208BFWS","TPR000999"],"rmCategoryKey":"MISC","rmCategory":"Bulk raw materials","qcInspectionGroup":"","subCategory":"Bulk raw materials","optionalRmSubCategory":"","optionalRmSubSubCategory":"","hazardHandlingClass":"","seriesPrefix":"EI-RM-MISC","rmDefaultStorageType":"","inciName":"Salicylic Acid","tradeCommercialName":"AC 224 LENOCARE SMCT","functionRole":"","rmType":"Bulk Raw Materials","casNo":"","einecs":"","countryOfOrigin":"","manufacturer":"","synonyms":"","internalNotes":"","primaryUom":"kg","issueUom":"","standardPackSize":"","hsnCode":"33021090","gst":"18","preferredCurrency":"INR","grade":"Cosmetic","bisCompliance":"","animalOrigin":"","compliance":"","allergenRequired":false,"gmoRequired":false,"sdsAvailable":false,"coaAvailable":false,"regulatoryNotes":"","regMaxUseLevelPct":"","regAllergenDeclarationEu26":"","regIfraCategoryLimit":"","regCiNumber":"","regApprovedArea":"","rmState":"Solid","appearance":"guyibijk","odour":"","activeContentPurityPct":"","viscosityP":"","meltingPointC":"","boilingPointC":"","flashPointC":"","specificGravity":"1","refractiveIndex":"","chargeType":"","activeMatterPct":"","hlbValue":"","residualSolventsPpm":"","pathogen":"","moistureContentPct":"","doseUseLevel":"","ph":"","vocPct":"","opticalSpectroscopy":"","colourImpartToFormulation":"","msdsSdsNotesLink":"j","storageCondition":"kj","dispensingDirection":"","arNumber":"89","coaRequired":"No","acceptanceSpecMin":"","acceptanceSpecMax":"","physicalFormSolid":"","physicalFormLiquid":"","preferredVendor":"20 MICRONS NANO MINERALS LIMITED","preferredVendorClientId":"","alternateVendors":"","alternateVendorClientId":"","sourcingCountryOfOrigin":"","sourcingMoq":"","sourcingLeadTimeDays":"","sourcingStandardUom":"kg","sourcingCurrency":"INR","assayPurity":"","appearanceSpec":"","phSpec":"","moistureLod":"","heavyMetalsSpec":"","microbialSpec":"","odorColorSpec":"","otherSpecs":"","recommendedUseLevel":"","maxUseLevel":"","solubility":"","processingGuidance":"","incompatibilities":"","stabilityNotes":"","claims":"","storageConditions":"","shelfLife":"8","retestPeriod":"","warehouseLocation":"","batchTracking":"","fifoFefo":"","minimumStock":"","reorderLevel":"","dispensingBatchNo":"","masterLifecycleStatus":"Active","rmOwner":"","universalSwapEligibility":"","functionalEquivalents":"","handlingNotes":"","vendors":[{"id":"1780562087495","name":"20 MICRONS NANO MINERALS LIMITED","location":"Gujarat","moq":9,"unitPrice":9,"leadTime":0,"approved":"","priceValidTill":"","currency":"INR","advancePct":"0","preShipmentPct":"0","postShipmentPct":"0","creditDays":"0","tiers":[{"moq":"9.0000","price":"9","validTill":"2026-06-05","note":""}]}],"documents":[],"tests":[],"category":"Bulk raw materials"}	2026-05-10 10:44:21.604+00	2026-06-05 18:33:41.491+00	\N	active	Active		\N	
 2970	1000003	AC 506 PCA-ZN	AC 506 PCA-ZN	Bulk raw materials	Bulk Raw Materials	KG	\N	18.00		1.000	\N	active	["AE2208HS","DP2112SLO","EIDSNS072022","IS2208OBH","N2201NS","PR0002935","PR0003543","PR0003828","PR0003861","PR0003864","PR0003924","PR0004131","PR0004188","PR0004383","PR0004630","PR0004708","PR0005021","PR0005203","PR0005588","PR0005629","PR0006183","PR0006306","PR0006352","PR0006448","PR0006651","PR0006718","PR0006920","PR0006944","PR0007039","PR0007103","RD2211UNHS","SK2202PFSD","SK2202RFSD","SN2304GRFW","SQ2212ACMT"]	General	1252231000000889578	1000003	33021090	Taxable	\N	{"zohoId":"1252231000000889578","rmTaxPreference":"Taxable","rmReturnable":"No","rmAssociateItems":"AE2208HS\\nDP2112SLO\\nEIDSNS072022\\nIS2208OBH\\nN2201NS\\nPR0002935\\nPR0003543\\nPR0003828\\nPR0003861\\nPR0003864\\nPR0003924\\nPR0004131\\nPR0004188\\nPR0004383\\nPR0004630\\nPR0004708\\nPR0005021\\nPR0005203\\nPR0005588\\nPR0005629\\nPR0006183\\nPR0006306\\nPR0006352\\nPR0006448\\nPR0006651\\nPR0006718\\nPR0006920\\nPR0006944\\nPR0007039\\nPR0007103\\nRD2211UNHS\\nSK2202PFSD\\nSK2202RFSD\\nSN2304GRFW\\nSQ2212ACMT","products":["AE2208HS","DP2112SLO","EIDSNS072022","IS2208OBH","N2201NS","PR0002935","PR0003543","PR0003828","PR0003861","PR0003864","PR0003924","PR0004131","PR0004188","PR0004383","PR0004630","PR0004708","PR0005021","PR0005203","PR0005588","PR0005629","PR0006183","PR0006306","PR0006352","PR0006448","PR0006651","PR0006718","PR0006920","PR0006944","PR0007039","PR0007103","RD2211UNHS","SK2202PFSD","SK2202RFSD","SN2304GRFW","SQ2212ACMT"],"rmCategoryKey":"MISC","rmCategory":"Bulk raw materials","qcInspectionGroup":"","subCategory":"Bulk raw materials","optionalRmSubCategory":"Emulsifiers","optionalRmSubSubCategory":"","hazardHandlingClass":"","seriesPrefix":"EI-RM-MISC","rmDefaultStorageType":"","inciName":"AC 506 PCA-ZN","tradeCommercialName":"AC 506 PCA-ZN","functionRole":"","rmType":"Bulk Raw Materials","casNo":"","einecs":"","countryOfOrigin":"","manufacturer":"","synonyms":"","internalNotes":"","primaryUom":"KG","issueUom":"","standardPackSize":"","hsnCode":"33021090","gst":"18","preferredCurrency":"INR","grade":"","bisCompliance":"","animalOrigin":"","compliance":"","allergenRequired":false,"gmoRequired":false,"sdsAvailable":false,"coaAvailable":false,"regulatoryNotes":"","regMaxUseLevelPct":"","regAllergenDeclarationEu26":"","regIfraCategoryLimit":"","regCiNumber":"","regApprovedArea":"","rmState":"","appearance":"","odour":"","activeContentPurityPct":"","viscosityP":"","meltingPointC":"","boilingPointC":"","flashPointC":"","specificGravity":"1","refractiveIndex":"","chargeType":"","activeMatterPct":"","hlbValue":"","residualSolventsPpm":"","pathogen":"","moistureContentPct":"","doseUseLevel":"","ph":"","vocPct":"","opticalSpectroscopy":"","colourImpartToFormulation":"","msdsSdsNotesLink":"","storageCondition":"","dispensingDirection":"","arNumber":"","coaRequired":"","acceptanceSpecMin":"","acceptanceSpecMax":"","physicalFormSolid":"","physicalFormLiquid":"","preferredVendor":"","preferredVendorClientId":"","alternateVendors":"","alternateVendorClientId":"","sourcingCountryOfOrigin":"","sourcingMoq":"","sourcingLeadTimeDays":"","sourcingStandardUom":"KG","sourcingCurrency":"INR","assayPurity":"","appearanceSpec":"","phSpec":"","moistureLod":"","heavyMetalsSpec":"","microbialSpec":"","odorColorSpec":"","otherSpecs":"","recommendedUseLevel":"","maxUseLevel":"","solubility":"","processingGuidance":"","incompatibilities":"","stabilityNotes":"","claims":"","storageConditions":"","shelfLife":"","retestPeriod":"","warehouseLocation":"","batchTracking":"","fifoFefo":"","minimumStock":"","reorderLevel":"","dispensingBatchNo":"","masterLifecycleStatus":"Active","rmOwner":"","universalSwapEligibility":"","functionalEquivalents":"","handlingNotes":"","vendors":[],"documents":[],"tests":[],"category":"Bulk raw materials"}	2026-05-10 10:44:21.957+00	2026-06-05 12:33:09.483+00	\N	active	Active		\N	
+2969	1000002	AC 224 LENOCARE SMCT	Salicylic Acid	Bulk raw materials	Bulk Raw Materials	GM	\N	18.00	8	1.000	\N	active	["AC2303DRPM","LJ2203GGL","PR0006276","SS2208AFFS","SS2208BFW","SS2208BFWS","TPR000999"]	General	1252231000000893607	1000002	33021090	Taxable	\N	{"zohoId":"1252231000000893607","rmTaxPreference":"Taxable","rmReturnable":"No","rmAssociateItems":"AC2303DRPM\\nLJ2203GGL\\nPR0006276\\nSS2208AFFS\\nSS2208BFW\\nSS2208BFWS\\nTPR000999","products":["AC2303DRPM","LJ2203GGL","PR0006276","SS2208AFFS","SS2208BFW","SS2208BFWS","TPR000999"],"rmCategoryKey":"MISC","rmCategory":"Bulk raw materials","qcInspectionGroup":"","subCategory":"Bulk raw materials","optionalRmSubCategory":"Surfactant","optionalRmSubSubCategory":"Non-ionic","hazardHandlingClass":"","seriesPrefix":"EI-RM-MISC","rmDefaultStorageType":"","inciName":"Salicylic Acid","tradeCommercialName":"AC 224 LENOCARE SMCT","functionRole":"","rmType":"Bulk Raw Materials","casNo":"","einecs":"","countryOfOrigin":"","manufacturer":"","synonyms":"","internalNotes":"","primaryUom":"GM","issueUom":"","standardPackSize":"","hsnCode":"33021090","gst":"18","preferredCurrency":"INR","grade":"Cosmetic","bisCompliance":"","animalOrigin":"","compliance":"","allergenRequired":false,"gmoRequired":false,"sdsAvailable":false,"coaAvailable":false,"regulatoryNotes":"","regMaxUseLevelPct":"","regAllergenDeclarationEu26":"","regIfraCategoryLimit":"","regCiNumber":"","regApprovedArea":"","rmState":"Solid","appearance":"guyibijk","odour":"","activeContentPurityPct":"","viscosityP":"","meltingPointC":"","boilingPointC":"","flashPointC":"","specificGravity":"1","refractiveIndex":"","chargeType":"","activeMatterPct":"","hlbValue":"","residualSolventsPpm":"","pathogen":"","moistureContentPct":"","doseUseLevel":"","ph":"","vocPct":"","opticalSpectroscopy":"","colourImpartToFormulation":"","msdsSdsNotesLink":"j","storageCondition":"kj","dispensingDirection":"","coaRequired":"No","acceptanceSpecMin":"","acceptanceSpecMax":"","rmQualitySpecRows":[{"id":"qs-1781172177495-14po90q","parameter":"Appearance","specLimit":"Per Master","method":"Visual","mandatory":false,"tolerance":"Match","frequency":"Per batch","sample":"10g","acceptance":"Match","attachments":[{"id":"qsa-1781172503570-pggig3t","type":"file","name":"01_Active_Clients_for_EIAdmin.xlsx","url":"/api/v1/master-attachments/quality-spec/82cffb24-e6a9-4af6-a704-bc5391883bbf-01_Active_Clients_for_EIAdmin.xlsx"},{"id":"qsa-1781172515846-e4rghr9","type":"file","name":"01_Active_Clients_for_EIAdmin.xlsx","url":"/api/v1/master-attachments/quality-spec/d4ea3940-4e37-4177-8342-f72b86a7aeb6-01_Active_Clients_for_EIAdmin.xlsx"}]},{"id":"qs-1781172177495-xtwahh8","parameter":"Color","specLimit":"Per Master","method":"Visual vs standard","mandatory":false,"tolerance":"Match","frequency":"Per batch","sample":"10g","acceptance":"Match","attachments":[]},{"id":"qs-1781172177495-pqfwmaj","parameter":"Odor","specLimit":"Per Master","method":"Olfactory","mandatory":false,"tolerance":"Match","frequency":"Per batch","sample":"10g","acceptance":"Match","attachments":[]},{"id":"qs-1781172177495-x5u1wip","parameter":"pH","specLimit":"Per Master","method":"pH meter @25°C","mandatory":false,"tolerance":"±0.3","frequency":"Per batch","sample":"100g","acceptance":"Within range","attachments":[]},{"id":"qs-1781172177495-t2s0ru1","parameter":"Viscosity","specLimit":"Per Master (cps)","method":"Brookfield @25°C","mandatory":false,"tolerance":"±20%","frequency":"Per batch","sample":"250g","acceptance":"Within range","attachments":[]},{"id":"qs-1781172177495-wglhrnx","parameter":"TAMC / TYMC","specLimit":"≤ 100 / 10 CFU/g","method":"IS 14648","mandatory":false,"tolerance":"≤ Limit","frequency":"Per batch","sample":"1g","acceptance":"Pass","attachments":[]},{"id":"qs-1781172177495-fofsq27","parameter":"Pathogens (E.coli/Salmonella/P.aeruginosa/S.aureus)","specLimit":"Absent","method":"IS 14648","mandatory":false,"tolerance":"Absent","frequency":"Per batch","sample":"1g/10g","acceptance":"Absent","attachments":[]},{"id":"qs-1781172177495-ncx4iub","parameter":"Bulk Yield","specLimit":"≥ 95% of theoretical","method":"Weigh","mandatory":false,"tolerance":"≥ 95%","frequency":"Per batch","sample":"Full bulk","acceptance":"≥ 95%","attachments":[]},{"id":"qs-1781172177495-sh8l4w9","parameter":"Hold Time (bulk)","specLimit":"≤ 24 hr","method":"BMR timestamp","mandatory":false,"tolerance":"≤ 24 hr","frequency":"Per batch","sample":"BMR","acceptance":"Within hold","attachments":[]}],"rmQualitySubSpecRowsByPath":{"Surfactant::Anionic":[{"id":"qs-1781172178764-4khv4zf","parameter":"Active Matter (sulfate %)","specLimit":"27–29% (SLES) / 28–32% (SLS)","method":"Two-phase titration","mandatory":false,"tolerance":"Per spec","frequency":"Per lot","sample":"1g","acceptance":"Within range","attachments":[]},{"id":"qs-1781172178764-gm6xquv","parameter":"Free Oil","specLimit":"≤ 0.5%","method":"Solvent extraction","mandatory":false,"tolerance":"≤ Spec","frequency":"Per lot","sample":"5g","acceptance":"≤ 0.5%","attachments":[]},{"id":"qs-1781172178764-2go4v55","parameter":"1,4-Dioxane","specLimit":"≤ 10 ppm (FDA / EU)","method":"GC-MS","mandatory":true,"tolerance":"≤ Limit","frequency":"Per vendor / yearly","sample":"5g","acceptance":"≤ 10 ppm","attachments":[]},{"id":"qs-1781172178764-hb7ic3l","parameter":"Sulfate Content (inorganic)","specLimit":"≤ 2.5%","method":"BaCl2 titration","mandatory":false,"tolerance":"≤ Spec","frequency":"Per lot","sample":"5g","acceptance":"≤ 2.5%","attachments":[]},{"id":"qs-1781172178764-8tfxna1","parameter":"Color (Hazen / APHA)","specLimit":"≤ 50","method":"Colorimeter","mandatory":false,"tolerance":"≤ Limit","frequency":"Per lot","sample":"10mL","acceptance":"≤ 50","attachments":[]}],"Surfactant::Non-ionic":[{"id":"qs-1781172188642-adoliby","parameter":"HLB Value","specLimit":"","method":"","mandatory":true,"tolerance":"1123","frequency":"","sample":"","acceptance":"","attachments":[]},{"id":"qs-1781172188642-v48zu6u","parameter":"Cloud Point","specLimit":"","method":"","mandatory":false,"tolerance":"","frequency":"","sample":"","acceptance":"","attachments":[]},{"id":"qs-1781172188642-1f07g5y","parameter":"Hydroxyl Value","specLimit":"","method":"","mandatory":false,"tolerance":"","frequency":"","sample":"","acceptance":"","attachments":[]},{"id":"qs-1781172188642-l9als5i","parameter":"Ethylene Oxide/1,4-Dioxane","specLimit":"","method":"","mandatory":true,"tolerance":"","frequency":"","sample":"","acceptance":"","attachments":[]}]},"physicalFormSolid":"","physicalFormLiquid":"","preferredVendor":"20 MICRONS NANO MINERALS LIMITED","preferredVendorClientId":"","alternateVendors":"","alternateVendorClientId":"","sourcingCountryOfOrigin":"","sourcingMoq":"","sourcingLeadTimeDays":"","sourcingStandardUom":"kg","sourcingCurrency":"INR","assayPurity":"","appearanceSpec":"","phSpec":"","moistureLod":"","heavyMetalsSpec":"","microbialSpec":"","odorColorSpec":"","otherSpecs":"","recommendedUseLevel":"","maxUseLevel":"","solubility":"","processingGuidance":"","incompatibilities":"","stabilityNotes":"","claims":"","storageConditions":"","shelfLife":"8","retestPeriod":"","warehouseLocation":"","batchTracking":"","fifoFefo":"","minimumStock":"","reorderLevel":"","dispensingBatchNo":"","masterLifecycleStatus":"Active","rmOwner":"","universalSwapEligibility":"","functionalEquivalents":"","handlingNotes":"","vendors":[{"id":"1780562087495","name":"20 MICRONS NANO MINERALS LIMITED","location":"Gujarat","moq":9,"unitPrice":9,"leadTime":0,"approved":"","priceValidTill":"","currency":"INR","advancePct":"0","preShipmentPct":"0","postShipmentPct":"0","creditDays":"0","tiers":[{"moq":"9.0000","price":"9","validTill":"2026-06-05","note":""}]}],"documents":[],"tests":[],"arNumber":"89","category":"Bulk raw materials"}	2026-05-10 10:44:21.604+00	2026-06-11 10:08:44.238+00	\N	active	Active		\N	
 \.
 
 
@@ -10713,6 +10744,7 @@ COPY public.roles (role_id, role_code, role_name, description, level, status, pe
 
 COPY public.sales_orders (id, order_id, customer_name, branch, order_date, expected_shipment_date, reference, payment_terms, status, order_status, form_data, items, created_by, created_at, updated_at, deleted_at, lifecycle_status) FROM stdin;
 1375	EI-SO-2026-001	ADVAYA SKIN CLINIC	\N	2026-06-10	2026-07-25	\N	{"advance_pct":50,"pre_shipment_pct":50,"post_shipment_pct":0,"credit_days":0}	Approved	\N	\N	[{"product_id":null,"sku":"PR0006814","productName":"DERMIQ DAILY CLEANSER 100ML","pack":"100 ML","quantity":1000,"unitPrice":90}]	Super Admin	2026-06-10 09:32:22.932+00	2026-06-10 09:32:22.932+00	\N	active
+1376	EI-SO-2026-002	BEST MED AESTHETIQUE PRIVATE LIMITED	\N	2026-06-11	2026-07-26	\N	{"advance_pct":50,"pre_shipment_pct":50,"post_shipment_pct":0,"credit_days":0}	Approved	\N	\N	[{"product_id":null,"sku":"PR0006524","productName":"DERMASONIQUE ANTI WASH HAIR SERUM 50ML","pack":"50 ML","quantity":1000,"unitPrice":200}]	Super Admin	2026-06-11 11:10:16.72+00	2026-06-11 11:10:16.72+00	\N	active
 \.
 
 
@@ -15173,7 +15205,7 @@ SELECT pg_catalog.setval('public.facility_areas_id_seq', 46, true);
 -- Name: fulfillment_batch_splits_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.fulfillment_batch_splits_id_seq', 47, true);
+SELECT pg_catalog.setval('public.fulfillment_batch_splits_id_seq', 49, true);
 
 
 --
@@ -15187,14 +15219,14 @@ SELECT pg_catalog.setval('public.fulfillment_invoices_id_seq', 10, true);
 -- Name: fulfillment_order_items_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.fulfillment_order_items_id_seq', 1860, true);
+SELECT pg_catalog.setval('public.fulfillment_order_items_id_seq', 1861, true);
 
 
 --
 -- Name: fulfillment_orders_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.fulfillment_orders_id_seq', 1375, true);
+SELECT pg_catalog.setval('public.fulfillment_orders_id_seq', 1376, true);
 
 
 --
@@ -15222,21 +15254,21 @@ SELECT pg_catalog.setval('public.item_groups_id_seq', 4, true);
 -- Name: item_list_tiers_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.item_list_tiers_id_seq', 1150, true);
+SELECT pg_catalog.setval('public.item_list_tiers_id_seq', 1154, true);
 
 
 --
 -- Name: item_list_vendor_rates_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.item_list_vendor_rates_id_seq', 1147, true);
+SELECT pg_catalog.setval('public.item_list_vendor_rates_id_seq', 1151, true);
 
 
 --
 -- Name: items_list_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.items_list_id_seq', 1123, true);
+SELECT pg_catalog.setval('public.items_list_id_seq', 1125, true);
 
 
 --
@@ -15320,28 +15352,28 @@ SELECT pg_catalog.setval('public.permissions_permission_id_seq', 758, true);
 -- Name: planning_batches_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.planning_batches_id_seq', 44, true);
+SELECT pg_catalog.setval('public.planning_batches_id_seq', 47, true);
 
 
 --
 -- Name: planning_bom_override_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.planning_bom_override_id_seq', 29, true);
+SELECT pg_catalog.setval('public.planning_bom_override_id_seq', 30, true);
 
 
 --
 -- Name: planning_extracted_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.planning_extracted_id_seq', 1842, true);
+SELECT pg_catalog.setval('public.planning_extracted_id_seq', 1843, true);
 
 
 --
 -- Name: planning_quotation_asks_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.planning_quotation_asks_id_seq', 19, true);
+SELECT pg_catalog.setval('public.planning_quotation_asks_id_seq', 22, true);
 
 
 --
@@ -15362,7 +15394,7 @@ SELECT pg_catalog.setval('public.procurement_quotations_id_seq', 4, true);
 -- Name: procurement_requests_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.procurement_requests_id_seq', 46, true);
+SELECT pg_catalog.setval('public.procurement_requests_id_seq', 50, true);
 
 
 --
@@ -15376,7 +15408,7 @@ SELECT pg_catalog.setval('public.product_customizations_customization_id_seq', 1
 -- Name: production_batches_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.production_batches_id_seq', 30, true);
+SELECT pg_catalog.setval('public.production_batches_id_seq', 33, true);
 
 
 --
@@ -15404,7 +15436,7 @@ SELECT pg_catalog.setval('public.products_product_id_seq', 8380, true);
 -- Name: purchase_orders_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.purchase_orders_id_seq', 536, true);
+SELECT pg_catalog.setval('public.purchase_orders_id_seq', 538, true);
 
 
 --
@@ -15439,7 +15471,7 @@ SELECT pg_catalog.setval('public.roles_role_id_seq', 3, true);
 -- Name: sales_orders_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.sales_orders_id_seq', 1375, true);
+SELECT pg_catalog.setval('public.sales_orders_id_seq', 1376, true);
 
 
 --
@@ -18178,6 +18210,86 @@ ALTER TABLE ONLY public.customization_packaging_options
 
 
 --
+-- Name: customization_packaging_options customization_packaging_options_option_id_key390; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customization_packaging_options
+    ADD CONSTRAINT customization_packaging_options_option_id_key390 UNIQUE (option_id);
+
+
+--
+-- Name: customization_packaging_options customization_packaging_options_option_id_key391; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customization_packaging_options
+    ADD CONSTRAINT customization_packaging_options_option_id_key391 UNIQUE (option_id);
+
+
+--
+-- Name: customization_packaging_options customization_packaging_options_option_id_key392; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customization_packaging_options
+    ADD CONSTRAINT customization_packaging_options_option_id_key392 UNIQUE (option_id);
+
+
+--
+-- Name: customization_packaging_options customization_packaging_options_option_id_key393; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customization_packaging_options
+    ADD CONSTRAINT customization_packaging_options_option_id_key393 UNIQUE (option_id);
+
+
+--
+-- Name: customization_packaging_options customization_packaging_options_option_id_key394; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customization_packaging_options
+    ADD CONSTRAINT customization_packaging_options_option_id_key394 UNIQUE (option_id);
+
+
+--
+-- Name: customization_packaging_options customization_packaging_options_option_id_key395; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customization_packaging_options
+    ADD CONSTRAINT customization_packaging_options_option_id_key395 UNIQUE (option_id);
+
+
+--
+-- Name: customization_packaging_options customization_packaging_options_option_id_key396; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customization_packaging_options
+    ADD CONSTRAINT customization_packaging_options_option_id_key396 UNIQUE (option_id);
+
+
+--
+-- Name: customization_packaging_options customization_packaging_options_option_id_key397; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customization_packaging_options
+    ADD CONSTRAINT customization_packaging_options_option_id_key397 UNIQUE (option_id);
+
+
+--
+-- Name: customization_packaging_options customization_packaging_options_option_id_key398; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customization_packaging_options
+    ADD CONSTRAINT customization_packaging_options_option_id_key398 UNIQUE (option_id);
+
+
+--
+-- Name: customization_packaging_options customization_packaging_options_option_id_key399; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customization_packaging_options
+    ADD CONSTRAINT customization_packaging_options_option_id_key399 UNIQUE (option_id);
+
+
+--
 -- Name: customization_packaging_options customization_packaging_options_option_id_key4; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -18191,6 +18303,78 @@ ALTER TABLE ONLY public.customization_packaging_options
 
 ALTER TABLE ONLY public.customization_packaging_options
     ADD CONSTRAINT customization_packaging_options_option_id_key40 UNIQUE (option_id);
+
+
+--
+-- Name: customization_packaging_options customization_packaging_options_option_id_key400; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customization_packaging_options
+    ADD CONSTRAINT customization_packaging_options_option_id_key400 UNIQUE (option_id);
+
+
+--
+-- Name: customization_packaging_options customization_packaging_options_option_id_key401; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customization_packaging_options
+    ADD CONSTRAINT customization_packaging_options_option_id_key401 UNIQUE (option_id);
+
+
+--
+-- Name: customization_packaging_options customization_packaging_options_option_id_key402; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customization_packaging_options
+    ADD CONSTRAINT customization_packaging_options_option_id_key402 UNIQUE (option_id);
+
+
+--
+-- Name: customization_packaging_options customization_packaging_options_option_id_key403; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customization_packaging_options
+    ADD CONSTRAINT customization_packaging_options_option_id_key403 UNIQUE (option_id);
+
+
+--
+-- Name: customization_packaging_options customization_packaging_options_option_id_key404; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customization_packaging_options
+    ADD CONSTRAINT customization_packaging_options_option_id_key404 UNIQUE (option_id);
+
+
+--
+-- Name: customization_packaging_options customization_packaging_options_option_id_key405; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customization_packaging_options
+    ADD CONSTRAINT customization_packaging_options_option_id_key405 UNIQUE (option_id);
+
+
+--
+-- Name: customization_packaging_options customization_packaging_options_option_id_key406; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customization_packaging_options
+    ADD CONSTRAINT customization_packaging_options_option_id_key406 UNIQUE (option_id);
+
+
+--
+-- Name: customization_packaging_options customization_packaging_options_option_id_key407; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customization_packaging_options
+    ADD CONSTRAINT customization_packaging_options_option_id_key407 UNIQUE (option_id);
+
+
+--
+-- Name: customization_packaging_options customization_packaging_options_option_id_key408; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customization_packaging_options
+    ADD CONSTRAINT customization_packaging_options_option_id_key408 UNIQUE (option_id);
 
 
 --
@@ -21314,6 +21498,86 @@ ALTER TABLE ONLY public.departments
 
 
 --
+-- Name: departments departments_code_key390; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_code_key390 UNIQUE (code);
+
+
+--
+-- Name: departments departments_code_key391; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_code_key391 UNIQUE (code);
+
+
+--
+-- Name: departments departments_code_key392; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_code_key392 UNIQUE (code);
+
+
+--
+-- Name: departments departments_code_key393; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_code_key393 UNIQUE (code);
+
+
+--
+-- Name: departments departments_code_key394; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_code_key394 UNIQUE (code);
+
+
+--
+-- Name: departments departments_code_key395; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_code_key395 UNIQUE (code);
+
+
+--
+-- Name: departments departments_code_key396; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_code_key396 UNIQUE (code);
+
+
+--
+-- Name: departments departments_code_key397; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_code_key397 UNIQUE (code);
+
+
+--
+-- Name: departments departments_code_key398; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_code_key398 UNIQUE (code);
+
+
+--
+-- Name: departments departments_code_key399; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_code_key399 UNIQUE (code);
+
+
+--
 -- Name: departments departments_code_key4; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -21327,6 +21591,78 @@ ALTER TABLE ONLY public.departments
 
 ALTER TABLE ONLY public.departments
     ADD CONSTRAINT departments_code_key40 UNIQUE (code);
+
+
+--
+-- Name: departments departments_code_key400; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_code_key400 UNIQUE (code);
+
+
+--
+-- Name: departments departments_code_key401; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_code_key401 UNIQUE (code);
+
+
+--
+-- Name: departments departments_code_key402; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_code_key402 UNIQUE (code);
+
+
+--
+-- Name: departments departments_code_key403; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_code_key403 UNIQUE (code);
+
+
+--
+-- Name: departments departments_code_key404; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_code_key404 UNIQUE (code);
+
+
+--
+-- Name: departments departments_code_key405; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_code_key405 UNIQUE (code);
+
+
+--
+-- Name: departments departments_code_key406; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_code_key406 UNIQUE (code);
+
+
+--
+-- Name: departments departments_code_key407; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_code_key407 UNIQUE (code);
+
+
+--
+-- Name: departments departments_code_key408; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_code_key408 UNIQUE (code);
 
 
 --
@@ -24434,6 +24770,86 @@ ALTER TABLE ONLY public.departments
 
 
 --
+-- Name: departments departments_name_key390; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_name_key390 UNIQUE (name);
+
+
+--
+-- Name: departments departments_name_key391; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_name_key391 UNIQUE (name);
+
+
+--
+-- Name: departments departments_name_key392; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_name_key392 UNIQUE (name);
+
+
+--
+-- Name: departments departments_name_key393; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_name_key393 UNIQUE (name);
+
+
+--
+-- Name: departments departments_name_key394; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_name_key394 UNIQUE (name);
+
+
+--
+-- Name: departments departments_name_key395; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_name_key395 UNIQUE (name);
+
+
+--
+-- Name: departments departments_name_key396; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_name_key396 UNIQUE (name);
+
+
+--
+-- Name: departments departments_name_key397; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_name_key397 UNIQUE (name);
+
+
+--
+-- Name: departments departments_name_key398; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_name_key398 UNIQUE (name);
+
+
+--
+-- Name: departments departments_name_key399; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_name_key399 UNIQUE (name);
+
+
+--
 -- Name: departments departments_name_key4; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -24447,6 +24863,78 @@ ALTER TABLE ONLY public.departments
 
 ALTER TABLE ONLY public.departments
     ADD CONSTRAINT departments_name_key40 UNIQUE (name);
+
+
+--
+-- Name: departments departments_name_key400; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_name_key400 UNIQUE (name);
+
+
+--
+-- Name: departments departments_name_key401; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_name_key401 UNIQUE (name);
+
+
+--
+-- Name: departments departments_name_key402; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_name_key402 UNIQUE (name);
+
+
+--
+-- Name: departments departments_name_key403; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_name_key403 UNIQUE (name);
+
+
+--
+-- Name: departments departments_name_key404; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_name_key404 UNIQUE (name);
+
+
+--
+-- Name: departments departments_name_key405; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_name_key405 UNIQUE (name);
+
+
+--
+-- Name: departments departments_name_key406; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_name_key406 UNIQUE (name);
+
+
+--
+-- Name: departments departments_name_key407; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_name_key407 UNIQUE (name);
+
+
+--
+-- Name: departments departments_name_key408; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_name_key408 UNIQUE (name);
 
 
 --
@@ -27762,11 +28250,163 @@ ALTER TABLE ONLY public.enquiries
 
 
 --
+-- Name: enquiries enquiries_ticket_number_key410; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enquiries
+    ADD CONSTRAINT enquiries_ticket_number_key410 UNIQUE (ticket_number);
+
+
+--
+-- Name: enquiries enquiries_ticket_number_key411; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enquiries
+    ADD CONSTRAINT enquiries_ticket_number_key411 UNIQUE (ticket_number);
+
+
+--
+-- Name: enquiries enquiries_ticket_number_key412; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enquiries
+    ADD CONSTRAINT enquiries_ticket_number_key412 UNIQUE (ticket_number);
+
+
+--
+-- Name: enquiries enquiries_ticket_number_key413; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enquiries
+    ADD CONSTRAINT enquiries_ticket_number_key413 UNIQUE (ticket_number);
+
+
+--
+-- Name: enquiries enquiries_ticket_number_key414; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enquiries
+    ADD CONSTRAINT enquiries_ticket_number_key414 UNIQUE (ticket_number);
+
+
+--
+-- Name: enquiries enquiries_ticket_number_key415; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enquiries
+    ADD CONSTRAINT enquiries_ticket_number_key415 UNIQUE (ticket_number);
+
+
+--
+-- Name: enquiries enquiries_ticket_number_key416; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enquiries
+    ADD CONSTRAINT enquiries_ticket_number_key416 UNIQUE (ticket_number);
+
+
+--
+-- Name: enquiries enquiries_ticket_number_key417; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enquiries
+    ADD CONSTRAINT enquiries_ticket_number_key417 UNIQUE (ticket_number);
+
+
+--
+-- Name: enquiries enquiries_ticket_number_key418; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enquiries
+    ADD CONSTRAINT enquiries_ticket_number_key418 UNIQUE (ticket_number);
+
+
+--
+-- Name: enquiries enquiries_ticket_number_key419; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enquiries
+    ADD CONSTRAINT enquiries_ticket_number_key419 UNIQUE (ticket_number);
+
+
+--
 -- Name: enquiries enquiries_ticket_number_key42; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.enquiries
     ADD CONSTRAINT enquiries_ticket_number_key42 UNIQUE (ticket_number);
+
+
+--
+-- Name: enquiries enquiries_ticket_number_key420; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enquiries
+    ADD CONSTRAINT enquiries_ticket_number_key420 UNIQUE (ticket_number);
+
+
+--
+-- Name: enquiries enquiries_ticket_number_key421; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enquiries
+    ADD CONSTRAINT enquiries_ticket_number_key421 UNIQUE (ticket_number);
+
+
+--
+-- Name: enquiries enquiries_ticket_number_key422; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enquiries
+    ADD CONSTRAINT enquiries_ticket_number_key422 UNIQUE (ticket_number);
+
+
+--
+-- Name: enquiries enquiries_ticket_number_key423; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enquiries
+    ADD CONSTRAINT enquiries_ticket_number_key423 UNIQUE (ticket_number);
+
+
+--
+-- Name: enquiries enquiries_ticket_number_key424; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enquiries
+    ADD CONSTRAINT enquiries_ticket_number_key424 UNIQUE (ticket_number);
+
+
+--
+-- Name: enquiries enquiries_ticket_number_key425; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enquiries
+    ADD CONSTRAINT enquiries_ticket_number_key425 UNIQUE (ticket_number);
+
+
+--
+-- Name: enquiries enquiries_ticket_number_key426; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enquiries
+    ADD CONSTRAINT enquiries_ticket_number_key426 UNIQUE (ticket_number);
+
+
+--
+-- Name: enquiries enquiries_ticket_number_key427; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enquiries
+    ADD CONSTRAINT enquiries_ticket_number_key427 UNIQUE (ticket_number);
+
+
+--
+-- Name: enquiries enquiries_ticket_number_key428; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enquiries
+    ADD CONSTRAINT enquiries_ticket_number_key428 UNIQUE (ticket_number);
 
 
 --
@@ -30914,6 +31554,30 @@ ALTER TABLE ONLY public.facility_areas
 
 
 --
+-- Name: facility_areas facility_areas_code_key397; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_code_key397 UNIQUE (code);
+
+
+--
+-- Name: facility_areas facility_areas_code_key398; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_code_key398 UNIQUE (code);
+
+
+--
+-- Name: facility_areas facility_areas_code_key399; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_code_key399 UNIQUE (code);
+
+
+--
 -- Name: facility_areas facility_areas_code_key4; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -30930,11 +31594,139 @@ ALTER TABLE ONLY public.facility_areas
 
 
 --
+-- Name: facility_areas facility_areas_code_key400; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_code_key400 UNIQUE (code);
+
+
+--
+-- Name: facility_areas facility_areas_code_key401; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_code_key401 UNIQUE (code);
+
+
+--
+-- Name: facility_areas facility_areas_code_key402; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_code_key402 UNIQUE (code);
+
+
+--
+-- Name: facility_areas facility_areas_code_key403; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_code_key403 UNIQUE (code);
+
+
+--
+-- Name: facility_areas facility_areas_code_key404; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_code_key404 UNIQUE (code);
+
+
+--
+-- Name: facility_areas facility_areas_code_key405; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_code_key405 UNIQUE (code);
+
+
+--
+-- Name: facility_areas facility_areas_code_key406; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_code_key406 UNIQUE (code);
+
+
+--
+-- Name: facility_areas facility_areas_code_key407; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_code_key407 UNIQUE (code);
+
+
+--
+-- Name: facility_areas facility_areas_code_key408; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_code_key408 UNIQUE (code);
+
+
+--
+-- Name: facility_areas facility_areas_code_key409; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_code_key409 UNIQUE (code);
+
+
+--
 -- Name: facility_areas facility_areas_code_key41; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.facility_areas
     ADD CONSTRAINT facility_areas_code_key41 UNIQUE (code);
+
+
+--
+-- Name: facility_areas facility_areas_code_key410; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_code_key410 UNIQUE (code);
+
+
+--
+-- Name: facility_areas facility_areas_code_key411; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_code_key411 UNIQUE (code);
+
+
+--
+-- Name: facility_areas facility_areas_code_key412; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_code_key412 UNIQUE (code);
+
+
+--
+-- Name: facility_areas facility_areas_code_key413; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_code_key413 UNIQUE (code);
+
+
+--
+-- Name: facility_areas facility_areas_code_key414; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_code_key414 UNIQUE (code);
+
+
+--
+-- Name: facility_areas facility_areas_code_key415; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_code_key415 UNIQUE (code);
 
 
 --
@@ -32826,6 +33618,62 @@ ALTER TABLE ONLY public.facility_areas
 
 
 --
+-- Name: facility_areas facility_areas_zoho_location_id_key253; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_zoho_location_id_key253 UNIQUE (zoho_location_id);
+
+
+--
+-- Name: facility_areas facility_areas_zoho_location_id_key254; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_zoho_location_id_key254 UNIQUE (zoho_location_id);
+
+
+--
+-- Name: facility_areas facility_areas_zoho_location_id_key255; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_zoho_location_id_key255 UNIQUE (zoho_location_id);
+
+
+--
+-- Name: facility_areas facility_areas_zoho_location_id_key256; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_zoho_location_id_key256 UNIQUE (zoho_location_id);
+
+
+--
+-- Name: facility_areas facility_areas_zoho_location_id_key257; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_zoho_location_id_key257 UNIQUE (zoho_location_id);
+
+
+--
+-- Name: facility_areas facility_areas_zoho_location_id_key258; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_zoho_location_id_key258 UNIQUE (zoho_location_id);
+
+
+--
+-- Name: facility_areas facility_areas_zoho_location_id_key259; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_zoho_location_id_key259 UNIQUE (zoho_location_id);
+
+
+--
 -- Name: facility_areas facility_areas_zoho_location_id_key26; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -32834,11 +33682,107 @@ ALTER TABLE ONLY public.facility_areas
 
 
 --
+-- Name: facility_areas facility_areas_zoho_location_id_key260; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_zoho_location_id_key260 UNIQUE (zoho_location_id);
+
+
+--
+-- Name: facility_areas facility_areas_zoho_location_id_key261; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_zoho_location_id_key261 UNIQUE (zoho_location_id);
+
+
+--
+-- Name: facility_areas facility_areas_zoho_location_id_key262; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_zoho_location_id_key262 UNIQUE (zoho_location_id);
+
+
+--
+-- Name: facility_areas facility_areas_zoho_location_id_key263; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_zoho_location_id_key263 UNIQUE (zoho_location_id);
+
+
+--
+-- Name: facility_areas facility_areas_zoho_location_id_key264; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_zoho_location_id_key264 UNIQUE (zoho_location_id);
+
+
+--
+-- Name: facility_areas facility_areas_zoho_location_id_key265; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_zoho_location_id_key265 UNIQUE (zoho_location_id);
+
+
+--
+-- Name: facility_areas facility_areas_zoho_location_id_key266; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_zoho_location_id_key266 UNIQUE (zoho_location_id);
+
+
+--
+-- Name: facility_areas facility_areas_zoho_location_id_key267; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_zoho_location_id_key267 UNIQUE (zoho_location_id);
+
+
+--
+-- Name: facility_areas facility_areas_zoho_location_id_key268; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_zoho_location_id_key268 UNIQUE (zoho_location_id);
+
+
+--
+-- Name: facility_areas facility_areas_zoho_location_id_key269; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_zoho_location_id_key269 UNIQUE (zoho_location_id);
+
+
+--
 -- Name: facility_areas facility_areas_zoho_location_id_key27; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.facility_areas
     ADD CONSTRAINT facility_areas_zoho_location_id_key27 UNIQUE (zoho_location_id);
+
+
+--
+-- Name: facility_areas facility_areas_zoho_location_id_key270; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_zoho_location_id_key270 UNIQUE (zoho_location_id);
+
+
+--
+-- Name: facility_areas facility_areas_zoho_location_id_key271; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_zoho_location_id_key271 UNIQUE (zoho_location_id);
 
 
 --
@@ -36234,6 +37178,22 @@ ALTER TABLE ONLY public.fulfillment_invoices
 
 
 --
+-- Name: fulfillment_invoices fulfillment_invoices_invoice_no_key408; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_invoices
+    ADD CONSTRAINT fulfillment_invoices_invoice_no_key408 UNIQUE (invoice_no);
+
+
+--
+-- Name: fulfillment_invoices fulfillment_invoices_invoice_no_key409; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_invoices
+    ADD CONSTRAINT fulfillment_invoices_invoice_no_key409 UNIQUE (invoice_no);
+
+
+--
 -- Name: fulfillment_invoices fulfillment_invoices_invoice_no_key41; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -36242,11 +37202,147 @@ ALTER TABLE ONLY public.fulfillment_invoices
 
 
 --
+-- Name: fulfillment_invoices fulfillment_invoices_invoice_no_key410; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_invoices
+    ADD CONSTRAINT fulfillment_invoices_invoice_no_key410 UNIQUE (invoice_no);
+
+
+--
+-- Name: fulfillment_invoices fulfillment_invoices_invoice_no_key411; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_invoices
+    ADD CONSTRAINT fulfillment_invoices_invoice_no_key411 UNIQUE (invoice_no);
+
+
+--
+-- Name: fulfillment_invoices fulfillment_invoices_invoice_no_key412; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_invoices
+    ADD CONSTRAINT fulfillment_invoices_invoice_no_key412 UNIQUE (invoice_no);
+
+
+--
+-- Name: fulfillment_invoices fulfillment_invoices_invoice_no_key413; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_invoices
+    ADD CONSTRAINT fulfillment_invoices_invoice_no_key413 UNIQUE (invoice_no);
+
+
+--
+-- Name: fulfillment_invoices fulfillment_invoices_invoice_no_key414; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_invoices
+    ADD CONSTRAINT fulfillment_invoices_invoice_no_key414 UNIQUE (invoice_no);
+
+
+--
+-- Name: fulfillment_invoices fulfillment_invoices_invoice_no_key415; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_invoices
+    ADD CONSTRAINT fulfillment_invoices_invoice_no_key415 UNIQUE (invoice_no);
+
+
+--
+-- Name: fulfillment_invoices fulfillment_invoices_invoice_no_key416; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_invoices
+    ADD CONSTRAINT fulfillment_invoices_invoice_no_key416 UNIQUE (invoice_no);
+
+
+--
+-- Name: fulfillment_invoices fulfillment_invoices_invoice_no_key417; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_invoices
+    ADD CONSTRAINT fulfillment_invoices_invoice_no_key417 UNIQUE (invoice_no);
+
+
+--
+-- Name: fulfillment_invoices fulfillment_invoices_invoice_no_key418; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_invoices
+    ADD CONSTRAINT fulfillment_invoices_invoice_no_key418 UNIQUE (invoice_no);
+
+
+--
+-- Name: fulfillment_invoices fulfillment_invoices_invoice_no_key419; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_invoices
+    ADD CONSTRAINT fulfillment_invoices_invoice_no_key419 UNIQUE (invoice_no);
+
+
+--
 -- Name: fulfillment_invoices fulfillment_invoices_invoice_no_key42; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.fulfillment_invoices
     ADD CONSTRAINT fulfillment_invoices_invoice_no_key42 UNIQUE (invoice_no);
+
+
+--
+-- Name: fulfillment_invoices fulfillment_invoices_invoice_no_key420; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_invoices
+    ADD CONSTRAINT fulfillment_invoices_invoice_no_key420 UNIQUE (invoice_no);
+
+
+--
+-- Name: fulfillment_invoices fulfillment_invoices_invoice_no_key421; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_invoices
+    ADD CONSTRAINT fulfillment_invoices_invoice_no_key421 UNIQUE (invoice_no);
+
+
+--
+-- Name: fulfillment_invoices fulfillment_invoices_invoice_no_key422; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_invoices
+    ADD CONSTRAINT fulfillment_invoices_invoice_no_key422 UNIQUE (invoice_no);
+
+
+--
+-- Name: fulfillment_invoices fulfillment_invoices_invoice_no_key423; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_invoices
+    ADD CONSTRAINT fulfillment_invoices_invoice_no_key423 UNIQUE (invoice_no);
+
+
+--
+-- Name: fulfillment_invoices fulfillment_invoices_invoice_no_key424; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_invoices
+    ADD CONSTRAINT fulfillment_invoices_invoice_no_key424 UNIQUE (invoice_no);
+
+
+--
+-- Name: fulfillment_invoices fulfillment_invoices_invoice_no_key425; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_invoices
+    ADD CONSTRAINT fulfillment_invoices_invoice_no_key425 UNIQUE (invoice_no);
+
+
+--
+-- Name: fulfillment_invoices fulfillment_invoices_invoice_no_key426; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_invoices
+    ADD CONSTRAINT fulfillment_invoices_invoice_no_key426 UNIQUE (invoice_no);
 
 
 --
@@ -39762,6 +40858,46 @@ ALTER TABLE ONLY public.fulfillment_orders
 
 
 --
+-- Name: fulfillment_orders fulfillment_orders_so_no_key435; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_orders
+    ADD CONSTRAINT fulfillment_orders_so_no_key435 UNIQUE (so_no);
+
+
+--
+-- Name: fulfillment_orders fulfillment_orders_so_no_key436; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_orders
+    ADD CONSTRAINT fulfillment_orders_so_no_key436 UNIQUE (so_no);
+
+
+--
+-- Name: fulfillment_orders fulfillment_orders_so_no_key437; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_orders
+    ADD CONSTRAINT fulfillment_orders_so_no_key437 UNIQUE (so_no);
+
+
+--
+-- Name: fulfillment_orders fulfillment_orders_so_no_key438; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_orders
+    ADD CONSTRAINT fulfillment_orders_so_no_key438 UNIQUE (so_no);
+
+
+--
+-- Name: fulfillment_orders fulfillment_orders_so_no_key439; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_orders
+    ADD CONSTRAINT fulfillment_orders_so_no_key439 UNIQUE (so_no);
+
+
+--
 -- Name: fulfillment_orders fulfillment_orders_so_no_key44; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -39770,11 +40906,123 @@ ALTER TABLE ONLY public.fulfillment_orders
 
 
 --
+-- Name: fulfillment_orders fulfillment_orders_so_no_key440; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_orders
+    ADD CONSTRAINT fulfillment_orders_so_no_key440 UNIQUE (so_no);
+
+
+--
+-- Name: fulfillment_orders fulfillment_orders_so_no_key441; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_orders
+    ADD CONSTRAINT fulfillment_orders_so_no_key441 UNIQUE (so_no);
+
+
+--
+-- Name: fulfillment_orders fulfillment_orders_so_no_key442; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_orders
+    ADD CONSTRAINT fulfillment_orders_so_no_key442 UNIQUE (so_no);
+
+
+--
+-- Name: fulfillment_orders fulfillment_orders_so_no_key443; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_orders
+    ADD CONSTRAINT fulfillment_orders_so_no_key443 UNIQUE (so_no);
+
+
+--
+-- Name: fulfillment_orders fulfillment_orders_so_no_key444; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_orders
+    ADD CONSTRAINT fulfillment_orders_so_no_key444 UNIQUE (so_no);
+
+
+--
+-- Name: fulfillment_orders fulfillment_orders_so_no_key445; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_orders
+    ADD CONSTRAINT fulfillment_orders_so_no_key445 UNIQUE (so_no);
+
+
+--
+-- Name: fulfillment_orders fulfillment_orders_so_no_key446; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_orders
+    ADD CONSTRAINT fulfillment_orders_so_no_key446 UNIQUE (so_no);
+
+
+--
+-- Name: fulfillment_orders fulfillment_orders_so_no_key447; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_orders
+    ADD CONSTRAINT fulfillment_orders_so_no_key447 UNIQUE (so_no);
+
+
+--
+-- Name: fulfillment_orders fulfillment_orders_so_no_key448; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_orders
+    ADD CONSTRAINT fulfillment_orders_so_no_key448 UNIQUE (so_no);
+
+
+--
+-- Name: fulfillment_orders fulfillment_orders_so_no_key449; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_orders
+    ADD CONSTRAINT fulfillment_orders_so_no_key449 UNIQUE (so_no);
+
+
+--
 -- Name: fulfillment_orders fulfillment_orders_so_no_key45; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.fulfillment_orders
     ADD CONSTRAINT fulfillment_orders_so_no_key45 UNIQUE (so_no);
+
+
+--
+-- Name: fulfillment_orders fulfillment_orders_so_no_key450; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_orders
+    ADD CONSTRAINT fulfillment_orders_so_no_key450 UNIQUE (so_no);
+
+
+--
+-- Name: fulfillment_orders fulfillment_orders_so_no_key451; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_orders
+    ADD CONSTRAINT fulfillment_orders_so_no_key451 UNIQUE (so_no);
+
+
+--
+-- Name: fulfillment_orders fulfillment_orders_so_no_key452; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_orders
+    ADD CONSTRAINT fulfillment_orders_so_no_key452 UNIQUE (so_no);
+
+
+--
+-- Name: fulfillment_orders fulfillment_orders_so_no_key453; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_orders
+    ADD CONSTRAINT fulfillment_orders_so_no_key453 UNIQUE (so_no);
 
 
 --
@@ -46986,6 +48234,14 @@ ALTER TABLE ONLY public.orders
 
 
 --
+-- Name: orders orders_so_no_key499; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key499 UNIQUE (so_no);
+
+
+--
 -- Name: orders orders_so_no_key5; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -47002,11 +48258,171 @@ ALTER TABLE ONLY public.orders
 
 
 --
+-- Name: orders orders_so_no_key500; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key500 UNIQUE (so_no);
+
+
+--
+-- Name: orders orders_so_no_key501; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key501 UNIQUE (so_no);
+
+
+--
+-- Name: orders orders_so_no_key502; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key502 UNIQUE (so_no);
+
+
+--
+-- Name: orders orders_so_no_key503; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key503 UNIQUE (so_no);
+
+
+--
+-- Name: orders orders_so_no_key504; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key504 UNIQUE (so_no);
+
+
+--
+-- Name: orders orders_so_no_key505; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key505 UNIQUE (so_no);
+
+
+--
+-- Name: orders orders_so_no_key506; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key506 UNIQUE (so_no);
+
+
+--
+-- Name: orders orders_so_no_key507; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key507 UNIQUE (so_no);
+
+
+--
+-- Name: orders orders_so_no_key508; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key508 UNIQUE (so_no);
+
+
+--
+-- Name: orders orders_so_no_key509; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key509 UNIQUE (so_no);
+
+
+--
 -- Name: orders orders_so_no_key51; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.orders
     ADD CONSTRAINT orders_so_no_key51 UNIQUE (so_no);
+
+
+--
+-- Name: orders orders_so_no_key510; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key510 UNIQUE (so_no);
+
+
+--
+-- Name: orders orders_so_no_key511; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key511 UNIQUE (so_no);
+
+
+--
+-- Name: orders orders_so_no_key512; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key512 UNIQUE (so_no);
+
+
+--
+-- Name: orders orders_so_no_key513; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key513 UNIQUE (so_no);
+
+
+--
+-- Name: orders orders_so_no_key514; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key514 UNIQUE (so_no);
+
+
+--
+-- Name: orders orders_so_no_key515; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key515 UNIQUE (so_no);
+
+
+--
+-- Name: orders orders_so_no_key516; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key516 UNIQUE (so_no);
+
+
+--
+-- Name: orders orders_so_no_key517; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key517 UNIQUE (so_no);
+
+
+--
+-- Name: orders orders_so_no_key518; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key518 UNIQUE (so_no);
+
+
+--
+-- Name: orders orders_so_no_key519; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key519 UNIQUE (so_no);
 
 
 --
@@ -50474,6 +51890,14 @@ ALTER TABLE ONLY public.production_batches
 
 
 --
+-- Name: production_batches production_batches_bmr_no_key429; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bmr_no_key429 UNIQUE (bmr_no);
+
+
+--
 -- Name: production_batches production_batches_bmr_no_key43; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -50482,11 +51906,155 @@ ALTER TABLE ONLY public.production_batches
 
 
 --
+-- Name: production_batches production_batches_bmr_no_key430; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bmr_no_key430 UNIQUE (bmr_no);
+
+
+--
+-- Name: production_batches production_batches_bmr_no_key431; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bmr_no_key431 UNIQUE (bmr_no);
+
+
+--
+-- Name: production_batches production_batches_bmr_no_key432; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bmr_no_key432 UNIQUE (bmr_no);
+
+
+--
+-- Name: production_batches production_batches_bmr_no_key433; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bmr_no_key433 UNIQUE (bmr_no);
+
+
+--
+-- Name: production_batches production_batches_bmr_no_key434; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bmr_no_key434 UNIQUE (bmr_no);
+
+
+--
+-- Name: production_batches production_batches_bmr_no_key435; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bmr_no_key435 UNIQUE (bmr_no);
+
+
+--
+-- Name: production_batches production_batches_bmr_no_key436; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bmr_no_key436 UNIQUE (bmr_no);
+
+
+--
+-- Name: production_batches production_batches_bmr_no_key437; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bmr_no_key437 UNIQUE (bmr_no);
+
+
+--
+-- Name: production_batches production_batches_bmr_no_key438; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bmr_no_key438 UNIQUE (bmr_no);
+
+
+--
+-- Name: production_batches production_batches_bmr_no_key439; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bmr_no_key439 UNIQUE (bmr_no);
+
+
+--
 -- Name: production_batches production_batches_bmr_no_key44; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.production_batches
     ADD CONSTRAINT production_batches_bmr_no_key44 UNIQUE (bmr_no);
+
+
+--
+-- Name: production_batches production_batches_bmr_no_key440; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bmr_no_key440 UNIQUE (bmr_no);
+
+
+--
+-- Name: production_batches production_batches_bmr_no_key441; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bmr_no_key441 UNIQUE (bmr_no);
+
+
+--
+-- Name: production_batches production_batches_bmr_no_key442; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bmr_no_key442 UNIQUE (bmr_no);
+
+
+--
+-- Name: production_batches production_batches_bmr_no_key443; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bmr_no_key443 UNIQUE (bmr_no);
+
+
+--
+-- Name: production_batches production_batches_bmr_no_key444; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bmr_no_key444 UNIQUE (bmr_no);
+
+
+--
+-- Name: production_batches production_batches_bmr_no_key445; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bmr_no_key445 UNIQUE (bmr_no);
+
+
+--
+-- Name: production_batches production_batches_bmr_no_key446; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bmr_no_key446 UNIQUE (bmr_no);
+
+
+--
+-- Name: production_batches production_batches_bmr_no_key447; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bmr_no_key447 UNIQUE (bmr_no);
 
 
 --
@@ -53890,6 +55458,30 @@ ALTER TABLE ONLY public.production_batches
 
 
 --
+-- Name: production_batches production_batches_bpr_no_key427; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bpr_no_key427 UNIQUE (bpr_no);
+
+
+--
+-- Name: production_batches production_batches_bpr_no_key428; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bpr_no_key428 UNIQUE (bpr_no);
+
+
+--
+-- Name: production_batches production_batches_bpr_no_key429; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bpr_no_key429 UNIQUE (bpr_no);
+
+
+--
 -- Name: production_batches production_batches_bpr_no_key43; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -53898,11 +55490,139 @@ ALTER TABLE ONLY public.production_batches
 
 
 --
+-- Name: production_batches production_batches_bpr_no_key430; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bpr_no_key430 UNIQUE (bpr_no);
+
+
+--
+-- Name: production_batches production_batches_bpr_no_key431; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bpr_no_key431 UNIQUE (bpr_no);
+
+
+--
+-- Name: production_batches production_batches_bpr_no_key432; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bpr_no_key432 UNIQUE (bpr_no);
+
+
+--
+-- Name: production_batches production_batches_bpr_no_key433; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bpr_no_key433 UNIQUE (bpr_no);
+
+
+--
+-- Name: production_batches production_batches_bpr_no_key434; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bpr_no_key434 UNIQUE (bpr_no);
+
+
+--
+-- Name: production_batches production_batches_bpr_no_key435; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bpr_no_key435 UNIQUE (bpr_no);
+
+
+--
+-- Name: production_batches production_batches_bpr_no_key436; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bpr_no_key436 UNIQUE (bpr_no);
+
+
+--
+-- Name: production_batches production_batches_bpr_no_key437; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bpr_no_key437 UNIQUE (bpr_no);
+
+
+--
+-- Name: production_batches production_batches_bpr_no_key438; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bpr_no_key438 UNIQUE (bpr_no);
+
+
+--
+-- Name: production_batches production_batches_bpr_no_key439; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bpr_no_key439 UNIQUE (bpr_no);
+
+
+--
 -- Name: production_batches production_batches_bpr_no_key44; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.production_batches
     ADD CONSTRAINT production_batches_bpr_no_key44 UNIQUE (bpr_no);
+
+
+--
+-- Name: production_batches production_batches_bpr_no_key440; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bpr_no_key440 UNIQUE (bpr_no);
+
+
+--
+-- Name: production_batches production_batches_bpr_no_key441; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bpr_no_key441 UNIQUE (bpr_no);
+
+
+--
+-- Name: production_batches production_batches_bpr_no_key442; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bpr_no_key442 UNIQUE (bpr_no);
+
+
+--
+-- Name: production_batches production_batches_bpr_no_key443; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bpr_no_key443 UNIQUE (bpr_no);
+
+
+--
+-- Name: production_batches production_batches_bpr_no_key444; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bpr_no_key444 UNIQUE (bpr_no);
+
+
+--
+-- Name: production_batches production_batches_bpr_no_key445; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bpr_no_key445 UNIQUE (bpr_no);
 
 
 --
@@ -57002,6 +58722,70 @@ ALTER TABLE ONLY public.production_equipment
 
 
 --
+-- Name: production_equipment production_equipment_equipment_id_key392; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_equipment
+    ADD CONSTRAINT production_equipment_equipment_id_key392 UNIQUE (equipment_id);
+
+
+--
+-- Name: production_equipment production_equipment_equipment_id_key393; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_equipment
+    ADD CONSTRAINT production_equipment_equipment_id_key393 UNIQUE (equipment_id);
+
+
+--
+-- Name: production_equipment production_equipment_equipment_id_key394; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_equipment
+    ADD CONSTRAINT production_equipment_equipment_id_key394 UNIQUE (equipment_id);
+
+
+--
+-- Name: production_equipment production_equipment_equipment_id_key395; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_equipment
+    ADD CONSTRAINT production_equipment_equipment_id_key395 UNIQUE (equipment_id);
+
+
+--
+-- Name: production_equipment production_equipment_equipment_id_key396; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_equipment
+    ADD CONSTRAINT production_equipment_equipment_id_key396 UNIQUE (equipment_id);
+
+
+--
+-- Name: production_equipment production_equipment_equipment_id_key397; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_equipment
+    ADD CONSTRAINT production_equipment_equipment_id_key397 UNIQUE (equipment_id);
+
+
+--
+-- Name: production_equipment production_equipment_equipment_id_key398; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_equipment
+    ADD CONSTRAINT production_equipment_equipment_id_key398 UNIQUE (equipment_id);
+
+
+--
+-- Name: production_equipment production_equipment_equipment_id_key399; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_equipment
+    ADD CONSTRAINT production_equipment_equipment_id_key399 UNIQUE (equipment_id);
+
+
+--
 -- Name: production_equipment production_equipment_equipment_id_key4; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -57018,11 +58802,99 @@ ALTER TABLE ONLY public.production_equipment
 
 
 --
+-- Name: production_equipment production_equipment_equipment_id_key400; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_equipment
+    ADD CONSTRAINT production_equipment_equipment_id_key400 UNIQUE (equipment_id);
+
+
+--
+-- Name: production_equipment production_equipment_equipment_id_key401; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_equipment
+    ADD CONSTRAINT production_equipment_equipment_id_key401 UNIQUE (equipment_id);
+
+
+--
+-- Name: production_equipment production_equipment_equipment_id_key402; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_equipment
+    ADD CONSTRAINT production_equipment_equipment_id_key402 UNIQUE (equipment_id);
+
+
+--
+-- Name: production_equipment production_equipment_equipment_id_key403; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_equipment
+    ADD CONSTRAINT production_equipment_equipment_id_key403 UNIQUE (equipment_id);
+
+
+--
+-- Name: production_equipment production_equipment_equipment_id_key404; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_equipment
+    ADD CONSTRAINT production_equipment_equipment_id_key404 UNIQUE (equipment_id);
+
+
+--
+-- Name: production_equipment production_equipment_equipment_id_key405; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_equipment
+    ADD CONSTRAINT production_equipment_equipment_id_key405 UNIQUE (equipment_id);
+
+
+--
+-- Name: production_equipment production_equipment_equipment_id_key406; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_equipment
+    ADD CONSTRAINT production_equipment_equipment_id_key406 UNIQUE (equipment_id);
+
+
+--
+-- Name: production_equipment production_equipment_equipment_id_key407; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_equipment
+    ADD CONSTRAINT production_equipment_equipment_id_key407 UNIQUE (equipment_id);
+
+
+--
+-- Name: production_equipment production_equipment_equipment_id_key408; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_equipment
+    ADD CONSTRAINT production_equipment_equipment_id_key408 UNIQUE (equipment_id);
+
+
+--
+-- Name: production_equipment production_equipment_equipment_id_key409; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_equipment
+    ADD CONSTRAINT production_equipment_equipment_id_key409 UNIQUE (equipment_id);
+
+
+--
 -- Name: production_equipment production_equipment_equipment_id_key41; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.production_equipment
     ADD CONSTRAINT production_equipment_equipment_id_key41 UNIQUE (equipment_id);
+
+
+--
+-- Name: production_equipment production_equipment_equipment_id_key410; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_equipment
+    ADD CONSTRAINT production_equipment_equipment_id_key410 UNIQUE (equipment_id);
 
 
 --
@@ -60146,6 +62018,70 @@ ALTER TABLE ONLY public.production_team_members
 
 
 --
+-- Name: production_team_members production_team_members_member_id_key392; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_team_members
+    ADD CONSTRAINT production_team_members_member_id_key392 UNIQUE (member_id);
+
+
+--
+-- Name: production_team_members production_team_members_member_id_key393; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_team_members
+    ADD CONSTRAINT production_team_members_member_id_key393 UNIQUE (member_id);
+
+
+--
+-- Name: production_team_members production_team_members_member_id_key394; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_team_members
+    ADD CONSTRAINT production_team_members_member_id_key394 UNIQUE (member_id);
+
+
+--
+-- Name: production_team_members production_team_members_member_id_key395; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_team_members
+    ADD CONSTRAINT production_team_members_member_id_key395 UNIQUE (member_id);
+
+
+--
+-- Name: production_team_members production_team_members_member_id_key396; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_team_members
+    ADD CONSTRAINT production_team_members_member_id_key396 UNIQUE (member_id);
+
+
+--
+-- Name: production_team_members production_team_members_member_id_key397; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_team_members
+    ADD CONSTRAINT production_team_members_member_id_key397 UNIQUE (member_id);
+
+
+--
+-- Name: production_team_members production_team_members_member_id_key398; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_team_members
+    ADD CONSTRAINT production_team_members_member_id_key398 UNIQUE (member_id);
+
+
+--
+-- Name: production_team_members production_team_members_member_id_key399; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_team_members
+    ADD CONSTRAINT production_team_members_member_id_key399 UNIQUE (member_id);
+
+
+--
 -- Name: production_team_members production_team_members_member_id_key4; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -60162,11 +62098,99 @@ ALTER TABLE ONLY public.production_team_members
 
 
 --
+-- Name: production_team_members production_team_members_member_id_key400; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_team_members
+    ADD CONSTRAINT production_team_members_member_id_key400 UNIQUE (member_id);
+
+
+--
+-- Name: production_team_members production_team_members_member_id_key401; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_team_members
+    ADD CONSTRAINT production_team_members_member_id_key401 UNIQUE (member_id);
+
+
+--
+-- Name: production_team_members production_team_members_member_id_key402; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_team_members
+    ADD CONSTRAINT production_team_members_member_id_key402 UNIQUE (member_id);
+
+
+--
+-- Name: production_team_members production_team_members_member_id_key403; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_team_members
+    ADD CONSTRAINT production_team_members_member_id_key403 UNIQUE (member_id);
+
+
+--
+-- Name: production_team_members production_team_members_member_id_key404; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_team_members
+    ADD CONSTRAINT production_team_members_member_id_key404 UNIQUE (member_id);
+
+
+--
+-- Name: production_team_members production_team_members_member_id_key405; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_team_members
+    ADD CONSTRAINT production_team_members_member_id_key405 UNIQUE (member_id);
+
+
+--
+-- Name: production_team_members production_team_members_member_id_key406; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_team_members
+    ADD CONSTRAINT production_team_members_member_id_key406 UNIQUE (member_id);
+
+
+--
+-- Name: production_team_members production_team_members_member_id_key407; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_team_members
+    ADD CONSTRAINT production_team_members_member_id_key407 UNIQUE (member_id);
+
+
+--
+-- Name: production_team_members production_team_members_member_id_key408; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_team_members
+    ADD CONSTRAINT production_team_members_member_id_key408 UNIQUE (member_id);
+
+
+--
+-- Name: production_team_members production_team_members_member_id_key409; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_team_members
+    ADD CONSTRAINT production_team_members_member_id_key409 UNIQUE (member_id);
+
+
+--
 -- Name: production_team_members production_team_members_member_id_key41; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.production_team_members
     ADD CONSTRAINT production_team_members_member_id_key41 UNIQUE (member_id);
+
+
+--
+-- Name: production_team_members production_team_members_member_id_key410; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_team_members
+    ADD CONSTRAINT production_team_members_member_id_key410 UNIQUE (member_id);
 
 
 --
@@ -64778,11 +66802,115 @@ ALTER TABLE ONLY public."refreshTokens"
 
 
 --
+-- Name: refreshTokens refreshTokens_email_key557; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key557" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key558; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key558" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key559; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key559" UNIQUE (email);
+
+
+--
 -- Name: refreshTokens refreshTokens_email_key56; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public."refreshTokens"
     ADD CONSTRAINT "refreshTokens_email_key56" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key560; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key560" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key561; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key561" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key562; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key562" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key563; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key563" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key564; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key564" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key565; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key565" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key566; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key566" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key567; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key567" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key568; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key568" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key569; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key569" UNIQUE (email);
 
 
 --
@@ -64794,11 +66922,147 @@ ALTER TABLE ONLY public."refreshTokens"
 
 
 --
+-- Name: refreshTokens refreshTokens_email_key570; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key570" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key571; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key571" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key572; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key572" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key573; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key573" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key574; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key574" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key575; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key575" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key576; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key576" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key577; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key577" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key578; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key578" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key579; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key579" UNIQUE (email);
+
+
+--
 -- Name: refreshTokens refreshTokens_email_key58; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public."refreshTokens"
     ADD CONSTRAINT "refreshTokens_email_key58" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key580; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key580" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key581; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key581" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key582; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key582" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key583; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key583" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key584; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key584" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key585; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key585" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key586; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key586" UNIQUE (email);
 
 
 --
@@ -69234,11 +71498,147 @@ ALTER TABLE ONLY public.roles
 
 
 --
+-- Name: roles roles_role_code_key553; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key553 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key554; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key554 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key555; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key555 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key556; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key556 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key557; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key557 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key558; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key558 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key559; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key559 UNIQUE (role_code);
+
+
+--
 -- Name: roles roles_role_code_key56; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.roles
     ADD CONSTRAINT roles_role_code_key56 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key560; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key560 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key561; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key561 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key562; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key562 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key563; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key563 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key564; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key564 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key565; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key565 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key566; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key566 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key567; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key567 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key568; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key568 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key569; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key569 UNIQUE (role_code);
 
 
 --
@@ -69250,11 +71650,115 @@ ALTER TABLE ONLY public.roles
 
 
 --
+-- Name: roles roles_role_code_key570; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key570 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key571; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key571 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key572; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key572 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key573; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key573 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key574; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key574 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key575; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key575 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key576; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key576 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key577; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key577 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key578; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key578 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key579; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key579 UNIQUE (role_code);
+
+
+--
 -- Name: roles roles_role_code_key58; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.roles
     ADD CONSTRAINT roles_role_code_key58 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key580; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key580 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key581; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key581 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key582; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key582 UNIQUE (role_code);
 
 
 --
@@ -72434,6 +74938,62 @@ ALTER TABLE ONLY public.transporters
 
 
 --
+-- Name: transporters transporters_code_key413; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.transporters
+    ADD CONSTRAINT transporters_code_key413 UNIQUE (code);
+
+
+--
+-- Name: transporters transporters_code_key414; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.transporters
+    ADD CONSTRAINT transporters_code_key414 UNIQUE (code);
+
+
+--
+-- Name: transporters transporters_code_key415; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.transporters
+    ADD CONSTRAINT transporters_code_key415 UNIQUE (code);
+
+
+--
+-- Name: transporters transporters_code_key416; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.transporters
+    ADD CONSTRAINT transporters_code_key416 UNIQUE (code);
+
+
+--
+-- Name: transporters transporters_code_key417; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.transporters
+    ADD CONSTRAINT transporters_code_key417 UNIQUE (code);
+
+
+--
+-- Name: transporters transporters_code_key418; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.transporters
+    ADD CONSTRAINT transporters_code_key418 UNIQUE (code);
+
+
+--
+-- Name: transporters transporters_code_key419; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.transporters
+    ADD CONSTRAINT transporters_code_key419 UNIQUE (code);
+
+
+--
 -- Name: transporters transporters_code_key42; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -72442,11 +75002,107 @@ ALTER TABLE ONLY public.transporters
 
 
 --
+-- Name: transporters transporters_code_key420; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.transporters
+    ADD CONSTRAINT transporters_code_key420 UNIQUE (code);
+
+
+--
+-- Name: transporters transporters_code_key421; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.transporters
+    ADD CONSTRAINT transporters_code_key421 UNIQUE (code);
+
+
+--
+-- Name: transporters transporters_code_key422; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.transporters
+    ADD CONSTRAINT transporters_code_key422 UNIQUE (code);
+
+
+--
+-- Name: transporters transporters_code_key423; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.transporters
+    ADD CONSTRAINT transporters_code_key423 UNIQUE (code);
+
+
+--
+-- Name: transporters transporters_code_key424; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.transporters
+    ADD CONSTRAINT transporters_code_key424 UNIQUE (code);
+
+
+--
+-- Name: transporters transporters_code_key425; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.transporters
+    ADD CONSTRAINT transporters_code_key425 UNIQUE (code);
+
+
+--
+-- Name: transporters transporters_code_key426; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.transporters
+    ADD CONSTRAINT transporters_code_key426 UNIQUE (code);
+
+
+--
+-- Name: transporters transporters_code_key427; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.transporters
+    ADD CONSTRAINT transporters_code_key427 UNIQUE (code);
+
+
+--
+-- Name: transporters transporters_code_key428; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.transporters
+    ADD CONSTRAINT transporters_code_key428 UNIQUE (code);
+
+
+--
+-- Name: transporters transporters_code_key429; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.transporters
+    ADD CONSTRAINT transporters_code_key429 UNIQUE (code);
+
+
+--
 -- Name: transporters transporters_code_key43; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.transporters
     ADD CONSTRAINT transporters_code_key43 UNIQUE (code);
+
+
+--
+-- Name: transporters transporters_code_key430; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.transporters
+    ADD CONSTRAINT transporters_code_key430 UNIQUE (code);
+
+
+--
+-- Name: transporters transporters_code_key431; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.transporters
+    ADD CONSTRAINT transporters_code_key431 UNIQUE (code);
 
 
 --
@@ -77274,11 +79930,131 @@ ALTER TABLE ONLY public.users
 
 
 --
+-- Name: users users_email_key585; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key585 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key586; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key586 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key587; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key587 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key588; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key588 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key589; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key589 UNIQUE (email);
+
+
+--
 -- Name: users users_email_key59; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT users_email_key59 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key590; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key590 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key591; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key591 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key592; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key592 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key593; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key593 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key594; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key594 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key595; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key595 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key596; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key596 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key597; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key597 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key598; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key598 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key599; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key599 UNIQUE (email);
 
 
 --
@@ -77298,6 +80074,86 @@ ALTER TABLE ONLY public.users
 
 
 --
+-- Name: users users_email_key600; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key600 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key601; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key601 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key602; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key602 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key603; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key603 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key604; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key604 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key605; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key605 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key606; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key606 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key607; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key607 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key608; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key608 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key609; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key609 UNIQUE (email);
+
+
+--
 -- Name: users users_email_key61; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -77306,11 +80162,99 @@ ALTER TABLE ONLY public.users
 
 
 --
+-- Name: users users_email_key610; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key610 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key611; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key611 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key612; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key612 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key613; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key613 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key614; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key614 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key615; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key615 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key616; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key616 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key617; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key617 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key618; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key618 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key619; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key619 UNIQUE (email);
+
+
+--
 -- Name: users users_email_key62; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT users_email_key62 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key620; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key620 UNIQUE (email);
 
 
 --
@@ -81466,11 +84410,99 @@ ALTER TABLE ONLY public.vendor_clients
 
 
 --
+-- Name: vendor_clients vendor_clients_entity_code_key529; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key529 UNIQUE (entity_code);
+
+
+--
 -- Name: vendor_clients vendor_clients_entity_code_key53; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.vendor_clients
     ADD CONSTRAINT vendor_clients_entity_code_key53 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key530; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key530 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key531; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key531 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key532; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key532 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key533; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key533 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key534; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key534 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key535; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key535 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key536; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key536 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key537; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key537 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key538; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key538 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key539; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key539 UNIQUE (entity_code);
 
 
 --
@@ -81482,11 +84514,139 @@ ALTER TABLE ONLY public.vendor_clients
 
 
 --
+-- Name: vendor_clients vendor_clients_entity_code_key540; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key540 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key541; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key541 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key542; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key542 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key543; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key543 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key544; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key544 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key545; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key545 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key546; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key546 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key547; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key547 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key548; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key548 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key549; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key549 UNIQUE (entity_code);
+
+
+--
 -- Name: vendor_clients vendor_clients_entity_code_key55; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.vendor_clients
     ADD CONSTRAINT vendor_clients_entity_code_key55 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key550; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key550 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key551; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key551 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key552; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key552 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key553; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key553 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key554; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key554 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key555; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key555 UNIQUE (entity_code);
 
 
 --
@@ -84570,6 +87730,46 @@ ALTER TABLE ONLY public.warehouse_locations
 
 
 --
+-- Name: warehouse_locations warehouse_locations_code_key395; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_code_key395 UNIQUE (code);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_code_key396; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_code_key396 UNIQUE (code);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_code_key397; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_code_key397 UNIQUE (code);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_code_key398; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_code_key398 UNIQUE (code);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_code_key399; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_code_key399 UNIQUE (code);
+
+
+--
 -- Name: warehouse_locations warehouse_locations_code_key4; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -84586,11 +87786,123 @@ ALTER TABLE ONLY public.warehouse_locations
 
 
 --
+-- Name: warehouse_locations warehouse_locations_code_key400; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_code_key400 UNIQUE (code);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_code_key401; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_code_key401 UNIQUE (code);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_code_key402; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_code_key402 UNIQUE (code);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_code_key403; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_code_key403 UNIQUE (code);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_code_key404; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_code_key404 UNIQUE (code);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_code_key405; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_code_key405 UNIQUE (code);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_code_key406; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_code_key406 UNIQUE (code);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_code_key407; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_code_key407 UNIQUE (code);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_code_key408; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_code_key408 UNIQUE (code);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_code_key409; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_code_key409 UNIQUE (code);
+
+
+--
 -- Name: warehouse_locations warehouse_locations_code_key41; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.warehouse_locations
     ADD CONSTRAINT warehouse_locations_code_key41 UNIQUE (code);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_code_key410; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_code_key410 UNIQUE (code);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_code_key411; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_code_key411 UNIQUE (code);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_code_key412; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_code_key412 UNIQUE (code);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_code_key413; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_code_key413 UNIQUE (code);
 
 
 --
@@ -86466,11 +89778,163 @@ ALTER TABLE ONLY public.warehouse_locations
 
 
 --
+-- Name: warehouse_locations warehouse_locations_zoho_warehouse_id_key251; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_zoho_warehouse_id_key251 UNIQUE (zoho_warehouse_id);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_zoho_warehouse_id_key252; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_zoho_warehouse_id_key252 UNIQUE (zoho_warehouse_id);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_zoho_warehouse_id_key253; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_zoho_warehouse_id_key253 UNIQUE (zoho_warehouse_id);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_zoho_warehouse_id_key254; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_zoho_warehouse_id_key254 UNIQUE (zoho_warehouse_id);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_zoho_warehouse_id_key255; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_zoho_warehouse_id_key255 UNIQUE (zoho_warehouse_id);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_zoho_warehouse_id_key256; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_zoho_warehouse_id_key256 UNIQUE (zoho_warehouse_id);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_zoho_warehouse_id_key257; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_zoho_warehouse_id_key257 UNIQUE (zoho_warehouse_id);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_zoho_warehouse_id_key258; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_zoho_warehouse_id_key258 UNIQUE (zoho_warehouse_id);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_zoho_warehouse_id_key259; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_zoho_warehouse_id_key259 UNIQUE (zoho_warehouse_id);
+
+
+--
 -- Name: warehouse_locations warehouse_locations_zoho_warehouse_id_key26; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.warehouse_locations
     ADD CONSTRAINT warehouse_locations_zoho_warehouse_id_key26 UNIQUE (zoho_warehouse_id);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_zoho_warehouse_id_key260; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_zoho_warehouse_id_key260 UNIQUE (zoho_warehouse_id);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_zoho_warehouse_id_key261; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_zoho_warehouse_id_key261 UNIQUE (zoho_warehouse_id);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_zoho_warehouse_id_key262; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_zoho_warehouse_id_key262 UNIQUE (zoho_warehouse_id);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_zoho_warehouse_id_key263; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_zoho_warehouse_id_key263 UNIQUE (zoho_warehouse_id);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_zoho_warehouse_id_key264; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_zoho_warehouse_id_key264 UNIQUE (zoho_warehouse_id);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_zoho_warehouse_id_key265; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_zoho_warehouse_id_key265 UNIQUE (zoho_warehouse_id);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_zoho_warehouse_id_key266; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_zoho_warehouse_id_key266 UNIQUE (zoho_warehouse_id);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_zoho_warehouse_id_key267; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_zoho_warehouse_id_key267 UNIQUE (zoho_warehouse_id);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_zoho_warehouse_id_key268; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_zoho_warehouse_id_key268 UNIQUE (zoho_warehouse_id);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_zoho_warehouse_id_key269; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_zoho_warehouse_id_key269 UNIQUE (zoho_warehouse_id);
 
 
 --
@@ -87652,5 +91116,5 @@ ALTER TABLE ONLY public.warehouse_racks
 -- PostgreSQL database dump complete
 --
 
-\unrestrict Hw0xPcyac5lGpNh48k6ZugFR0OSxaYGpklP7JjAlkAX9G6Cf2EQaHIa0aLFB0PW
+\unrestrict ZfcUntXfLrCwhd1m4JTVspD9Bn0Mrh4HHvxdRThEueD7ir1jWGAhjjgichtyg5P
 

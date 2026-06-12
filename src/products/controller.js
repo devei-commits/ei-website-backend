@@ -23,6 +23,13 @@ const {
   scrubProcurementJsonForDeletedProducts,
 } = require('./destroyProductWithDependents');
 const { productActiveWhere, softDeleteInstance } = require('../lib/softDelete');
+const {
+  hydratePrQualitySpecRowsBySectionFromBom,
+  hydratePrQualityBulkSubSpecRowsByPathFromBom,
+  hydratePrQualityFinalSubSpecRowsByPathFromBom,
+  hydratePrQualityDispatchSubSpecRowsByPathFromBom,
+  prQualitySpecBomColumnPatch,
+} = require('./prQualitySpecStorage');
 const { linkMaterialMastersToProductCode } = require('./linkMaterialMastersToProduct');
 const { normalizePmSubCategorySlug, pmLevelForSubCategorySlug } = require('../lib/pmSubCategoryRules');
 const { nextNumericSuffixAfterMax } = require('../lib/nextNumericMasterCode');
@@ -638,6 +645,12 @@ const createPRRegistration = async (req, res) => {
         product.zoho_item_id != null && String(product.zoho_item_id).trim() !== ''
           ? String(product.zoho_item_id).trim()
           : null;
+      const prQsPatch = prQualitySpecBomColumnPatch(
+        b.pr_quality_spec_rows_by_section ?? b.prQualitySpecRowsBySection,
+        b.pr_quality_bulk_sub_spec_rows_by_path ?? b.prQualityBulkSubSpecRowsByPath,
+        b.pr_quality_final_sub_spec_rows_by_path ?? b.prQualityFinalSubSpecRowsByPath,
+        b.pr_quality_dispatch_sub_spec_rows_by_path ?? b.prQualityDispatchSubSpecRowsByPath
+      );
       const bomRow = {
         bom_code: product_code,
         bom_sku: bomSku,
@@ -672,6 +685,7 @@ const createPRRegistration = async (req, res) => {
         spec_pack: b.pack_configuration ?? b.packConfiguration ?? null,
         spec_bulk: b.specific_gravity ?? b.specificGravity ?? null,
         stability_summary: productRow.stability_summary,
+        ...prQsPatch,
         rm_lines,
         sku_rm_lines: Array.isArray(b.sku_rm_lines) ? b.sku_rm_lines : [],
         sku_bom_limit_qty:
@@ -1173,8 +1187,18 @@ const getProductDetail = async (req, res) => {
     });
 
     const parsedNotes = bom ? parseBomNotes(bom.notes) : parseBomNotes(null);
+    const bomPlain = bom ? (bom.get ? bom.get({ plain: true }) : bom) : null;
+    const pr_quality_spec_rows_by_section = hydratePrQualitySpecRowsBySectionFromBom(bomPlain);
+    const pr_quality_bulk_sub_spec_rows_by_path = hydratePrQualityBulkSubSpecRowsByPathFromBom(bomPlain);
+    const pr_quality_final_sub_spec_rows_by_path = hydratePrQualityFinalSubSpecRowsByPathFromBom(bomPlain);
+    const pr_quality_dispatch_sub_spec_rows_by_path =
+      hydratePrQualityDispatchSubSpecRowsByPathFromBom(bomPlain);
     res.json({
       ...plain,
+      pr_quality_spec_rows_by_section,
+      pr_quality_bulk_sub_spec_rows_by_path,
+      pr_quality_final_sub_spec_rows_by_path,
+      pr_quality_dispatch_sub_spec_rows_by_path,
       internal_sku_code: plain.product_code ?? null,
       zoho_sku_code: plain.zoho_sku_code ?? null,
       bom_composite_item: bom ? bom.bom_composite_item : null,
@@ -1350,6 +1374,13 @@ const updateProduct = async (req, res) => {
           stability_summary: bomPayload.stability_summary ?? null,
           spec_pack: bomPayload.pack_configuration ?? bomPayload.packConfiguration ?? null,
           spec_bulk: bomPayload.specific_gravity ?? bomPayload.specificGravity ?? null,
+          ...prQualitySpecBomColumnPatch(
+            bomPayload.pr_quality_spec_rows_by_section ?? bomPayload.prQualitySpecRowsBySection,
+            bomPayload.pr_quality_bulk_sub_spec_rows_by_path ?? bomPayload.prQualityBulkSubSpecRowsByPath,
+            bomPayload.pr_quality_final_sub_spec_rows_by_path ?? bomPayload.prQualityFinalSubSpecRowsByPath,
+            bomPayload.pr_quality_dispatch_sub_spec_rows_by_path ??
+              bomPayload.prQualityDispatchSubSpecRowsByPath
+          ),
           notes: (() => {
             const parts = [];
             const qc = String(bomPayload.pr_qc_group ?? bomPayload.prQcGroup ?? '').trim();
@@ -1520,6 +1551,21 @@ const updateProduct = async (req, res) => {
           bomUpdate.bom_composite_item = !!bomPayload.bom_composite_item;
         } else if (bomPayload.bomCompositeItem !== undefined) {
           bomUpdate.bom_composite_item = !!bomPayload.bomCompositeItem;
+        }
+        if (
+          bomPayload.pr_quality_spec_rows_by_section !== undefined ||
+          bomPayload.prQualitySpecRowsBySection !== undefined
+        ) {
+          Object.assign(
+            bomUpdate,
+            prQualitySpecBomColumnPatch(
+              bomPayload.pr_quality_spec_rows_by_section ?? bomPayload.prQualitySpecRowsBySection,
+              bomPayload.pr_quality_bulk_sub_spec_rows_by_path ?? bomPayload.prQualityBulkSubSpecRowsByPath,
+              bomPayload.pr_quality_final_sub_spec_rows_by_path ?? bomPayload.prQualityFinalSubSpecRowsByPath,
+              bomPayload.pr_quality_dispatch_sub_spec_rows_by_path ??
+                bomPayload.prQualityDispatchSubSpecRowsByPath
+            )
+          );
         }
         await bom.update(bomUpdate);
       }
