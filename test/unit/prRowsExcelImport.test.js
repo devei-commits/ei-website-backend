@@ -1,22 +1,186 @@
 const ExcelJS = require('exceljs');
 const {
   normalizeSheetName,
+  findPurchaseOrderWorksheet,
   findPrRowsWorksheet,
   findQuotationRowsWorksheet,
   findRawPoDetailWorksheet,
   prRowFieldsToItem,
   quotationRowFieldsToItem,
   rawPoDetailFieldsToItem,
+  purchaseOrderFlatFieldsToItem,
+  parsePurchaseOrderFlatWorkbook,
   parsePrRowsWorkbook,
   parseQuotationRowsWorkbook,
   parseRawPoDetailWorkbook,
   groupPrRowsToPoPayloads,
+  groupPurchaseOrderFlatRows,
   applyQuotationRowsToGroupedPos,
   applyRawPoDetailsToGroupedPos,
   enrichItemsWithMaterialLookup,
 } = require('../../src/purchaseOrders/prRowsExcelImport');
 
 describe('prRowsExcelImport', () => {
+  test('normalizeSheetName matches PurchaseOrder', () => {
+    expect(normalizeSheetName('PurchaseOrder')).toBe('purchaseorder');
+  });
+
+  test('findPurchaseOrderWorksheet finds sheet by name', () => {
+    const wb = new ExcelJS.Workbook();
+    wb.addWorksheet('Summary');
+    const ws = wb.addWorksheet('PurchaseOrder');
+    expect(findPurchaseOrderWorksheet(wb)).toBe(ws);
+  });
+
+  test('parsePurchaseOrderFlatWorkbook groups line rows by Purchase Order Number', () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('PurchaseOrder');
+    ws.getRow(1).values = [
+      null,
+      'Purchase Order Number',
+      'Purchase Order Date',
+      'Delivery Date',
+      'Expected Arrival Date',
+      'Purchase Order Status',
+      'Vendor Name',
+      'GST Identification Number (GSTIN)',
+      'Payment Terms',
+      'Attention',
+      'Address',
+      'City',
+      'State',
+      'Country',
+      'Code',
+      'Phone',
+      'Item Name',
+      'SKU',
+      'HSN/SAC',
+      'QuantityOrdered',
+      'Item Price',
+      'Item Total',
+    ];
+    ws.getRow(2).values = [
+      null,
+      'PO-1001',
+      '2026-05-01',
+      '2026-05-10',
+      '2026-05-12',
+      'Open',
+      'ABC Chemicals',
+      '27AAAAA0000A1Z5',
+      'Net 30',
+      'Procurement',
+      'Plot 1',
+      'Mumbai',
+      'Maharashtra',
+      'India',
+      '400001',
+      '+91-9999999999',
+      'Glycerin',
+      'RM-GLY',
+      '2905',
+      '100',
+      '140',
+      '14000',
+    ];
+    ws.getRow(3).values = [
+      null,
+      'PO-1001',
+      '2026-05-01',
+      '2026-05-10',
+      '2026-05-12',
+      'Open',
+      'ABC Chemicals',
+      '27AAAAA0000A1Z5',
+      'Net 30',
+      'Procurement',
+      'Plot 1',
+      'Mumbai',
+      'Maharashtra',
+      'India',
+      '400001',
+      '+91-9999999999',
+      'Niacinamide',
+      'RM-NIA',
+      '2936',
+      '50',
+      '320',
+      '16000',
+    ];
+
+    const parsed = parsePurchaseOrderFlatWorkbook(wb);
+    expect(parsed.format).toBe('purchase_order_flat');
+    expect(parsed.rows.length).toBe(1);
+    expect(parsed.rows[0].payload.order_id).toBe('PO-1001');
+    expect(parsed.rows[0].payload.vendor_name).toBe('ABC Chemicals');
+    expect(parsed.rows[0].payload.form_data.vendorGstin).toBe('27AAAAA0000A1Z5');
+    expect(parsed.rows[0].payload.form_data.vendorPincode).toBe('400001');
+    expect(parsed.rows[0].payload.form_data.source).toBe('excel_purchase_order');
+    expect(parsed.rows[0].payload.items).toHaveLength(2);
+    expect(parsed.rows[0].payload.items[0].productName).toBe('Glycerin');
+
+    const grouped = groupPurchaseOrderFlatRows(parsed.rows);
+    expect(grouped.size).toBe(1);
+    expect(grouped.get('PO-1001').payload.items).toHaveLength(2);
+  });
+
+  test('parsePurchaseOrderFlatWorkbook ignores skipped columns present in sheet', () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('PurchaseOrder');
+    ws.getRow(1).values = [
+      null,
+      'Purchase Order ID',
+      'Purchase Order Number',
+      'Reference#',
+      'Currency Code',
+      'Product ID',
+      'Item Name',
+      'QuantityOrdered',
+      'QuantityReceived',
+      'Item Tax %',
+      'Usage unit',
+      'Total',
+    ];
+    ws.getRow(2).values = [
+      null,
+      '1252231000040999000',
+      'PO-2002',
+      'REF-SKIP',
+      'USD',
+      '1252231000090000001',
+      'Cap 24mm',
+      '20',
+      '5',
+      '18',
+      'Nos',
+      '5000',
+    ];
+
+    const parsed = parsePurchaseOrderFlatWorkbook(wb);
+    expect(parsed.rows.length).toBe(1);
+    expect(parsed.rows[0].payload.order_id).toBe('PO-2002');
+    expect(parsed.rows[0].payload.form_data.currency).toBeUndefined();
+    expect(parsed.rows[0].payload.items[0].quantity).toBe(20);
+    expect(parsed.rows[0].payload.items[0].uom).toBeUndefined();
+    expect(parsed.rows[0].payload.items[0].taxPercent).toBeUndefined();
+  });
+
+  test('purchaseOrderFlatFieldsToItem maps line columns', () => {
+    const item = purchaseOrderFlatFieldsToItem({
+      itemName: 'Glycerin',
+      sku: 'RM-GLY',
+      qtyOrdered: '100',
+      unitPrice: '140',
+      hsnSac: '2905',
+      itemTotal: '14000',
+    });
+    expect(item.productName).toBe('Glycerin');
+    expect(item.quantity).toBe(100);
+    expect(item.unitPrice).toBe(140);
+    expect(item.hsnCode).toBe('2905');
+    expect(item.itemTotal).toBe(14000);
+  });
+
   test('normalizeSheetName matches PR rows', () => {
     expect(normalizeSheetName('PR rows')).toBe('pr rows');
   });

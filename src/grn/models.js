@@ -22,6 +22,8 @@ GoodsReceivedNote.init(
     assigned_to: { type: DataTypes.STRING(200), allowNull: true },
     qc_status: { type: DataTypes.STRING(50), allowNull: true }, // Under test | Quality checked | Passed | Rejected
     qc_by: { type: DataTypes.STRING(200), allowNull: true }, // display name of user who performed QC
+    /** Per-line QC test results (master specs + measured result + pass/fail). */
+    qc_specs: { type: DataTypes.JSON, allowNull: true },
     status: { type: DataTypes.STRING(50), allowNull: true }, // GRN Complete | Under GRN | In Transit | On Hold | Delayed | Pending
     line_items: { type: DataTypes.JSON, allowNull: true },
     workflow_steps: { type: DataTypes.JSON, allowNull: true },

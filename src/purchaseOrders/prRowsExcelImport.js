@@ -1,6 +1,8 @@
 /**
  * POST /api/v1/purchase-orders/import-excel
- * Workbook sheets:
+ * Workbook sheets (preferred):
+ * - "PurchaseOrder": Zoho export — one row per line item with header fields repeated.
+ * Legacy (still supported):
  * - "PR rows" (or name containing "pr" + "rows")
  * - "Quotation rows" (or name containing "quotation" + "rows")
  * - "Raw PO Detail (reconcile)" (or name containing "raw po detail")
@@ -14,6 +16,7 @@ const PackMaterial = require('../packMaterials/models');
 const { cellToText } = require('../masterBulk/masterExcelFlexibleParse');
 const { readRowFields, readZohoContactIdMetaFromCell } = require('../vendorClient/vendorClientExcelParseUtils');
 
+const PURCHASE_ORDER_SHEET = 'purchaseorder';
 const PR_ROWS_SHEET = 'pr rows';
 const QUOTATION_ROWS_SHEET = 'quotation rows';
 const RAW_PO_DETAIL_SHEET = 'raw po detail (reconcile)';
@@ -99,10 +102,41 @@ const RAW_DETAIL_HEADER_ALIASES = {
 };
 const RAW_DETAIL_HEADER_KEYS = Object.keys(RAW_DETAIL_HEADER_ALIASES);
 
+/**
+ * Explicit allowlist for Zoho "PurchaseOrder" flat export.
+ * All other workbook columns are ignored on import.
+ */
+const PURCHASE_ORDER_FLAT_ALIASES = {
+  purchaseOrderNumber: ['purchase order number'],
+  purchaseOrderDate: ['purchase order date'],
+  deliveryDate: ['delivery date'],
+  expectedArrivalDate: ['expected arrival date'],
+  poStatus: ['purchase order status'],
+  vendorName: ['vendor name'],
+  gstin: ['gst identification number (gstin)'],
+  paymentTerms: ['payment terms'],
+  paymentTermsLabel: ['payment terms label'],
+  attention: ['attention'],
+  address: ['address'],
+  city: ['city'],
+  state: ['state'],
+  country: ['country'],
+  pincode: ['code'],
+  phone: ['phone'],
+  itemName: ['item name'],
+  sku: ['sku'],
+  hsnSac: ['hsn/sac'],
+  qtyOrdered: ['quantityordered'],
+  unitPrice: ['item price'],
+  itemTotal: ['item total'],
+};
+const PURCHASE_ORDER_FLAT_KEYS = Object.keys(PURCHASE_ORDER_FLAT_ALIASES);
+
 function normalizeHeaderLabel(text) {
   return String(text || '')
     .toLowerCase()
-    .replace(/[_/]+/g, ' ')
+    .replace(/[_/.]+/g, ' ')
+    .replace(/[()]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -135,6 +169,31 @@ function toDateOnly(val) {
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
   const d = new Date(s);
   if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  return null;
+}
+
+function headerLabelMatchesAliases(label, aliases) {
+  const normalized = normalizeHeaderLabel(label);
+  if (!normalized) return false;
+  return aliases.some((alias) => normalizeHeaderLabel(alias) === normalized);
+}
+
+function normalizePoKey(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+/**
+ * @param {import('exceljs').Workbook} workbook
+ */
+function findPurchaseOrderWorksheet(workbook) {
+  for (const ws of workbook.worksheets || []) {
+    const n = normalizeSheetName(ws.name).replace(/\s+/g, '');
+    if (n === PURCHASE_ORDER_SHEET) return ws;
+  }
+  for (const ws of workbook.worksheets || []) {
+    const n = normalizeSheetName(ws.name);
+    if (n === 'purchase order' || n === 'purchase orders') return ws;
+  }
   return null;
 }
 
@@ -186,6 +245,194 @@ function findRawPoDetailWorksheet(workbook) {
     if (n.includes('reconcile') && n.includes('po')) return ws;
   }
   return null;
+}
+
+/**
+ * @param {import('exceljs').Worksheet} worksheet
+ * @param {number} [maxScanRow]
+ */
+function detectPurchaseOrderColumnMap(worksheet, maxScanRow = 8) {
+  const lastCol = Math.min(worksheet.columnCount || 160, 220);
+  for (let r = 1; r <= maxScanRow; r += 1) {
+    const row = worksheet.getRow(r);
+    const map = {};
+    for (let c = 1; c <= lastCol; c += 1) {
+      const label = cellToText(row.getCell(c));
+      if (!label) continue;
+      for (const [key, aliases] of Object.entries(PURCHASE_ORDER_FLAT_ALIASES)) {
+        if (map[key]) continue;
+        if (headerLabelMatchesAliases(label, aliases)) {
+          map[key] = c;
+        }
+      }
+    }
+    if (map.purchaseOrderNumber != null && map.itemName != null) {
+      return { headerRow: r, col: map };
+    }
+  }
+  return null;
+}
+
+function readPurchaseOrderFlatRowFields(row, colMap) {
+  return readRowFields(row, colMap, PURCHASE_ORDER_FLAT_KEYS);
+}
+
+function resolvePurchaseOrderFlatGroupKey(fields) {
+  const poNo = String(fields.purchaseOrderNumber || '').trim();
+  if (poNo) return `no:${normalizePoKey(poNo)}`;
+  return '';
+}
+
+function purchaseOrderFlatFieldsToItem(fields) {
+  const sku = String(fields.sku || '').trim();
+  const itemName = String(fields.itemName || '').trim() || 'PO item';
+  return {
+    sku,
+    productName: itemName,
+    itemName,
+    name: itemName,
+    itemCode: sku || undefined,
+    code: sku || undefined,
+    type: 'RM',
+    quantity: parseOptionalNumber(fields.qtyOrdered) ?? 0,
+    unitPrice: parseOptionalNumber(fields.unitPrice) ?? 0,
+    hsnCode: String(fields.hsnSac || '').trim() || undefined,
+    itemTotal: parseOptionalNumber(fields.itemTotal) ?? undefined,
+  };
+}
+
+function buildPoHeaderFromFlatFields(fields) {
+  const orderId = String(fields.purchaseOrderNumber || '').trim();
+  if (!orderId) return null;
+
+  const paymentTerms =
+    String(fields.paymentTerms || '').trim() ||
+    String(fields.paymentTermsLabel || '').trim() ||
+    '';
+
+  return {
+    order_id: orderId,
+    vendor_name: String(fields.vendorName || '').trim() || null,
+    order_date: toDateOnly(fields.purchaseOrderDate),
+    expected_shipment_date:
+      toDateOnly(fields.deliveryDate) || toDateOnly(fields.expectedArrivalDate),
+    reference: null,
+    status: String(fields.poStatus || '').trim() || 'Draft',
+    payment_terms: paymentTerms || null,
+    order_status: {
+      orderStatus: String(fields.poStatus || '').trim() || '',
+    },
+    form_data: {
+      source: 'excel_purchase_order',
+      poNumber: orderId,
+      purchaseOrderNumber: orderId,
+      purchaseOrderDate: toDateOnly(fields.purchaseOrderDate) || '',
+      deliveryDate: toDateOnly(fields.deliveryDate) || '',
+      expectedArrivalDate: toDateOnly(fields.expectedArrivalDate) || '',
+      vendorGstin: String(fields.gstin || '').trim() || '',
+      paymentTerms,
+      vendorAttention: String(fields.attention || '').trim() || '',
+      vendorAddress: String(fields.address || '').trim() || '',
+      vendorCity: String(fields.city || '').trim() || '',
+      vendorState: String(fields.state || '').trim() || '',
+      vendorCountry: String(fields.country || '').trim() || '',
+      vendorPincode: String(fields.pincode || '').trim() || '',
+      vendorPhone: String(fields.phone || '').trim() || '',
+      poStatus: String(fields.poStatus || '').trim() || '',
+    },
+    items: [],
+  };
+}
+
+/**
+ * @param {import('exceljs').Workbook} workbook
+ */
+function parsePurchaseOrderFlatWorkbook(workbook) {
+  const worksheet = findPurchaseOrderWorksheet(workbook);
+  if (!worksheet) {
+    throw new Error('Worksheet "PurchaseOrder" not found');
+  }
+
+  const layout = detectPurchaseOrderColumnMap(worksheet);
+  if (!layout) {
+    throw new Error(
+      'Could not detect "PurchaseOrder" header row (need Purchase Order Number and Item Name columns)'
+    );
+  }
+
+  const { headerRow, col: colMap } = layout;
+  const lastDataRow = getWorksheetEndRow(worksheet, headerRow);
+  const grouped = new Map();
+  let skippedNoIdentity = 0;
+  let skippedNoProduct = 0;
+
+  for (let r = headerRow + 1; r <= lastDataRow; r += 1) {
+    const fields = readPurchaseOrderFlatRowFields(worksheet.getRow(r), colMap);
+    const groupKey = resolvePurchaseOrderFlatGroupKey(fields);
+    if (!groupKey) {
+      skippedNoIdentity += 1;
+      continue;
+    }
+
+    const productName = String(fields.itemName || '').trim();
+    if (!productName && !String(fields.sku || '').trim()) {
+      skippedNoProduct += 1;
+      continue;
+    }
+
+    const entry = grouped.get(groupKey) || {
+      headerFields: fields,
+      lineRows: [],
+      firstExcelRow: r,
+    };
+    entry.lineRows.push({
+      excel_row: r,
+      fields,
+      item: purchaseOrderFlatFieldsToItem(fields),
+    });
+    grouped.set(groupKey, entry);
+  }
+
+  const rows = [];
+  for (const group of grouped.values()) {
+    const payload = buildPoHeaderFromFlatFields(group.headerFields);
+    if (!payload) continue;
+    payload.items = group.lineRows.map((lineRow) => lineRow.item);
+    rows.push({
+      excel_row: group.firstExcelRow,
+      sheet_name: worksheet.name,
+      po_key: String(group.headerFields.purchaseOrderNumber || '').trim(),
+      payload,
+      fields: group.headerFields,
+      line_count: group.lineRows.length,
+    });
+  }
+
+  return {
+    rows,
+    sheetName: worksheet.name,
+    headerRow,
+    format: 'purchase_order_flat',
+    parseStats: {
+      scanned_through_row: lastDataRow,
+      skipped_no_identity: skippedNoIdentity,
+      skipped_no_product: skippedNoProduct,
+      groups_total: grouped.size,
+    },
+  };
+}
+
+function groupPurchaseOrderFlatRows(rows) {
+  const out = new Map();
+  for (const row of rows || []) {
+    const key = String(row.po_key || '').trim();
+    if (!key || !row.payload) continue;
+    out.set(key, {
+      excel_rows: [row.excel_row],
+      payload: row.payload,
+    });
+  }
+  return out;
 }
 
 /**
@@ -921,6 +1168,53 @@ async function postPrRowsExcelImport(req, res) {
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(req.file.buffer);
+
+    if (findPurchaseOrderWorksheet(workbook)) {
+      const parsed = parsePurchaseOrderFlatWorkbook(workbook);
+      if (!parsed.rows.length) {
+        return res.status(400).json({
+          error:
+            'No purchase order rows found on "PurchaseOrder". Need Purchase Order Number and line items.',
+          sheet: parsed.sheetName,
+          header_row: parsed.headerRow,
+          parse_stats: parsed.parseStats ?? null,
+        });
+      }
+      if (parsed.rows.length > MAX_DATA_ROWS) {
+        return res.status(400).json({ error: `At most ${MAX_DATA_ROWS} data rows per file` });
+      }
+
+      const grouped = groupPurchaseOrderFlatRows(parsed.rows);
+      const materialLookup = await buildMaterialSkuLookup();
+      const createdBy =
+        req.user.fullName || req.user.email || req.user.name || 'PurchaseOrder import';
+      const summary = await executePrRowsImport(grouped, { details, createdBy, materialLookup });
+      return res.json({
+        ok: true,
+        format: 'purchase_order_flat',
+        rows_total: parsed.rows.length,
+        po_groups_total: grouped.size,
+        sheet: parsed.sheetName,
+        header_row: parsed.headerRow,
+        parse_stats: parsed.parseStats ?? null,
+        quotation_sheet: null,
+        quotation_header_row: null,
+        quotation_rows_total: 0,
+        quotation_parse_stats: null,
+        raw_detail_sheet: null,
+        raw_detail_header_row: null,
+        raw_detail_rows_total: 0,
+        raw_detail_parse_stats: null,
+        summary: {
+          purchase_orders_created: summary.created,
+          purchase_orders_updated: summary.updated,
+          skipped: summary.skipped,
+          errors: summary.errors,
+        },
+        ...(details ? { row_log: summary.row_log } : {}),
+      });
+    }
+
     const parsed = parsePrRowsWorkbook(workbook);
     const quotationParsed = parseQuotationRowsWorkbook(workbook);
     const rawDetailParsed = parseRawPoDetailWorkbook(workbook);
@@ -943,6 +1237,7 @@ async function postPrRowsExcelImport(req, res) {
     const summary = await executePrRowsImport(grouped, { details, createdBy, materialLookup });
     return res.json({
       ok: true,
+      format: 'pr_rows_split',
       rows_total: parsed.rows.length,
       po_groups_total: grouped.size,
       sheet: parsed.sheetName,
@@ -990,6 +1285,8 @@ function uploadPrRowsExcelSafe(req, res, next) {
 }
 
 module.exports = {
+  PURCHASE_ORDER_SHEET,
+  PURCHASE_ORDER_FLAT_ALIASES,
   PR_ROWS_SHEET,
   QUOTATION_ROWS_SHEET,
   RAW_PO_DETAIL_SHEET,
@@ -997,20 +1294,26 @@ module.exports = {
   QUOTATION_HEADER_ALIASES,
   RAW_DETAIL_HEADER_ALIASES,
   normalizeSheetName,
+  findPurchaseOrderWorksheet,
   findPrRowsWorksheet,
   findQuotationRowsWorksheet,
   findRawPoDetailWorksheet,
+  detectPurchaseOrderColumnMap,
   detectPrRowsColumnMap,
   detectQuotationRowsColumnMap,
   detectRawPoDetailColumnMap,
   prRowFieldsToItem,
   quotationRowFieldsToItem,
   rawPoDetailFieldsToItem,
+  purchaseOrderFlatFieldsToItem,
   buildPoHeaderFromFirstRow,
+  buildPoHeaderFromFlatFields,
+  parsePurchaseOrderFlatWorkbook,
   parsePrRowsWorkbook,
   parseQuotationRowsWorkbook,
   parseRawPoDetailWorkbook,
   groupPrRowsToPoPayloads,
+  groupPurchaseOrderFlatRows,
   applyQuotationRowsToGroupedPos,
   applyRawPoDetailsToGroupedPos,
   buildMaterialSkuLookup,

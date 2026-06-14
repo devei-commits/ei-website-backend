@@ -1,6 +1,8 @@
 /**
  * POST /api/v1/sales-orders/import-excel
- * Workbook sheets:
+ * Workbook sheets (preferred):
+ * - "Sales Order": Zoho export — one row per line item with header fields repeated.
+ * Legacy (still supported):
  * - "Open SO Headers": header-level sales order fields.
  * - "Open SO Lines": item-level rows linked by Zoho SO id / number.
  */
@@ -23,6 +25,7 @@ const {
   mapZohoSoStatus,
 } = require('../../scripts/lib/zoho-sales-order-import');
 
+const SALES_ORDER_SHEET = 'sales order';
 const OPEN_SO_HEADERS_SHEET = 'open so headers';
 const OPEN_SO_LINES_SHEET = 'open so lines';
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
@@ -38,95 +41,162 @@ const ZOHO_SO_NUMBER_ALIASES = ['zoho so number', 'zoho sales order number', 'zo
 const ZOHO_SO_ID_ALIASES = ['zoho so id', 'zoho sales order id', 'salesorder id'];
 const ZOHO_CUSTOMER_ID_ALIASES = ['zoho customer id', 'customer id'];
 
-/** Columns read from "Open SO Headers". */
+/** Header-level columns (Open SO Headers sheet or repeated on Sales Order rows). */
 const HEADER_ALIASES = {
   eiSoReference: ['ei so reference', 'ei so reference (reference#)', 'reference#', 'reference'],
-  zohoSoNumber: ZOHO_SO_NUMBER_ALIASES,
+  zohoSoId: ['salesorder id', ...ZOHO_SO_ID_ALIASES],
+  zohoSoNumber: ['salesorder number', ...ZOHO_SO_NUMBER_ALIASES],
   customerName: ['customer name'],
-  zohoCustomerId: ZOHO_CUSTOMER_ID_ALIASES,
+  zohoCustomerId: ['customer id', ...ZOHO_CUSTOMER_ID_ALIASES],
   orderDate: ['order date'],
   expectedShipmentDate: [
-    'expected shipment / due date',
     'expected shipment date',
+    'expected shipment / due date',
     'expected shipment',
     'due date',
   ],
-  salesperson: ['salesperson', 'sales person'],
+  salesperson: ['sales person', 'salesperson'],
   placeOfSupply: ['place of supply'],
+  placeOfSupplyWithStateCode: [
+    'place of supply(with state code)',
+    'place of supply (with state code)',
+  ],
   gstTreatment: ['gst treatment'],
-  gstin: ['gstin (on so)', 'gstin on so', 'gstin'],
+  gstin: [
+    'gst identification number (gstin)',
+    'gstin (on so)',
+    'gstin on so',
+    'gstin',
+  ],
   billingAddress: ['billing address'],
+  billingStreet2: ['billing street2'],
   billingCity: ['billing city'],
   billingState: ['billing state'],
   billingCountry: ['billing country'],
-  billingPincode: ['billing pincode', 'billing zip', 'billing postal code'],
+  billingPincode: ['billing code', 'billing pincode', 'billing zip', 'billing postal code'],
   billingPhone: ['billing phone'],
+  billingFax: ['billing fax'],
   shippingAddress: ['shipping address'],
+  shippingStreet2: ['shipping street2'],
   shippingCity: ['shipping city', 'shippng city'],
-  shippingState: ['shipping state', 'shippng state', 'shipping state'],
-  shippingCountry: ['shipping country', 'shippng country', 'shipping country'],
-  shippingPincode: ['shipping pincode', 'shippng pincode', 'shipping zip'],
+  shippingState: ['shipping state', 'shippng state'],
+  shippingCountry: ['shipping country', 'shippng country'],
+  shippingPincode: ['shipping code', 'shipping pincode', 'shippng pincode', 'shipping zip'],
   shippingPhone: ['shipping phone', 'shippng phone'],
-  paymentTerms: ['payment terms (raw)', 'payment terms raw', 'payment terms'],
+  shippingFax: ['shipping fax'],
+  paymentTerms: ['payment terms', 'payment terms (raw)', 'payment terms raw'],
+  paymentTermsLabel: ['payment terms label'],
+  notes: ['notes'],
   advancePercent: ['advance %', 'advance percent', 'advance'],
   preShipmentPercent: ['pre-shipment %', 'pre shipment %', 'preshipment %'],
   postShipmentPercent: ['post-shipment %', 'post shipment %', 'postshipment %'],
   creditDays: ['credit days'],
-  currency: ['currency'],
+  currency: ['currency code', 'currency'],
   exchangeRate: ['exchange rate'],
   deliveryMethod: ['delivery method'],
   totalQtyOrdered: ['total qty ordered', 'total quantity ordered'],
   totalQtyInvoiced: ['total qty invoiced', 'total quantity invoiced'],
   totalQtyCancelled: ['total qty cancelled', 'total qty canceled', 'total quantity cancelled'],
   openQtyRemaining: ['open qty (remaining)', 'open qty remaining', 'open quantity'],
-  zohoStatus: ['status (zoho)', 'status zoho', 'zoho status'],
+  zohoStatus: ['status', 'status (zoho)', 'status zoho', 'zoho status'],
+  customStatus: ['custom status'],
 };
 
 const HEADER_KEYS = Object.keys(HEADER_ALIASES);
 const LINE_HEADER_ALIASES = {
   eiSoReference: ['ei so reference', 'ei so reference (reference#)', 'reference#', 'reference'],
-  zohoSoNumber: ZOHO_SO_NUMBER_ALIASES,
-  zohoSoId: ZOHO_SO_ID_ALIASES,
-  zohoCustomerId: ZOHO_CUSTOMER_ID_ALIASES,
+  zohoSoNumber: ['salesorder number', ...ZOHO_SO_NUMBER_ALIASES],
+  zohoSoId: ['salesorder id', ...ZOHO_SO_ID_ALIASES],
+  zohoCustomerId: ['customer id', ...ZOHO_CUSTOMER_ID_ALIASES],
   customerName: ['customer name'],
-  zohoStatus: ['status (zoho)', 'status zoho', 'zoho status'],
+  zohoStatus: ['status', 'status (zoho)', 'status zoho', 'zoho status'],
   productName: [
+    'item name',
     'product(item name)',
     'product (item name)',
-    'item name',
     'product name',
     'product',
     'item',
     'description',
   ],
+  itemDesc: ['item desc', 'item description'],
   sku: ['sku'],
-  zohoProductId: ['product id (zoho)', 'zoho product id', 'item id'],
+  zohoProductId: ['product id', 'product id (zoho)', 'zoho product id', 'item id'],
   hsnSac: ['hsn/sac', 'hsn', 'sac'],
   packSize: ['pack size', 'pack'],
-  qtyOrdered: ['qty ordered', 'quantity ordered', 'qty', 'quantity', 'order qty', 'ordered qty'],
-  qtyInvoiced: ['qty invoiced', 'quantity invoiced'],
-  qtyCancelled: ['qty cancelled', 'qty canceled', 'quantity cancelled'],
+  qtyOrdered: [
+    'quantityordered',
+    'qty ordered',
+    'quantity ordered',
+    'qty',
+    'quantity',
+    'order qty',
+    'ordered qty',
+  ],
+  qtyInvoiced: ['quantityinvoiced', 'qty invoiced', 'quantity invoiced'],
+  qtyCancelled: ['quantitycancelled', 'qty cancelled', 'qty canceled', 'quantity cancelled'],
   openQtyRemaining: ['open qty (remaining)', 'open qty remaining', 'open quantity', 'open qty', 'balance qty', 'pending qty'],
-  uom: ['uom', 'unit'],
-  unitPrice: ['unit price (₹)', 'unit price', 'rate', 'unit rate', 'price'],
+  uom: ['usage unit', 'uom', 'unit'],
+  unitPrice: ['item price', 'unit price (₹)', 'unit price', 'rate', 'unit rate', 'price'],
   itemTotal: ['item total', 'line total'],
-  taxPercent: ['tax %', 'tax percent'],
-  taxAmount: ['tax amount'],
+  taxPercent: ['item tax %', 'tax %', 'tax percent'],
+  taxAmount: ['item tax amount', 'tax amount'],
   cgstRatePercent: ['cgst rate %'],
   sgstRatePercent: ['sgst rate %'],
   igstRatePercent: ['igst rate %'],
+  cessRatePercent: ['cess rate %'],
   cgstAmount: ['cgst'],
   sgstAmount: ['sgst'],
   igstAmount: ['igst'],
+  cessAmount: ['cess'],
 };
 const LINE_HEADER_KEYS = Object.keys(LINE_HEADER_ALIASES);
+
+/**
+ * Explicit allowlist for Zoho "Sales Order" flat export.
+ * All other workbook columns are ignored on import.
+ */
+const SALES_ORDER_FLAT_ALIASES = {
+  zohoSoNumber: ['salesorder number'],
+  orderDate: ['order date'],
+  expectedShipmentDate: ['expected shipment date'],
+  zohoStatus: ['status'],
+  customStatus: ['custom status'],
+  zohoCustomerId: ['customer id'],
+  customerName: ['customer name'],
+  gstin: ['gst identification number (gstin)'],
+  paymentTerms: ['payment terms'],
+  paymentTermsLabel: ['payment terms label'],
+  billingAddress: ['billing address'],
+  billingStreet2: ['billing street2'],
+  billingCity: ['billing city'],
+  billingState: ['billing state'],
+  billingCountry: ['billing country'],
+  billingPincode: ['billing code'],
+  billingPhone: ['billing phone'],
+  shippingAddress: ['shipping address'],
+  shippingStreet2: ['shipping street2'],
+  shippingCity: ['shipping city'],
+  shippingState: ['shipping state'],
+  shippingCountry: ['shipping country'],
+  shippingPincode: ['shipping code'],
+  shippingPhone: ['shipping phone'],
+  productName: ['item name'],
+  sku: ['sku'],
+  qtyOrdered: ['quantityordered'],
+  unitPrice: ['item price'],
+  hsnSac: ['hsn/sac'],
+  itemTotal: ['item total'],
+};
+const SALES_ORDER_FLAT_KEYS = Object.keys(SALES_ORDER_FLAT_ALIASES);
 
 const SO_NUMBER_RE = /^SO[-\s]?\d+/i;
 
 function normalizeHeaderLabel(text) {
   return String(text || '')
     .toLowerCase()
-    .replace(/[_/]+/g, ' ')
+    .replace(/[_/.]+/g, ' ')
+    .replace(/[()]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -147,6 +217,31 @@ function getWorksheetEndRow(worksheet, headerRow) {
   const bottom = Number(worksheet.dimensions?.bottom ?? 0);
   const reported = Number(worksheet.rowCount || worksheet.actualRowCount || 0);
   return Math.max(bottom, reported, headerRow + 1);
+}
+
+const SALES_ORDER_ALIASES = SALES_ORDER_FLAT_ALIASES;
+const SALES_ORDER_KEYS = SALES_ORDER_FLAT_KEYS;
+
+function headerLabelMatchesAliases(label, aliases) {
+  const normalized = normalizeHeaderLabel(label);
+  if (!normalized) return false;
+  return aliases.some((alias) => normalizeHeaderLabel(alias) === normalized);
+}
+
+/**
+ * @param {import('exceljs').Workbook} workbook
+ */
+function findSalesOrderWorksheet(workbook) {
+  for (const ws of workbook.worksheets || []) {
+    if (normalizeSheetName(ws.name) === SALES_ORDER_SHEET) return ws;
+  }
+  for (const ws of workbook.worksheets || []) {
+    const n = normalizeSheetName(ws.name);
+    if (n === 'sales orders' || (n.includes('sales') && n.includes('order') && !n.includes('line') && !n.includes('header'))) {
+      return ws;
+    }
+  }
+  return null;
 }
 
 /**
@@ -196,7 +291,33 @@ function detectOpenSoHeadersColumnMap(worksheet, maxScanRow = 8) {
         }
       }
     }
-    if (map.zohoSoNumber != null) {
+    if (map.zohoSoNumber != null || map.zohoSoId != null) {
+      return { headerRow: r, col: map };
+    }
+  }
+  return null;
+}
+
+/**
+ * @param {import('exceljs').Worksheet} worksheet
+ * @param {number} [maxScanRow]
+ */
+function detectSalesOrderColumnMap(worksheet, maxScanRow = 8) {
+  const lastCol = Math.min(worksheet.columnCount || 160, 220);
+  for (let r = 1; r <= maxScanRow; r += 1) {
+    const row = worksheet.getRow(r);
+    const map = {};
+    for (let c = 1; c <= lastCol; c += 1) {
+      const label = cellToText(row.getCell(c));
+      if (!label) continue;
+      for (const [key, aliases] of Object.entries(SALES_ORDER_FLAT_ALIASES)) {
+        if (map[key]) continue;
+        if (headerLabelMatchesAliases(label, aliases)) {
+          map[key] = c;
+        }
+      }
+    }
+    if (map.zohoSoNumber != null && map.productName != null) {
       return { headerRow: r, col: map };
     }
   }
@@ -234,7 +355,11 @@ function detectOpenSoLinesColumnMap(worksheet, maxScanRow = 8) {
  * @param {Record<string, number>} colMap
  */
 function readOpenSoHeaderRowFields(row, colMap) {
-  const fields = readRowFields(row, colMap, HEADER_KEYS.filter((k) => k !== 'zohoSoNumber' && k !== 'zohoCustomerId'));
+  const fields = readRowFields(
+    row,
+    colMap,
+    HEADER_KEYS.filter((k) => k !== 'zohoSoNumber' && k !== 'zohoSoId' && k !== 'zohoCustomerId')
+  );
 
   if (colMap.zohoSoNumber) {
     const meta = readZohoContactIdMetaFromCell(row.getCell(colMap.zohoSoNumber));
@@ -243,9 +368,19 @@ function readOpenSoHeaderRowFields(row, colMap) {
     const display = cellToText(row.getCell(colMap.zohoSoNumber));
     if (display && SO_NUMBER_RE.test(display.trim())) {
       fields.zohoSoDisplayNumber = display.trim();
+    } else if (display && !/^\d{10,22}$/.test(display.trim().replace(/\s/g, ''))) {
+      fields.zohoSoDisplayNumber = display.trim();
     }
   } else {
     fields.zohoSoNumber = '';
+  }
+
+  if (colMap.zohoSoId) {
+    const meta = readZohoContactIdMetaFromCell(row.getCell(colMap.zohoSoId));
+    fields.zohoSoId = meta.id;
+    fields.zohoSoIdReliable = meta.reliable;
+  } else {
+    fields.zohoSoId = '';
   }
 
   if (colMap.zohoCustomerId) {
@@ -278,7 +413,31 @@ function normalizeGstTreatment(val) {
   return String(val).trim();
 }
 
+function joinAddressLine(line1, line2) {
+  const a = String(line1 || '').trim();
+  const b = String(line2 || '').trim();
+  if (a && b) return `${a}, ${b}`;
+  return a || b || '';
+}
+
 function resolveZohoSoIdFromFields(fields) {
+  const soIdRaw = cleanDigitsOrText(fields.zohoSoId);
+  if (/^\d{10,22}$/.test(soIdRaw)) {
+    const displayFromCell = String(fields.zohoSoDisplayNumber || '').trim();
+    const numberField = String(fields.zohoSoNumber || '').trim();
+    let displayNumber = displayFromCell;
+    if (!displayNumber && numberField && SO_NUMBER_RE.test(numberField)) {
+      displayNumber = numberField;
+    } else if (!displayNumber && numberField && !/^\d{10,22}$/.test(numberField.replace(/\s/g, ''))) {
+      displayNumber = numberField;
+    }
+    return {
+      zohoId: soIdRaw,
+      displayNumber: displayNumber || null,
+      reliable: fields.zohoSoIdReliable === true,
+    };
+  }
+
   const raw = String(fields.zohoSoNumber || '')
     .trim()
     .replace(/\s/g, '');
@@ -298,7 +457,12 @@ function resolveZohoSoIdFromFields(fields) {
 
 function rowHasSoIdentity(fields) {
   const { zohoId, displayNumber } = resolveZohoSoIdFromFields(fields);
-  return Boolean(zohoId || displayNumber || String(fields.customerName || '').trim());
+  return Boolean(
+    zohoId ||
+      displayNumber ||
+      String(fields.customerName || '').trim() ||
+      normalizeEiSoReference(fields.eiSoReference)
+  );
 }
 
 function cleanDigitsOrText(value) {
@@ -359,19 +523,32 @@ function extractLineLookupKeys(fields) {
 /**
  * @param {Record<string, string|boolean>} fields
  */
-function excelFieldsToSalesOrderPayload(fields) {
+function excelFieldsToSalesOrderPayload(fields, opts = {}) {
+  const flatFormat = opts.flatFormat === true;
   const { zohoId, displayNumber } = resolveZohoSoIdFromFields(fields);
-  if (!zohoId && !displayNumber) return null;
+  if (!flatFormat && !zohoId && !displayNumber && !normalizeEiSoReference(fields.eiSoReference)) {
+    return null;
+  }
+  if (flatFormat && !displayNumber && !String(fields.zohoSoNumber || '').trim()) {
+    return null;
+  }
 
   const customerName = String(fields.customerName || '').trim() || null;
   const zohoCustomerId = String(fields.zohoCustomerId || '').trim().replace(/\s/g, '') || '';
 
   let orderId = displayNumber || '';
-  if (!orderId && zohoId) orderId = `ZOHO-SO-${zohoId}`;
+  if (!orderId && !flatFormat && zohoId) orderId = `ZOHO-SO-${zohoId}`;
+  if (!orderId && flatFormat) {
+    orderId = String(fields.zohoSoNumber || fields.zohoSoDisplayNumber || '').trim();
+  }
+  if (!orderId && !flatFormat) {
+    const ref = normalizeEiSoReference(fields.eiSoReference);
+    if (ref) orderId = ref;
+  }
   if (!orderId) return null;
 
   const billing = {
-    address: String(fields.billingAddress || '').trim() || undefined,
+    address: joinAddressLine(fields.billingAddress, fields.billingStreet2) || undefined,
     city: String(fields.billingCity || '').trim() || undefined,
     state: String(fields.billingState || '').trim() || undefined,
     country: String(fields.billingCountry || '').trim() || undefined,
@@ -379,7 +556,7 @@ function excelFieldsToSalesOrderPayload(fields) {
     phone: String(fields.billingPhone || '').trim() || undefined,
   };
   const shipping = {
-    address: String(fields.shippingAddress || '').trim() || undefined,
+    address: joinAddressLine(fields.shippingAddress, fields.shippingStreet2) || undefined,
     city: String(fields.shippingCity || '').trim() || undefined,
     state: String(fields.shippingState || '').trim() || undefined,
     country: String(fields.shippingCountry || '').trim() || undefined,
@@ -392,18 +569,27 @@ function excelFieldsToSalesOrderPayload(fields) {
   const qtyInvoiced = parseOptionalNumber(fields.totalQtyInvoiced);
   const qtyCancelled = parseOptionalNumber(fields.totalQtyCancelled);
   const qtyOpen = parseOptionalNumber(fields.openQtyRemaining);
+  const paymentTerms =
+    String(fields.paymentTerms || '').trim() ||
+    String(fields.paymentTermsLabel || '').trim() ||
+    '';
+  const placeOfSupply = flatFormat
+    ? ''
+    : String(fields.placeOfSupply || '').trim() ||
+      String(fields.placeOfSupplyWithStateCode || '').trim() ||
+      '';
 
   const form_data = {
-    source: 'excel_open_so_headers',
+    source: opts.source || 'excel_open_so_headers',
     orderId,
     customerName: customerName || '',
     orderDate: toDateOnly(fields.orderDate) || '',
     expectedShipmentDate: toDateOnly(fields.expectedShipmentDate) || '',
-    paymentTerms: String(fields.paymentTerms || '').trim() || '',
-    deliveryMethod: String(fields.deliveryMethod || '').trim() || '',
-    salespersonName: String(fields.salesperson || '').trim() || '',
-    placeOfSupply: String(fields.placeOfSupply || '').trim() || '',
-    gstTreatment: normalizeGstTreatment(fields.gstTreatment),
+    paymentTerms,
+    deliveryMethod: flatFormat ? '' : String(fields.deliveryMethod || '').trim() || '',
+    salespersonName: flatFormat ? '' : String(fields.salesperson || '').trim() || '',
+    placeOfSupply,
+    gstTreatment: flatFormat ? '' : normalizeGstTreatment(fields.gstTreatment),
     gstin: String(fields.gstin || '').trim() || '',
     billingAddress: billing.address || '',
     billingCity: billing.city || '',
@@ -417,22 +603,28 @@ function excelFieldsToSalesOrderPayload(fields) {
     shippingCountry: shipping.country || '',
     shippingPincode: shipping.pincode || '',
     shippingPhone: shipping.phone || '',
-    currencyCode: String(fields.currency || '').trim() || '',
-    exchangeRate: parseOptionalNumber(fields.exchangeRate) ?? undefined,
-    advancePercent: parseOptionalNumber(fields.advancePercent) ?? undefined,
-    preShipmentPercent: parseOptionalNumber(fields.preShipmentPercent) ?? undefined,
-    postShipmentPercent: parseOptionalNumber(fields.postShipmentPercent) ?? undefined,
-    creditDays: parseOptionalNumber(fields.creditDays) ?? undefined,
+    currencyCode: flatFormat ? '' : String(fields.currency || '').trim() || '',
+    exchangeRate: flatFormat ? undefined : parseOptionalNumber(fields.exchangeRate) ?? undefined,
+    advancePercent: flatFormat ? undefined : parseOptionalNumber(fields.advancePercent) ?? undefined,
+    preShipmentPercent: flatFormat ? undefined : parseOptionalNumber(fields.preShipmentPercent) ?? undefined,
+    postShipmentPercent: flatFormat ? undefined : parseOptionalNumber(fields.postShipmentPercent) ?? undefined,
+    creditDays: flatFormat ? undefined : parseOptionalNumber(fields.creditDays) ?? undefined,
     zohoStatus,
   };
+  if (!flatFormat) {
+    const notes = String(fields.notes || '').trim();
+    if (notes) form_data.notes = notes;
+  }
+  const customStatus = String(fields.customStatus || '').trim();
+  if (customStatus) form_data.customStatus = customStatus;
   const eiSoReference = normalizeEiSoReference(fields.eiSoReference);
   if (eiSoReference) {
     form_data.eiSoReference = eiSoReference;
   }
 
-  if (zohoId) {
+  if (!flatFormat && zohoId) {
     form_data.zohoSalesorderId = zohoId;
-    if (fields.zohoSoNumberReliable === false) {
+    if (fields.zohoSoIdReliable === false || fields.zohoSoNumberReliable === false) {
       form_data.zohoSalesorderIdUnreliable = true;
     }
   }
@@ -507,36 +699,195 @@ function readOpenSoLineRowFields(row, colMap) {
 /**
  * @param {Record<string, string|boolean>} fields
  */
-function excelLineFieldsToItem(fields) {
+function excelLineFieldsToItem(fields, opts = {}) {
+  const flatFormat = opts.flatFormat === true;
   const qty = parseOptionalNumber(fields.qtyOrdered) ?? 0;
   const unitPrice = parseOptionalNumber(fields.unitPrice) ?? 0;
-  const taxPercent = parseOptionalNumber(fields.taxPercent);
+  const productName = String(fields.productName || '').trim() || 'Line item';
   const item = {
     sku: String(fields.sku || '').trim(),
-    productName: String(fields.productName || '').trim() || 'Line item',
-    pack: String(fields.packSize || '').trim(),
+    productName,
+    pack: flatFormat ? '' : String(fields.packSize || '').trim(),
     quantity: qty,
     unitPrice,
     orderedQty: qty,
-    invoicedQty: parseOptionalNumber(fields.qtyInvoiced) ?? undefined,
-    cancelledQty: parseOptionalNumber(fields.qtyCancelled) ?? undefined,
-    openQty: parseOptionalNumber(fields.openQtyRemaining) ?? undefined,
-    uom: String(fields.uom || '').trim() || undefined,
+    openQty: qty || undefined,
     itemTotal: parseOptionalNumber(fields.itemTotal) ?? undefined,
-    taxPercent: taxPercent ?? undefined,
-    taxAmount: parseOptionalNumber(fields.taxAmount) ?? undefined,
-    cgstRatePercent: parseOptionalNumber(fields.cgstRatePercent) ?? undefined,
-    sgstRatePercent: parseOptionalNumber(fields.sgstRatePercent) ?? undefined,
-    igstRatePercent: parseOptionalNumber(fields.igstRatePercent) ?? undefined,
-    cgstAmount: parseOptionalNumber(fields.cgstAmount) ?? undefined,
-    sgstAmount: parseOptionalNumber(fields.sgstAmount) ?? undefined,
-    igstAmount: parseOptionalNumber(fields.igstAmount) ?? undefined,
   };
-  const zohoProductId = cleanDigitsOrText(fields.zohoProductId);
-  if (zohoProductId) item.zohoItemId = zohoProductId;
+  if (!flatFormat) {
+    const invoiced = parseOptionalNumber(fields.qtyInvoiced) ?? 0;
+    const cancelled = parseOptionalNumber(fields.qtyCancelled) ?? 0;
+    const taxPercent = parseOptionalNumber(fields.taxPercent);
+    let openQty = parseOptionalNumber(fields.openQtyRemaining);
+    if (openQty == null && qty > 0) {
+      openQty = Math.max(0, qty - invoiced - cancelled);
+    }
+    item.invoicedQty = invoiced || undefined;
+    item.cancelledQty = cancelled || undefined;
+    item.openQty = openQty ?? undefined;
+    item.uom = String(fields.uom || '').trim() || undefined;
+    item.taxPercent = taxPercent ?? undefined;
+    item.taxAmount = parseOptionalNumber(fields.taxAmount) ?? undefined;
+    item.cgstRatePercent = parseOptionalNumber(fields.cgstRatePercent) ?? undefined;
+    item.sgstRatePercent = parseOptionalNumber(fields.sgstRatePercent) ?? undefined;
+    item.igstRatePercent = parseOptionalNumber(fields.igstRatePercent) ?? undefined;
+    item.cessRatePercent = parseOptionalNumber(fields.cessRatePercent) ?? undefined;
+    item.cgstAmount = parseOptionalNumber(fields.cgstAmount) ?? undefined;
+    item.sgstAmount = parseOptionalNumber(fields.sgstAmount) ?? undefined;
+    item.igstAmount = parseOptionalNumber(fields.igstAmount) ?? undefined;
+    item.cessAmount = parseOptionalNumber(fields.cessAmount) ?? undefined;
+    const zohoProductId = cleanDigitsOrText(fields.zohoProductId);
+    if (zohoProductId) item.zohoItemId = zohoProductId;
+  }
   const hsnSac = String(fields.hsnSac || '').trim();
   if (hsnSac) item.hsnCode = hsnSac;
   return item;
+}
+
+/**
+ * @param {import('exceljs').Row} row
+ * @param {Record<string, number>} colMap
+ */
+function readSalesOrderFlatRowFields(row, colMap) {
+  const zohoMetaKeys = new Set(['zohoSoNumber', 'zohoCustomerId']);
+  const fields = readRowFields(
+    row,
+    colMap,
+    SALES_ORDER_FLAT_KEYS.filter((k) => !zohoMetaKeys.has(k))
+  );
+
+  if (colMap.zohoSoNumber) {
+    const display = String(cellToText(row.getCell(colMap.zohoSoNumber))).trim();
+    fields.zohoSoNumber = display;
+    if (display && SO_NUMBER_RE.test(display)) {
+      fields.zohoSoDisplayNumber = display;
+    } else if (display) {
+      fields.zohoSoDisplayNumber = display;
+    }
+  } else {
+    fields.zohoSoNumber = '';
+  }
+
+  if (colMap.zohoCustomerId) {
+    const meta = readZohoContactIdMetaFromCell(row.getCell(colMap.zohoCustomerId));
+    fields.zohoCustomerId =
+      meta.id || String(cellToText(row.getCell(colMap.zohoCustomerId))).trim();
+    fields.zohoCustomerIdReliable = meta.reliable;
+  } else {
+    fields.zohoCustomerId = '';
+  }
+
+  return fields;
+}
+
+/**
+ * @param {Record<string, string|boolean>} fields
+ */
+function resolveSalesOrderFlatGroupKey(fields) {
+  const display = String(fields.zohoSoDisplayNumber || fields.zohoSoNumber || '').trim();
+  if (display) return `no:${normalizeSoKey(display)}`;
+  return '';
+}
+
+function sumItemQty(items, pick) {
+  return items.reduce((sum, it) => sum + (Number(pick(it)) || 0), 0);
+}
+
+/**
+ * @param {import('exceljs').Workbook} workbook
+ * @param {Buffer} [buffer]
+ */
+function parseSalesOrderFlatWorkbook(workbook, buffer) {
+  const worksheet = findSalesOrderWorksheet(workbook);
+  if (!worksheet) {
+    throw new Error('Worksheet "Sales Order" not found');
+  }
+
+  const layout = detectSalesOrderColumnMap(worksheet);
+  if (!layout) {
+    throw new Error(
+      'Could not detect "Sales Order" header row (need SalesOrder Number and Item Name columns)'
+    );
+  }
+
+  const { headerRow, col: colMap } = layout;
+  const customerOverlay = buffer
+    ? buildZohoColumnOverlayFromXlsx(buffer, worksheet.name, ['customer id'])
+    : { byRow: {}, unreliableCount: 0 };
+
+  const lastDataRow = getWorksheetEndRow(worksheet, headerRow);
+  const grouped = new Map();
+  let skippedNoIdentity = 0;
+  let skippedNoProduct = 0;
+
+  for (let r = headerRow + 1; r <= lastDataRow; r += 1) {
+    const fields = readSalesOrderFlatRowFields(worksheet.getRow(r), colMap);
+    if (customerOverlay.byRow?.[r]?.id) {
+      fields.zohoCustomerId = customerOverlay.byRow[r].id;
+      fields.zohoCustomerIdReliable = customerOverlay.byRow[r].reliable;
+    }
+
+    const groupKey = resolveSalesOrderFlatGroupKey(fields);
+    if (!groupKey) {
+      skippedNoIdentity += 1;
+      continue;
+    }
+
+    const productName = String(fields.productName || '').trim();
+    if (!productName && !String(fields.sku || '').trim()) {
+      skippedNoProduct += 1;
+      continue;
+    }
+
+    const entry = grouped.get(groupKey) || {
+      headerFields: fields,
+      lineRows: [],
+      firstExcelRow: r,
+    };
+    entry.lineRows.push({
+      excel_row: r,
+      fields,
+      item: excelLineFieldsToItem(fields, { flatFormat: true }),
+    });
+    grouped.set(groupKey, entry);
+  }
+
+  const rows = [];
+  for (const group of grouped.values()) {
+    const payload = excelFieldsToSalesOrderPayload(group.headerFields, {
+      source: 'excel_sales_order',
+      flatFormat: true,
+    });
+    if (!payload) continue;
+
+    const items = group.lineRows.map((lineRow) => lineRow.item);
+    payload.items = items;
+
+    payload.order_status.quantity = sumItemQty(items, (it) => it.quantity);
+    payload.order_status.quantityOpen = sumItemQty(items, (it) => it.quantity);
+
+    rows.push({
+      excel_row: group.firstExcelRow,
+      sheet_name: worksheet.name,
+      payload,
+      fields: group.headerFields,
+      line_count: group.lineRows.length,
+    });
+  }
+
+  return {
+    rows,
+    sheetName: worksheet.name,
+    headerRow,
+    format: 'sales_order_flat',
+    parseStats: {
+      scanned_through_row: lastDataRow,
+      skipped_no_identity: skippedNoIdentity,
+      skipped_no_product: skippedNoProduct,
+      groups_total: grouped.size,
+      zoho_overlay_unreliable: customerOverlay.unreliableCount ?? 0,
+    },
+  };
 }
 
 /**
@@ -723,9 +1074,22 @@ async function extractOpenSoHeadersFromBuffer(buffer) {
 async function extractOpenSoWorkbookFromBuffer(buffer) {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer);
+  if (findSalesOrderWorksheet(workbook)) {
+    const flat = parseSalesOrderFlatWorkbook(workbook, buffer);
+    return {
+      format: 'sales_order_flat',
+      headers: flat,
+      lines: {
+        rows: [],
+        sheetName: null,
+        headerRow: null,
+        parseStats: { scanned_through_row: 0, skipped_no_identity: 0, zoho_overlay_unreliable: 0 },
+      },
+    };
+  }
   const headers = parseOpenSoHeadersWorkbook(workbook, buffer);
   const lines = parseOpenSoLinesWorkbook(workbook, buffer);
-  return { headers, lines };
+  return { format: 'open_so_split', headers, lines };
 }
 
 async function findByZohoSalesorderId(zohoId) {
@@ -1063,14 +1427,16 @@ async function postOpenSoHeadersExcelImport(req, res) {
       return res.status(400).json({ error: loadErr.message || 'Invalid Excel file' });
     }
 
-    const { headers, lines } = parsed;
+    const { headers, lines, format } = parsed;
     const { rows, sheetName, headerRow, parseStats } = headers;
-    if (!lines.sheetName) {
+    const isFlatFormat = format === 'sales_order_flat';
+
+    if (!isFlatFormat && !lines.sheetName) {
       return res.status(400).json({
         error: 'Worksheet "Open SO Lines" not found. SKU/product rows are required for import.',
       });
     }
-    if (!lines.rows.length) {
+    if (!isFlatFormat && !lines.rows.length) {
       return res.status(400).json({
         error:
           'No line rows parsed from "Open SO Lines". Please verify line headers (SKU, Product, Qty Ordered, Zoho SO Number/ID).',
@@ -1081,9 +1447,12 @@ async function postOpenSoHeadersExcelImport(req, res) {
     }
     if (!rows.length) {
       return res.status(400).json({
-        error: 'No sales order rows found on "Open SO Headers". Need Zoho SO Number or customer name.',
+        error: isFlatFormat
+          ? 'No sales order rows found on "Sales Order". Need SalesOrder Number and line items.'
+          : 'No sales order rows found on "Open SO Headers". Need Zoho SO Number or customer name.',
         sheet: sheetName,
         header_row: headerRow,
+        parse_stats: parseStats ?? null,
       });
     }
     if (rows.length > MAX_DATA_ROWS) {
@@ -1107,8 +1476,10 @@ async function postOpenSoHeadersExcelImport(req, res) {
       payload: r.payload,
       ei_so_reference: r.fields?.eiSoReference || '',
     }));
-    const itemsBySoKey = groupItemsBySoKey(lines.rows);
-    const itemsByEiSoReference = groupItemsByEiSoReference(lines.rows);
+    const itemsBySoKey = isFlatFormat ? new Map() : groupItemsBySoKey(lines.rows);
+    const itemsByEiSoReference = isFlatFormat
+      ? new Map()
+      : groupItemsByEiSoReference(lines.rows);
 
     for (let offset = 0; offset < importRows.length; offset += CHUNK_SIZE) {
       const slice = importRows.slice(offset, offset + CHUNK_SIZE);
@@ -1129,13 +1500,14 @@ async function postOpenSoHeadersExcelImport(req, res) {
 
     return res.json({
       ok: true,
+      format: format || 'open_so_split',
       rows_total: rows.length,
       rows_imported: importRows.length,
       sheet: sheetName,
       header_row: headerRow,
       parse_stats: parseStats ?? null,
-      lines_parse_stats: lines.parseStats ?? null,
-      lines_rows_total: lines.rows.length,
+      lines_parse_stats: isFlatFormat ? null : lines.parseStats ?? null,
+      lines_rows_total: isFlatFormat ? 0 : lines.rows.length,
       summary: {
         sales_orders_created: aggregated.created,
         sales_orders_updated: aggregated.updated,
@@ -1172,17 +1544,23 @@ function uploadOpenSoHeadersExcelSafe(req, res, next) {
 }
 
 module.exports = {
+  SALES_ORDER_SHEET,
   OPEN_SO_HEADERS_SHEET,
   OPEN_SO_LINES_SHEET,
   HEADER_ALIASES,
   LINE_HEADER_ALIASES,
+  SALES_ORDER_FLAT_ALIASES,
+  SALES_ORDER_ALIASES,
   normalizeSheetName,
+  findSalesOrderWorksheet,
   findOpenSoHeadersWorksheet,
   findOpenSoLinesWorksheet,
+  detectSalesOrderColumnMap,
   detectOpenSoHeadersColumnMap,
   detectOpenSoLinesColumnMap,
   excelFieldsToSalesOrderPayload,
   excelLineFieldsToItem,
+  parseSalesOrderFlatWorkbook,
   parseOpenSoHeadersWorkbook,
   parseOpenSoLinesWorkbook,
   extractOpenSoHeadersFromBuffer,

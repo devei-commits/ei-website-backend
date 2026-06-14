@@ -1,16 +1,172 @@
 const ExcelJS = require('exceljs');
 const {
   normalizeSheetName,
+  findSalesOrderWorksheet,
   findOpenSoHeadersWorksheet,
   findOpenSoLinesWorksheet,
   excelFieldsToSalesOrderPayload,
   excelLineFieldsToItem,
+  parseSalesOrderFlatWorkbook,
   parseOpenSoHeadersWorkbook,
   parseOpenSoLinesWorkbook,
   groupItemsBySoKey,
 } = require('../../src/salesOrders/openSoHeadersExcelImport');
 
 describe('openSoHeadersExcelImport', () => {
+  test('normalizeSheetName matches Sales Order', () => {
+    expect(normalizeSheetName('Sales Order')).toBe('sales order');
+  });
+
+  test('findSalesOrderWorksheet finds sheet by name', () => {
+    const wb = new ExcelJS.Workbook();
+    wb.addWorksheet('Summary');
+    const sheet = wb.addWorksheet('Sales Order');
+    expect(findSalesOrderWorksheet(wb)).toBe(sheet);
+  });
+
+  test('parseSalesOrderFlatWorkbook groups line rows by SalesOrder Number', () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sales Order');
+    ws.getRow(1).values = [
+      null,
+      'SalesOrder Number',
+      'Order Date',
+      'Expected Shipment Date',
+      'Status',
+      'Custom Status',
+      'Customer ID',
+      'Customer Name',
+      'GST Identification Number (GSTIN)',
+      'Payment Terms',
+      'Item Name',
+      'SKU',
+      'QuantityOrdered',
+      'Item Price',
+      'HSN/SAC',
+      'Item Total',
+      'Billing Address',
+      'Billing City',
+      'Billing Code',
+      'Shipping Address',
+      'Shipping City',
+      'Shipping Code',
+    ];
+    ws.getRow(2).values = [
+      null,
+      'SO-03611',
+      '2026-04-01',
+      '2026-05-01',
+      'open',
+      'Awaiting dispatch',
+      '1252231000037973999',
+      'Test Client',
+      '27AAAAA0000A1Z5',
+      'Net 45',
+      'Face Wash',
+      'FG-FW-100',
+      '10',
+      '120',
+      '3304',
+      '1200',
+      'Plot 1',
+      'Mumbai',
+      '400001',
+      'Plot 2',
+      'Pune',
+      '411001',
+    ];
+    ws.getRow(3).values = [
+      null,
+      'SO-03611',
+      '2026-04-01',
+      '2026-05-01',
+      'open',
+      'Awaiting dispatch',
+      '1252231000037973999',
+      'Test Client',
+      '27AAAAA0000A1Z5',
+      'Net 45',
+      'Serum',
+      'FG-SERUM-10ML',
+      '5',
+      '250',
+      '3304',
+      '1250',
+      'Plot 1',
+      'Mumbai',
+      '400001',
+      'Plot 2',
+      'Pune',
+      '411001',
+    ];
+
+    const parsed = parseSalesOrderFlatWorkbook(wb);
+    expect(parsed.format).toBe('sales_order_flat');
+    expect(parsed.rows.length).toBe(1);
+    expect(parsed.rows[0].payload.order_id).toBe('SO-03611');
+    expect(parsed.rows[0].payload.customer_name).toBe('Test Client');
+    expect(parsed.rows[0].payload.form_data.zohoCustomerId).toBe('1252231000037973999');
+    expect(parsed.rows[0].payload.form_data.zohoSalesorderId).toBeUndefined();
+    expect(parsed.rows[0].payload.form_data.gstin).toBe('27AAAAA0000A1Z5');
+    expect(parsed.rows[0].payload.form_data.billingPincode).toBe('400001');
+    expect(parsed.rows[0].payload.form_data.shippingPincode).toBe('411001');
+    expect(parsed.rows[0].payload.form_data.customStatus).toBe('Awaiting dispatch');
+    expect(parsed.rows[0].payload.form_data.source).toBe('excel_sales_order');
+    expect(parsed.rows[0].payload.items).toHaveLength(2);
+    expect(parsed.rows[0].payload.items[0].productName).toBe('Face Wash');
+    expect(parsed.rows[0].payload.items[0].zohoItemId).toBeUndefined();
+    expect(parsed.rows[0].payload.items[1].sku).toBe('FG-SERUM-10ML');
+    expect(parsed.rows[0].payload.order_status.quantity).toBe(15);
+  });
+
+  test('parseSalesOrderFlatWorkbook ignores skipped columns present in sheet', () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sales Order');
+    ws.getRow(1).values = [
+      null,
+      'SalesOrder ID',
+      'SalesOrder Number',
+      'Customer ID',
+      'Customer Name',
+      'Reference#',
+      'Currency Code',
+      'Product ID',
+      'Item Name',
+      'QuantityOrdered',
+      'QuantityInvoiced',
+      'Item Tax %',
+      'Sales person',
+      'Notes',
+    ];
+    ws.getRow(2).values = [
+      null,
+      '1252231000040833999',
+      'SO-99999',
+      '1252231000037973999',
+      'Ignored Client',
+      'REF-SKIP',
+      'USD',
+      '1252231000040001000',
+      'Toner',
+      '3',
+      '1',
+      '18',
+      'Priya',
+      'Should ignore',
+    ];
+
+    const parsed = parseSalesOrderFlatWorkbook(wb);
+    expect(parsed.rows.length).toBe(1);
+    expect(parsed.rows[0].payload.order_id).toBe('SO-99999');
+    expect(parsed.rows[0].payload.form_data.zohoSalesorderId).toBeUndefined();
+    expect(parsed.rows[0].payload.form_data.currencyCode).toBe('');
+    expect(parsed.rows[0].payload.form_data.eiSoReference).toBeUndefined();
+    expect(parsed.rows[0].payload.items[0].taxPercent).toBeUndefined();
+    expect(parsed.rows[0].payload.items[0].invoicedQty).toBeUndefined();
+    expect(parsed.rows[0].payload.form_data.salespersonName).toBe('');
+    expect(parsed.rows[0].payload.form_data.notes).toBeUndefined();
+  });
+
   test('normalizeSheetName matches Open SO Headers', () => {
     expect(normalizeSheetName('Open SO Headers')).toBe('open so headers');
   });
@@ -27,6 +183,18 @@ describe('openSoHeadersExcelImport', () => {
     wb.addWorksheet('Summary');
     const lines = wb.addWorksheet('Open SO Lines');
     expect(findOpenSoLinesWorksheet(wb)).toBe(lines);
+  });
+
+  test('excelFieldsToSalesOrderPayload maps SalesOrder ID and Number columns', () => {
+    const payload = excelFieldsToSalesOrderPayload({
+      zohoSoId: '1252231000040833074',
+      zohoSoIdReliable: true,
+      zohoSoDisplayNumber: 'SO-03611',
+      customerName: 'Acme',
+    });
+    expect(payload.order_id).toBe('SO-03611');
+    expect(payload.form_data.zohoSalesorderId).toBe('1252231000040833074');
+    expect(payload.form_data.zohoSalesorderNumber).toBe('SO-03611');
   });
 
   test('excelFieldsToSalesOrderPayload maps header columns', () => {

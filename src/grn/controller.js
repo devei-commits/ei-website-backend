@@ -19,6 +19,22 @@ async function ensureGrnLocationZoneColumn() {
   }
 }
 
+let grnQcSpecsColumnEnsured = false;
+async function ensureGrnQcSpecsColumn() {
+  if (grnQcSpecsColumnEnsured) return;
+  grnQcSpecsColumnEnsured = true;
+  try {
+    const dialect = db.getDialect && db.getDialect();
+    if (dialect === 'postgres') {
+      await db.query(
+        'ALTER TABLE goods_received_notes ADD COLUMN IF NOT EXISTS qc_specs JSONB'
+      );
+    }
+  } catch (e) {
+    console.warn('[grn] ensure qc_specs column skipped:', e && e.message ? e.message : e);
+  }
+}
+
 let warehouseInventoryZoneRackTextEnsured = false;
 /** Allow multiple rack/zone labels on one inventory row (merged list, not a single slot). */
 async function ensureWarehouseInventoryZoneRackTextColumns() {
@@ -53,6 +69,12 @@ const { applyWhInboundStock } = require('./applyWhInboundStock');
 const { quantityToKg } = require('../warehouseInventory/quantityToKg');
 const { WarehouseLocation, WarehouseRack } = require('../warehouseLocations/models');
 const { ensureWarehouseZoneAndRack } = require('../facilityAreas/ensureWarehouseCustomLocation');
+const {
+  buildGrnQcSpecPayload,
+  deriveGrnQcStatusFromSpecs,
+  validateQcSpecsForPassed,
+  normalizeIncomingQcSpecs,
+} = require('./grnQcSpecs');
 
 function isCustomGrnLocationSource(body) {
   const v = String((body && (body.locationSource ?? body.location_source)) || '')
@@ -198,6 +220,100 @@ async function getMastersForLineItems(rows) {
     productMap[String(d.product_id)] = { code: d.product_code || '', name };
   });
   return { rmMap, pmMap, productMap };
+}
+
+async function loadMastersForQc(lineItems, grnType) {
+  const rmIds = new Set();
+  const pmIds = new Set();
+  const rmCodes = new Set();
+  const pmCodes = new Set();
+  for (const line of lineItems || []) {
+    if (line.raw_material_id != null) rmIds.add(Number(line.raw_material_id));
+    if (line.pack_material_id != null) pmIds.add(Number(line.pack_material_id));
+    const code = String(line.itemCode ?? line.item_code ?? '').trim();
+    if (code) {
+      if (String(grnType || '').toUpperCase() === 'PM') pmCodes.add(code);
+      else rmCodes.add(code);
+    }
+  }
+  const rmCodeList = [...rmCodes];
+  const pmCodeList = [...pmCodes];
+  const [rms, pms] = await Promise.all([
+    rmIds.size || rmCodeList.length
+      ? RawMaterial.findAll({
+        where: {
+          [Op.or]: [
+            ...(rmIds.size ? [{ id: { [Op.in]: [...rmIds] } }] : []),
+            ...(rmCodeList.length ? [{ code: { [Op.in]: rmCodeList } }] : []),
+            ...(rmCodeList.length ? [{ zoho_sku_code: { [Op.in]: rmCodeList } }] : []),
+          ],
+        },
+        attributes: ['id', 'code', 'name', 'inci', 'zoho_sku_code', 'form_data'],
+      })
+      : [],
+    pmIds.size || pmCodeList.length
+      ? PackMaterial.findAll({
+        where: {
+          [Op.or]: [
+            ...(pmIds.size ? [{ id: { [Op.in]: [...pmIds] } }] : []),
+            ...(pmCodeList.length ? [{ code: { [Op.in]: pmCodeList } }] : []),
+            ...(pmCodeList.length ? [{ zoho_sku_code: { [Op.in]: pmCodeList } }] : []),
+          ],
+        },
+        attributes: ['id', 'code', 'description', 'zoho_sku_code', 'form_data'],
+      })
+      : [],
+  ]);
+  const indexMasterCode = (map, row) => {
+    const code = String(row.code ?? '').trim();
+    const sku = String(row.zoho_sku_code ?? '').trim();
+    if (code) {
+      map.set(code, row);
+      map.set(code.toUpperCase(), row);
+    }
+    if (sku) {
+      map.set(sku, row);
+      map.set(sku.toUpperCase(), row);
+    }
+  };
+  const rmById = new Map();
+  const rmByCode = new Map();
+  for (const r of rms) {
+    const p = r.get ? r.get({ plain: true }) : r;
+    rmById.set(Number(p.id), p);
+    indexMasterCode(rmByCode, p);
+  }
+  const pmById = new Map();
+  const pmByCode = new Map();
+  for (const r of pms) {
+    const p = r.get ? r.get({ plain: true }) : r;
+    pmById.set(Number(p.id), p);
+    indexMasterCode(pmByCode, p);
+  }
+  return { rmById, pmById, rmByCode, pmByCode };
+}
+
+/**
+ * GET /api/v1/grn/:id/qc-reference — master quality specs merged with saved GRN QC results.
+ */
+async function qcReference(req, res) {
+  try {
+    await ensureGrnQcSpecsColumn();
+    const id = parseInt(String(req.params.id), 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const row = await GoodsReceivedNote.findByPk(id);
+    if (!row) return res.status(404).json({ error: 'GRN not found' });
+    await repairLineItemsMasterLinks([row]);
+    const d = row.get ? row.get({ plain: true }) : row;
+    const lineItems = d.line_items || [];
+    const masters = await loadMastersForQc(lineItems, d.type);
+    const qcSpecs = buildGrnQcSpecPayload(lineItems, d.type, d.qc_specs, masters);
+    const derivedStatus = deriveGrnQcStatusFromSpecs(qcSpecs);
+    res.json({ qcSpecs, derivedQcStatus: derivedStatus });
+  } catch (err) {
+    console.error('[grn] qcReference error:', err);
+    res.status(500).json({ error: err.message || 'Failed to load GRN QC reference' });
+  }
 }
 
 function extractMasterCodeFromText(text) {
@@ -364,6 +480,7 @@ function formatRow(r, enrichedLineItems) {
     assignedTo: d.assigned_to || '',
     qcStatus: d.qc_status || 'Pending',
     qcBy: d.qc_by || '',
+    qcSpecs: d.qc_specs || null,
     status: d.status || 'Pending',
     lineItems,
     workflowSteps: d.workflow_steps || [],
@@ -388,6 +505,7 @@ function formatRow(r, enrichedLineItems) {
 async function list(req, res) {
   try {
     await ensureGrnLocationZoneColumn();
+    await ensureGrnQcSpecsColumn();
     const rows = await GoodsReceivedNote.findAll({
       where: activeRowWhere(),
       order: [['expected_date', 'DESC'], ['id', 'DESC']],
@@ -412,6 +530,7 @@ async function list(req, res) {
 async function getById(req, res) {
   try {
     await ensureGrnLocationZoneColumn();
+    await ensureGrnQcSpecsColumn();
     const id = parseInt(String(req.params.id), 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await GoodsReceivedNote.findByPk(id);
@@ -1025,6 +1144,7 @@ async function applyGrnCompletionToInventory(grnRow, opts = {}) {
 async function update(req, res) {
   try {
     await ensureGrnLocationZoneColumn();
+    await ensureGrnQcSpecsColumn();
     const id = parseInt(String(req.params.id), 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await GoodsReceivedNote.findByPk(id);
@@ -1037,10 +1157,17 @@ async function update(req, res) {
     if (body.grn_date !== undefined) updates.grn_date = body.grn_date;
     if (body.receivedDate !== undefined) updates.received_date = body.receivedDate;
     if (body.received_date !== undefined) updates.received_date = body.received_date;
-    if (body.qcStatus !== undefined) updates.qc_status = body.qcStatus;
-    if (body.qc_status !== undefined) updates.qc_status = body.qc_status;
     if (body.qcBy !== undefined) updates.qc_by = body.qcBy;
     if (body.qc_by !== undefined) updates.qc_by = body.qc_by;
+    const incomingQcSpecs = normalizeIncomingQcSpecs(body);
+    if (incomingQcSpecs) {
+      updates.qc_specs = incomingQcSpecs;
+      updates.qc_status = deriveGrnQcStatusFromSpecs(incomingQcSpecs);
+    } else if (body.qcStatus !== undefined) {
+      updates.qc_status = body.qcStatus;
+    } else if (body.qc_status !== undefined) {
+      updates.qc_status = body.qc_status;
+    }
     if (body.status !== undefined) updates.status = body.status;
     if (body.lineItems !== undefined) updates.line_items = body.lineItems;
     if (body.line_items !== undefined) updates.line_items = body.line_items;
@@ -1070,7 +1197,22 @@ async function update(req, res) {
     }
     const rowPlain = row.get ? row.get({ plain: true }) : row;
     const nextStatus = updates.status !== undefined ? updates.status : rowPlain.status;
-    const nextQcStatus = updates.qc_status !== undefined ? updates.qc_status : rowPlain.qc_status;
+    let nextQcStatus = updates.qc_status !== undefined ? updates.qc_status : rowPlain.qc_status;
+    const nextQcSpecs = updates.qc_specs !== undefined ? updates.qc_specs : rowPlain.qc_specs;
+    if (String(nextQcStatus || '').trim() === 'Passed') {
+      const qcValidation = validateQcSpecsForPassed(nextQcSpecs);
+      if (!qcValidation.ok) {
+        return res.status(400).json({ error: qcValidation.message });
+      }
+    }
+    if (incomingQcSpecs && (body.qcStatus === 'Passed' || body.qc_status === 'Passed')) {
+      const qcValidation = validateQcSpecsForPassed(incomingQcSpecs);
+      if (!qcValidation.ok) {
+        return res.status(400).json({ error: qcValidation.message });
+      }
+      updates.qc_status = 'Passed';
+      nextQcStatus = 'Passed';
+    }
     const nextQcByRaw = updates.qc_by !== undefined ? updates.qc_by : rowPlain.qc_by;
     const nextAssignedToRaw = updates.assigned_to !== undefined ? updates.assigned_to : rowPlain.assigned_to;
     const nextWorkflowSteps = updates.workflow_steps !== undefined ? updates.workflow_steps : rowPlain.workflow_steps;
@@ -1528,4 +1670,4 @@ async function generateLabels(req, res) {
   }
 }
 
-module.exports = { list, getById, create, update, remove, assignableUsers, generateLabels, applyGrnCompletionToInventory };
+module.exports = { list, getById, create, update, remove, assignableUsers, generateLabels, qcReference, applyGrnCompletionToInventory };
