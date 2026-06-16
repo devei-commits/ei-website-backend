@@ -333,6 +333,10 @@ async function updateProcurementRequest(req, res) {
     const nextStatus = updates.status !== undefined ? updates.status : row.status;
     const nextStockCheckStatus =
       updates.stock_check_status !== undefined ? updates.stock_check_status : row.stock_check_status;
+    const nextStockCheckAssignedTo =
+      updates.stock_check_assigned_to !== undefined
+        ? updates.stock_check_assigned_to
+        : row.stock_check_assigned_to;
     const lockStockCheckReopen = isStockCheckOneTimeCompleted(
       row.stock_check_status,
       row.stock_check_notes,
@@ -353,6 +357,17 @@ async function updateProcurementRequest(req, res) {
           'Stock check is still pending. Warehouse must complete stock check before PO can be released.',
         code: 'STOCK_CHECK_PENDING',
       });
+    }
+    {
+      const assignee = String(nextStockCheckAssignedTo ?? '').trim();
+      const stockStatusLower = String(nextStockCheckStatus ?? '').trim().toLowerCase();
+      const needsAssignee = stockStatusLower === 'in progress' || stockStatusLower === 'completed';
+      if (needsAssignee && !assignee) {
+        return res.status(400).json({
+          error: 'Assign a person for stock check before setting stock check to In Progress or Completed.',
+          code: 'STOCK_CHECK_ASSIGNEE_REQUIRED',
+        });
+      }
     }
     if (updates.items !== undefined) {
       const moqCheck = await validateProcurementItemsMoq(updates.items);

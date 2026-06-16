@@ -39,6 +39,7 @@ const { ProductionBatch } = require('../production/models');
 const {
   isPlanningBatchEditableByProduction,
   planningBatchEditLockReason,
+  validateUpdateOnlyBatchPayload,
 } = require('./planningBatchEditLock');
 
 /** Idempotent schema patch: adds bom_specific_gravity on Postgres if missing. Lazy, safe to call repeatedly. */
@@ -1362,6 +1363,7 @@ async function listBatches(req, res) {
 /**
  * POST /:id/batches — create or update planning_batches from customBatches; each batch gets current BOM copy (override or product BOM).
  * Body: { batches: [ { sizeKg }, ... ] }. Batch codes: PE-{planningId}-B1, PE-{planningId}-B2, ...
+ * Optional: { updateOnlyBatchId } — edit-mode guard; rejects batch count changes.
  */
 async function createOrUpdateBatches(req, res) {
   try {
@@ -1371,9 +1373,27 @@ async function createOrUpdateBatches(req, res) {
     if (!planRow) return res.status(404).json({ error: 'Planning extracted not found' });
     const body = req.body || {};
     const batches = Array.isArray(body.batches) ? body.batches : [];
+    const updateOnlyBatchId =
+      body.updateOnlyBatchId != null ? parseInt(body.updateOnlyBatchId, 10) : null;
     const bomCopy = await getBomCopyForPlanning(id);
     const existing = await PlanningBatch.findAll({ where: { planning_extracted_id: id }, order: [['sequence', 'ASC']] });
+    if (updateOnlyBatchId != null && !Number.isNaN(updateOnlyBatchId)) {
+      try {
+        validateUpdateOnlyBatchPayload(batches, existing, updateOnlyBatchId);
+      } catch (lockErr) {
+        if (lockErr.status) {
+          return res.status(lockErr.status).json({ error: lockErr.message, code: lockErr.code });
+        }
+        throw lockErr;
+      }
+    }
     if (batches.length > existing.length && existing.length > 0) {
+      if (updateOnlyBatchId != null && !Number.isNaN(updateOnlyBatchId)) {
+        return res.status(409).json({
+          error: 'Edit batch cannot add planning batches. Use Add Batch to create a new row.',
+          code: 'BATCH_COUNT_LOCKED',
+        });
+      }
       const lastRow = existing[existing.length - 1];
       const lastIdx = (Number(lastRow.sequence) || existing.length) - 1;
       const sentRaw = planRow.get ? planRow.get('sent_batch_indices') : planRow.sent_batch_indices;
@@ -1421,6 +1441,12 @@ async function createOrUpdateBatches(req, res) {
       }
     }
     if (existing.length > batches.length) {
+      if (updateOnlyBatchId != null && !Number.isNaN(updateOnlyBatchId)) {
+        return res.status(409).json({
+          error: 'Edit batch cannot remove planning batches.',
+          code: 'BATCH_COUNT_LOCKED',
+        });
+      }
       for (let i = batches.length; i < existing.length; i += 1) {
         const rowToRemove = existing[i];
         const removeId = rowToRemove.get ? rowToRemove.get('id') : rowToRemove.id;
@@ -1503,6 +1529,24 @@ async function assertPlanningBatchEditable(batchId) {
     throw err;
   }
   return null;
+}
+
+/** When Planning updates size_kg on a sent batch, mirror to linked Production row if BMR is still draft. */
+async function syncProductionBatchSizeFromPlanningBatch(planningBatchId, sizeKg) {
+  const id = Number(planningBatchId);
+  const kg = Number(sizeKg);
+  if (!Number.isFinite(id) || id <= 0 || !Number.isFinite(kg) || kg < 0) return;
+  const prod = await ProductionBatch.findOne({
+    where: { planning_batch_id: id },
+    attributes: ['id', 'bmr_status', 'batch_size'],
+  });
+  if (!prod) return;
+  const bmr = prod.get ? prod.get('bmr_status') : prod.bmr_status;
+  if (!isPlanningBatchEditableByProduction(bmr)) return;
+  const rounded = Math.round(kg);
+  const current = Number(prod.get ? prod.get('batch_size') : prod.batch_size);
+  if (Number.isFinite(current) && current === rounded) return;
+  await prod.update({ batch_size: rounded });
 }
 
 /**
@@ -1718,6 +1762,11 @@ async function updateBatch(req, res) {
       batch.batch_code = String(body.batchCode).trim().slice(0, 64);
     }
     await batch.save();
+
+    if (body.sizeKg !== undefined) {
+      const savedId = batch.get ? batch.get('id') : batch.id;
+      await syncProductionBatchSizeFromPlanningBatch(savedId, batch.size_kg);
+    }
 
     // Keep PI-level required snapshot in sync when batch BOM lines are edited in the modal.
     const editedRmLines = Array.isArray(body.rmLines) ? batch.rm_lines : null;
