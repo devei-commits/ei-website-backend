@@ -44,7 +44,7 @@ const clientHubRouters = require('./src/clientHub/routers');
 const dashboardRouters = require('./src/dashboard/routers');
 const errorHandler = require('./src/middleware/error_handler');
 const logginHandler = require('./src/middleware/logging')
-const { isAuthenticated } = require('./src/middleware/security')
+const { isAuthenticated, authorizeRoles } = require('./src/middleware/security')
 const { cacheInvalidationMiddleware } = require('./src/cache/cacheInvalidationMiddleware');
 const dotenv = require('dotenv');
 const cors = require('cors');
@@ -55,6 +55,9 @@ const customizationPackagingAdminRouter = require('./src/customizationPackaging/
 const { listPublicCustomizationPackaging } = require('./src/customizationPackaging/controller');
 const { ensureCustomizationPackagingPresets } = require('./src/customizationPackaging/ensureCustomizationPackagingPresets');
 const { ensureSchemaPatches } = require('./src/db/ensureSchemaPatches');
+require('./src/quotations/models');
+const { seedQuotationDefaults } = require('./src/quotations/seedQuotationDefaults');
+const quotationRouters = require('./src/quotations/routers');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -180,6 +183,7 @@ app.use(`${apiPrefix}/departments`, departmentsRouters);
 app.use(`${apiPrefix}/fulfillment`, isAuthenticated, fulfillmentRouters);
 app.use(`${apiPrefix}/client-hub`, isAuthenticated, clientHubRouters);
 app.use(`${apiPrefix}/dashboard`, isAuthenticated, dashboardRouters);
+app.use(`${apiPrefix}/quotes`, isAuthenticated, authorizeRoles('super_admin'), quotationRouters);
 
 app.use(errorHandler);
 
@@ -198,6 +202,7 @@ if (process.env.NODE_ENV !== 'test') {
       await db.sync({ alter: true });
       await ensureSchemaPatches();
       await ensureCustomizationPackagingPresets();
+      await seedQuotationDefaults();
       app.listen(port, '0.0.0.0',() => {
         console.log(`Server is running on port ${port}`);
       });
