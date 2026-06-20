@@ -11,35 +11,44 @@ const c = require('./controller');
 router.post('/calculate', c.calculateQuote);
 
 // Grades
+router.use('/grades', c.auditConfig('grade'));
 router.get('/grades', c.listGrades);
 router.post('/grades', c.createGrade);
 router.put('/grades/:id', c.updateGrade);
 router.delete('/grades/:id', c.deleteGrade);
 
 // Overheads
+router.use('/overheads', c.auditConfig('overhead'));
 router.get('/overheads', c.listOverheads);
 router.post('/overheads', c.createOverhead);
 router.put('/overheads/:id', c.updateOverhead);
 router.delete('/overheads/:id', c.deleteOverhead);
 
 // Timeline — procurement
+router.use('/timeline/procurement', c.auditConfig('procurement_rule'));
 router.get('/timeline/procurement', c.listProcurement);
 router.post('/timeline/procurement', c.createProcurement);
 router.put('/timeline/procurement/:id', c.updateProcurement);
 router.delete('/timeline/procurement/:id', c.deleteProcurement);
 
 // Timeline — manufacturing
+router.use('/timeline/manufacturing', c.auditConfig('manufacturing_rule'));
 router.get('/timeline/manufacturing', c.listManufacturing);
 router.post('/timeline/manufacturing', c.createManufacturing);
 router.put('/timeline/manufacturing/:id', c.updateManufacturing);
 router.delete('/timeline/manufacturing/:id', c.deleteManufacturing);
 
 // Timeline — QC + dispatch
+router.use('/timeline/qc', c.auditConfig('qc_rule'));
 router.get('/timeline/qc', c.listQc);
 router.post('/timeline/qc', c.upsertQc);
 router.delete('/timeline/qc/:id', c.deleteQc);
+router.use('/timeline/dispatch', c.auditConfig('dispatch_rule'));
 router.get('/timeline/dispatch', c.listDispatch);
 router.post('/timeline/dispatch', c.upsertDispatch);
+
+// Audit log
+router.get('/audit', c.listAudit);
 
 // Saved quotes
 router.post('/save', c.saveQuote);
@@ -58,6 +67,7 @@ router.delete('/saved/:id', c.deleteSaved);
 router.post('/rm-sg', c.saveRmSg);
 
 // Material lead-time tooling (view/bulk-edit raw_materials & pack_materials)
+router.use('/lead-times', c.auditConfig('material_lead'));
 router.get('/lead-times', c.listLeadTimes);
 router.post('/lead-times', c.saveLeadTimes);
 

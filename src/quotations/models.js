@@ -237,9 +237,28 @@ QuoteEmail.init(
   { sequelize: db, modelName: 'QuoteEmail', tableName: 'quote_emails', timestamps: true, createdAt: 'created_at', updatedAt: false }
 );
 
+// ─────────────────────────────────────────────────────────────
+// quote_audit_log — append-only log of config mutations
+// ─────────────────────────────────────────────────────────────
+class QuoteAuditLog extends Model {}
+QuoteAuditLog.init(
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    entity_type: { type: DataTypes.STRING(40), allowNull: false },
+    entity_id: { type: DataTypes.INTEGER, allowNull: true },
+    action: { type: DataTypes.STRING(20), allowNull: false },
+    summary: { type: DataTypes.TEXT, allowNull: true },
+    changed_by: { type: DataTypes.INTEGER, allowNull: true },
+    changed_by_name: { type: DataTypes.STRING(255), allowNull: true },
+    created_at: { type: DataTypes.DATE, allowNull: true },
+  },
+  { sequelize: db, modelName: 'QuoteAuditLog', tableName: 'quote_audit_log', timestamps: true, createdAt: 'created_at', updatedAt: false }
+);
+
 module.exports = {
   QuoteGrade,
   QuoteOverhead,
+  QuoteAuditLog,
   QuoteProcurementRule,
   QuoteManufacturingRule,
   QuoteQcRule,

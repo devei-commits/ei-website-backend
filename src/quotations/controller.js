@@ -8,7 +8,7 @@ const { QueryTypes } = require('sequelize');
 const db = require('../../db');
 const {
   QuoteGrade, QuoteOverhead, QuoteProcurementRule, QuoteManufacturingRule,
-  QuoteQcRule, QuoteDispatchConfig, SavedQuote, QuoteEmail,
+  QuoteQcRule, QuoteDispatchConfig, SavedQuote, QuoteEmail, QuoteAuditLog,
 } = require('./models');
 const { enrichBom } = require('./bomEnrich');
 const RawMaterial = require('../rawMaterials/models');
@@ -785,6 +785,45 @@ async function saveRmSg(req, res) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// AUDIT LOG — middleware records successful config mutations; one hook
+// instead of instrumenting every handler. GET endpoint lists entries.
+// ─────────────────────────────────────────────────────────────
+function auditConfig(entityType) {
+  return (req, res, next) => {
+    if (req.method !== 'GET') {
+      res.on('finish', () => {
+        if (res.statusCode >= 400) return;
+        const action = req.method === 'DELETE' ? 'delete' : (req.params.id ? 'update' : 'create');
+        const b = req.body || {};
+        const name = b.name || b.head_name || b.category_or_material || b.grade_ref || b.product_type || (Array.isArray(b.updates) ? `${b.updates.length} item(s)` : '');
+        QuoteAuditLog.create({
+          entity_type: entityType,
+          entity_id: req.params.id ? parseInt(req.params.id) : null,
+          action,
+          summary: `${action} ${entityType}${name ? `: ${name}` : ''}`,
+          changed_by: req.user?.id || null,
+          changed_by_name: req.user?.fullName || null,
+        }).catch((e) => console.error('audit log failed:', e.message));
+      });
+    }
+    next();
+  };
+}
+
+async function listAudit(req, res) {
+  try {
+    const where = req.query.entity_type ? { entity_type: req.query.entity_type } : {};
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const offset = parseInt(req.query.offset) || 0;
+    const { count, rows } = await QuoteAuditLog.findAndCountAll({ where, order: [['created_at', 'DESC']], limit, offset });
+    res.json({ entries: plain(rows), total: count });
+  } catch (err) {
+    console.error('GET /quotes/audit error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
 // EMAIL — stub (to be implemented later)
 // ─────────────────────────────────────────────────────────────
 async function sendEmail(req, res) {
@@ -799,5 +838,5 @@ module.exports = {
   listManufacturing, createManufacturing, updateManufacturing, deleteManufacturing,
   listQc, upsertQc, deleteQc, listDispatch, upsertDispatch,
   saveQuote, quoteStats, quoteAnalytics, listClients, listSaved, getSaved, deleteSaved, changeStatus, convertToSalesOrder, reviseQuote, listVersions, saveRmSg,
-  listLeadTimes, saveLeadTimes, sendEmail,
+  listLeadTimes, saveLeadTimes, auditConfig, listAudit, sendEmail,
 };
