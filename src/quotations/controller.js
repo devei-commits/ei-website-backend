@@ -95,6 +95,25 @@ async function calculateQuote(req, res) {
         material: l.material || null,
         lead_time_days: l.lead_time_days != null ? parseInt(l.lead_time_days) : null,
       }));
+      bomMeta.bom_name = b.name || 'Adhoc Quote';
+      // Blended SG from the adhoc lines (mirror BOM mode); manual b.sg wins.
+      let blendedSgKnown = 0, knownPct = 0;
+      const missingSgLines = [];
+      for (const l of rmLines) {
+        if (l.specific_gravity != null && l.specific_gravity > 0) { blendedSgKnown += (l.pct_w_w / 100) * l.specific_gravity; knownPct += l.pct_w_w; }
+        else missingSgLines.push({ rm_code: l.rm_code, name: l.inci_name, pct_w_w: l.pct_w_w });
+      }
+      const sgComplete = missingSgLines.length === 0;
+      const blendedSg = sgComplete ? Math.round(blendedSgKnown * 1000) / 1000 : null;
+      if (!finalSg) finalSg = blendedSg || 0;
+      sgInfo = {
+        blended_sg: blendedSg,
+        blended_sg_partial: Math.round(blendedSgKnown * 1000) / 1000,
+        sg_complete: sgComplete,
+        sg_known_pct: Math.round(knownPct * 100) / 100,
+        missing_sg_lines: missingSgLines,
+        sg_used: finalSg,
+      };
     }
 
     const productType = detectProductType(bomMeta.bom_name);
