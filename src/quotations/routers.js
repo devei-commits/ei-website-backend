@@ -43,9 +43,11 @@ router.post('/timeline/dispatch', c.upsertDispatch);
 
 // Saved quotes
 router.post('/save', c.saveQuote);
+router.get('/stats', c.quoteStats);
 router.get('/saved', c.listSaved);
 router.get('/saved/:id', c.getSaved);
 router.post('/saved/:id/status', c.changeStatus);
+router.post('/saved/:id/convert', c.convertToSalesOrder);
 router.delete('/saved/:id', c.deleteSaved);
 
 // Persist manually-entered SG back to RM master

@@ -13,6 +13,7 @@ const {
 const { enrichBom } = require('./bomEnrich');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
+const SalesOrder = require('../salesOrders/models');
 const { calculate } = require('./pricing');
 const { estimateTimeline, detectProductType } = require('./timing');
 const { loadOverheadRows, loadTimelineConfig } = require('./configLoader');
@@ -435,6 +436,62 @@ async function changeStatus(req, res) {
   }
 }
 
+// Next SO-NNNNN order id (5-digit zero-padded, max+1).
+async function nextSoOrderId() {
+  const rows = await db.query(`SELECT order_id FROM sales_orders WHERE order_id ~ '^SO-[0-9]+$'`, { type: QueryTypes.SELECT });
+  let max = 0;
+  for (const r of rows) { const n = parseInt(String(r.order_id).replace('SO-', '')); if (Number.isFinite(n) && n > max) max = n; }
+  return 'SO-' + String(max + 1).padStart(5, '0');
+}
+
+// POST /quotes/saved/:id/convert — accepted quote → sales order (one line for the chosen band).
+async function convertToSalesOrder(req, res) {
+  try {
+    const row = await SavedQuote.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Saved quote not found' });
+    if ((row.status || 'draft') !== 'accepted') return res.status(400).json({ error: 'Only accepted quotes can be converted to a sales order.' });
+    if (row.sales_order_id) return res.status(400).json({ error: `Already converted to ${row.sales_order_ref}.` });
+
+    const result = row.result || {};
+    const bands = Array.isArray(result.bands) ? result.bands : [];
+    const bi = parseInt(req.body?.band_index);
+    const band = bands[Number.isFinite(bi) ? bi : 3];
+    if (!band) return res.status(400).json({ error: 'Invalid band selected.' });
+
+    const qty = req.body?.quantity != null ? parseInt(req.body.quantity) : band.moqv;
+    const unitPrice = req.body?.unit_price != null ? parseFloat(req.body.unit_price) : band.sell_price;
+    if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ error: 'Invalid quantity.' });
+
+    const orderId = await nextSoOrderId();
+    const item = {
+      sku: result.product_code || result.bom_code || '',
+      productName: row.quote_name || result.bom_name || '',
+      pack: result.pack_size || '',
+      quantity: qty, unitPrice, orderedQty: qty, openQty: qty,
+      itemTotal: Math.round(qty * unitPrice * 100) / 100, hsnCode: '',
+    };
+    const so = await SalesOrder.create({
+      order_id: orderId,
+      customer_name: row.customer_name || null,
+      order_date: new Date(),
+      reference: row.quote_ref,
+      status: 'Draft',
+      items: [item],
+      created_by: req.user?.fullName || null,
+      form_data: { source: 'quotation', quote_id: row.id, quote_ref: row.quote_ref, band_moq: band.moq },
+    });
+
+    const history = Array.isArray(row.status_history) ? row.status_history.slice() : [];
+    history.push({ from: row.status, to: row.status, by: req.user?.id || null, by_name: req.user?.fullName || null, note: `Converted to sales order ${orderId}`, at: new Date().toISOString() });
+    await row.update({ sales_order_id: so.id, sales_order_ref: orderId, status_history: history });
+
+    res.json({ ok: true, sales_order_id: so.id, order_id: orderId });
+  } catch (err) {
+    console.error('POST /quotes/saved/:id/convert error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
 function makeQuoteRef() {
   const d = new Date();
   const y = String(d.getFullYear()).slice(-2);
@@ -468,6 +525,28 @@ async function saveQuote(req, res) {
   } catch (err) { res.status(500).json({ error: err.message }); }
 }
 
+async function quoteStats(req, res) {
+  try {
+    const { Op } = require('sequelize');
+    const rows = await SavedQuote.findAll({
+      attributes: ['status', [db.fn('COUNT', db.col('id')), 'count']],
+      group: ['status'], raw: true,
+    });
+    const byStatus = {};
+    let total = 0;
+    for (const r of rows) {
+      const s = r.status || 'draft';
+      byStatus[s] = (byStatus[s] || 0) + parseInt(r.count);
+      total += parseInt(r.count);
+    }
+    const converted = await SavedQuote.count({ where: { sales_order_id: { [Op.ne]: null } } });
+    res.json({ total, by_status: byStatus, converted });
+  } catch (err) {
+    console.error('GET /quotes/stats error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
 async function listSaved(req, res) {
   try {
     const { Op } = require('sequelize');
@@ -484,7 +563,7 @@ async function listSaved(req, res) {
     const where = and.length ? { [Op.and]: and } : {};
     const { count, rows } = await SavedQuote.findAndCountAll({
       where,
-      attributes: ['id', 'quote_ref', 'quote_name', 'customer_name', 'bom_id', 'bom_code', 'grade', 'mode', 'status', 'headline_sell', 'headline_moq', 'notes', 'created_at'],
+      attributes: ['id', 'quote_ref', 'quote_name', 'customer_name', 'bom_id', 'bom_code', 'grade', 'mode', 'status', 'sales_order_ref', 'headline_sell', 'headline_moq', 'notes', 'created_at'],
       order: [['created_at', 'DESC']], limit: parseInt(limit), offset: parseInt(offset),
     });
     const quotes = plain(rows).map((q) => ({ ...q, status: q.status || 'draft' }));
@@ -621,6 +700,6 @@ module.exports = {
   listProcurement, createProcurement, updateProcurement, deleteProcurement,
   listManufacturing, createManufacturing, updateManufacturing, deleteManufacturing,
   listQc, upsertQc, deleteQc, listDispatch, upsertDispatch,
-  saveQuote, listSaved, getSaved, deleteSaved, changeStatus, saveRmSg,
+  saveQuote, quoteStats, listSaved, getSaved, deleteSaved, changeStatus, convertToSalesOrder, saveRmSg,
   listLeadTimes, saveLeadTimes, sendEmail,
 };

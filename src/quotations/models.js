@@ -199,6 +199,9 @@ SavedQuote.init(
     valid_until: { type: DataTypes.DATEONLY, allowNull: true },
     client_id: { type: DataTypes.INTEGER, allowNull: true },
     prepared_by: { type: DataTypes.TEXT, allowNull: true },
+    /** Set when an accepted quote is converted to a sales order. */
+    sales_order_id: { type: DataTypes.INTEGER, allowNull: true },
+    sales_order_ref: { type: DataTypes.STRING(100), allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
     deleted_at: { type: DataTypes.DATE, allowNull: true },
