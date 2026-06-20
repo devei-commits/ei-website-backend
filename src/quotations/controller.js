@@ -11,6 +11,7 @@ const {
   QuoteQcRule, QuoteDispatchConfig, SavedQuote, QuoteEmail,
 } = require('./models');
 const { enrichBom } = require('./bomEnrich');
+const RawMaterial = require('../rawMaterials/models');
 const { calculate } = require('./pricing');
 const { estimateTimeline, detectProductType } = require('./timing');
 const { loadOverheadRows, loadTimelineConfig } = require('./configLoader');
@@ -470,6 +471,29 @@ async function deleteSaved(req, res) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// RAW MATERIAL SG — persist manually-entered SG back to the master so
+// future quotes auto-compute blended SG (scoped to specific_gravity only).
+// ─────────────────────────────────────────────────────────────
+async function saveRmSg(req, res) {
+  try {
+    const updates = Array.isArray(req.body?.updates) ? req.body.updates : [];
+    if (!updates.length) return res.status(400).json({ error: 'No SG updates provided' });
+    let updated = 0;
+    for (const u of updates) {
+      const id = parseInt(u.raw_material_id);
+      const sg = parseFloat(u.specific_gravity);
+      if (!Number.isFinite(id) || !Number.isFinite(sg) || sg <= 0) continue;
+      const [count] = await RawMaterial.update({ specific_gravity: sg }, { where: { id } });
+      updated += count;
+    }
+    res.json({ ok: true, updated });
+  } catch (err) {
+    console.error('POST /quotes/rm-sg error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
 // EMAIL — stub (to be implemented later)
 // ─────────────────────────────────────────────────────────────
 async function sendEmail(req, res) {
@@ -483,5 +507,5 @@ module.exports = {
   listProcurement, createProcurement, updateProcurement, deleteProcurement,
   listManufacturing, createManufacturing, updateManufacturing, deleteManufacturing,
   listQc, upsertQc, deleteQc, listDispatch, upsertDispatch,
-  saveQuote, listSaved, getSaved, deleteSaved, sendEmail,
+  saveQuote, listSaved, getSaved, deleteSaved, saveRmSg, sendEmail,
 };

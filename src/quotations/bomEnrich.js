@@ -98,7 +98,7 @@ async function enrichBom(bom, opts = {}) {
       blendedSgKnown += (pct / 100) * sg;
       knownPct += pct;
     } else {
-      missingSgLines.push({ rm_code: code, name: r.inci_name || master.name || code, pct_w_w: pct });
+      missingSgLines.push({ raw_material_id: r.raw_material_id || null, rm_code: code, name: r.inci_name || master.name || code, pct_w_w: pct });
     }
     // Lead time: master value (currently NULL) → vendor min → null (rule-based)
     const leadTime = master.lead_time_days != null ? parseInt(master.lead_time_days)

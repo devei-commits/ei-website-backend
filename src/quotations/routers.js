@@ -47,6 +47,9 @@ router.get('/saved', c.listSaved);
 router.get('/saved/:id', c.getSaved);
 router.delete('/saved/:id', c.deleteSaved);
 
+// Persist manually-entered SG back to RM master
+router.post('/rm-sg', c.saveRmSg);
+
 // Email (stub)
 router.post('/email', c.sendEmail);
 
