@@ -45,10 +45,15 @@ router.post('/timeline/dispatch', c.upsertDispatch);
 router.post('/save', c.saveQuote);
 router.get('/saved', c.listSaved);
 router.get('/saved/:id', c.getSaved);
+router.post('/saved/:id/status', c.changeStatus);
 router.delete('/saved/:id', c.deleteSaved);
 
 // Persist manually-entered SG back to RM master
 router.post('/rm-sg', c.saveRmSg);
+
+// Material lead-time tooling (view/bulk-edit raw_materials & pack_materials)
+router.get('/lead-times', c.listLeadTimes);
+router.post('/lead-times', c.saveLeadTimes);
 
 // Email (stub)
 router.post('/email', c.sendEmail);

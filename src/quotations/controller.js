@@ -12,6 +12,7 @@ const {
 } = require('./models');
 const { enrichBom } = require('./bomEnrich');
 const RawMaterial = require('../rawMaterials/models');
+const PackMaterial = require('../packMaterials/models');
 const { calculate } = require('./pricing');
 const { estimateTimeline, detectProductType } = require('./timing');
 const { loadOverheadRows, loadTimelineConfig } = require('./configLoader');
@@ -59,6 +60,7 @@ async function calculateQuote(req, res) {
       if (!bom) return res.status(404).json({ error: 'BOM not found' });
       const enriched = await enrichBom(bom, {
         rmOverrides: b.rmOverrides || {}, pmOverrides: b.pmOverrides || {}, sgOverrides: b.sgOverrides || {},
+        pricingSource: b.pricingSource === 'vendor' ? 'vendor' : 'master',
       });
       rmLines = enriched.rm_lines;
       pmLines = enriched.pm_lines;
@@ -151,6 +153,7 @@ async function calculateQuote(req, res) {
       grade_ref: gradeRef,
       product_type: productType,
       overhead_category: ohRows.length ? (ohRows.find(r => r.product_category !== 'all') ? productType : 'all') : 'all',
+      pricing_source: b.bom_id ? (b.pricingSource === 'vendor' ? 'vendor' : 'master') : 'manual',
       sg_info: sgInfo,
       ...result,
     });
@@ -402,6 +405,36 @@ async function upsertDispatch(req, res) {
 // ─────────────────────────────────────────────────────────────
 // SAVED QUOTES
 // ─────────────────────────────────────────────────────────────
+// Quote lifecycle state machine. Keys = current status, values = allowed next.
+const STATUS_FLOW = {
+  draft: ['pending_approval'],
+  pending_approval: ['approved', 'rejected', 'draft'],
+  approved: ['sent', 'draft'],
+  sent: ['accepted', 'rejected'],
+  accepted: [],
+  rejected: ['draft'],
+};
+
+async function changeStatus(req, res) {
+  try {
+    const row = await SavedQuote.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Saved quote not found' });
+    const to = String(req.body?.status || '');
+    const from = row.status || 'draft';
+    const allowed = STATUS_FLOW[from] || [];
+    if (!allowed.includes(to)) {
+      return res.status(400).json({ error: `Cannot move a quote from "${from}" to "${to}".` });
+    }
+    const history = Array.isArray(row.status_history) ? row.status_history.slice() : [];
+    history.push({ from, to, by: req.user?.id || null, by_name: req.user?.fullName || null, note: req.body?.note || null, at: new Date().toISOString() });
+    await row.update({ status: to, status_history: history });
+    res.json({ ok: true, status: to, status_history: history });
+  } catch (err) {
+    console.error('POST /quotes/saved/:id/status error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
 function makeQuoteRef() {
   const d = new Date();
   const y = String(d.getFullYear()).slice(-2);
@@ -438,18 +471,24 @@ async function saveQuote(req, res) {
 async function listSaved(req, res) {
   try {
     const { Op } = require('sequelize');
-    const { search, limit = 50, offset = 0 } = req.query;
-    const where = {};
+    const { search, status, limit = 50, offset = 0 } = req.query;
+    const and = [];
     if (search) {
       const like = { [Op.iLike]: `%${search}%` };
-      where[Op.or] = [{ quote_name: like }, { customer_name: like }, { quote_ref: like }, { bom_code: like }];
+      and.push({ [Op.or]: [{ quote_name: like }, { customer_name: like }, { quote_ref: like }, { bom_code: like }] });
     }
+    if (status) {
+      // null status counts as 'draft'
+      and.push(status === 'draft' ? { [Op.or]: [{ status: 'draft' }, { status: null }] } : { status });
+    }
+    const where = and.length ? { [Op.and]: and } : {};
     const { count, rows } = await SavedQuote.findAndCountAll({
       where,
-      attributes: ['id', 'quote_ref', 'quote_name', 'customer_name', 'bom_id', 'bom_code', 'grade', 'mode', 'headline_sell', 'headline_moq', 'notes', 'created_at'],
+      attributes: ['id', 'quote_ref', 'quote_name', 'customer_name', 'bom_id', 'bom_code', 'grade', 'mode', 'status', 'headline_sell', 'headline_moq', 'notes', 'created_at'],
       order: [['created_at', 'DESC']], limit: parseInt(limit), offset: parseInt(offset),
     });
-    res.json({ quotes: plain(rows), total: count });
+    const quotes = plain(rows).map((q) => ({ ...q, status: q.status || 'draft' }));
+    res.json({ quotes, total: count });
   } catch (err) { res.status(500).json({ error: err.message }); }
 }
 
@@ -457,7 +496,10 @@ async function getSaved(req, res) {
   try {
     const row = await SavedQuote.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Saved quote not found' });
-    res.json(row.get({ plain: true }));
+    const q = row.get({ plain: true });
+    q.status = q.status || 'draft';
+    q.status_history = Array.isArray(q.status_history) ? q.status_history : [];
+    res.json(q);
   } catch (err) { res.status(500).json({ error: err.message }); }
 }
 
@@ -468,6 +510,78 @@ async function deleteSaved(req, res) {
     await row.update(softDeletePayload(SavedQuote));
     res.json({ ok: true, id: row.id });
   } catch (err) { res.status(500).json({ error: err.message }); }
+}
+
+// ─────────────────────────────────────────────────────────────
+// MATERIAL LEAD TIMES — view/edit raw_materials & pack_materials
+// lead_time_days. The timing engine prefers these over vendor/rule
+// fallbacks, so filling them makes per-material timelines DB-driven.
+// ─────────────────────────────────────────────────────────────
+async function listLeadTimes(req, res) {
+  try {
+    const type = String(req.query.type || 'RM').toUpperCase();
+    const isPm = type === 'PM';
+    const table = isPm ? 'pack_materials' : 'raw_materials';
+    const nameCol = isPm ? 'description' : 'name';
+    const classCol = isPm ? 'material' : 'category';
+    const ilCol = isPm ? 'pack_material_id' : 'raw_material_id';
+    const search = (req.query.search || '').trim();
+    const missingOnly = req.query.missingOnly === 'true';
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const offset = parseInt(req.query.offset) || 0;
+
+    const conds = ['m.deleted_at IS NULL'];
+    const bind = [];
+    if (search) { bind.push(`%${search}%`); conds.push(`(m.code ILIKE $${bind.length} OR m.${nameCol} ILIKE $${bind.length})`); }
+    if (missingOnly) conds.push('m.lead_time_days IS NULL');
+    const whereSql = conds.join(' AND ');
+
+    const countRows = await db.query(`SELECT COUNT(*)::int AS count FROM ${table} m WHERE ${whereSql}`, { bind, type: QueryTypes.SELECT });
+    const total = countRows[0]?.count || 0;
+
+    const items = await db.query(
+      `SELECT m.id, m.code, m.${nameCol} AS name, m.${classCol} AS klass, m.lead_time_days, vl.lead AS vendor_lead
+         FROM ${table} m
+         LEFT JOIN (
+           SELECT il.${ilCol} AS mid, MIN(vr.lead_time_days) AS lead
+             FROM items_list il
+             JOIN item_list_vendor_rates vr ON vr.items_list_id = il.id AND vr.deleted_at IS NULL AND vr.lead_time_days IS NOT NULL
+            WHERE il.type = $${bind.length + 1} AND il.deleted_at IS NULL
+            GROUP BY il.${ilCol}
+         ) vl ON vl.mid = m.id
+        WHERE ${whereSql}
+        ORDER BY (m.lead_time_days IS NOT NULL), m.code
+        LIMIT $${bind.length + 2} OFFSET $${bind.length + 3}`,
+      { bind: [...bind, type, limit, offset], type: QueryTypes.SELECT }
+    );
+    res.json({ items, total });
+  } catch (err) {
+    console.error('GET /quotes/lead-times error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+async function saveLeadTimes(req, res) {
+  try {
+    const type = String(req.body?.type || 'RM').toUpperCase();
+    const Model = type === 'PM' ? PackMaterial : RawMaterial;
+    const updates = Array.isArray(req.body?.updates) ? req.body.updates : [];
+    if (!updates.length) return res.status(400).json({ error: 'No updates provided' });
+    let updated = 0;
+    for (const u of updates) {
+      const id = parseInt(u.id);
+      if (!Number.isFinite(id)) continue;
+      const raw = u.lead_time_days;
+      const lt = (raw === null || raw === '' || raw === undefined) ? null : parseInt(raw);
+      if (lt !== null && (!Number.isFinite(lt) || lt < 0)) continue;
+      const [count] = await Model.update({ lead_time_days: lt }, { where: { id } });
+      updated += count;
+    }
+    res.json({ ok: true, updated });
+  } catch (err) {
+    console.error('POST /quotes/lead-times error:', err);
+    res.status(500).json({ error: err.message });
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -507,5 +621,6 @@ module.exports = {
   listProcurement, createProcurement, updateProcurement, deleteProcurement,
   listManufacturing, createManufacturing, updateManufacturing, deleteManufacturing,
   listQc, upsertQc, deleteQc, listDispatch, upsertDispatch,
-  saveQuote, listSaved, getSaved, deleteSaved, saveRmSg, sendEmail,
+  saveQuote, listSaved, getSaved, deleteSaved, changeStatus, saveRmSg,
+  listLeadTimes, saveLeadTimes, sendEmail,
 };

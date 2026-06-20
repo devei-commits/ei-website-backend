@@ -190,6 +190,10 @@ SavedQuote.init(
     /** Snapshot of the mid-band sell price for list display. */
     headline_sell: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
     headline_moq: { type: DataTypes.TEXT, allowNull: true },
+    /** Lifecycle: draft → pending_approval → approved → sent → accepted/rejected. */
+    status: { type: DataTypes.STRING(30), allowNull: true, defaultValue: 'draft' },
+    /** Transition log: [{from,to,by,by_name,note,at}]. */
+    status_history: { type: DataTypes.JSON, allowNull: true, defaultValue: [] },
     notes: { type: DataTypes.TEXT, allowNull: true },
     gst_pct: { type: DataTypes.DECIMAL(5, 2), allowNull: true, defaultValue: 18 },
     valid_until: { type: DataTypes.DATEONLY, allowNull: true },
