@@ -57,6 +57,7 @@ router.get('/analytics', c.quoteAnalytics);
 router.get('/clients', c.listClients);
 router.get('/saved', c.listSaved);
 router.get('/saved/:id', c.getSaved);
+router.put('/saved/:id', c.updateSavedQuote);
 router.post('/saved/:id/status', c.changeStatus);
 router.post('/saved/:id/convert', c.convertToSalesOrder);
 router.post('/saved/:id/revise', c.reviseQuote);

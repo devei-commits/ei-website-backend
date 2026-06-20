@@ -644,6 +644,40 @@ async function quoteAnalytics(req, res) {
   }
 }
 
+// PUT /quotes/saved/:id — update an existing quote in place (not a new row).
+async function updateSavedQuote(req, res) {
+  try {
+    const row = await SavedQuote.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Saved quote not found' });
+    if (row.superseded_by) return res.status(400).json({ error: 'This quote has a newer version — revise that instead.' });
+    if (row.sales_order_id) return res.status(400).json({ error: 'This quote is converted to a sales order and cannot be edited.' });
+
+    const b = req.body || {};
+    const result = b.result && Array.isArray(b.result.bands) ? b.result : row.result;
+    const mid = (result && Array.isArray(result.bands) && (result.bands[3] || result.bands[0])) || {};
+    await row.update({
+      quote_name: b.quote_name ?? row.quote_name,
+      customer_name: b.customer_name !== undefined ? b.customer_name : row.customer_name,
+      client_id: b.client_id !== undefined ? b.client_id : row.client_id,
+      notes: b.notes !== undefined ? b.notes : row.notes,
+      gst_pct: b.gst_pct != null ? b.gst_pct : row.gst_pct,
+      valid_until: b.valid_until !== undefined ? (b.valid_until || null) : row.valid_until,
+      payload: b.payload || row.payload,
+      result,
+      bom_id: b.payload?.bom_id ?? row.bom_id,
+      bom_code: result?.bom_code ?? row.bom_code,
+      grade: result?.grade ?? row.grade,
+      mode: b.payload ? (b.payload.bom_id ? 'db' : 'adhoc') : row.mode,
+      headline_sell: mid.sell_price ?? row.headline_sell,
+      headline_moq: mid.moq ?? row.headline_moq,
+    });
+    res.json({ ok: true, id: row.id, quote_ref: row.quote_ref });
+  } catch (err) {
+    console.error('PUT /quotes/saved/:id error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
 async function listSaved(req, res) {
   try {
     const { Op } = require('sequelize');
@@ -837,6 +871,6 @@ module.exports = {
   listProcurement, createProcurement, updateProcurement, deleteProcurement,
   listManufacturing, createManufacturing, updateManufacturing, deleteManufacturing,
   listQc, upsertQc, deleteQc, listDispatch, upsertDispatch,
-  saveQuote, quoteStats, quoteAnalytics, listClients, listSaved, getSaved, deleteSaved, changeStatus, convertToSalesOrder, reviseQuote, listVersions, saveRmSg,
+  saveQuote, updateSavedQuote, quoteStats, quoteAnalytics, listClients, listSaved, getSaved, deleteSaved, changeStatus, convertToSalesOrder, reviseQuote, listVersions, saveRmSg,
   listLeadTimes, saveLeadTimes, auditConfig, listAudit, sendEmail,
 };
