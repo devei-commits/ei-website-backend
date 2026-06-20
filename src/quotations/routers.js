@@ -44,6 +44,7 @@ router.post('/timeline/dispatch', c.upsertDispatch);
 // Saved quotes
 router.post('/save', c.saveQuote);
 router.get('/stats', c.quoteStats);
+router.get('/analytics', c.quoteAnalytics);
 router.get('/clients', c.listClients);
 router.get('/saved', c.listSaved);
 router.get('/saved/:id', c.getSaved);

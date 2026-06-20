@@ -617,6 +617,33 @@ async function quoteStats(req, res) {
   }
 }
 
+// GET /quotes/analytics — aggregate metrics for the dashboard.
+async function quoteAnalytics(req, res) {
+  try {
+    const where = "deleted_at IS NULL AND COALESCE(lifecycle_status,'active') <> 'deleted'";
+    const [byStatus, totals, topBoms, byMonth, recent] = await Promise.all([
+      db.query(`SELECT COALESCE(status,'draft') s, COUNT(*)::int c FROM saved_quotes WHERE ${where} GROUP BY 1`, { type: QueryTypes.SELECT }),
+      db.query(`SELECT COUNT(*)::int total, COUNT(sales_order_id)::int converted, AVG(headline_sell)::float avg_sell FROM saved_quotes WHERE ${where}`, { type: QueryTypes.SELECT }),
+      db.query(`SELECT bom_code, MAX(quote_name) name, COUNT(*)::int c FROM saved_quotes WHERE ${where} AND bom_code IS NOT NULL GROUP BY bom_code ORDER BY c DESC LIMIT 6`, { type: QueryTypes.SELECT }),
+      db.query(`SELECT to_char(created_at,'YYYY-MM') m, COUNT(*)::int c FROM saved_quotes WHERE ${where} AND created_at > NOW() - INTERVAL '6 months' GROUP BY 1 ORDER BY 1`, { type: QueryTypes.SELECT }),
+      db.query(`SELECT id, quote_ref, quote_name, COALESCE(status,'draft') status, headline_sell, created_at FROM saved_quotes WHERE ${where} ORDER BY created_at DESC LIMIT 6`, { type: QueryTypes.SELECT }),
+    ]);
+    const sc = {};
+    for (const r of byStatus) sc[r.s] = r.c;
+    const accepted = sc.accepted || 0, rejected = sc.rejected || 0;
+    const winRate = (accepted + rejected) > 0 ? accepted / (accepted + rejected) : null;
+    const convRate = accepted > 0 ? totals[0].converted / accepted : null;
+    res.json({
+      total: totals[0].total, converted: totals[0].converted, avg_sell: totals[0].avg_sell,
+      by_status: sc, win_rate: winRate, conversion_rate: convRate,
+      top_boms: topBoms, by_month: byMonth, recent,
+    });
+  } catch (err) {
+    console.error('GET /quotes/analytics error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
 async function listSaved(req, res) {
   try {
     const { Op } = require('sequelize');
@@ -771,6 +798,6 @@ module.exports = {
   listProcurement, createProcurement, updateProcurement, deleteProcurement,
   listManufacturing, createManufacturing, updateManufacturing, deleteManufacturing,
   listQc, upsertQc, deleteQc, listDispatch, upsertDispatch,
-  saveQuote, quoteStats, listClients, listSaved, getSaved, deleteSaved, changeStatus, convertToSalesOrder, reviseQuote, listVersions, saveRmSg,
+  saveQuote, quoteStats, quoteAnalytics, listClients, listSaved, getSaved, deleteSaved, changeStatus, convertToSalesOrder, reviseQuote, listVersions, saveRmSg,
   listLeadTimes, saveLeadTimes, sendEmail,
 };
