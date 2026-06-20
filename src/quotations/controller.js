@@ -436,6 +436,57 @@ async function changeStatus(req, res) {
   }
 }
 
+// POST /quotes/saved/:id/revise — create a new draft version that supersedes the source.
+async function reviseQuote(req, res) {
+  try {
+    const src = await SavedQuote.findByPk(req.params.id);
+    if (!src) return res.status(404).json({ error: 'Saved quote not found' });
+    if (src.superseded_by) return res.status(400).json({ error: 'This quote already has a newer version.' });
+
+    const newVersion = (src.version || 1) + 1;
+    const rootId = src.root_quote_id || src.id;
+    const ref = makeQuoteRef();
+    const history = [{ from: null, to: 'draft', by: req.user?.id || null, by_name: req.user?.fullName || null, note: `Revised from ${src.quote_ref} (v${src.version || 1})`, at: new Date().toISOString() }];
+
+    const dup = await SavedQuote.create({
+      quote_ref: ref,
+      quote_name: src.quote_name,
+      customer_name: src.customer_name,
+      bom_id: src.bom_id, bom_code: src.bom_code, grade: src.grade, mode: src.mode,
+      payload: src.payload, result: src.result,
+      headline_sell: src.headline_sell, headline_moq: src.headline_moq,
+      notes: src.notes, gst_pct: src.gst_pct, valid_until: src.valid_until,
+      client_id: src.client_id, prepared_by: req.user?.fullName || src.prepared_by,
+      status: 'draft', status_history: history,
+      version: newVersion, root_quote_id: rootId,
+    });
+    await src.update({ superseded_by: dup.id });
+    res.json({ ok: true, id: dup.id, quote_ref: ref, version: newVersion });
+  } catch (err) {
+    console.error('POST /quotes/saved/:id/revise error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// GET /quotes/saved/:id/versions — full revision lineage, ordered by version.
+async function listVersions(req, res) {
+  try {
+    const { Op } = require('sequelize');
+    const src = await SavedQuote.findByPk(req.params.id);
+    if (!src) return res.status(404).json({ error: 'Saved quote not found' });
+    const rootId = src.root_quote_id || src.id;
+    const rows = await SavedQuote.findAll({
+      where: { [Op.or]: [{ id: rootId }, { root_quote_id: rootId }] },
+      attributes: ['id', 'quote_ref', 'version', 'status', 'headline_sell', 'superseded_by', 'created_at'],
+      order: [['version', 'ASC']],
+    });
+    res.json({ versions: plain(rows) });
+  } catch (err) {
+    console.error('GET /quotes/saved/:id/versions error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
 // Next SO-NNNNN order id (5-digit zero-padded, max+1).
 async function nextSoOrderId() {
   const rows = await db.query(`SELECT order_id FROM sales_orders WHERE order_id ~ '^SO-[0-9]+$'`, { type: QueryTypes.SELECT });
@@ -525,6 +576,25 @@ async function saveQuote(req, res) {
   } catch (err) { res.status(500).json({ error: err.message }); }
 }
 
+// Client typeahead for linking quotes to a vendor_clients record (type='client').
+async function listClients(req, res) {
+  try {
+    const search = (req.query.search || '').trim();
+    const conds = ['deleted_at IS NULL', "type = 'client'"];
+    const bind = [];
+    if (search) { bind.push(`%${search}%`); conds.push(`(name ILIKE $${bind.length} OR entity_code ILIKE $${bind.length} OR email ILIKE $${bind.length})`); }
+    const rows = await db.query(
+      `SELECT id, entity_code, name, email, segment, payment_terms, city
+         FROM vendor_clients WHERE ${conds.join(' AND ')} ORDER BY name LIMIT 30`,
+      { bind, type: QueryTypes.SELECT }
+    );
+    res.json({ clients: rows });
+  } catch (err) {
+    console.error('GET /quotes/clients error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
 async function quoteStats(req, res) {
   try {
     const { Op } = require('sequelize');
@@ -550,7 +620,7 @@ async function quoteStats(req, res) {
 async function listSaved(req, res) {
   try {
     const { Op } = require('sequelize');
-    const { search, status, limit = 50, offset = 0 } = req.query;
+    const { search, status, client_id, limit = 50, offset = 0 } = req.query;
     const and = [];
     if (search) {
       const like = { [Op.iLike]: `%${search}%` };
@@ -560,6 +630,7 @@ async function listSaved(req, res) {
       // null status counts as 'draft'
       and.push(status === 'draft' ? { [Op.or]: [{ status: 'draft' }, { status: null }] } : { status });
     }
+    if (client_id) and.push({ client_id: parseInt(client_id) });
     const where = and.length ? { [Op.and]: and } : {};
     const { count, rows } = await SavedQuote.findAndCountAll({
       where,
@@ -700,6 +771,6 @@ module.exports = {
   listProcurement, createProcurement, updateProcurement, deleteProcurement,
   listManufacturing, createManufacturing, updateManufacturing, deleteManufacturing,
   listQc, upsertQc, deleteQc, listDispatch, upsertDispatch,
-  saveQuote, quoteStats, listSaved, getSaved, deleteSaved, changeStatus, convertToSalesOrder, saveRmSg,
+  saveQuote, quoteStats, listClients, listSaved, getSaved, deleteSaved, changeStatus, convertToSalesOrder, reviseQuote, listVersions, saveRmSg,
   listLeadTimes, saveLeadTimes, sendEmail,
 };

@@ -202,6 +202,10 @@ SavedQuote.init(
     /** Set when an accepted quote is converted to a sales order. */
     sales_order_id: { type: DataTypes.INTEGER, allowNull: true },
     sales_order_ref: { type: DataTypes.STRING(100), allowNull: true },
+    /** Revision lineage: v1=1; root_quote_id points to v1; superseded_by = newer version id. */
+    version: { type: DataTypes.INTEGER, allowNull: true, defaultValue: 1 },
+    root_quote_id: { type: DataTypes.INTEGER, allowNull: true },
+    superseded_by: { type: DataTypes.INTEGER, allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
     deleted_at: { type: DataTypes.DATE, allowNull: true },
