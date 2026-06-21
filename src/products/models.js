@@ -143,6 +143,10 @@ Product.init(
 
     /** Zoho Books API item.item_id after POST /items sync */
     zoho_item_id: { type: DataTypes.STRING(64), allowNull: true },
+
+    approval_assigned_user_id: { type: DataTypes.INTEGER, allowNull: true },
+    approval_assigned_display_name: { type: DataTypes.STRING(255), allowNull: true },
+    approval_stage_assignees: { type: DataTypes.JSON, allowNull: true },
   },
   {
     sequelize: db,

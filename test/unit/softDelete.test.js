@@ -41,6 +41,19 @@ describe('softDelete', () => {
     });
   });
 
+  it('activeRowWhere preserves Op.and-only filters', () => {
+    const { Op } = require('sequelize');
+    const staffFilter = {
+      [Op.and]: [{ usertype: { [Op.notIn]: ['customer', 'doctor'] } }],
+    };
+    const where = activeRowWhere(staffFilter);
+    expect(where[Op.and][0]).toEqual(staffFilter);
+    expect(where[Op.and][1]).toEqual({
+      deleted_at: { [Op.is]: null },
+      lifecycle_status: LIFECYCLE_ACTIVE,
+    });
+  });
+
   it('productActiveWhere excludes deleted products but keeps Draft', () => {
     const { Op } = require('sequelize');
     const where = productActiveWhere({ product_id: 1 });

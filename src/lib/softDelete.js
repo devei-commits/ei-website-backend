@@ -38,12 +38,17 @@ function softDeletePayload(model) {
  * Read filter: non-deleted rows with archive lifecycle_status = active.
  * @param {Record<string, unknown>} [extra]
  */
+function hasWhereClauses(extra) {
+  if (!extra || typeof extra !== 'object') return false;
+  return Object.keys(extra).length > 0 || Object.getOwnPropertySymbols(extra).length > 0;
+}
+
 function activeRowWhere(extra = {}) {
   const active = {
     deleted_at: { [Op.is]: null },
     lifecycle_status: LIFECYCLE_ACTIVE,
   };
-  if (!extra || Object.keys(extra).length === 0) return active;
+  if (!hasWhereClauses(extra)) return active;
   return { [Op.and]: [extra, active] };
 }
 
@@ -57,7 +62,7 @@ function productActiveWhere(extra = {}) {
     deleted_at: { [Op.is]: null },
     lifecycle_status: { [Op.ne]: LIFECYCLE_DELETED },
   };
-  if (!extra || Object.keys(extra).length === 0) return active;
+  if (!hasWhereClauses(extra)) return active;
   return { [Op.and]: [extra, active] };
 }
 

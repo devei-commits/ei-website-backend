@@ -107,27 +107,23 @@ async function normalizeCustomGrnPutawayOnUpdates(body, updates) {
   updates.location_zone = putaway.locationZone;
 }
 
-/** Usertypes that have order-management (warehouse/GRN) access — can be assigned to GRN. */
-const ASSIGNABLE_USERTYPES = ['super_admin', 'admin', 'bd_manager'];
+const {
+  listAssignableInternalStaffUsers,
+  displayNameForAssignableUser,
+} = require('../users/assignableInternalStaff');
 
 /**
- * GET /api/v1/grn/assignable-users — users with correct permissions for "Assigned To" dropdown.
- * Returns [{ id, email, displayName }] for staff who can be assigned to a GRN.
+ * GET /api/v1/grn/assignable-users — internal team only (warehouse GRN assignee).
  */
 async function assignableUsers(req, res) {
   try {
-    const users = await User.findAll({
-      where: { usertype: ASSIGNABLE_USERTYPES },
-      attributes: ['userid', 'email', 'fname', 'lname', 'display_name'],
-      order: [['display_name', 'ASC'], ['fname', 'ASC']],
-    });
+    const users = await listAssignableInternalStaffUsers({ limit: 100 });
     const list = users.map((u) => {
       const d = u.get ? u.get({ plain: true }) : u;
-      const displayName = d.display_name && d.display_name.trim() ? d.display_name.trim() : [d.fname, d.lname].filter(Boolean).join(' ') || d.email || `User ${d.userid}`;
       return {
         id: d.userid,
         email: d.email || '',
-        displayName,
+        displayName: displayNameForAssignableUser(u),
       };
     });
     res.json(list);

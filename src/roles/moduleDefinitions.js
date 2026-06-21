@@ -16,6 +16,8 @@ const defaultGlobalSettings = {
   sessionTimeout: 30,
 };
 
+const { getMastersModuleDefinition } = require('./mastersModuleDefinition');
+
 const defaultActions = { view: false, create: false, edit: false, delete: false, approve: false, export: false };
 
 function col(id, name) {
@@ -191,53 +193,7 @@ const MODULE_DEFINITIONS = [
       },
     ],
   },
-  {
-    moduleId: 'inventory',
-    moduleName: 'Inventory Management',
-    icon: 'inventory',
-    description: 'Stock and inventory control',
-    subModules: [
-      {
-        subModuleId: 'raw-materials',
-        subModuleName: 'Raw Materials',
-        actions: { ...defaultActions },
-        columns: [
-          col('material-code', 'Material Code'),
-          col('material-name', 'Material Name'),
-          col('category', 'Category'),
-          col('current-stock', 'Current Stock'),
-          col('min-stock', 'Minimum Stock'),
-          col('unit-price', 'Unit Price'),
-          col('supplier', 'Supplier'),
-          col('expiry-date', 'Expiry Date'),
-        ],
-      },
-      {
-        subModuleId: 'packaging',
-        subModuleName: 'Packaging Materials',
-        actions: { ...defaultActions },
-        columns: [
-          col('pkg-code', 'Package Code'),
-          col('pkg-name', 'Package Name'),
-          col('pkg-type', 'Package Type'),
-          col('pkg-stock', 'Stock'),
-          col('pkg-cost', 'Cost'),
-        ],
-      },
-      {
-        subModuleId: 'bom',
-        subModuleName: 'Bill of Materials',
-        actions: { ...defaultActions },
-        columns: [
-          col('bom-id', 'BOM ID'),
-          col('product-name', 'Product Name'),
-          col('components', 'Components'),
-          col('quantities', 'Quantities'),
-          col('total-cost', 'Total Cost'),
-        ],
-      },
-    ],
-  },
+  getMastersModuleDefinition(),
   {
     moduleId: 'vendor-client',
     moduleName: 'Vendors & Clients',

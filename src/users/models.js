@@ -116,6 +116,12 @@ User.init({
     allowNull: true
   },
 
+  /** Set when user completes login (password + OTP if required). */
+  last_login_at: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
+
   deleted_at: {
     type: DataTypes.DATE,
     allowNull: true

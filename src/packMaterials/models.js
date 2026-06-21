@@ -26,6 +26,9 @@ PackMaterial.init(
     moq: { type: DataTypes.INTEGER, allowNull: true },
     lead_time_days: { type: DataTypes.INTEGER, allowNull: true },
     print_status: { type: DataTypes.STRING(100), allowNull: true },
+    approval_assigned_user_id: { type: DataTypes.INTEGER, allowNull: true },
+    approval_assigned_display_name: { type: DataTypes.STRING(255), allowNull: true },
+    approval_stage_assignees: { type: DataTypes.JSON, allowNull: true },
     products: { type: DataTypes.JSON, allowNull: true }, // array of product codes e.g. ['PR-002']
     zoho_id: { type: DataTypes.STRING(100), allowNull: true },
     /**

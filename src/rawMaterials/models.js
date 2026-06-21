@@ -29,6 +29,10 @@ RawMaterial.init(
     /** Typical procurement lead (days) for this RM; Items List vendor rates override for quoted pricing. */
     lead_time_days: { type: DataTypes.INTEGER, allowNull: true },
     status: { type: DataTypes.STRING(50), allowNull: true },
+    /** Staff user (userid) who may approve this master; admins bypass. */
+    approval_assigned_user_id: { type: DataTypes.INTEGER, allowNull: true },
+    approval_assigned_display_name: { type: DataTypes.STRING(255), allowNull: true },
+    approval_stage_assignees: { type: DataTypes.JSON, allowNull: true },
     products: { type: DataTypes.JSON, allowNull: true }, // array of product codes e.g. ['PR-001','PR-002']
     group: { type: DataTypes.STRING(100), allowNull: true },
     zoho_id: { type: DataTypes.STRING(100), allowNull: true },

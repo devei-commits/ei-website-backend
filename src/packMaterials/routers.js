@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { isAuthenticated, requireModule } = require('../middleware/security');
+const { requireMasterApprovalUpdate } = require('../lib/masterApprovalAuth');
 const {
   listPackMaterials,
   getNextCode,
@@ -8,6 +9,7 @@ const {
   syncPmZoho,
   createPackMaterial,
   updatePackMaterial,
+  patchPackMaterialApprovalStatus,
   deletePackMaterial,
   getReservedStock,
   resetAllPackMaterials,
@@ -54,6 +56,7 @@ router.post('/import-excel', requirePackMaterials, uploadPmMasterExcelSafe, post
 router.post('/', requirePackMaterials, createPackMaterial);
 router.get('/:id/reserved-stock', requirePackMaterials, getReservedStock);
 router.get('/:id', requirePackMaterials, cachePackMaterialsOne, getPackMaterialById);
+router.patch('/:id/approval-status', requirePackMaterials, requireMasterApprovalUpdate('PM'), patchPackMaterialApprovalStatus);
 router.put('/:id', requirePackMaterials, updatePackMaterial);
 router.delete('/:id', requirePackMaterials, deletePackMaterial);
 router.get('/', requirePackMaterialsListRead, cachePackMaterialsList, listPackMaterials);

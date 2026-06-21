@@ -3,6 +3,8 @@
  * Used when DB has no row yet, and for seeding module_definitions.
  */
 
+const { getMastersModuleDefinition } = require('./mastersModuleDefinition');
+
 const DEFAULT_GLOBAL_SETTINGS = {
   accessToAllModules: false,
   allowLogin: true,
@@ -186,6 +188,7 @@ const MODULES = [
       },
     ],
   },
+  getMastersModuleDefinition(),
 ];
 
 module.exports = {

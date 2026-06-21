@@ -1,4 +1,4 @@
-const { User, DoctorProfile, RefreshToken, Role, VendorClient } = require("../models/index");
+const { User, DoctorProfile, RefreshToken, Role, VendorClient, StaffProfile } = require("../models/index");
 const { Op } = require("sequelize");
 const bcrypt = require("bcrypt");
 const { getAllowedModules } = require("../middleware/security");
@@ -19,7 +19,13 @@ const {
   isPortalUsertype,
   isInternalStaffUsertype,
   buildInternalStaffWhere,
+  buildInternalStaffRolesWhere,
 } = require('./internalStaff');
+const {
+  listAssignableInternalStaffUsers,
+  displayNameForAssignableUser,
+} = require('./assignableInternalStaff');
+const { recordUserLastLogin } = require('../lib/userLastLogin');
 const { activeRowWhere, softDeleteInstance, softDeleteWhere } = require('../lib/softDelete');
 
 const isDev = process.env.DEV === "true" || process.env.NODE_ENV === "development";
@@ -326,8 +332,9 @@ const userLogin = async (req, res) => {
   }
 
   // Staff/admin dashboard: skip OTP and return token directly (no auth table needed)
-  const staffTypes = ['super_admin', 'admin', 'bd_manager'];
+  const staffTypes = ['super_admin', 'admin', 'manager', 'bd_manager', 'accounts_team'];
   if (staffTypes.includes(user.usertype)) {
+    await recordUserLastLogin(user);
     return res.status(200).json({
       success: true,
       token: generateToken(user),
@@ -337,6 +344,7 @@ const userLogin = async (req, res) => {
 
   // DEV: skip OTP for test user and return token directly
   if (isDev && user.email === DEV_BYPASS_EMAIL) {
+    await recordUserLastLogin(user);
     return res.status(200).json({
       success: true,
       token: generateToken(user),
@@ -383,6 +391,31 @@ const updateUserPaymentTerms = async (req, res) => {
 };
 
 // Current user's own profile (from token). For staff: includes roleId, roleName, roleLevel, department.
+async function attachStaffRoleFields(payload, user) {
+  const roleByCode = user.usertype
+    ? await Role.findOne({
+      where: { role_code: String(user.usertype).trim().toLowerCase() },
+      attributes: ['role_id', 'role_name', 'level'],
+    }).catch(() => null)
+    : null;
+  const staffProfile = await StaffProfile.findOne({
+    where: { user_id: user.userid },
+    include: [{ model: Role, as: 'role', attributes: ['role_id', 'role_name', 'level'] }],
+  });
+  if (roleByCode) {
+    payload.roleId = roleByCode.role_id;
+    payload.roleName = roleByCode.role_name;
+    payload.roleLevel = roleByCode.level;
+    payload.department = staffProfile?.department ?? user.department ?? null;
+  } else if (staffProfile?.role) {
+    payload.roleId = staffProfile.role.role_id;
+    payload.roleName = staffProfile.role.role_name;
+    payload.roleLevel = staffProfile.role.level;
+    payload.department = staffProfile.department ?? user.department ?? null;
+  }
+  return payload;
+}
+
 const getMe = async (req, res) => {
   try {
     const user = await User.findByPk(req.user.id, {
@@ -442,6 +475,7 @@ const getMe = async (req, res) => {
 
     const payload = user.toJSON ? user.toJSON() : { ...user.get() };
     payload.allowedModules = getAllowedModules(user.usertype);
+    await attachStaffRoleFields(payload, user);
     const vcRaw = payload.linkedVendorClient;
     const vc = vcRaw && (vcRaw.id != null ? vcRaw : null);
     payload.vendor_client_id = vc?.id ?? null;
@@ -454,16 +488,13 @@ const getMe = async (req, res) => {
   }
 };
 
-/** Internal team (User Management, approver search). Excludes portal customer/doctor. */
-const STAFF_USERTYPES = ['super_admin', 'admin', 'bd_manager', 'accounts_team'];
-
 /** Portal users staff can link when raising a customer ticket from the dashboard */
 const PORTAL_CUSTOMER_USERTYPES = PORTAL_USERTYPES;
 // Map usertype -> role_id for API consistency (matches minimal GET /roles list)
 const USERTYPE_TO_ROLE_ID = { super_admin: 1, admin: 2, bd_manager: 3, doctor: 4, customer: 5 };
 const ROLE_ID_TO_USERTYPE = { 1: 'super_admin', 2: 'admin', 3: 'bd_manager', 4: 'doctor', 5: 'customer' };
 // Display names for Edit User dropdown (must match GET /roles role_name values)
-const USERTYPE_TO_ROLE_NAME = { super_admin: 'Super Admin', admin: 'Admin', bd_manager: 'BD Manager', doctor: 'Doctor', customer: 'Customer' };
+const USERTYPE_TO_ROLE_NAME = { super_admin: 'Super Admin', admin: 'Admin', manager: 'Manager', bd_manager: 'BD Manager', accounts_team: 'Accounts Team', doctor: 'Doctor', customer: 'Customer' };
 
 // Optional rolesByCode: { [role_code]: { role_id, role_name } } from Role.findAll() for dynamic role names/ids
 function formatUserForStaffList(user, rolesByCode) {
@@ -485,6 +516,7 @@ function formatUserForStaffList(user, rolesByCode) {
     department: user.department ?? null,
     status: user.status || 'active',
     created_at: user.created_at,
+    last_login_at: plain.last_login_at ?? user.last_login_at ?? null,
     vendor_client_id: vc?.id ?? null,
     vendor_client_code: vc?.entity_code ?? null,
     vendor_client_type: vc?.type ?? null,
@@ -504,27 +536,23 @@ const getAllUsers = async (req, res) => {
   try {
     const staffOnly = req.query.staffOnly === 'true';
     const attributes = [
-      'userid', 'fname', 'lname', 'display_name', 'email', 'mobile', 'usertype', 'department', 'status', 'created_at', 'zoho_contact_id',
+      'userid', 'fname', 'lname', 'display_name', 'email', 'mobile', 'usertype', 'department', 'status', 'created_at', 'last_login_at', 'zoho_contact_id',
     ];
-    const where = activeRowWhere(staffOnly ? buildInternalStaffWhere() : {});
     let rolesByCode = null;
     if (staffOnly) {
       const roles = await Role.findAll({ attributes: ['role_id', 'role_code', 'role_name'] });
       rolesByCode = {};
       roles.forEach((r) => { rolesByCode[r.role_code] = { role_id: r.role_id, role_name: r.role_name }; });
-    }
-    const users = await User.findAll({
-      attributes,
-      where,
-      order: [['userid', 'ASC']],
-      include: staffOnly ? [LINKED_VC_INCLUDE] : [],
-    });
-
-    if (staffOnly) {
+      const where = activeRowWhere(buildInternalStaffWhere());
+      const users = await User.findAll({
+        attributes,
+        where,
+        order: [['userid', 'ASC']],
+        include: [LINKED_VC_INCLUDE],
+      });
       return res.status(200).json(users.map((u) => formatUserForStaffList(u, rolesByCode)));
     }
 
-    // Full list (legacy): include addresses
     const usersWithAddresses = await User.findAll({
       where: activeRowWhere(),
       attributes: ['userid', 'display_name', 'email', 'usertype'],
@@ -543,27 +571,11 @@ const getAllUsers = async (req, res) => {
   }
 };
 
-// Authenticated: search staff users by name/email (e.g. for approver dropdown, team management).
+// Authenticated: search internal staff for assignee pickers (warehouse / production / masters).
 const searchUsers = async (req, res) => {
   try {
     const q = req.query.q != null ? String(req.query.q).trim() : '';
-    const attributes = ['userid', 'fname', 'lname', 'display_name', 'email', 'department', 'usertype'];
-    const filters = { usertype: { [Op.in]: STAFF_USERTYPES } };
-    if (q.length > 0) {
-      const like = { [Op.iLike]: `%${q}%` };
-      filters[Op.or] = [
-        { display_name: like },
-        { email: like },
-        { fname: like },
-        { lname: like },
-      ];
-    }
-    const users = await User.findAll({
-      attributes,
-      where: activeRowWhere(filters),
-      order: [['display_name', 'ASC']],
-      limit: 30,
-    });
+    const users = await listAssignableInternalStaffUsers({ q, limit: 50 });
     const rolesByCode = await getRolesByCode();
     const list = users.map((u) => {
       const formatted = formatUserForStaffList(u, rolesByCode);

@@ -24,7 +24,7 @@ const {
   getStockQtyAtMuZone,
   getStockQtyStrAtMuZone,
 } = require('../facilityAreas/defaultLocationService');
-const { buildSchedulePatchFromPlanning } = require('./scheduleFromPlanning');
+const { buildSchedulePatchFromPlanning, scheduleFieldsInBody, validateEquipmentSchedulePatch } = require('./scheduleFromPlanning');
 const {
   flattenPrQualitySpecRowsForDisplay,
   hydratePrQualitySpecRowsBySectionFromBom,
@@ -2252,6 +2252,22 @@ const BMR_STATUS_RANK = {
   cleared: 8,
 };
 
+const PACKAGING_GATE_MESSAGE = 'Packaging cannot start until BMR bulk QC is cleared';
+
+function isBmrBulkCleared(plain) {
+  return String(plain?.bmr_status || '').toLowerCase() === 'cleared';
+}
+
+/** Block PM reserve / BPR advances until BMR bulk QC is cleared. */
+function assertPackagingRequiresBmrCleared(prevPlain, nextPlain) {
+  if (isBmrBulkCleared(nextPlain)) return null;
+  if (!prevPlain.pm_reserved && nextPlain.pm_reserved) return PACKAGING_GATE_MESSAGE;
+  const prevBpr = String(prevPlain.bpr_status || 'draft').toLowerCase();
+  const nextBpr = String(nextPlain.bpr_status || 'draft').toLowerCase();
+  if (nextBpr !== prevBpr && nextBpr !== 'draft') return PACKAGING_GATE_MESSAGE;
+  return null;
+}
+
 function bmrStatusRank(status) {
   if (status == null || status === '') return -1;
   const k = String(status).trim();
@@ -2343,6 +2359,28 @@ async function updateBatch(req, res) {
         return res.status(400).json({
           error: 'Packaging / FG yield (units) is required to complete packaging QC and mark FG ready.',
         });
+      }
+    }
+
+    const packagingGateErr = assertPackagingRequiresBmrCleared(prevPlain, nextPreview);
+    if (packagingGateErr) {
+      return res.status(400).json({ error: packagingGateErr });
+    }
+
+    if (scheduleFieldsInBody(req.body || {})) {
+      const allBatches = await ProductionBatch.findAll({
+        attributes: [
+          'bmr_no', 'mfg_date', 'fill_date', 'pack_date',
+          'main_vessel', 'filling_line', 'packaging_line', 'supporting_tanks',
+        ],
+      });
+      const equipErrors = validateEquipmentSchedulePatch(
+        nextPreview,
+        allBatches,
+        prevPlain?.bmr_no || nextPreview?.bmr_no || '',
+      );
+      if (equipErrors.length > 0) {
+        return res.status(400).json({ error: equipErrors.join(' ') });
       }
     }
 
@@ -2509,8 +2547,14 @@ async function updateBatch(req, res) {
     if (pmUnreserveTriggered) {
       await releasePmReservedFromInventory(row);
     } else if (pmReserveTriggered) {
+      if (!isBmrBulkCleared(nextPlain)) {
+        return res.status(400).json({ error: PACKAGING_GATE_MESSAGE });
+      }
       await applyPmReservedToInventory(row);
     } else if (await needsPmReserveRepair(id, nextPlain)) {
+      if (!isBmrBulkCleared(nextPlain)) {
+        return res.status(400).json({ error: PACKAGING_GATE_MESSAGE });
+      }
       await applyPmReservedToInventory(row, { force: true });
     }
     if (prevBprStatus !== 'fg_ready' && nextPlain.bpr_status === 'fg_ready') {
@@ -3298,7 +3342,11 @@ async function reserveBatchLines(req, res) {
     const codes = Array.isArray(req.body?.codes) ? req.body.codes : null;
     const batch = await ProductionBatch.findByPk(id);
     if (!batch) return res.status(404).json({ error: 'Batch not found' });
-    const bomMeta = await getBomLinesForBatch(batch.get ? batch.get({ plain: true }) : batch);
+    const batchPlainRow = batch.get ? batch.get({ plain: true }) : batch;
+    if (kind === 'pm' && !isBmrBulkCleared(batchPlainRow)) {
+      return res.status(400).json({ error: PACKAGING_GATE_MESSAGE });
+    }
+    const bomMeta = await getBomLinesForBatch(batchPlainRow);
     await reserveProductionBatchLines(batch, kind, codes, bomMeta);
     await batch.reload();
     res.json({ success: true, data: formatBatch(batch), coverage: await computeBatchMaterialCoverage(batch.get({ plain: true }), kind, bomMeta) });

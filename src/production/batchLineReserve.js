@@ -242,6 +242,9 @@ async function syncBatchReserveFlags(batchRow, kind, bomMeta) {
       updates.bmr_status = 'batch_confirmed';
     }
   } else {
+    if (String(d.bmr_status || '').toLowerCase() !== 'cleared') {
+      return d;
+    }
     const locked = ['pm_connected', 'pm_dispensing', 'filling', 'fill_qc', 'packaging', 'pack_qc', 'qc_failed', 'fg_ready'].includes(d.bpr_status);
     if (locked) return d;
     updates.pm_reserved = fullyReserved;
@@ -329,6 +332,11 @@ async function assertCanUnreserveLine(batchPlain, kind, code, materialId) {
  */
 async function reserveProductionBatchLines(batchRow, kind, codes, bomMeta) {
   const d = batchPlain(batchRow);
+  if (kind === 'pm' && String(d.bmr_status || '').toLowerCase() !== 'cleared') {
+    const err = new Error('Packaging cannot start until BMR bulk QC is cleared');
+    err.statusCode = 400;
+    throw err;
+  }
   const codesFilter = normalizeCodes(codes);
   const rmQuantities = kind === 'rm'
     ? await buildRmQuantitiesMap(d, bomMeta.rmLines, bomMeta.source, bomMeta.batchSizeKg, codesFilter)

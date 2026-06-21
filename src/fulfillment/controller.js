@@ -1,5 +1,6 @@
 const { Op } = require('sequelize');
-const { softDeleteInstance, softDeleteWhere, activeRowWhere } = require('../lib/softDelete');
+const { softDeleteInstance, softDeleteWhere, activeRowWhere, productActiveWhere } = require('../lib/softDelete');
+const { normalizeMasterApprovalStatus } = require('../lib/masterApprovalStatus');
 const { FulfillmentOrder, FulfillmentOrderItem, FulfillmentBatchSplit, Transporter, FulfillmentInvoice, ReservedBatchItem } = require('./models');
 const BOM = require('../bom/models');
 const { ProductionBatch } = require('../production/models');
@@ -1335,8 +1336,20 @@ function normalizePackSizeForOrder(pack) {
 
 async function getProducts(_req, res) {
   try {
+    // Sale-order picker: all non-deleted PR masters regardless of approval status (Draft, Under Review, Active, …).
     const products = await Product.findAll({
-      attributes: ['product_id', 'product_code', 'product_name', 'zoho_sku_code', 'form', 'category', 'mrp_price'],
+      where: productActiveWhere(),
+      attributes: [
+        'product_id',
+        'product_code',
+        'product_name',
+        'zoho_sku_code',
+        'form',
+        'category',
+        'mrp_price',
+        'status',
+        'lifecycle_status',
+      ],
       order: [['product_name', 'ASC']],
     });
     const productIds = products.map((p) => p.product_id).filter((id) => id != null);
@@ -1355,6 +1368,8 @@ async function getProducts(_req, res) {
     const items = products.map(p => {
       const d = p.get({ plain: true });
       const bom = bomByProductId.get(d.product_id);
+      const approvalStatus =
+        normalizeMasterApprovalStatus(d.status ?? d.lifecycle_status) || 'Draft';
       return {
         id: `PR-${d.product_id}`,
         type: 'product',
@@ -1364,6 +1379,7 @@ async function getProducts(_req, res) {
         category: d.category || '',
         /** Reference only — SO unit price is resolved per client via GET /client-product-price */
         price: d.mrp_price != null ? Number(d.mrp_price) : 0,
+        approvalStatus,
       };
     });
 

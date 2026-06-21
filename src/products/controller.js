@@ -23,6 +23,12 @@ const {
   scrubProcurementJsonForDeletedProducts,
 } = require('./destroyProductWithDependents');
 const { productActiveWhere, softDeleteInstance } = require('../lib/softDelete');
+const { resolveMasterApprovalStatus } = require('../lib/masterApprovalStatus');
+const { preservePrApprovalOnWrite, resolveWritableMasterApprovalStatus } = require('../lib/masterApprovalAuth');
+const {
+  handleMasterApprovalPatch,
+  prApprovalHooks,
+} = require('../lib/masterApprovalPatchHandlers');
 const {
   hydratePrQualitySpecRowsBySectionFromBom,
   hydratePrQualityBulkSubSpecRowsByPathFromBom,
@@ -300,6 +306,13 @@ const syncPrProductZoho = async (req, res) => {
     const bomSku = String(b.zoho_sku_code ?? b.product_sku ?? b.bomSku ?? product_code).trim();
     const now = new Date();
 
+    let createdNewProduct = false;
+    let product = await Product.findOne({ where: { product_code } });
+
+    const approvalStatus = await resolveWritableMasterApprovalStatus(req, 'PR', b.status ?? b.lifecycle_status, {
+      existing: product?.status ?? product?.lifecycle_status,
+      forCreate: !product,
+    });
     const productRow = {
       product_name,
       product_code,
@@ -307,8 +320,8 @@ const syncPrProductZoho = async (req, res) => {
       generic_name: b.generic_name ?? b.category ?? null,
       brand_name: b.brand_name ?? b.client ?? null,
       category: b.category ?? null,
-      status: b.status ?? 'Draft',
-      lifecycle_status: b.lifecycle_status ?? b.status ?? 'Draft',
+      status: approvalStatus,
+      lifecycle_status: approvalStatus,
       form: b.form ?? b.type ?? null,
       product_description: b.product_description ?? b.description ?? null,
       storage_conditions: b.storage_conditions ?? null,
@@ -316,8 +329,6 @@ const syncPrProductZoho = async (req, res) => {
       updated_at: now,
     };
 
-    let createdNewProduct = false;
-    let product = await Product.findOne({ where: { product_code } });
     if (product) {
       const nameTaken = await Product.findOne({ where: { product_name } });
       if (nameTaken && nameTaken.product_id !== product.product_id) {
@@ -567,6 +578,10 @@ const createPRRegistration = async (req, res) => {
       ? String(b.zoho_id ?? b.zohoId).trim()
       : null;
 
+    const prApprovalStatus = await resolveWritableMasterApprovalStatus(req, 'PR', b.status ?? b.lifecycle_status, {
+      existing: preProduct?.status ?? preProduct?.lifecycle_status,
+      forCreate: !preProduct,
+    });
     const productRow = {
       product_name,
       product_code,
@@ -575,8 +590,8 @@ const createPRRegistration = async (req, res) => {
       generic_name: b.generic_name ?? b.category ?? null,
       brand_name: b.brand_name ?? b.client ?? null,
       category: b.category ?? null,
-      status: b.status ?? 'Draft',
-      lifecycle_status: b.lifecycle_status ?? b.status ?? 'Draft',
+      status: prApprovalStatus,
+      lifecycle_status: prApprovalStatus,
       form: b.form ?? b.type ?? null,
       product_description: b.product_description ?? b.description ?? null,
       storage_conditions: b.storage_conditions ?? null,
@@ -1593,6 +1608,11 @@ const updateProduct = async (req, res) => {
     delete body.applicable_regulation;
     delete body.claims_substantiation;
 
+    await preservePrApprovalOnWrite(req, body, {
+      status: product.status,
+      lifecycle_status: product.lifecycle_status,
+    });
+
     await product.update({
       ...body,
       updated_at: new Date(),
@@ -1733,6 +1753,30 @@ const deleteCategory = async (req, res) => {
     }
 };
 
+/**
+ * PATCH /api/v1/products/:id/approval-status — team workflow update for PR masters.
+ */
+const patchProductApprovalStatus = async (req, res) => {
+  try {
+    const productId = parseInt(req.params.id, 10);
+    if (Number.isNaN(productId)) {
+      return res.status(400).json({ error: 'Invalid product id' });
+    }
+    const product = await Product.findOne({ where: productActiveWhere({ product_id: productId }) });
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    const ok = await handleMasterApprovalPatch(req, res, 'PR', product, prApprovalHooks());
+    if (ok) {
+      redisCache.delByPattern('products:').catch(() => {});
+    }
+  } catch (err) {
+    console.error('patchProductApprovalStatus error', err);
+    return res.status(500).json({ error: err.message || 'Failed to update approval status' });
+  }
+};
+
 module.exports = {
     saveProduct,
     syncPrProductZoho,
@@ -1741,6 +1785,7 @@ module.exports = {
     getProductById,
     getProductDetail,
     updateProduct,
+    patchProductApprovalStatus,
     deleteProduct,
     getCategory,
     saveCategory,

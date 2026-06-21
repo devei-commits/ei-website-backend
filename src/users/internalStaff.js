@@ -7,6 +7,7 @@ const PORTAL_USERTYPES = ['customer', 'doctor'];
 const INTERNAL_STAFF_USERTYPES_FALLBACK = [
   'super_admin',
   'admin',
+  'manager',
   'bd_manager',
   'accounts_team',
 ];

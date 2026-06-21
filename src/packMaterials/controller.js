@@ -21,6 +21,19 @@ const {
   pmLevelForSubCategorySlug,
 } = require('../lib/pmSubCategoryRules');
 const { PM_CANONICAL_UNIT } = require('../warehouseInventory/whUnitDefaults');
+const {
+  readMasterApprovalStatusFromFormData,
+  mergeFormDataWithApprovalStatus,
+} = require('../lib/masterApprovalStatus');
+const {
+  resolveWritableMasterApprovalStatus,
+  preservePmApprovalOnWrite,
+} = require('../lib/masterApprovalAuth');
+const { formatMasterApprovalAssigneeFields } = require('../lib/masterApprovalAssignee');
+const {
+  handleMasterApprovalPatch,
+  pmApprovalHooks,
+} = require('../lib/masterApprovalPatchHandlers');
 
 /** All PM stock is counted in pieces (aligned with planning, production, warehouse). */
 function canonicalPmUnit() {
@@ -174,9 +187,11 @@ async function allocateNextPmInternalCode(b, { transaction }) {
 function formatPackMaterial(row) {
   if (!row) return null;
   const d = row.get ? row.get({ plain: true }) : row;
+  const approvalStatus = readMasterApprovalStatusFromFormData(d.form_data, 'Draft');
   return {
     id: String(d.id),
     code: d.code,
+    status: approvalStatus,
     description: d.description,
     type: d.type,
     level: d.level,
@@ -196,6 +211,7 @@ function formatPackMaterial(row) {
     pkg_returnable: d.pkg_returnable ?? null,
     pkg_associate_items: d.pkg_associate_items ?? null,
     sales_purchase_account: d.sales_purchase_account ?? null,
+    ...formatMasterApprovalAssigneeFields(row),
     created_at: d.created_at,
     updated_at: d.updated_at,
   };
@@ -292,7 +308,7 @@ async function getNextCode(req, res) {
 }
 
 /** Map request body (camelCase or snake_case) to pack_materials columns. */
-function bodyToPackMaterial(b, preserveUnsetProducts = false) {
+function bodyToPackMaterial(b, preserveUnsetProducts = false, existingFormData = null) {
   const fd = b.form_data != null && typeof b.form_data === 'object' && !Array.isArray(b.form_data) ? b.form_data : {};
   const subRaw = fd.subCategory ?? b.subCategory ?? b.group ?? fd.pmSkuCategory ?? '';
   const subSlug = normalizePmSubCategorySlug(subRaw) || String(subRaw || '').trim().toLowerCase();
@@ -322,12 +338,30 @@ function bodyToPackMaterial(b, preserveUnsetProducts = false) {
     pkg_returnable: b.pkg_returnable ?? b.pkgReturnable ?? null,
     pkg_associate_items: b.pkg_associate_items ?? b.pkgAssociateItems ?? b.associateItems ?? null,
     sales_purchase_account: b.sales_purchase_account ?? b.salesPurchaseAccount ?? null,
-    ...(b.form_data !== undefined ? { form_data: b.form_data } : {}),
   };
+  if (!preserveUnsetProducts || b.form_data !== undefined) {
+    base.form_data = mergeFormDataWithApprovalStatus(b, {
+      forCreate: !preserveUnsetProducts,
+      existingFormData,
+    });
+  }
   if (products !== undefined) {
     base.products = products;
   }
   return base;
+}
+
+async function applyPmApprovalOnCreate(req, fields, existingFormData = null) {
+  const fd =
+    fields.form_data != null && typeof fields.form_data === 'object' && !Array.isArray(fields.form_data)
+      ? fields.form_data
+      : {};
+  const raw = fd.masterApprovalStatus ?? fd.status;
+  const status = await resolveWritableMasterApprovalStatus(req, 'PM', raw, {
+    existing: existingFormData ? readMasterApprovalStatusFromFormData(existingFormData, 'Draft') : undefined,
+    forCreate: true,
+  });
+  fields.form_data = { ...fd, masterApprovalStatus: status, status };
 }
 
 async function destroyPackMaterialDraft(row) {
@@ -478,7 +512,13 @@ async function createPackMaterial(req, res) {
       if (!existingRow) {
         return res.status(404).json({ error: 'Draft pack material not found', code: 'PM_NOT_FOUND' });
       }
-      const fields = bodyToPackMaterial(b);
+      const exPlain = existingRow.get({ plain: true });
+      const exFd =
+        exPlain.form_data != null && typeof exPlain.form_data === 'object' && !Array.isArray(exPlain.form_data)
+          ? exPlain.form_data
+          : {};
+      const fields = bodyToPackMaterial(b, true, exFd);
+      await applyPmApprovalOnCreate(req, fields, exFd);
       const codeTrim = fields.code != null ? String(fields.code).trim() : '';
       if (!codeTrim) {
         return res.status(400).json({ error: 'code or itemCode is required' });
@@ -501,11 +541,6 @@ async function createPackMaterial(req, res) {
         return res.status(409).json({ error: 'A pack material with this code or SKU already exists' });
       }
 
-      const exPlain = existingRow.get({ plain: true });
-      const exFd =
-        exPlain.form_data != null && typeof exPlain.form_data === 'object' && !Array.isArray(exPlain.form_data)
-          ? exPlain.form_data
-          : {};
       const bodyFd = b.form_data != null && typeof b.form_data === 'object' && !Array.isArray(b.form_data) ? b.form_data : {};
       const mergedForRule = {
         ...b,
@@ -525,7 +560,6 @@ async function createPackMaterial(req, res) {
         Object.keys(fields).forEach((key) => {
           if (fields[key] !== undefined) existingRow.set(key, fields[key]);
         });
-        if (b.form_data !== undefined) existingRow.set('form_data', b.form_data);
         await existingRow.save({ transaction: t });
         await existingRow.reload({ transaction: t });
 
@@ -577,6 +611,7 @@ async function createPackMaterial(req, res) {
     const t = await db.transaction();
     try {
       const fields = bodyToPackMaterial(b);
+      await applyPmApprovalOnCreate(req, fields);
       let codeTrim = fields.code != null ? String(fields.code).trim() : '';
       if (!codeTrim) {
         const alloc = await allocateNextPmInternalCode(b, { transaction: t });
@@ -711,7 +746,13 @@ async function updatePackMaterial(req, res) {
     const row = await PackMaterial.findByPk(id);
     if (!row) return res.status(404).json({ error: 'Pack material not found' });
     const b = req.body || {};
-    const fields = bodyToPackMaterial(b, true);
+    const exPlain = row.get({ plain: true });
+    const exFd =
+      exPlain.form_data != null && typeof exPlain.form_data === 'object' && !Array.isArray(exPlain.form_data)
+        ? exPlain.form_data
+        : null;
+    const fields = bodyToPackMaterial(b, true, exFd);
+    await preservePmApprovalOnWrite(req, fields, exFd);
     const nextCode = String(row.code || '').trim();
     if (!nextCode) {
       return res.status(400).json({ error: 'Existing pack material has no internal code' });
@@ -721,7 +762,6 @@ async function updatePackMaterial(req, res) {
     Object.keys(fields).forEach((key) => {
       if (fields[key] !== undefined) row.set(key, fields[key]);
     });
-    if (b.form_data !== undefined) row.set('form_data', b.form_data);
     await row.save();
     res.json(formatPackMaterialFull(row));
   } catch (err) {
@@ -833,6 +873,26 @@ async function resetAllPackMaterials(req, res) {
   }
 }
 
+/**
+ * PATCH /api/v1/pack-materials/:id/approval-status — team workflow update.
+ */
+async function patchPackMaterialApprovalStatus(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const row = await PackMaterial.findOne({ where: activeRowWhere({ id }) });
+    if (!row) return res.status(404).json({ error: 'Pack material not found' });
+
+    const ok = await handleMasterApprovalPatch(req, res, 'PM', row, pmApprovalHooks(formatPackMaterialFull));
+    if (ok) {
+      redis.delByPattern('pack-materials:').catch(() => {});
+    }
+  } catch (err) {
+    console.error('patchPackMaterialApprovalStatus error', err);
+    res.status(500).json({ error: err.message || 'Failed to update approval status' });
+  }
+}
+
 module.exports = {
   listPackMaterials,
   getNextCode,
@@ -840,6 +900,7 @@ module.exports = {
   syncPmZoho,
   createPackMaterial,
   updatePackMaterial,
+  patchPackMaterialApprovalStatus,
   deletePackMaterial,
   getReservedStock,
   resetAllPackMaterials,

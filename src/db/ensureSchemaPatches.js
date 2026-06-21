@@ -378,6 +378,56 @@ const PATCHES = [
     sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "schedule_remarks" TEXT',
   },
   ...getSoftDeleteSchemaPatches(),
+  {
+    name: 'raw_materials.approval_assigned_user_id',
+    table: 'raw_materials',
+    sql: 'ALTER TABLE "raw_materials" ADD COLUMN IF NOT EXISTS "approval_assigned_user_id" INTEGER',
+  },
+  {
+    name: 'raw_materials.approval_assigned_display_name',
+    table: 'raw_materials',
+    sql: 'ALTER TABLE "raw_materials" ADD COLUMN IF NOT EXISTS "approval_assigned_display_name" VARCHAR(255)',
+  },
+  {
+    name: 'pack_materials.approval_assigned_user_id',
+    table: 'pack_materials',
+    sql: 'ALTER TABLE "pack_materials" ADD COLUMN IF NOT EXISTS "approval_assigned_user_id" INTEGER',
+  },
+  {
+    name: 'pack_materials.approval_assigned_display_name',
+    table: 'pack_materials',
+    sql: 'ALTER TABLE "pack_materials" ADD COLUMN IF NOT EXISTS "approval_assigned_display_name" VARCHAR(255)',
+  },
+  {
+    name: 'products.approval_assigned_user_id',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "approval_assigned_user_id" INTEGER',
+  },
+  {
+    name: 'products.approval_assigned_display_name',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "approval_assigned_display_name" VARCHAR(255)',
+  },
+  {
+    name: 'raw_materials.approval_stage_assignees',
+    table: 'raw_materials',
+    sql: 'ALTER TABLE "raw_materials" ADD COLUMN IF NOT EXISTS "approval_stage_assignees" JSONB',
+  },
+  {
+    name: 'pack_materials.approval_stage_assignees',
+    table: 'pack_materials',
+    sql: 'ALTER TABLE "pack_materials" ADD COLUMN IF NOT EXISTS "approval_stage_assignees" JSONB',
+  },
+  {
+    name: 'products.approval_stage_assignees',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "approval_stage_assignees" JSONB',
+  },
+  {
+    name: 'users.last_login_at',
+    table: 'users',
+    sql: 'ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "last_login_at" TIMESTAMPTZ',
+  },
 ];
 
 async function tableExists(tableName) {

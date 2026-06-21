@@ -21,6 +21,20 @@ const WarehouseInventoryLocationHistory = require('../warehouseInventory/locatio
 const { ReservedBatchItem } = require('../fulfillment/models');
 const { resetRawMaterialsMasterData } = require('../masters/resetMaterialMasters');
 const redis = require('../cache/redis');
+const {
+  resolveMasterApprovalStatus,
+  isMasterPickerRequest,
+  resolveApprovalStatusListFilter,
+} = require('../lib/masterApprovalStatus');
+const {
+  resolveWritableMasterApprovalStatus,
+  preserveRmApprovalOnWrite,
+} = require('../lib/masterApprovalAuth');
+const { formatMasterApprovalAssigneeFields } = require('../lib/masterApprovalAssignee');
+const {
+  handleMasterApprovalPatch,
+  rmApprovalHooks,
+} = require('../lib/masterApprovalPatchHandlers');
 /** List-view only (no form_data). */
 function formatRawMaterial(row) {
   if (!row) return null;
@@ -50,6 +64,7 @@ function formatRawMaterial(row) {
     rm_owner: d.rm_owner ?? null,
     universal_swap_eligibility: d.universal_swap_eligibility ?? null,
     functional_equivalents: d.functional_equivalents ?? null,
+    ...formatMasterApprovalAssigneeFields(d),
     created_at: d.created_at,
     updated_at: d.updated_at,
   };
@@ -185,10 +200,13 @@ async function listRawMaterials(req, res) {
       };
     }
 
-    // Optional status filtering for list screens (e.g. active/inactive).
-    // When status=all (or empty), the filter is ignored.
-    if (statusParam.length > 0 && statusParam.toLowerCase() !== 'all') {
-      where = { [Op.and]: [where, { status: statusParam.toLowerCase() }] };
+    // Optional approval-status filter for master dashboards only.
+    // Picker flows (SO, PR BOM) pass for_picker=1 and always receive every approval stage.
+    const approvalStatusFilter = !isMasterPickerRequest(req)
+      ? resolveApprovalStatusListFilter(statusParam)
+      : null;
+    if (approvalStatusFilter) {
+      where = { [Op.and]: [where, { status: approvalStatusFilter }] };
     }
 
     const limitQ = req.query.limit;
@@ -259,7 +277,19 @@ function payloadToListFields(b, omitGroupIfUnset = false) {
     price_per_kg: fd.price_per_kg ?? (fd.pricePerKg != null ? Number(fd.pricePerKg) : null),
     gst: fd.gst != null ? Number(fd.gst) : null,
     shelf: fd.shelfLife ?? fd.retestPeriod ?? fd.shelf ?? null,
-    status: (fd.status && String(fd.status).toLowerCase() === 'inactive') ? 'inactive' : 'active',
+    status: (() => {
+      const hasStatus =
+        fd.status !== undefined ||
+        fd.masterApprovalStatus !== undefined ||
+        b.status !== undefined ||
+        b.masterApprovalStatus !== undefined;
+      if (omitGroupIfUnset && !hasStatus) return undefined;
+      const raw = fd.masterApprovalStatus ?? fd.status ?? b.masterApprovalStatus ?? b.status;
+      return resolveMasterApprovalStatus(raw, {
+        existing: b.status,
+        forCreate: !omitGroupIfUnset,
+      });
+    })(),
     ...(omitGroupIfUnset && !hasGroup
       ? {}
       : { group: fd.subCategory ?? fd.group ?? b.group ?? b.subCategory ?? null }),
@@ -316,6 +346,23 @@ function payloadToListFields(b, omitGroupIfUnset = false) {
     ...(products !== undefined ? { products } : {}),
     form_data,
   };
+}
+
+/** Enforce approval write policy on create — non-approvers always persist Draft. */
+async function applyRmApprovalOnCreate(req, fields) {
+  const fd =
+    fields.form_data != null && typeof fields.form_data === 'object' && !Array.isArray(fields.form_data)
+      ? fields.form_data
+      : {};
+  const raw = fd.masterApprovalStatus ?? fd.status ?? fields.status;
+  fields.status = await resolveWritableMasterApprovalStatus(req, 'RM', raw, { forCreate: true });
+  if (fields.form_data != null && typeof fields.form_data === 'object' && !Array.isArray(fields.form_data)) {
+    fields.form_data = {
+      ...fields.form_data,
+      masterApprovalStatus: fields.status,
+      status: fields.status,
+    };
+  }
 }
 
 async function destroyRawMaterialDraft(row) {
@@ -462,6 +509,7 @@ async function createRawMaterial(req, res) {
         return res.status(404).json({ error: 'Draft raw material not found', code: 'RM_NOT_FOUND' });
       }
       const fields = payloadToListFields(b);
+      await applyRmApprovalOnCreate(req, fields);
       const codeTrim = fields.code != null ? String(fields.code).trim() : '';
       if (!codeTrim) {
         return res.status(400).json({ error: 'code or rmSku is required' });
@@ -548,6 +596,7 @@ async function createRawMaterial(req, res) {
     const t = await db.transaction();
     try {
       const fields = payloadToListFields(b);
+      await applyRmApprovalOnCreate(req, fields);
       let codeTrim = fields.code != null ? String(fields.code).trim() : '';
       if (!codeTrim) {
         const alloc = await allocateNextRmSkuCode(b, { transaction: t });
@@ -669,6 +718,7 @@ async function updateRawMaterial(req, res) {
     if (!row) return res.status(404).json({ error: 'Raw material not found' });
     const b = req.body || {};
     const fields = payloadToListFields(b, true);
+    await preserveRmApprovalOnWrite(req, fields, row.get({ plain: true }));
     const nextCode = String(row.code || '').trim();
     if (!nextCode) {
       return res.status(400).json({ error: 'Existing raw material has no internal code' });
@@ -784,12 +834,34 @@ async function resetAllRawMaterials(req, res) {
   }
 }
 
+/**
+ * PATCH /api/v1/raw-materials/:id/approval-status — team workflow update (Draft → … → Active).
+ * Body: { status: 'Under Review' } or { advance: true } for next step.
+ */
+async function patchRawMaterialApprovalStatus(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const row = await RawMaterial.findByPk(id);
+    if (!row) return res.status(404).json({ error: 'Raw material not found' });
+
+    const ok = await handleMasterApprovalPatch(req, res, 'RM', row, rmApprovalHooks(formatRawMaterial));
+    if (ok) {
+      redis.delByPattern('raw-materials:').catch(() => {});
+    }
+  } catch (err) {
+    console.error('patchRawMaterialApprovalStatus error', err);
+    res.status(500).json({ error: err.message || 'Failed to update approval status' });
+  }
+}
+
 module.exports = {
   listRawMaterials,
   getRawMaterialById,
   syncRmZoho,
   createRawMaterial,
   updateRawMaterial,
+  patchRawMaterialApprovalStatus,
   deleteRawMaterial,
   getReservedStock,
   resetAllRawMaterials,

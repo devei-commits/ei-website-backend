@@ -102,6 +102,7 @@ const ZOHO_SEED_PACK_MATERIAL_ITEM_IDS = {
 const ROLES_TO_SEED = [
   { role_code: 'super_admin', role_name: 'Super Admin', level: 'admin' },
   { role_code: 'admin', role_name: 'Admin', level: 'admin' },
+  { role_code: 'manager', role_name: 'Manager', level: 'manager' },
   { role_code: 'bd_manager', role_name: 'BD Manager', level: 'manager' },
   { role_code: 'accounts_team', role_name: 'Accounts Team', level: 'manager' },
   { role_code: 'doctor', role_name: 'Doctor', level: 'staff' },
@@ -116,6 +117,7 @@ const ADMIN_MODULE_IDS = [...MODULE_IDS];
 const ROLE_PERMISSIONS_MAP = {
   super_admin: MODULE_IDS,
   admin: ADMIN_MODULE_IDS,
+  manager: ['dashboard', 'order-management', 'packaging-management', 'raw-materials-management', 'items-master', 'sales-purchase', 'universal-swap', 'item-groups', 'enquiry-management'],
   bd_manager: ['dashboard', 'user-management', 'order-management', 'packaging-management', 'raw-materials-management', 'items-master', 'sales-purchase', 'universal-swap', 'item-groups'],
   accounts_team: ['dashboard', 'vendor-client'],
   doctor: ['dashboard'],
@@ -165,11 +167,12 @@ async function seed() {
     console.log('Syncing database...');
     await db.sync({ force: true });
 
-    console.log('Seeding module definitions (if empty)...');
-    await ModuleDefinition.findOrCreate({
+    console.log('Seeding module definitions...');
+    const [moduleDefRow] = await ModuleDefinition.findOrCreate({
       where: { name: 'default' },
       defaults: { definition_json: defaultModuleDef },
     });
+    await moduleDefRow.update({ definition_json: defaultModuleDef });
 
     console.log('Seeding roles and permissions...');
     await RolePermission.destroy({ where: {} });
@@ -202,6 +205,9 @@ async function seed() {
       }
     }
 
+    const { seedManagerRolePermissions } = require('./src/roles/managerRolePermissions');
+    await seedManagerRolePermissions();
+
     const now = new Date();
 
     const zohoBooksOn = zohoEnv.booksEnabled;
@@ -231,6 +237,7 @@ async function seed() {
     //   admin@example.com       / Admin@123       (Admin, Administration)
     //   admin2@example.com      / Admin2@123      (Admin, Administration)
     //   accounts@example.com    / Accounts@123    (Accounts Team, vendor/client only)
+    //   manager@example.com     / Manager@123     (Manager, Operations)
     //   bdmanager@example.com   / BDManager@123  (BD Manager, Business Development)
     //   dr.sarah@example.com    / Doctor@123      (Doctor)
     //   client1@example.com     / Client1@123     (Customer)
@@ -327,6 +334,25 @@ async function seed() {
       usertype: 'accounts_team',
       ...zu('accounts@example.com'),
       department: 'Accounts',
+      status: 'active',
+      verify_status: 'verified',
+      advance_payment: false,
+      advance_amount: null,
+      created_at: now,
+      updated_at: now
+    });
+
+    // 4c. Manager (operations — masters, orders, inventory modules)
+    const manager = await User.create({
+      fname: 'Ravi',
+      lname: 'Manager',
+      display_name: 'Ravi Manager',
+      email: 'manager@example.com',
+      mobile: '+919876543206',
+      password: bcrypt.hashSync('Manager@123', 10),
+      usertype: 'manager',
+      ...zu('manager@example.com'),
+      department: 'Operations',
       status: 'active',
       verify_status: 'verified',
       advance_payment: false,
@@ -440,6 +466,31 @@ async function seed() {
       advance_payment: false, advance_amount: null, created_at: now, updated_at: now
     });
 
+    console.log('Seeding staff profiles...');
+    const staffProfileLinks = [
+      { user: superAdmin, roleCode: 'super_admin' },
+      { user: admin, roleCode: 'admin' },
+      { user: admin2, roleCode: 'admin' },
+      { user: bdManager, roleCode: 'bd_manager' },
+      { user: accountsTeam, roleCode: 'accounts_team' },
+      { user: manager, roleCode: 'manager' },
+      { user: amPriya, roleCode: 'bd_manager' },
+      { user: amSuresh, roleCode: 'bd_manager' },
+      { user: amAnanya, roleCode: 'bd_manager' },
+    ];
+    for (const link of staffProfileLinks) {
+      const role = roles[link.roleCode];
+      if (!role || !link.user) continue;
+      await StaffProfile.create({
+        user_id: link.user.userid,
+        role_id: role.role_id,
+        department: link.user.department,
+        dep_level: null,
+        created_at: now,
+        updated_at: now,
+      });
+    }
+
     console.log('Seeding Doctor Profiles...');
 
     // Doctor Profile for Admin
@@ -474,6 +525,7 @@ async function seed() {
       { obj: bdManager, city: 'Bangalore', state: 'Karnataka', zip: '560001' },
       { obj: admin2, city: 'Chennai', state: 'Tamil Nadu', zip: '600001' },
       { obj: accountsTeam, city: 'Hyderabad', state: 'Telangana', zip: '500001' },
+      { obj: manager, city: 'Pune', state: 'Maharashtra', zip: '411001' },
       { obj: doctor, city: 'Mumbai', state: 'Maharashtra', zip: '400050' },
       { obj: client1, city: 'Mumbai', state: 'Maharashtra', zip: '400001' },
       { obj: client2, city: 'Kochi', state: 'Kerala', zip: '682001' },

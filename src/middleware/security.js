@@ -13,6 +13,7 @@ const USERTYPE_ALLOWED_MODULES = {
   super_admin: ['*'],
   admin: ADMIN_MODULE_IDS,
   bd_manager: ['dashboard', 'user-management', 'order-list', 'order-management', 'coupon-management', 'discount-management', 'packaging-management', 'raw-materials-management', 'items-master', 'sales-purchase', 'universal-swap', 'item-groups', 'enquiry-management'],
+  manager: ['dashboard', 'inventory', 'order-management', 'packaging-management', 'raw-materials-management', 'items-master', 'sales-purchase', 'universal-swap', 'item-groups', 'enquiry-management'],
   accounts_team: ['dashboard', 'vendor-client'],
   doctor: ['dashboard'],
   customer: [],
@@ -53,12 +54,28 @@ function isJwtExpiredError(err) {
 }
 
 /** Middleware: require one of the given module IDs. Use after isAuthenticated. req.user.allowedModules set in isAuthenticated. */
+function expandLegacyModuleIds(moduleIds) {
+  const expanded = new Set(moduleIds);
+  for (const id of moduleIds) {
+    if (id === 'raw-materials-management' || id === 'packaging-management' || id === 'items-master') {
+      expanded.add('inventory');
+    }
+    if (id === 'inventory') {
+      expanded.add('raw-materials-management');
+      expanded.add('packaging-management');
+      expanded.add('items-master');
+    }
+  }
+  return expanded;
+}
+
 function requireModule(...moduleIds) {
   return (req, res, next) => {
     if (!req.user) return sendUnauthorized(res);
     const allowed = req.user.allowedModules || [];
     if (allowed.includes('*')) return next();
-    const hasAccess = moduleIds.some(m => allowed.includes(m));
+    const expanded = expandLegacyModuleIds(moduleIds);
+    const hasAccess = [...expanded].some((m) => allowed.includes(m));
     if (!hasAccess) return sendForbidden(res);
     next();
   };
@@ -399,6 +416,7 @@ module.exports = {
     authorizeRoles,
     requireModule,
     getAllowedModules,
+    isPrivilegedRole,
     hasGranularAccess,
     requireAnyGranularAccess,
     requirePermission,

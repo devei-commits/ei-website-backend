@@ -5,10 +5,12 @@ const bcrypt = require('bcrypt');
 const db = require('../db');
 const { User } = require('../src/users/models');
 const { Role, StaffProfile } = require('../src/roles/models');
+const { seedManagerRolePermissions } = require('../src/roles/managerRolePermissions');
 
 const ROLE_SEED = [
   { role_code: 'super_admin', role_name: 'Super Admin', level: 'admin' },
   { role_code: 'admin', role_name: 'Admin', level: 'admin' },
+  { role_code: 'manager', role_name: 'Manager', level: 'manager' },
 ];
 
 /** EI team — password pattern EI@<local-part>, role super_admin */
@@ -79,6 +81,16 @@ const ADMIN_USERS = [
     mobile: '+919876543204',
     usertype: 'admin',
     department: 'Administration',
+  },
+  {
+    email: 'manager@example.com',
+    password: 'Manager@123',
+    fname: 'Ravi',
+    lname: 'Manager',
+    display_name: 'Ravi Manager',
+    mobile: '+919876543206',
+    usertype: 'manager',
+    department: 'Operations',
   },
 ];
 
@@ -164,6 +176,7 @@ async function upsertAdminUser(u, rolesByCode) {
 async function main() {
   await db.authenticate();
   const rolesByCode = await ensureRoles();
+  await seedManagerRolePermissions();
   const results = [];
   for (const u of ADMIN_USERS) {
     results.push(await upsertAdminUser(u, rolesByCode));

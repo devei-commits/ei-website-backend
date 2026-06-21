@@ -2,6 +2,7 @@ const { generateRefreshToken, generateToken } = require('../middleware/security'
 const Authentication = require('./models');
 const {User} = require('../models/index');
 const sendmail = require('../utils/mail');
+const { recordUserLastLogin } = require('../lib/userLastLogin');
 
 const generateOtp = async (args) => {
   try {
@@ -70,6 +71,7 @@ const verifyOtp = async (req, res) => {
     // create JWT
     const refreshToken = await generateRefreshToken(user);
     res.cookie('refreshToken', refreshToken, { httpOnly: true });
+    await recordUserLastLogin(user);
     res.status(200).json({ token: generateToken(user) });
 
   } catch (err) {

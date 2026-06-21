@@ -2640,6 +2640,40 @@ async function getItemsInvolvedByPlanningId(req, res) {
       accumulatePlannedBatchIntoQtyMaps(bp, plain, rmByCodeMap, rmByNameMap, pmByCodeMap, pmByNameMap, plannedRmFromBatches, plannedPmFromBatches);
     }
 
+    // Match global items-involved: include materials on sent batches even when absent from BOM snapshot.
+    for (const rid of plannedRmFromBatches.keys()) {
+      const ridNum = Number(rid);
+      if (!Number.isFinite(ridNum) || ridNum <= 0 || rmReq.has(ridNum)) continue;
+      let name = '';
+      let code = '';
+      for (const r of rmByCodeMap.values()) {
+        if (Number(r.id) === ridNum) {
+          name = r.name || '';
+          code = r.code || '';
+          break;
+        }
+      }
+      rmReq.set(ridNum, { quantity: 0, unit: 'KG', name, code });
+    }
+    for (const pid of plannedPmFromBatches.keys()) {
+      const pidNum = Number(pid);
+      if (!Number.isFinite(pidNum) || pidNum <= 0 || pmReq.has(pidNum)) continue;
+      let name = '';
+      let code = '';
+      for (const p of pmByCodeMap.values()) {
+        if (Number(p.id) === pidNum) {
+          name = p.description || p.code || '';
+          code = p.code || '';
+          break;
+        }
+      }
+      pmReq.set(pidNum, { quantity: 0, unit: 'PCS', name, code });
+    }
+    rmIds.length = 0;
+    pmIds.length = 0;
+    rmIds.push(...rmReq.keys());
+    pmIds.push(...pmReq.keys());
+
     const whWhere = [];
     if (rmIds.length) whWhere.push({ item_type: 'RM', raw_material_id: { [Op.in]: rmIds } });
     if (pmIds.length) whWhere.push({ item_type: 'PM', pack_material_id: { [Op.in]: pmIds } });

@@ -595,7 +595,7 @@ async function upsertRawMaterialMultiSheetRow(
         price_per_kg: rateNum != null ? rateNum : null,
         zoho_sku_code: skuTrim,
         tax_pref: taxPref,
-        status: 'active',
+        status: 'Draft',
         products: [],
         form_data: mergeFormData(mapped.formDataPatch, {
           ...(inciTrim ? { inciName: inciTrim } : {}),
@@ -711,7 +711,7 @@ async function upsertRawMaterialRow({ sku, description, excelRow }, results, det
         name: nameTrim,
         zoho_sku_code: skuTrim,
         rm_type: 'Raw Material',
-        status: 'active',
+        status: 'Draft',
         products: [],
         uom: 'KG',
       },

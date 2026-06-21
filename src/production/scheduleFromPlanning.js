@@ -38,9 +38,11 @@ function mfgDateForBatchSequence(plannedStartDate, sequence) {
 
 function batchPlainForOccupancy(row) {
   const d = row?.get ? row.get({ plain: true }) : row;
+  const supporting = Array.isArray(d.supporting_tanks) ? d.supporting_tanks : [];
   return {
     mainVessel: d.main_vessel || '',
     mfgDate: d.mfg_date || '',
+    supportingTanks: supporting,
     fillingLine: d.filling_line || '',
     fillDate: d.fill_date || '',
     packagingLine: d.packaging_line || '',
@@ -50,16 +52,73 @@ function batchPlainForOccupancy(row) {
 }
 
 function isEquipmentFreeOnDate(batches, equipId, dateStr, excludeBmrNo) {
-  if (!equipId || !dateStr) return false;
+  if (!equipId || !dateStr) return true;
   return !batches.some((b) => {
     const plain = batchPlainForOccupancy(b);
     if (excludeBmrNo && plain.bmrNo === excludeBmrNo) return false;
-    return (
-      (plain.mainVessel === equipId && plain.mfgDate === dateStr)
-      || (plain.fillingLine === equipId && plain.fillDate === dateStr)
-      || (plain.packagingLine === equipId && plain.packDate === dateStr)
-    );
+    if (plain.mainVessel === equipId && plain.mfgDate === dateStr) return true;
+    if (plain.fillingLine === equipId && plain.fillDate === dateStr) return true;
+    if (plain.packagingLine === equipId && plain.packDate === dateStr) return true;
+    if (Array.isArray(plain.supportingTanks) && plain.supportingTanks.includes(equipId) && plain.mfgDate === dateStr) {
+      return true;
+    }
+    return false;
   });
+}
+
+function hasBatchEquipmentReserved(plain) {
+  return Boolean(
+    String(plain?.main_vessel || '').trim()
+    && String(plain?.filling_line || '').trim()
+    && String(plain?.packaging_line || '').trim(),
+  );
+}
+
+function scheduleFieldsInBody(body) {
+  const keys = [
+    'mfg_date', 'mfgDate', 'fill_date', 'fillDate', 'pack_date', 'packDate',
+    'main_vessel', 'mainVessel', 'filling_line', 'fillingLine',
+    'packaging_line', 'packagingLine', 'supporting_tanks', 'supportingTanks',
+  ];
+  return keys.some((k) => body[k] !== undefined);
+}
+
+/** When mfg_date is set, vessel/fill/pack must be assigned; no double-booking on stage dates. */
+function validateEquipmentSchedulePatch(nextPlain, allBatchRows, excludeBmrNo) {
+  const errors = [];
+  const mfgDate = normalizeIsoDateOnly(nextPlain?.mfg_date);
+  if (!mfgDate) return errors;
+
+  if (!hasBatchEquipmentReserved(nextPlain)) {
+    errors.push('Manufacturing vessel, filling line, and packaging line must be assigned when saving a schedule.');
+    return errors;
+  }
+
+  const occupancy = Array.isArray(allBatchRows) ? allBatchRows : [];
+  const mv = String(nextPlain.main_vessel || '').trim();
+  const fl = String(nextPlain.filling_line || '').trim();
+  const pl = String(nextPlain.packaging_line || '').trim();
+  const fillDate = normalizeIsoDateOnly(nextPlain.fill_date);
+  const packDate = normalizeIsoDateOnly(nextPlain.pack_date);
+  const supporting = Array.isArray(nextPlain.supporting_tanks) ? nextPlain.supporting_tanks : [];
+
+  if (mv && !isEquipmentFreeOnDate(occupancy, mv, mfgDate, excludeBmrNo)) {
+    errors.push(`Vessel ${mv} is reserved on ${mfgDate}. Available from ${addDaysToDateStr(mfgDate, 1)}.`);
+  }
+  if (fl && fillDate && !isEquipmentFreeOnDate(occupancy, fl, fillDate, excludeBmrNo)) {
+    errors.push(`Filling line ${fl} is reserved on ${fillDate}. Available from ${addDaysToDateStr(fillDate, 1)}.`);
+  }
+  if (pl && packDate && !isEquipmentFreeOnDate(occupancy, pl, packDate, excludeBmrNo)) {
+    errors.push(`Packaging line ${pl} is reserved on ${packDate}. Available from ${addDaysToDateStr(packDate, 1)}.`);
+  }
+  for (const tankId of supporting) {
+    const tid = String(tankId || '').trim();
+    if (!tid) continue;
+    if (!isEquipmentFreeOnDate(occupancy, tid, mfgDate, excludeBmrNo)) {
+      errors.push(`Supporting tank ${tid} is reserved on ${mfgDate}. Available from ${addDaysToDateStr(mfgDate, 1)}.`);
+    }
+  }
+  return errors;
 }
 
 function getFirstFreeEquipment(equipIds, dateStr, batches, excludeBmrNo) {
@@ -114,4 +173,7 @@ module.exports = {
   mfgDateForBatchSequence,
   buildSchedulePatchFromPlanning,
   isEquipmentFreeOnDate,
+  scheduleFieldsInBody,
+  validateEquipmentSchedulePatch,
+  hasBatchEquipmentReserved,
 };

@@ -37,8 +37,10 @@ const {
   sanitizeMrnLineItems,
 } = require('../utils/materialQtyCompare');
 
-/** Usertypes that can be assigned as Picker / Transfer Team (same as GRN). */
-const ASSIGNABLE_USERTYPES = ['super_admin', 'admin', 'bd_manager'];
+const {
+  listAssignableInternalStaffUsers,
+  displayNameForAssignableUser,
+} = require('../users/assignableInternalStaff');
 
 /** Detect RM vs PM lines when ids are missing (codes not resolved) — MTR from Production sends KG / PCS. */
 function lineItemsIndicateRm(lineItems) {
@@ -163,18 +165,13 @@ function isClosedOutboundMtrStatus(status) {
  */
 async function assignablePickers(req, res) {
   try {
-    const users = await User.findAll({
-      where: { usertype: ASSIGNABLE_USERTYPES },
-      attributes: ['userid', 'email', 'fname', 'lname', 'display_name'],
-      order: [['display_name', 'ASC'], ['fname', 'ASC']],
-    });
+    const users = await listAssignableInternalStaffUsers({ limit: 100 });
     const list = users.map((u) => {
       const d = u.get ? u.get({ plain: true }) : u;
-      const displayName = d.display_name && d.display_name.trim() ? d.display_name.trim() : [d.fname, d.lname].filter(Boolean).join(' ') || d.email || `User ${d.userid}`;
       return {
         id: d.userid,
         email: d.email || '',
-        displayName,
+        displayName: displayNameForAssignableUser(u),
       };
     });
     res.json(list);
@@ -1027,7 +1024,7 @@ async function applyMtrCompletionToProductionBatch(plainMrn) {
        *   (based on cumulative moved qty vs dispensing_pm requirements),
        *   we must advance BPR into the PM dispensing stage.
        */
-      if (['pm_reserved', 'pm_connected'].includes(plain.bpr_status)) {
+      if (plain.bmr_status === 'cleared' && ['pm_reserved', 'pm_connected'].includes(plain.bpr_status)) {
         updates.bpr_status = 'pm_dispensing';
       }
     }

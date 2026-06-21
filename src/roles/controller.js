@@ -399,4 +399,5 @@ module.exports = {
   createRole,
   updateRole,
   deleteRole,
+  saveRolePermissions,
 };

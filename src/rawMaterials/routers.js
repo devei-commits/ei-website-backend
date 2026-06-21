@@ -1,12 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const { isAuthenticated, requireModule } = require('../middleware/security');
+const { requireMasterApprovalUpdate } = require('../lib/masterApprovalAuth');
 const {
   listRawMaterials,
   getRawMaterialById,
   syncRmZoho,
   createRawMaterial,
   updateRawMaterial,
+  patchRawMaterialApprovalStatus,
   deleteRawMaterial,
   getReservedStock,
   resetAllRawMaterials,
@@ -53,6 +55,7 @@ router.post('/zoho-sync', requireRawMaterials, syncRmZoho);
 router.post('/', requireRawMaterials, createRawMaterial);
 router.get('/:id/reserved-stock', requireRawMaterials, getReservedStock);
 router.get('/:id', requireRawMaterials, cacheRawMaterialsOne, getRawMaterialById);
+router.patch('/:id/approval-status', requireRawMaterials, requireMasterApprovalUpdate('RM'), patchRawMaterialApprovalStatus);
 router.put('/:id', requireRawMaterials, updateRawMaterial);
 router.delete('/:id', requireRawMaterials, deleteRawMaterial);
 
