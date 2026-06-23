@@ -17,13 +17,19 @@ function pf(v) { return parseFloat(v) || 0; }
 async function vendorMap(materialType, ids) {
   if (!ids.length) return {};
   const col = materialType === 'PM' ? 'pack_material_id' : 'raw_material_id';
+  // Prefer cheapest MOQ-tier price; fall back to default_rate if no tiers exist.
   const rows = await db.query(
     `SELECT il.${col} AS material_id,
-            MIN(vr.default_rate) FILTER (WHERE vr.default_rate IS NOT NULL)   AS rate,
+            COALESCE(
+              MIN(t.price_per_unit) FILTER (WHERE t.price_per_unit IS NOT NULL AND t.deleted_at IS NULL),
+              MIN(vr.default_rate)  FILTER (WHERE vr.default_rate  IS NOT NULL)
+            ) AS rate,
             MIN(vr.lead_time_days) FILTER (WHERE vr.lead_time_days IS NOT NULL) AS lead
        FROM items_list il
        JOIN item_list_vendor_rates vr
          ON vr.items_list_id = il.id AND vr.deleted_at IS NULL
+       LEFT JOIN item_list_tiers t
+         ON t.item_list_vendor_rate_id = vr.id AND t.deleted_at IS NULL
       WHERE il.type = $1 AND il.${col} = ANY($2) AND il.deleted_at IS NULL
       GROUP BY il.${col}`,
     { bind: [materialType, ids], type: QueryTypes.SELECT }
@@ -124,9 +130,32 @@ async function enrichBom(bom, opts = {}) {
     };
   });
 
+  // ── Auto-detect packaging configuration from PM lines ──
+  let detectedPackagingType = 'Bottle & Jar';
+  let detectedMonocarton = false;
+  for (const pm of pmLines) {
+    if (pm.material === 'Monocartons') detectedMonocarton = true;
+    if (pm.material === 'Packaging - Primary') {
+      const desc = (pm.description || '').toLowerCase();
+      if (desc.includes('tube')) detectedPackagingType = 'Tube';
+      else if (desc.includes('serum') || desc.includes('dropper')) detectedPackagingType = 'Serum with Dropper';
+    }
+  }
+
   const mtch = (bom.pack_size || '').match(/(\d+(?:\.\d+)?)\s*(ML|G|GM|MG|L)/i);
   const parsedVolume = mtch ? pf(mtch[1]) : 0;
   const parsedUnit = mtch ? mtch[2].toUpperCase() : 'ML';
+
+  const volMlForKey = parsedUnit === 'ML' ? parsedVolume : 0;
+  let detectedVolumeKey = '<=100';
+  if (detectedPackagingType === 'Serum with Dropper') {
+    detectedVolumeKey = '<=30';
+  } else if (volMlForKey > 0) {
+    if (volMlForKey <= 50) detectedVolumeKey = '<=50';
+    else if (volMlForKey <= 100) detectedVolumeKey = '<=100';
+    else detectedVolumeKey = '<=200';
+  }
+  if (detectedPackagingType === 'Tube' && detectedVolumeKey === '<=200') detectedVolumeKey = '<=100';
 
   return {
     id: bom.id, bom_code: bom.bom_code, name: bom.name, pack_size: bom.pack_size,
@@ -136,6 +165,11 @@ async function enrichBom(bom, opts = {}) {
     pricing_source: pricingSource,
     blended_sg: blendedSg, blended_sg_partial: Math.round(blendedSgKnown * 1000) / 1000,
     sg_complete: sgComplete, sg_known_pct: Math.round(knownPct * 100) / 100, missing_sg_lines: missingSgLines,
+    auto_detected: {
+      packaging_type: detectedPackagingType,
+      volume_key: detectedVolumeKey,
+      has_monocarton: detectedMonocarton,
+    },
   };
 }
 

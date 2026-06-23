@@ -206,6 +206,14 @@ SavedQuote.init(
     version: { type: DataTypes.INTEGER, allowNull: true, defaultValue: 1 },
     root_quote_id: { type: DataTypes.INTEGER, allowNull: true },
     superseded_by: { type: DataTypes.INTEGER, allowNull: true },
+    /** 'full' | 'rm_only' | 'pm_only' */
+    quote_type: { type: DataTypes.STRING(20), allowNull: true, defaultValue: 'full' },
+    /** 'pre_production' | 'post_production' */
+    quote_category: { type: DataTypes.STRING(30), allowNull: true, defaultValue: 'pre_production' },
+    /** Free-text job / production run reference */
+    job_ref: { type: DataTypes.TEXT, allowNull: true },
+    /** For post_production quotes: id of the linked pre_production quote */
+    pre_quote_id: { type: DataTypes.INTEGER, allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
     deleted_at: { type: DataTypes.DATE, allowNull: true },
@@ -215,6 +223,83 @@ SavedQuote.init(
     sequelize: db, modelName: 'SavedQuote', tableName: 'saved_quotes',
     timestamps: true, createdAt: 'created_at', updatedAt: 'updated_at',
     indexes: [{ unique: true, name: 'saved_quotes_quote_ref_uniq', fields: ['quote_ref'] }],
+  }
+);
+
+// ─────────────────────────────────────────────────────────────
+// quote_conversion_rates — filling conversion cost table (₹/unit)
+// replaces hardcoded BT/TB/SR tables in pricing.js
+// packaging_type='CONFIG', moq_band='mono_discount' is the mono discount row
+// ─────────────────────────────────────────────────────────────
+class QuoteConversionRate extends Model {}
+QuoteConversionRate.init(
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    packaging_type: { type: DataTypes.STRING(50), allowNull: false },
+    moq_band:       { type: DataTypes.STRING(20), allowNull: false },
+    volume_key:     { type: DataTypes.STRING(10), allowNull: false },
+    rate:           { type: DataTypes.DECIMAL(8, 2), allowNull: false },
+  },
+  {
+    sequelize: db, modelName: 'QuoteConversionRate', tableName: 'quote_conversion_rates',
+    timestamps: true, createdAt: 'created_at', updatedAt: 'updated_at',
+    indexes: [{ unique: true, name: 'qcr_pkg_band_vol_uniq', fields: ['packaging_type', 'moq_band', 'volume_key'] }],
+  }
+);
+
+// ─────────────────────────────────────────────────────────────
+// quote_category_rates — per-RM-category wastage rates
+// ─────────────────────────────────────────────────────────────
+class QuoteCategoryRate extends Model {}
+QuoteCategoryRate.init(
+  {
+    id:          { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    category:    { type: DataTypes.STRING(100), allowNull: false },
+    wastage_pct: { type: DataTypes.DECIMAL(5, 2), defaultValue: 3.0 },
+    notes:       { type: DataTypes.TEXT, allowNull: true },
+  },
+  {
+    sequelize: db, modelName: 'QuoteCategoryRate', tableName: 'quote_category_rates',
+    timestamps: true, createdAt: 'created_at', updatedAt: 'updated_at',
+    indexes: [{ unique: true, name: 'qcat_category_uniq', fields: ['category'] }],
+  }
+);
+
+// ─────────────────────────────────────────────────────────────
+// quote_actuals — post-production actual cost entry.
+// Linked to a post-production saved_quote (post_quote_id) and
+// optionally to the pre-production estimate (pre_quote_id).
+// est_* fields snapshot the estimated values at entry time.
+// ─────────────────────────────────────────────────────────────
+class QuoteActuals extends Model {}
+QuoteActuals.init(
+  {
+    id:              { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    bom_code:        { type: DataTypes.STRING(100), allowNull: false },
+    job_ref:         { type: DataTypes.TEXT, allowNull: true },
+    pre_quote_id:    { type: DataTypes.INTEGER, allowNull: true },
+    post_quote_id:   { type: DataTypes.INTEGER, allowNull: true },
+    batch_size:      { type: DataTypes.INTEGER, allowNull: true },
+    yield_pct:       { type: DataTypes.DECIMAL(5, 2), allowNull: true },
+    actual_rm:       { type: DataTypes.DECIMAL(10, 4), allowNull: true },
+    actual_pm:       { type: DataTypes.DECIMAL(10, 4), allowNull: true },
+    actual_conversion: { type: DataTypes.DECIMAL(10, 4), allowNull: true },
+    actual_overhead: { type: DataTypes.DECIMAL(10, 4), allowNull: true },
+    actual_total:    { type: DataTypes.DECIMAL(10, 4), allowNull: true },
+    est_rm:          { type: DataTypes.DECIMAL(10, 4), allowNull: true },
+    est_pm:          { type: DataTypes.DECIMAL(10, 4), allowNull: true },
+    est_conversion:  { type: DataTypes.DECIMAL(10, 4), allowNull: true },
+    est_overhead:    { type: DataTypes.DECIMAL(10, 4), allowNull: true },
+    est_total:       { type: DataTypes.DECIMAL(10, 4), allowNull: true },
+    notes:           { type: DataTypes.TEXT, allowNull: true },
+    entered_by:      { type: DataTypes.INTEGER, allowNull: true },
+    entered_by_name: { type: DataTypes.STRING(255), allowNull: true },
+    created_at:      { type: DataTypes.DATE, allowNull: true },
+    updated_at:      { type: DataTypes.DATE, allowNull: true },
+  },
+  {
+    sequelize: db, modelName: 'QuoteActuals', tableName: 'quote_actuals',
+    timestamps: true, createdAt: 'created_at', updatedAt: 'updated_at',
   }
 );
 
@@ -259,10 +344,13 @@ module.exports = {
   QuoteGrade,
   QuoteOverhead,
   QuoteAuditLog,
+  QuoteConversionRate,
+  QuoteCategoryRate,
   QuoteProcurementRule,
   QuoteManufacturingRule,
   QuoteQcRule,
   QuoteDispatchConfig,
   SavedQuote,
+  QuoteActuals,
   QuoteEmail,
 };

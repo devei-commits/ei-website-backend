@@ -4,11 +4,12 @@
 // plus CRUD for grades, overheads, timeline rules, and saved quotes.
 // All routes are super_admin-gated at the router level.
 // ─────────────────────────────────────────────────────────────
-const { QueryTypes } = require('sequelize');
+const { QueryTypes, Op } = require('sequelize');
 const db = require('../../db');
 const {
   QuoteGrade, QuoteOverhead, QuoteProcurementRule, QuoteManufacturingRule,
   QuoteQcRule, QuoteDispatchConfig, SavedQuote, QuoteEmail, QuoteAuditLog,
+  QuoteConversionRate, QuoteCategoryRate, QuoteActuals,
 } = require('./models');
 const { enrichBom } = require('./bomEnrich');
 const RawMaterial = require('../rawMaterials/models');
@@ -55,6 +56,7 @@ async function calculateQuote(req, res) {
     let finalSg = pf(b.sg);
     let bomMeta = { bom_id: null, bom_code: 'NEW', bom_name: b.name || 'New Quote', pack_size: finalVolume ? `${finalVolume} ML` : '—', product_code: null };
     let sgInfo = null;
+    let autoDetected = null;
 
     if (b.bom_id) {
       const bom = await fetchBom(b.bom_id);
@@ -76,8 +78,10 @@ async function calculateQuote(req, res) {
         missing_sg_lines: enriched.missing_sg_lines,
         sg_used: finalSg,
       };
+      autoDetected = enriched.auto_detected || null;
     } else {
-      if (!Array.isArray(b.rmLines) || b.rmLines.length === 0) {
+      const qs = ['rm_only', 'pm_only'].includes(b.quoteScope) ? b.quoteScope : 'full';
+      if (qs !== 'pm_only' && (!Array.isArray(b.rmLines) || b.rmLines.length === 0)) {
         return res.status(400).json({ error: 'Adhoc mode requires at least one RM line' });
       }
       rmLines = b.rmLines.map(l => ({
@@ -120,22 +124,39 @@ async function calculateQuote(req, res) {
       };
     }
 
+    // Packaging config: user selection wins; auto_detected is first-load fallback only
+    const packagingType = b.packagingType || (autoDetected && autoDetected.packaging_type) || 'Bottle & Jar';
+    const volumeKey = b.volumeKey || (autoDetected && autoDetected.volume_key) || '<=100';
+    const monocarton = (b.monocarton != null) ? b.monocarton : (autoDetected ? autoDetected.has_monocarton : true);
+
     const productType = detectProductType(bomMeta.bom_name);
     const [ohRows, timelineConfig] = await Promise.all([
       loadOverheadRows(productType),
       loadTimelineConfig(),
     ]);
 
+    const quoteScope = ['rm_only', 'pm_only'].includes(b.quoteScope) ? b.quoteScope : 'full';
+    const batchYieldPct = (b.batchYieldPct != null && b.batchYieldPct > 0 && b.batchYieldPct <= 100) ? parseFloat(b.batchYieldPct) : 100;
+
+    // Load rate tables from DB; seed defaults on first use
+    const [convRows, catRows] = await Promise.all([
+      QuoteConversionRate.count().then(async n => { if (n === 0) await seedDefaultConversionRates(); return QuoteConversionRate.findAll(); }),
+      QuoteCategoryRate.count().then(async n => { if (n === 0) await seedDefaultCategoryRates(); return QuoteCategoryRate.findAll(); }),
+    ]);
+    const conversionRates = buildConversionRatesObj(plain(convRows));
+    const categoryRates = buildCategoryRatesObj(plain(catRows));
+
     const result = calculate({
       rmLines, pmLines,
       volumeMl: finalVolume, sg: finalSg,
-      packagingType: b.packagingType, volumeKey: b.volumeKey, monocarton: b.monocarton,
+      packagingType, volumeKey, monocarton,
       rmWastage: b.rmWastage, pmWastage: b.pmWastage,
       rmLogistics: b.rmLogistics, pmLogistics: b.pmLogistics,
       freightPct: b.freightPct, insurancePct: b.insurancePct, handlingPct: b.handlingPct,
       creditDays: b.creditDays, annualRate: b.annualRate,
       grade, ohRows,
       customMargins: b.customMargins || null, targetPrice: b.targetPrice || 0,
+      quoteScope, batchYieldPct, conversionRates, categoryRates,
     });
 
     const gradeRef = grade.grade_ref || `id_${grade.id}`;
@@ -155,6 +176,7 @@ async function calculateQuote(req, res) {
       product_type: productType,
       overhead_category: ohRows.length ? (ohRows.find(r => r.product_category !== 'all') ? productType : 'all') : 'all',
       pricing_source: b.bom_id ? (b.pricingSource === 'vendor' ? 'vendor' : 'master') : 'manual',
+      auto_detected: autoDetected,
       sg_info: sgInfo,
       ...result,
     });
@@ -459,6 +481,10 @@ async function reviseQuote(req, res) {
       client_id: src.client_id, prepared_by: req.user?.fullName || src.prepared_by,
       status: 'draft', status_history: history,
       version: newVersion, root_quote_id: rootId,
+      quote_type: src.quote_type || 'full',
+      quote_category: src.quote_category || 'pre_production',
+      job_ref: src.job_ref || null,
+      pre_quote_id: src.pre_quote_id || null,
     });
     await src.update({ superseded_by: dup.id });
     res.json({ ok: true, id: dup.id, quote_ref: ref, version: newVersion });
@@ -571,6 +597,10 @@ async function saveQuote(req, res) {
       notes: b.notes || null, gst_pct: b.gst_pct != null ? b.gst_pct : 18,
       valid_until: b.valid_until || null, client_id: b.client_id || null,
       prepared_by: b.prepared_by || req.user?.fullName || null,
+      quote_type: b.quote_type || b.payload?.quoteScope || 'full',
+      quote_category: b.quote_category || 'pre_production',
+      job_ref: b.job_ref || null,
+      pre_quote_id: b.pre_quote_id || null,
     });
     res.json({ ok: true, id: row.id, quote_ref: row.quote_ref, created_at: row.created_at });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -670,6 +700,10 @@ async function updateSavedQuote(req, res) {
       mode: b.payload ? (b.payload.bom_id ? 'db' : 'adhoc') : row.mode,
       headline_sell: mid.sell_price ?? row.headline_sell,
       headline_moq: mid.moq ?? row.headline_moq,
+      quote_type: b.quote_type ?? row.quote_type,
+      quote_category: b.quote_category ?? row.quote_category,
+      job_ref: b.job_ref !== undefined ? b.job_ref : row.job_ref,
+      pre_quote_id: b.pre_quote_id !== undefined ? b.pre_quote_id : row.pre_quote_id,
     });
     res.json({ ok: true, id: row.id, quote_ref: row.quote_ref });
   } catch (err) {
@@ -692,15 +726,81 @@ async function listSaved(req, res) {
       and.push(status === 'draft' ? { [Op.or]: [{ status: 'draft' }, { status: null }] } : { status });
     }
     if (client_id) and.push({ client_id: parseInt(client_id) });
+    if (req.query.quote_type) and.push({ quote_type: req.query.quote_type });
+    if (req.query.quote_category) and.push({ quote_category: req.query.quote_category });
+    if (req.query.bom_code) and.push({ bom_code: req.query.bom_code });
+    if (req.query.no_actuals === 'true') {
+      and.push(db.literal(`(SELECT COUNT(*) FROM quote_actuals WHERE quote_actuals.post_quote_id = "SavedQuote"."id") = 0`));
+    }
     const where = and.length ? { [Op.and]: and } : {};
     const { count, rows } = await SavedQuote.findAndCountAll({
       where,
-      attributes: ['id', 'quote_ref', 'quote_name', 'customer_name', 'bom_id', 'bom_code', 'grade', 'mode', 'status', 'sales_order_ref', 'headline_sell', 'headline_moq', 'notes', 'created_at'],
+      attributes: ['id', 'quote_ref', 'quote_name', 'customer_name', 'bom_id', 'bom_code', 'grade', 'mode', 'status', 'sales_order_ref', 'headline_sell', 'headline_moq', 'notes', 'quote_type', 'quote_category', 'job_ref', 'pre_quote_id', 'created_at',
+        [db.literal(`(SELECT COUNT(*) FROM quote_actuals WHERE quote_actuals.post_quote_id = "SavedQuote"."id")`), 'actuals_count'],
+      ],
       order: [['created_at', 'DESC']], limit: parseInt(limit), offset: parseInt(offset),
     });
     const quotes = plain(rows).map((q) => ({ ...q, status: q.status || 'draft' }));
     res.json({ quotes, total: count });
   } catch (err) { res.status(500).json({ error: err.message }); }
+}
+
+function computeVariance(actual, estimated) {
+  if (actual == null || estimated == null) return null;
+  const diff = parseFloat(actual) - parseFloat(estimated);
+  const pct = parseFloat(estimated) !== 0 ? (diff / parseFloat(estimated)) * 100 : null;
+  return { diff: Math.round(diff * 10000) / 10000, pct: pct != null ? Math.round(pct * 100) / 100 : null };
+}
+
+function enrichActuals(row) {
+  const q = typeof row.get === 'function' ? row.get({ plain: true }) : row;
+  return {
+    ...q,
+    variance: {
+      rm:         computeVariance(q.actual_rm,         q.est_rm),
+      pm:         computeVariance(q.actual_pm,         q.est_pm),
+      conversion: computeVariance(q.actual_conversion, q.est_conversion),
+      overhead:   computeVariance(q.actual_overhead,   q.est_overhead),
+      total:      computeVariance(q.actual_total,      q.est_total),
+    },
+  };
+}
+
+async function checkPriceStaleness(q) {
+  const warnings = [];
+  const savedAt = q.updated_at || q.created_at;
+  if (!savedAt) return warnings;
+  const rmDetail = (q.result?.rm_detail || []).filter((r) => r.raw_material_id);
+  const pmDetail = (q.result?.pm_detail || []).filter((p) => p.pack_material_id);
+  if (rmDetail.length) {
+    const rmIds = rmDetail.map((r) => r.raw_material_id);
+    const current = await db.query(
+      `SELECT id, name, price_per_kg FROM raw_materials WHERE id = ANY($1) AND updated_at > $2 AND deleted_at IS NULL`,
+      { bind: [rmIds, savedAt], type: QueryTypes.SELECT }
+    );
+    for (const c of current) {
+      const was = rmDetail.find((r) => r.raw_material_id === c.id)?.price_per_kg;
+      if (was != null && Math.abs(parseFloat(c.price_per_kg) - parseFloat(was)) > 0.001) {
+        const pct = ((parseFloat(c.price_per_kg) - parseFloat(was)) / parseFloat(was)) * 100;
+        warnings.push({ type: 'RM', material_id: c.id, name: c.name, was: parseFloat(was), now: parseFloat(c.price_per_kg), pct_change: parseFloat(pct.toFixed(2)) });
+      }
+    }
+  }
+  if (pmDetail.length) {
+    const pmIds = pmDetail.map((p) => p.pack_material_id);
+    const current = await db.query(
+      `SELECT id, description, price_per_pc FROM pack_materials WHERE id = ANY($1) AND updated_at > $2 AND deleted_at IS NULL`,
+      { bind: [pmIds, savedAt], type: QueryTypes.SELECT }
+    );
+    for (const c of current) {
+      const was = pmDetail.find((p) => p.pack_material_id === c.id)?.price_per_pc;
+      if (was != null && Math.abs(parseFloat(c.price_per_pc) - parseFloat(was)) > 0.001) {
+        const pct = ((parseFloat(c.price_per_pc) - parseFloat(was)) / parseFloat(was)) * 100;
+        warnings.push({ type: 'PM', material_id: c.id, name: c.description, was: parseFloat(was), now: parseFloat(c.price_per_pc), pct_change: parseFloat(pct.toFixed(2)) });
+      }
+    }
+  }
+  return warnings;
 }
 
 async function getSaved(req, res) {
@@ -710,6 +810,7 @@ async function getSaved(req, res) {
     const q = row.get({ plain: true });
     q.status = q.status || 'draft';
     q.status_history = Array.isArray(q.status_history) ? q.status_history : [];
+    q.price_warnings = await checkPriceStaleness(q);
     res.json(q);
   } catch (err) { res.status(500).json({ error: err.message }); }
 }
@@ -857,6 +958,393 @@ async function listAudit(req, res) {
   }
 }
 
+// GET /quotes/by-bom/:bom_code — all quotes for a specific BOM, with job grouping.
+async function listQuotesByBom(req, res) {
+  try {
+    const bomCode = String(req.params.bom_code || '').trim();
+    if (!bomCode) return res.status(400).json({ error: 'bom_code is required' });
+    const { limit = 100, offset = 0 } = req.query;
+    const { count, rows } = await SavedQuote.findAndCountAll({
+      where: { bom_code: bomCode, deleted_at: null },
+      attributes: ['id', 'quote_ref', 'quote_name', 'customer_name', 'bom_id', 'bom_code', 'grade', 'mode', 'status', 'sales_order_ref', 'headline_sell', 'headline_moq', 'notes', 'quote_type', 'quote_category', 'job_ref', 'pre_quote_id', 'version', 'superseded_by', 'created_at'],
+      order: [['created_at', 'DESC']],
+      limit: Math.min(parseInt(limit), 200),
+      offset: parseInt(offset),
+    });
+    const quotes = plain(rows).map((q) => ({ ...q, status: q.status || 'draft' }));
+    const jobs = {};
+    for (const q of quotes) {
+      const key = q.job_ref || '__ungrouped';
+      if (!jobs[key]) jobs[key] = { job_ref: q.job_ref || null, quotes: [] };
+      jobs[key].quotes.push(q);
+    }
+    res.json({ quotes, total: count, jobs: Object.values(jobs) });
+  } catch (err) {
+    console.error('GET /quotes/by-bom error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// GET /quotes/bom-stats/:bom_code — aggregate stats for BOM dashboard.
+async function bomQuoteStats(req, res) {
+  try {
+    const bomCode = String(req.params.bom_code || '').trim();
+    if (!bomCode) return res.status(400).json({ error: 'bom_code is required' });
+    const where = `bom_code = $1 AND deleted_at IS NULL AND COALESCE(lifecycle_status,'active') <> 'deleted'`;
+    const [counts, prices, byType, byCategory, byClient] = await Promise.all([
+      db.query(`SELECT COUNT(*)::int total, COUNT(sales_order_id)::int converted, COUNT(CASE WHEN status='accepted' THEN 1 END)::int accepted, COUNT(CASE WHEN status='rejected' THEN 1 END)::int rejected FROM saved_quotes WHERE ${where}`, { bind: [bomCode], type: QueryTypes.SELECT }),
+      db.query(`SELECT MIN(headline_sell)::float min_price, MAX(headline_sell)::float max_price, AVG(headline_sell)::float avg_price FROM saved_quotes WHERE ${where} AND headline_sell IS NOT NULL`, { bind: [bomCode], type: QueryTypes.SELECT }),
+      db.query(`SELECT COALESCE(quote_type,'full') qt, COUNT(*)::int c FROM saved_quotes WHERE ${where} GROUP BY 1`, { bind: [bomCode], type: QueryTypes.SELECT }),
+      db.query(`SELECT COALESCE(quote_category,'pre_production') qc, COUNT(*)::int c FROM saved_quotes WHERE ${where} GROUP BY 1`, { bind: [bomCode], type: QueryTypes.SELECT }),
+      db.query(`SELECT customer_name, COUNT(*)::int c FROM saved_quotes WHERE ${where} AND customer_name IS NOT NULL GROUP BY customer_name ORDER BY c DESC LIMIT 5`, { bind: [bomCode], type: QueryTypes.SELECT }),
+    ]);
+    const c = counts[0] || {};
+    const p = prices[0] || {};
+    const accepted = c.accepted || 0, rejected = c.rejected || 0;
+    const win_rate = (accepted + rejected) > 0 ? accepted / (accepted + rejected) : null;
+    const by_type = {}; for (const r of byType) by_type[r.qt] = r.c;
+    const by_category = {}; for (const r of byCategory) by_category[r.qc] = r.c;
+    res.json({ bom_code: bomCode, total: c.total || 0, converted: c.converted || 0, win_rate, min_price: p.min_price, max_price: p.max_price, avg_price: p.avg_price, by_type, by_category, top_clients: byClient });
+  } catch (err) {
+    console.error('GET /quotes/bom-stats error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// CONVERSION RATES — DB-backed BT/TB/SR filling cost tables
+// packaging_type='CONFIG', moq_band='mono_discount' stores the discount value.
+// ─────────────────────────────────────────────────────────────
+
+// Seed data: BT = Bottle & Jar, TB = Tube, SR = Serum with Dropper
+// Each row: { packaging_type, moq_band, volume_key, rate }
+const DEFAULT_CONV_RATES = [
+  // Bottle & Jar — 4 bands × 3 vol keys (matching BT table in pricing.js)
+  { packaging_type: 'Bottle & Jar', moq_band: '1-1000',     volume_key: '<=50',  rate: 11.15 },
+  { packaging_type: 'Bottle & Jar', moq_band: '1-1000',     volume_key: '<=100', rate: 11.85 },
+  { packaging_type: 'Bottle & Jar', moq_band: '1-1000',     volume_key: '<=200', rate: 12.55 },
+  { packaging_type: 'Bottle & Jar', moq_band: '1000-5000',  volume_key: '<=50',  rate: 8.90 },
+  { packaging_type: 'Bottle & Jar', moq_band: '1000-5000',  volume_key: '<=100', rate: 9.70 },
+  { packaging_type: 'Bottle & Jar', moq_band: '1000-5000',  volume_key: '<=200', rate: 10.30 },
+  { packaging_type: 'Bottle & Jar', moq_band: '5000-10000', volume_key: '<=50',  rate: 8.55 },
+  { packaging_type: 'Bottle & Jar', moq_band: '5000-10000', volume_key: '<=100', rate: 9.35 },
+  { packaging_type: 'Bottle & Jar', moq_band: '5000-10000', volume_key: '<=200', rate: 9.95 },
+  { packaging_type: 'Bottle & Jar', moq_band: '10000+',     volume_key: '<=50',  rate: 7.65 },
+  { packaging_type: 'Bottle & Jar', moq_band: '10000+',     volume_key: '<=100', rate: 8.45 },
+  { packaging_type: 'Bottle & Jar', moq_band: '10000+',     volume_key: '<=200', rate: 9.05 },
+  // Tube — 4 bands × 2 vol keys (matching TB table in pricing.js)
+  { packaging_type: 'Tube', moq_band: '1-1000',     volume_key: '<=50',  rate: 11.45 },
+  { packaging_type: 'Tube', moq_band: '1-1000',     volume_key: '<=100', rate: 12.15 },
+  { packaging_type: 'Tube', moq_band: '1000-5000',  volume_key: '<=50',  rate: 9.30 },
+  { packaging_type: 'Tube', moq_band: '1000-5000',  volume_key: '<=100', rate: 10.10 },
+  { packaging_type: 'Tube', moq_band: '5000-10000', volume_key: '<=50',  rate: 8.45 },
+  { packaging_type: 'Tube', moq_band: '5000-10000', volume_key: '<=100', rate: 9.25 },
+  { packaging_type: 'Tube', moq_band: '10000+',     volume_key: '<=50',  rate: 7.25 },
+  { packaging_type: 'Tube', moq_band: '10000+',     volume_key: '<=100', rate: 7.65 },
+  // Serum with Dropper — 4 bands × 1 vol key (matching SR table in pricing.js)
+  { packaging_type: 'Serum with Dropper', moq_band: '1-1000',     volume_key: '<=30', rate: 12.45 },
+  { packaging_type: 'Serum with Dropper', moq_band: '1000-5000',  volume_key: '<=30', rate: 10.65 },
+  { packaging_type: 'Serum with Dropper', moq_band: '5000-10000', volume_key: '<=30', rate: 9.60 },
+  { packaging_type: 'Serum with Dropper', moq_band: '10000+',     volume_key: '<=30', rate: 8.60 },
+  // Mono discount CONFIG row — matches hardcoded MONO_DISCOUNT = 0.70 in pricing.js
+  { packaging_type: 'CONFIG', moq_band: 'mono_discount', volume_key: 'value', rate: 0.70 },
+];
+
+const DEFAULT_CATEGORY_RATES = [
+  { category: 'Emollient',     wastage_pct: 3.0, notes: null },
+  { category: 'Humectant',     wastage_pct: 2.5, notes: null },
+  { category: 'Emulsifier',    wastage_pct: 3.5, notes: null },
+  { category: 'Active',        wastage_pct: 2.0, notes: 'High-value — lower buffer' },
+  { category: 'Preservative',  wastage_pct: 2.0, notes: null },
+];
+
+function buildConversionRatesObj(rows) {
+  const obj = {};
+  for (const r of rows) {
+    if (r.packaging_type === 'CONFIG' && r.moq_band === 'mono_discount') {
+      obj.MONO_DISCOUNT = pf(r.rate);
+      continue;
+    }
+    if (!obj[r.packaging_type]) obj[r.packaging_type] = {};
+    if (!obj[r.packaging_type][r.moq_band]) obj[r.packaging_type][r.moq_band] = {};
+    obj[r.packaging_type][r.moq_band][r.volume_key] = pf(r.rate);
+  }
+  return obj;
+}
+
+function buildCategoryRatesObj(rows) {
+  const obj = {};
+  for (const r of rows) obj[r.category] = { wastage_pct: pf(r.wastage_pct), notes: r.notes || null };
+  return obj;
+}
+
+async function seedDefaultConversionRates() {
+  for (const row of DEFAULT_CONV_RATES) {
+    await QuoteConversionRate.findOrCreate({
+      where: { packaging_type: row.packaging_type, moq_band: row.moq_band, volume_key: row.volume_key },
+      defaults: { rate: row.rate },
+    });
+  }
+}
+
+async function migrateConversionRateKeys() {
+  const oldBands = ['1001-5000', '5001-10000', '>10000'];
+  const oldVolKeys = ['101-250', '>250', '>100'];
+  const deleted = await QuoteConversionRate.destroy({
+    where: {
+      [Op.or]: [
+        { moq_band: { [Op.in]: oldBands } },
+        { volume_key: { [Op.in]: oldVolKeys } },
+      ],
+    },
+  });
+  if (deleted > 0) {
+    console.log(`[migration] Removed ${deleted} conversion rate rows with old key names — reseeding.`);
+    await seedDefaultConversionRates();
+  }
+}
+
+async function seedDefaultCategoryRates() {
+  for (const row of DEFAULT_CATEGORY_RATES) {
+    await QuoteCategoryRate.findOrCreate({
+      where: { category: row.category },
+      defaults: { wastage_pct: row.wastage_pct, notes: row.notes },
+    });
+  }
+}
+
+async function getConversionRates(req, res) {
+  try {
+    const count = await QuoteConversionRate.count();
+    if (count === 0) await seedDefaultConversionRates();
+    await migrateConversionRateKeys();
+    const rows = await QuoteConversionRate.findAll({ order: [['packaging_type', 'ASC'], ['moq_band', 'ASC'], ['volume_key', 'ASC']] });
+    res.json({ rates: plain(rows) });
+  } catch (err) {
+    console.error('GET /quotes/conversion-rates error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+async function upsertConversionRate(req, res) {
+  try {
+    const { packaging_type, moq_band, volume_key, rate } = req.body || {};
+    if (!packaging_type || !moq_band || !volume_key || rate == null) return res.status(400).json({ error: 'packaging_type, moq_band, volume_key, rate are required' });
+    const [row, created] = await QuoteConversionRate.findOrCreate({
+      where: { packaging_type, moq_band, volume_key },
+      defaults: { rate },
+    });
+    if (!created) await row.update({ rate });
+    QuoteAuditLog.create({
+      entity_type: 'conversion_rate', entity_id: row.id,
+      action: created ? 'create' : 'update',
+      summary: `${created ? 'created' : 'updated'} conversion rate: ${packaging_type} / ${moq_band} / ${volume_key} = ${rate}`,
+      changed_by: req.user?.id || null, changed_by_name: req.user?.fullName || null,
+    }).catch(e => console.error('audit log failed:', e.message));
+    res.json({ rate: plain([row])[0] });
+  } catch (err) {
+    console.error('PUT /quotes/conversion-rates error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+async function getCategoryRates(req, res) {
+  try {
+    const count = await QuoteCategoryRate.count();
+    if (count === 0) await seedDefaultCategoryRates();
+    const rows = await QuoteCategoryRate.findAll({ order: [['category', 'ASC']] });
+    res.json({ rates: plain(rows) });
+  } catch (err) {
+    console.error('GET /quotes/category-rates error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+async function upsertCategoryRate(req, res) {
+  try {
+    const { category, wastage_pct, notes } = req.body || {};
+    if (!category || wastage_pct == null) return res.status(400).json({ error: 'category and wastage_pct are required' });
+    const [row, created] = await QuoteCategoryRate.findOrCreate({
+      where: { category },
+      defaults: { wastage_pct, notes: notes || null },
+    });
+    if (!created) await row.update({ wastage_pct, notes: notes || null });
+    QuoteAuditLog.create({
+      entity_type: 'category_rate', entity_id: row.id,
+      action: created ? 'create' : 'update',
+      summary: `${created ? 'created' : 'updated'} category rate: ${category} = ${wastage_pct}%`,
+      changed_by: req.user?.id || null, changed_by_name: req.user?.fullName || null,
+    }).catch(e => console.error('audit log failed:', e.message));
+    res.json({ rate: plain([row])[0] });
+  } catch (err) {
+    console.error('PUT /quotes/category-rates error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+async function deleteCategoryRate(req, res) {
+  try {
+    const id = parseInt(req.params.id);
+    const row = await QuoteCategoryRate.findByPk(id);
+    if (!row) return res.status(404).json({ error: 'Category rate not found' });
+    const cat = row.category;
+    await row.destroy();
+    QuoteAuditLog.create({
+      entity_type: 'category_rate', entity_id: id, action: 'delete',
+      summary: `deleted category rate: ${cat}`,
+      changed_by: req.user?.id || null, changed_by_name: req.user?.fullName || null,
+    }).catch(e => console.error('audit log failed:', e.message));
+    res.json({ success: true });
+  } catch (err) {
+    console.error('DELETE /quotes/category-rates error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// ── Quote Actuals (v0.9.0) ──
+
+async function createActuals(req, res) {
+  try {
+    const b = req.body;
+    if (!b.bom_code) return res.status(400).json({ error: 'bom_code required' });
+    const actual_total = [b.actual_rm, b.actual_pm, b.actual_conversion, b.actual_overhead]
+      .reduce((s, v) => s + (parseFloat(v) || 0), 0);
+    const est_total = [b.est_rm, b.est_pm, b.est_conversion, b.est_overhead]
+      .reduce((s, v) => s + (parseFloat(v) || 0), 0);
+    const row = await QuoteActuals.create({
+      bom_code:       b.bom_code,
+      job_ref:        b.job_ref || null,
+      pre_quote_id:   b.pre_quote_id || null,
+      post_quote_id:  b.post_quote_id || null,
+      batch_size:     b.batch_size ? parseInt(b.batch_size) : null,
+      yield_pct:      b.yield_pct != null ? parseFloat(b.yield_pct) : null,
+      actual_rm:      b.actual_rm != null ? parseFloat(b.actual_rm) : null,
+      actual_pm:      b.actual_pm != null ? parseFloat(b.actual_pm) : null,
+      actual_conversion: b.actual_conversion != null ? parseFloat(b.actual_conversion) : null,
+      actual_overhead:   b.actual_overhead  != null ? parseFloat(b.actual_overhead)  : null,
+      actual_total:   actual_total > 0 ? actual_total : null,
+      est_rm:         b.est_rm != null ? parseFloat(b.est_rm) : null,
+      est_pm:         b.est_pm != null ? parseFloat(b.est_pm) : null,
+      est_conversion: b.est_conversion != null ? parseFloat(b.est_conversion) : null,
+      est_overhead:   b.est_overhead   != null ? parseFloat(b.est_overhead)   : null,
+      est_total:      est_total > 0 ? est_total : null,
+      notes:          b.notes || null,
+      entered_by:     req.user?.id || null,
+      entered_by_name: req.user?.fullName || null,
+    });
+    await QuoteAuditLog.create({
+      entity_type: 'QuoteActuals', entity_id: row.id, action: 'create',
+      summary: `Actuals entered for BOM ${b.bom_code}`,
+      changed_by: req.user?.id || null, changed_by_name: req.user?.fullName || null,
+    }).catch(e => console.error('audit log failed:', e.message));
+    res.status(201).json(enrichActuals(row));
+  } catch (err) { console.error('createActuals error:', err); res.status(500).json({ error: err.message }); }
+}
+
+async function getActualsByQuote(req, res) {
+  try {
+    const qid = parseInt(req.params.quote_id);
+    const rows = await QuoteActuals.findAll({
+      where: { [Op.or]: [{ post_quote_id: qid }, { pre_quote_id: qid }] },
+      order: [['created_at', 'DESC']],
+    });
+    res.json({ actuals: rows.map(enrichActuals) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+}
+
+async function getActualsByBom(req, res) {
+  try {
+    const rows = await QuoteActuals.findAll({
+      where: { bom_code: req.params.bom_code },
+      order: [['created_at', 'DESC']],
+    });
+    res.json({ actuals: rows.map(enrichActuals) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+}
+
+async function updateActuals(req, res) {
+  try {
+    const row = await QuoteActuals.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Actuals record not found' });
+    const b = req.body;
+    const actual_total = [b.actual_rm ?? row.actual_rm, b.actual_pm ?? row.actual_pm, b.actual_conversion ?? row.actual_conversion, b.actual_overhead ?? row.actual_overhead]
+      .reduce((s, v) => s + (parseFloat(v) || 0), 0);
+    const est_total = [b.est_rm ?? row.est_rm, b.est_pm ?? row.est_pm, b.est_conversion ?? row.est_conversion, b.est_overhead ?? row.est_overhead]
+      .reduce((s, v) => s + (parseFloat(v) || 0), 0);
+    await row.update({
+      batch_size:     b.batch_size != null ? parseInt(b.batch_size) : row.batch_size,
+      yield_pct:      b.yield_pct  != null ? parseFloat(b.yield_pct) : row.yield_pct,
+      actual_rm:      b.actual_rm  != null ? parseFloat(b.actual_rm) : row.actual_rm,
+      actual_pm:      b.actual_pm  != null ? parseFloat(b.actual_pm) : row.actual_pm,
+      actual_conversion: b.actual_conversion != null ? parseFloat(b.actual_conversion) : row.actual_conversion,
+      actual_overhead:   b.actual_overhead   != null ? parseFloat(b.actual_overhead)   : row.actual_overhead,
+      actual_total:   actual_total > 0 ? actual_total : row.actual_total,
+      est_rm:         b.est_rm != null ? parseFloat(b.est_rm) : row.est_rm,
+      est_pm:         b.est_pm != null ? parseFloat(b.est_pm) : row.est_pm,
+      est_conversion: b.est_conversion != null ? parseFloat(b.est_conversion) : row.est_conversion,
+      est_overhead:   b.est_overhead   != null ? parseFloat(b.est_overhead)   : row.est_overhead,
+      est_total:      est_total > 0 ? est_total : row.est_total,
+      notes:          b.notes !== undefined ? b.notes : row.notes,
+    });
+    res.json(enrichActuals(row));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+}
+
+async function deleteActuals(req, res) {
+  try {
+    const row = await QuoteActuals.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    await row.destroy();
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+}
+
+// ── Dashboard Stats (v0.9.1) ──
+async function getDashboardStats(req, res) {
+  try {
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const [totalQuotes, quotesThisMonth, actualsCount, byScope, byCategory, topBomsRaw, recentRaw] = await Promise.all([
+      SavedQuote.count({ where: { superseded_by: null } }),
+      SavedQuote.count({ where: { superseded_by: null, created_at: { [Op.gte]: startOfMonth } } }),
+      QuoteActuals.count(),
+      db.query(`SELECT quote_type, COUNT(*) as c FROM saved_quotes WHERE superseded_by IS NULL GROUP BY quote_type`, { type: db.QueryTypes.SELECT }),
+      db.query(`SELECT quote_category, COUNT(*) as c FROM saved_quotes WHERE superseded_by IS NULL GROUP BY quote_category`, { type: db.QueryTypes.SELECT }),
+      db.query(`SELECT bom_code, COUNT(*) as c FROM saved_quotes WHERE superseded_by IS NULL AND bom_code IS NOT NULL GROUP BY bom_code ORDER BY c DESC LIMIT 5`, { type: db.QueryTypes.SELECT }),
+      db.query(`SELECT id, quote_ref, quote_name, status, created_at FROM saved_quotes WHERE superseded_by IS NULL ORDER BY created_at DESC LIMIT 5`, { type: db.QueryTypes.SELECT }),
+    ]);
+
+    let avgAccuracyPct = null;
+    if (actualsCount > 0) {
+      const rows = await QuoteActuals.findAll({ attributes: ['actual_total', 'est_total'] });
+      const variances = rows
+        .map(r => r.get({ plain: true }))
+        .filter(r => r.actual_total != null && r.est_total != null && parseFloat(r.est_total) !== 0)
+        .map(r => Math.abs((parseFloat(r.actual_total) - parseFloat(r.est_total)) / parseFloat(r.est_total) * 100));
+      if (variances.length > 0) avgAccuracyPct = Math.round((variances.reduce((s, v) => s + v, 0) / variances.length) * 100) / 100;
+    }
+
+    const pendingActuals = await db.query(
+      `SELECT COUNT(*) as c FROM saved_quotes sq
+       LEFT JOIN quote_actuals qa ON qa.post_quote_id = sq.id
+       WHERE sq.quote_category = 'post_production' AND sq.superseded_by IS NULL AND qa.id IS NULL`,
+      { type: db.QueryTypes.SELECT }
+    );
+
+    res.json({
+      total_quotes: totalQuotes,
+      quotes_this_month: quotesThisMonth,
+      actuals_count: actualsCount,
+      pending_actuals: parseInt(pendingActuals[0]?.c ?? 0),
+      avg_accuracy_pct: avgAccuracyPct,
+      by_scope: Object.fromEntries((byScope || []).map(r => [r.quote_type || 'full', parseInt(r.c)])),
+      by_category: Object.fromEntries((byCategory || []).map(r => [r.quote_category || 'pre_production', parseInt(r.c)])),
+      top_boms: (topBomsRaw || []).map(r => ({ bom_code: r.bom_code, count: parseInt(r.c) })),
+      recent: (recentRaw || []).map(r => ({ id: r.id, quote_ref: r.quote_ref, quote_name: r.quote_name, status: r.status || 'draft', created_at: r.created_at })),
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+}
+
 // ─────────────────────────────────────────────────────────────
 // EMAIL — stub (to be implemented later)
 // ─────────────────────────────────────────────────────────────
@@ -872,5 +1360,10 @@ module.exports = {
   listManufacturing, createManufacturing, updateManufacturing, deleteManufacturing,
   listQc, upsertQc, deleteQc, listDispatch, upsertDispatch,
   saveQuote, updateSavedQuote, quoteStats, quoteAnalytics, listClients, listSaved, getSaved, deleteSaved, changeStatus, convertToSalesOrder, reviseQuote, listVersions, saveRmSg,
+  listQuotesByBom, bomQuoteStats,
+  getConversionRates, upsertConversionRate,
+  getCategoryRates, upsertCategoryRate, deleteCategoryRate,
+  createActuals, getActualsByQuote, getActualsByBom, updateActuals, deleteActuals,
+  getDashboardStats,
   listLeadTimes, saveLeadTimes, auditConfig, listAudit, sendEmail,
 };

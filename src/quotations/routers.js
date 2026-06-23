@@ -75,4 +75,27 @@ router.post('/lead-times', c.saveLeadTimes);
 // Email (stub)
 router.post('/email', c.sendEmail);
 
+// BOM-level quote hub
+router.get('/by-bom/:bom_code', c.listQuotesByBom);
+router.get('/bom-stats/:bom_code', c.bomQuoteStats);
+
+// Conversion rates (filling cost table)
+router.get('/conversion-rates', c.getConversionRates);
+router.put('/conversion-rates', c.upsertConversionRate);
+
+// Per-category wastage rates
+router.get('/category-rates', c.getCategoryRates);
+router.put('/category-rates', c.upsertCategoryRate);
+router.delete('/category-rates/:id', c.deleteCategoryRate);
+
+// Dashboard stats (v0.9.1)
+router.get('/dashboard-stats', c.getDashboardStats);
+
+// Post-production actuals (v0.9.0)
+router.post('/actuals', c.createActuals);
+router.get('/actuals/by-quote/:quote_id', c.getActualsByQuote);
+router.get('/actuals/by-bom/:bom_code', c.getActualsByBom);
+router.put('/actuals/:id', c.updateActuals);
+router.delete('/actuals/:id', c.deleteActuals);
+
 module.exports = router;

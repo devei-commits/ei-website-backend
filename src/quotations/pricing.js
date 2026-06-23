@@ -47,11 +47,15 @@ function interpolateOH(moq, ohRows) {
 }
 
 // Conversion cost lookup for one band using the grade's bmap entry.
-function calcConv(pkgType, volKey, monocarton, bmapEntry) {
+function calcConv(pkgType, volKey, monocarton, bmapEntry, convRates) {
   const { b: band, f } = bmapEntry || { b: '1-1000', f: 1.0 };
-  const table = pkgType === 'Bottle & Jar' ? BT : pkgType === 'Tube' ? TB : SR;
+  const tBT   = (convRates && convRates['Bottle & Jar'])        || BT;
+  const tTB   = (convRates && convRates['Tube'])                || TB;
+  const tSR   = (convRates && convRates['Serum with Dropper'])  || SR;
+  const disc  = (convRates && convRates.MONO_DISCOUNT != null)  ? convRates.MONO_DISCOUNT : MONO_DISCOUNT;
+  const table = pkgType === 'Bottle & Jar' ? tBT : pkgType === 'Tube' ? tTB : tSR;
   let base = ((table[band] || {})[volKey]) || 11.0;
-  if (!monocarton) base -= MONO_DISCOUNT;
+  if (!monocarton) base -= disc;
   return r2(base * f);
 }
 
@@ -91,12 +95,20 @@ function calculate(config) {
     creditDays = 30, annualRate = 0.14,
     grade, ohRows = [],
     customMargins = null, targetPrice = 0,
+    quoteScope = 'full',
+    batchYieldPct = 100,
+    conversionRates = null,
+    categoryRates = null,
   } = config;
+
+  const scopeZeroRm = quoteScope === 'pm_only';
+  const effectiveZeroPm = !!grade.zero_pm || quoteScope === 'rm_only';
+  const scopeZeroConv = quoteScope === 'pm_only';
 
   const moqLabels = grade.moq_labels;
   const moqValues = grade.moq_values;
   const bmap = grade.bmap;
-  const zeroPm = !!grade.zero_pm;
+  const zeroPm = effectiveZeroPm;
   const margins = customMargins && customMargins.length === 7 ? customMargins : grade.markups.slice();
 
   const landingFactor = 1 + pf(freightPct) + pf(insurancePct) + pf(handlingPct);
@@ -107,14 +119,20 @@ function calculate(config) {
   // ── RM cost ──
   let blendedRmExWorks = 0;
   let totalPctWW = 0;
+  let blendedCategoryWastage = 0;
   const rmDetail = [];
-  for (const item of rmLines) {
+  if (!scopeZeroRm) for (const item of rmLines) {
     const pct = pf(item.pct_w_w) / 100;
     const priceKg = pf(item.price_per_kg);
     const landedKg = priceKg * landingFactor;
     blendedRmExWorks += pct * priceKg;
     totalPctWW += pf(item.pct_w_w);
+    const catWastage = (categoryRates && item.category && categoryRates[item.category])
+      ? categoryRates[item.category].wastage_pct / 100
+      : pf(rmWastage);
+    blendedCategoryWastage += pct * catWastage;
     rmDetail.push({
+      raw_material_id: item.raw_material_id || null,
       name: item.inci_name || item.name,
       rm_code: item.rm_code,
       pct_w_w: pf(item.pct_w_w),
@@ -132,15 +150,18 @@ function calculate(config) {
   let rmPerUnit, rmWastageAmt, rmLogisticsAmt, totalRm;
   if (hasWeight) {
     rmPerUnit = blendedRmLanded * weightPerUnit;
-    rmWastageAmt = rmPerUnit * rmWastage;
     rmLogisticsAmt = rmLogistics * weightPerUnit;
-    totalRm = rmPerUnit + rmWastageAmt + rmLogisticsAmt;
   } else {
     rmPerUnit = blendedRmLanded;
-    rmWastageAmt = rmPerUnit * rmWastage;
     rmLogisticsAmt = rmLogistics;
-    totalRm = rmPerUnit + rmWastageAmt + rmLogisticsAmt;
   }
+  // Batch yield — e.g. 97% yield means 1/0.97 more RM consumed per sellable unit
+  const yieldFactor = (!scopeZeroRm && batchYieldPct > 0 && batchYieldPct < 100) ? batchYieldPct / 100 : 1;
+  if (yieldFactor < 1) rmPerUnit = rmPerUnit / yieldFactor;
+  // Per-category blended wastage; falls back to global rmWastage when no categoryRates
+  const effectiveRmWastage = (categoryRates && !scopeZeroRm) ? blendedCategoryWastage : pf(rmWastage);
+  rmWastageAmt = rmPerUnit * effectiveRmWastage;
+  totalRm = rmPerUnit + rmWastageAmt + rmLogisticsAmt;
 
   // ── PM cost ──
   let pmBaseTotal = 0;
@@ -155,6 +176,7 @@ function calculate(config) {
       pmBaseTotal += lineTotal;
       if (priceUnit === 0 && item.pack_material_id) missingPmPrices.push(item.description);
       pmDetail.push({
+        pack_material_id: item.pack_material_id || null,
         name: item.pm_description || item.description,
         pm_code: item.pm_code,
         qty_per_unit: qty,
@@ -175,7 +197,7 @@ function calculate(config) {
   const bands = [];
   for (let bi = 0; bi < 7; bi++) {
     const oh = interpolateOH(moqValues[bi], ohRows);
-    const cv = calcConv(packagingType, volumeKey, monocarton, bmap[bi]);
+    const cv = scopeZeroConv ? 0 : calcConv(packagingType, volumeKey, monocarton, bmap[bi], conversionRates);
     const costBase = totalRm + totalPm + cv + oh;
     const creditAmt = costBase * creditFactor;
     const totalCost = costBase + creditAmt;
@@ -209,7 +231,7 @@ function calculate(config) {
   if (pf(targetPrice) > 0) {
     for (let bi = 0; bi < 7; bi++) {
       const oh = interpolateOH(moqValues[bi], ohRows);
-      const cv = calcConv(packagingType, volumeKey, monocarton, bmap[bi]);
+      const cv = scopeZeroConv ? 0 : calcConv(packagingType, volumeKey, monocarton, bmap[bi], conversionRates);
       const mp = margins[bi];
       const rmLogAmt = hasWeight ? rmLogistics * weightPerUnit : rmLogistics;
       const requiredRmUnit = (pf(targetPrice) / (1 + mp) / (1 + creditFactor) - totalPm - cv - oh - rmLogAmt) / (1 + rmWastage);
@@ -229,6 +251,9 @@ function calculate(config) {
 
   return {
     grade_name: grade.name,
+    batch_yield_pct: batchYieldPct,
+    effective_rm_wastage_pct: r2(effectiveRmWastage * 100),
+    quote_scope: quoteScope,
     has_weight: hasWeight,
     zero_pm: zeroPm,
     volume_ml: pf(volumeMl),
