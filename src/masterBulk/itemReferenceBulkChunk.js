@@ -140,7 +140,6 @@ async function upsertPackMaterialRow({ sku, description, excelRow }, results, de
           code,
           description: descTrim,
           zoho_sku_code: skuTrim,
-          type: 'Packaging',
           level: 'Primary',
           unit: 'PCS',
           products: [],
@@ -215,7 +214,6 @@ async function upsertPackMaterialRow({ sku, description, excelRow }, results, de
 
   await row.update({
     zoho_sku_code: skuTrim,
-    type: 'Packaging',
   });
   results.packaging_updated += 1;
   if (details) {
@@ -324,7 +322,6 @@ async function upsertPackMaterialMultiSheetRow(
       description: descTrim,
       group: groupDb,
       material: mapped.materialDb,
-      type: 'Packaging',
       unit: uomTrim || row.unit || 'PCS',
       hsn_code: hsnTrim || null,
       price_per_pc: rateNum != null ? rateNum : row.price_per_pc,
@@ -381,7 +378,6 @@ async function upsertPackMaterialMultiSheetRow(
         code: skuTrim,
         description: descTrim,
         zoho_sku_code: skuTrim,
-        type: 'Packaging',
         level: levelFromSlug || 'Primary',
         group: groupDb,
         material: mapped.materialDb,
@@ -710,7 +706,6 @@ async function upsertRawMaterialRow({ sku, description, excelRow }, results, det
         code,
         name: nameTrim,
         zoho_sku_code: skuTrim,
-        rm_type: 'Raw Material',
         status: 'Draft',
         products: [],
         uom: 'KG',

@@ -25,6 +25,7 @@ const {
   resolveMasterApprovalStatus,
   isMasterPickerRequest,
   resolveApprovalStatusListFilter,
+  stripDeprecatedMasterFormKeys,
 } = require('../lib/masterApprovalStatus');
 const {
   resolveWritableMasterApprovalStatus,
@@ -45,7 +46,6 @@ function formatRawMaterial(row) {
     name: d.name,
     inci: d.inci,
     category: d.category,
-    rm_type: d.rm_type,
     uom: d.uom,
     specific_gravity: d.specific_gravity != null ? Number(d.specific_gravity) : null,
     price_per_kg: d.price_per_kg != null ? Number(d.price_per_kg) : null,
@@ -193,7 +193,6 @@ async function listRawMaterials(req, res) {
               { name: like },
               { inci: like },
               { category: like },
-              { rm_type: like },
             ],
           },
         ],
@@ -272,7 +271,7 @@ function payloadToListFields(b, omitGroupIfUnset = false) {
     name: fd.tradeCommercialName ?? fd.name ?? '',
     inci: fd.inciName ?? fd.inci ?? '',
     category: fd.rmCategory ?? fd.category ?? fd.subCategory ?? fd.group ?? null,
-    rm_type: fd.rmType ?? fd.rm_type ?? null,
+    rm_type: null,
     uom: fd.primaryUom ?? fd.uom ?? null,
     price_per_kg: fd.price_per_kg ?? (fd.pricePerKg != null ? Number(fd.pricePerKg) : null),
     gst: fd.gst != null ? Number(fd.gst) : null,
@@ -338,7 +337,16 @@ function payloadToListFields(b, omitGroupIfUnset = false) {
               })(),
       }
     : {};
-  const form_data = b.form_data !== undefined ? b.form_data : (typeof fd.rmSku !== 'undefined' || typeof fd.inciName !== 'undefined' ? fd : null);
+  const form_dataRaw =
+    b.form_data !== undefined
+      ? b.form_data
+      : typeof fd.rmSku !== 'undefined' || typeof fd.inciName !== 'undefined'
+        ? fd
+        : null;
+  const form_data =
+    form_dataRaw != null && typeof form_dataRaw === 'object' && !Array.isArray(form_dataRaw)
+      ? stripDeprecatedMasterFormKeys(form_dataRaw)
+      : form_dataRaw;
   const products = parseMasterProductsFromPayload(b, { preserveWhenUnset: omitGroupIfUnset });
   return {
     ...listFields,

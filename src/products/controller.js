@@ -1594,13 +1594,14 @@ const updateProduct = async (req, res) => {
             )
           );
         }
-        if (
-          bomPayload.pr_facility_licences !== undefined ||
-          bomPayload.prFacilityLicences !== undefined
-        ) {
-          bomUpdate.pr_facility_licences = flattenPrFacilityLicencesForStorage(
-            bomPayload.pr_facility_licences ?? bomPayload.prFacilityLicences
-          );
+        const facilityLicencesRaw =
+          bomPayload.pr_facility_licences ??
+          bomPayload.prFacilityLicences ??
+          req.body.pr_facility_licences ??
+          req.body.prFacilityLicences;
+        if (facilityLicencesRaw !== undefined) {
+          bomUpdate.pr_facility_licences =
+            flattenPrFacilityLicencesForStorage(facilityLicencesRaw);
         }
         await bom.update(bomUpdate);
       }

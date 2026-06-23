@@ -93,6 +93,15 @@ function readMasterApprovalStatusFromFormData(formData, fallback = 'Draft') {
  * @param {Record<string, unknown>} b request body
  * @param {{ forCreate?: boolean, existingFormData?: Record<string, unknown>|null }} [opts]
  */
+function stripDeprecatedMasterFormKeys(fd) {
+  if (fd == null || typeof fd !== 'object' || Array.isArray(fd)) return fd;
+  const next = { ...fd };
+  delete next.rmType;
+  delete next.rm_type;
+  delete next.itemCategory;
+  return next;
+}
+
 function mergeFormDataWithApprovalStatus(b, opts = {}) {
   const { forCreate = false, existingFormData = null } = opts;
   const exFd =
@@ -113,7 +122,7 @@ function mergeFormDataWithApprovalStatus(b, opts = {}) {
       forCreate,
     });
   }
-  return merged;
+  return stripDeprecatedMasterFormKeys(merged);
 }
 
 /**
@@ -146,6 +155,7 @@ module.exports = {
   resolveMasterApprovalPatch,
   readMasterApprovalStatusFromFormData,
   mergeFormDataWithApprovalStatus,
+  stripDeprecatedMasterFormKeys,
   isMasterPickerRequest,
   resolveApprovalStatusListFilter,
 };

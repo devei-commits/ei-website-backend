@@ -109,7 +109,6 @@ async function executeMasterCategoryRows(rows, opts = {}) {
         });
         await master.row.update({
           category: mapped.categoryDb,
-          rm_type: mapped.rmType || null,
           group: mapped.subCategory,
           form_data: mergeFormData(master.row.form_data, mapped.formDataPatch),
         });

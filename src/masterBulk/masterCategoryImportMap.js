@@ -124,7 +124,6 @@ function resolveRmEditFromDb(row) {
     subCategory,
     rmCategoryKey: trim(fd.rmCategoryKey || fd.rm_category_key),
     rmCategory,
-    rmType: trim(fd.rmType || row?.rm_type),
   };
 }
 
