@@ -1,0 +1,101 @@
+// ─────────────────────────────────────────────────────────────
+// QUOTATION ROUTES — mounted at /api/v1/quotes
+// isAuthenticated + authorizeRoles('super_admin') applied at mount
+// point in app.js, so every route below is super_admin-only.
+// ─────────────────────────────────────────────────────────────
+const express = require('express');
+const router = express.Router();
+const c = require('./controller');
+
+// Calculation
+router.post('/calculate', c.calculateQuote);
+
+// Grades
+router.use('/grades', c.auditConfig('grade'));
+router.get('/grades', c.listGrades);
+router.post('/grades', c.createGrade);
+router.put('/grades/:id', c.updateGrade);
+router.delete('/grades/:id', c.deleteGrade);
+
+// Overheads
+router.use('/overheads', c.auditConfig('overhead'));
+router.get('/overheads', c.listOverheads);
+router.post('/overheads', c.createOverhead);
+router.put('/overheads/:id', c.updateOverhead);
+router.delete('/overheads/:id', c.deleteOverhead);
+
+// Timeline — procurement
+router.use('/timeline/procurement', c.auditConfig('procurement_rule'));
+router.get('/timeline/procurement', c.listProcurement);
+router.post('/timeline/procurement', c.createProcurement);
+router.put('/timeline/procurement/:id', c.updateProcurement);
+router.delete('/timeline/procurement/:id', c.deleteProcurement);
+
+// Timeline — manufacturing
+router.use('/timeline/manufacturing', c.auditConfig('manufacturing_rule'));
+router.get('/timeline/manufacturing', c.listManufacturing);
+router.post('/timeline/manufacturing', c.createManufacturing);
+router.put('/timeline/manufacturing/:id', c.updateManufacturing);
+router.delete('/timeline/manufacturing/:id', c.deleteManufacturing);
+
+// Timeline — QC + dispatch
+router.use('/timeline/qc', c.auditConfig('qc_rule'));
+router.get('/timeline/qc', c.listQc);
+router.post('/timeline/qc', c.upsertQc);
+router.delete('/timeline/qc/:id', c.deleteQc);
+router.use('/timeline/dispatch', c.auditConfig('dispatch_rule'));
+router.get('/timeline/dispatch', c.listDispatch);
+router.post('/timeline/dispatch', c.upsertDispatch);
+
+// Audit log
+router.get('/audit', c.listAudit);
+
+// Saved quotes
+router.post('/save', c.saveQuote);
+router.get('/stats', c.quoteStats);
+router.get('/analytics', c.quoteAnalytics);
+router.get('/clients', c.listClients);
+router.get('/saved', c.listSaved);
+router.get('/saved/:id', c.getSaved);
+router.put('/saved/:id', c.updateSavedQuote);
+router.post('/saved/:id/status', c.changeStatus);
+router.post('/saved/:id/convert', c.convertToSalesOrder);
+router.post('/saved/:id/revise', c.reviseQuote);
+router.get('/saved/:id/versions', c.listVersions);
+router.delete('/saved/:id', c.deleteSaved);
+
+// Persist manually-entered SG back to RM master
+router.post('/rm-sg', c.saveRmSg);
+
+// Material lead-time tooling (view/bulk-edit raw_materials & pack_materials)
+router.use('/lead-times', c.auditConfig('material_lead'));
+router.get('/lead-times', c.listLeadTimes);
+router.post('/lead-times', c.saveLeadTimes);
+
+// Email (stub)
+router.post('/email', c.sendEmail);
+
+// BOM-level quote hub
+router.get('/by-bom/:bom_code', c.listQuotesByBom);
+router.get('/bom-stats/:bom_code', c.bomQuoteStats);
+
+// Conversion rates (filling cost table)
+router.get('/conversion-rates', c.getConversionRates);
+router.put('/conversion-rates', c.upsertConversionRate);
+
+// Per-category wastage rates
+router.get('/category-rates', c.getCategoryRates);
+router.put('/category-rates', c.upsertCategoryRate);
+router.delete('/category-rates/:id', c.deleteCategoryRate);
+
+// Dashboard stats (v0.9.1)
+router.get('/dashboard-stats', c.getDashboardStats);
+
+// Post-production actuals (v0.9.0)
+router.post('/actuals', c.createActuals);
+router.get('/actuals/by-quote/:quote_id', c.getActualsByQuote);
+router.get('/actuals/by-bom/:bom_code', c.getActualsByBom);
+router.put('/actuals/:id', c.updateActuals);
+router.delete('/actuals/:id', c.deleteActuals);
+
+module.exports = router;

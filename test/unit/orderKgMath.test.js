@@ -23,7 +23,7 @@ describe('orderKgMath', () => {
     expect(parseFillSizeToKgPerUnit('50 ml', 1)).toBeCloseTo(0.05, 6);
     const total = estimateOrderTotalKg({
       orderQty: 1000,
-      product: { fill_size: '50 ml' },
+      product: { sku_bom_limit_qty: 50, sku_bom_limit_uom: 'ML' },
       rmLines: [],
       batchSizeKg: 100,
       batchesRequired: 1,

@@ -87,7 +87,7 @@ describe('fulfillment createOrder client validation', () => {
         body: {
           soNo: 'SO-TEST-001',
           customer: 'Sigma Chemicals Pvt Ltd',
-          items: [],
+          items: [{ productName: 'Test SKU', pack: '50 ML', orderedQty: 1 }],
         },
       },
       res,

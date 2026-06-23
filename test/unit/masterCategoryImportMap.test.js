@@ -19,16 +19,17 @@ describe('masterCategoryImportMap (Excel verbatim)', () => {
     expect(m.formDataPatch.rmCategory).toBe('Bulk Raw Materials');
   });
 
-  test('stores PM category and sub-category exactly from Excel columns', () => {
+  test('maps PM Excel columns to slug-based category fields', () => {
     const m = mapPmImportCategories({
       sheetName: 'Labels',
       categoryCol: 'Self-adhesive Label',
       subCategoryCol: 'Labels',
     });
-    expect(m.subCategory).toBe('Labels');
+    expect(m.subCategory).toBe('self-adhesive label');
     expect(m.pmCategory).toBe('Self-adhesive Label');
-    expect(m.groupDb).toBe('Labels');
-    expect(m.materialDb).toBe('Self-adhesive Label');
+    expect(m.groupDb).toBe('self-adhesive label');
+    expect(m.materialDb).toBe('Labels');
+    expect(m.levelDb).toBeNull();
   });
 
   test('resolveRmEditFromDb returns stored excel fields', () => {
