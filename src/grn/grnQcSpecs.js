@@ -31,6 +31,7 @@ function parseQualitySpecRow(raw, idx) {
     frequency: String(raw.frequency ?? '').trim(),
     sample: String(raw.sample ?? '').trim(),
     acceptance: String(raw.acceptance ?? '').trim(),
+    outputType: String(raw.outputType ?? raw.output_type ?? raw.type ?? '').trim() || undefined,
   };
 }
 

@@ -29,6 +29,7 @@ const {
   handleMasterApprovalPatch,
   prApprovalHooks,
 } = require('../lib/masterApprovalPatchHandlers');
+const { createMasterApprovalStatusHistoryHandler } = require('../lib/masterApprovalStatusHistory');
 const {
   hydratePrQualitySpecRowsBySectionFromBom,
   hydratePrQualityBulkSubSpecRowsByPathFromBom,
@@ -1799,6 +1800,10 @@ const patchProductApprovalStatus = async (req, res) => {
   }
 };
 
+const getProductApprovalStatusHistory = createMasterApprovalStatusHistoryHandler('PR', async (req) =>
+  Product.findByPk(req.params.id)
+);
+
 module.exports = {
     saveProduct,
     syncPrProductZoho,
@@ -1808,6 +1813,7 @@ module.exports = {
     getProductDetail,
     updateProduct,
     patchProductApprovalStatus,
+    getProductApprovalStatusHistory,
     deleteProduct,
     getCategory,
     saveCategory,

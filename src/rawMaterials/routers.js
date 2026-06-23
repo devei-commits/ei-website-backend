@@ -9,6 +9,7 @@ const {
   createRawMaterial,
   updateRawMaterial,
   patchRawMaterialApprovalStatus,
+  getRawMaterialApprovalStatusHistory,
   deleteRawMaterial,
   getReservedStock,
   resetAllRawMaterials,
@@ -55,6 +56,7 @@ router.post('/zoho-sync', requireRawMaterials, syncRmZoho);
 router.post('/', requireRawMaterials, createRawMaterial);
 router.get('/:id/reserved-stock', requireRawMaterials, getReservedStock);
 router.get('/:id', requireRawMaterials, cacheRawMaterialsOne, getRawMaterialById);
+router.get('/:id/approval-status/history', requireRawMaterialsListRead, getRawMaterialApprovalStatusHistory);
 router.patch('/:id/approval-status', requireRawMaterials, requireMasterApprovalUpdate('RM'), patchRawMaterialApprovalStatus);
 router.put('/:id', requireRawMaterials, updateRawMaterial);
 router.delete('/:id', requireRawMaterials, deleteRawMaterial);

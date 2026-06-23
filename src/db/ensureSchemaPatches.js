@@ -433,6 +433,31 @@ const PATCHES = [
     table: 'users',
     sql: 'ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "last_login_at" TIMESTAMPTZ',
   },
+  {
+    name: 'master_approval_status_history.table',
+    table: 'master_approval_status_history',
+    skipTableCheck: true,
+    sql: `CREATE TABLE IF NOT EXISTS "master_approval_status_history" (
+      "id" SERIAL PRIMARY KEY,
+      "master_kind" VARCHAR(4) NOT NULL,
+      "master_id" INTEGER NOT NULL,
+      "master_code" VARCHAR(120),
+      "from_status" VARCHAR(64),
+      "to_status" VARCHAR(64) NOT NULL,
+      "changed_by_user_id" INTEGER,
+      "changed_by_display_name" VARCHAR(255),
+      "source" VARCHAR(64),
+      "note" TEXT,
+      "created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+  },
+  {
+    name: 'master_approval_status_history.kind_id_idx',
+    table: 'master_approval_status_history',
+    skipTableCheck: true,
+    sql:
+      'CREATE INDEX IF NOT EXISTS "master_approval_status_history_kind_id_idx" ON "master_approval_status_history" ("master_kind", "master_id", "created_at" DESC)',
+  },
 ];
 
 async function tableExists(tableName) {
@@ -465,11 +490,13 @@ async function ensureSchemaPatches() {
   };
 
   for (const patch of PATCHES) {
-    const exists = await checkTable(patch.table);
-    if (!exists) {
-      // Fresh DB / table not yet created — Sequelize sync will create it with the
-      // column already present in the model. Skip silently to avoid log noise.
-      continue;
+    if (!patch.skipTableCheck) {
+      const exists = await checkTable(patch.table);
+      if (!exists) {
+        // Fresh DB / table not yet created — Sequelize sync will create it with the
+        // column already present in the model. Skip silently to avoid log noise.
+        continue;
+      }
     }
     try {
       await db.query(patch.sql);

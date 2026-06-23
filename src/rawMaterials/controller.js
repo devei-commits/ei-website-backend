@@ -36,6 +36,7 @@ const {
   handleMasterApprovalPatch,
   rmApprovalHooks,
 } = require('../lib/masterApprovalPatchHandlers');
+const { createMasterApprovalStatusHistoryHandler } = require('../lib/masterApprovalStatusHistory');
 /** List-view only (no form_data). */
 function formatRawMaterial(row) {
   if (!row) return null;
@@ -863,6 +864,10 @@ async function patchRawMaterialApprovalStatus(req, res) {
   }
 }
 
+const getRawMaterialApprovalStatusHistory = createMasterApprovalStatusHistoryHandler('RM', async (req) =>
+  RawMaterial.findByPk(req.params.id)
+);
+
 module.exports = {
   listRawMaterials,
   getRawMaterialById,
@@ -870,6 +875,7 @@ module.exports = {
   createRawMaterial,
   updateRawMaterial,
   patchRawMaterialApprovalStatus,
+  getRawMaterialApprovalStatusHistory,
   deleteRawMaterial,
   getReservedStock,
   resetAllRawMaterials,

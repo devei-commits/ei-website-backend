@@ -34,6 +34,7 @@ const {
   handleMasterApprovalPatch,
   pmApprovalHooks,
 } = require('../lib/masterApprovalPatchHandlers');
+const { createMasterApprovalStatusHistoryHandler } = require('../lib/masterApprovalStatusHistory');
 
 /** All PM stock is counted in pieces (aligned with planning, production, warehouse). */
 function canonicalPmUnit() {
@@ -891,6 +892,10 @@ async function patchPackMaterialApprovalStatus(req, res) {
   }
 }
 
+const getPackMaterialApprovalStatusHistory = createMasterApprovalStatusHistoryHandler('PM', async (req) =>
+  PackMaterial.findByPk(req.params.id)
+);
+
 module.exports = {
   listPackMaterials,
   getNextCode,
@@ -899,6 +904,7 @@ module.exports = {
   createPackMaterial,
   updatePackMaterial,
   patchPackMaterialApprovalStatus,
+  getPackMaterialApprovalStatusHistory,
   deletePackMaterial,
   getReservedStock,
   resetAllPackMaterials,

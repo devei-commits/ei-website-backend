@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { requireModule } = require('../middleware/security');
 const { requireMasterApprovalUpdate } = require('../lib/masterApprovalAuth');
-const { getAllProducts, saveProduct, syncPrProductZoho, createPRRegistration, getProductById, getProductDetail, updateProduct, patchProductApprovalStatus, deleteProduct, getCategory, saveCategory, getCategoryById, updateCategory, deleteCategory } = require('./controller');
+const { getAllProducts, saveProduct, syncPrProductZoho, createPRRegistration, getProductById, getProductDetail, updateProduct, patchProductApprovalStatus, getProductApprovalStatusHistory, deleteProduct, getCategory, saveCategory, getCategoryById, updateCategory, deleteCategory } = require('./controller');
 const { getZohoCompositeSkuBomSuggestion } = require('./zohoCompositeSkuBomSuggestion');
 const {
   uploadSkuBomExcelMiddleware,
@@ -77,6 +77,7 @@ router.post(
 router.post('/:id([0-9]+)/sku-bom/clear', requireCatalogueModule, clearSkuBomForReimport);
 /** Full BOM line wipe + clear fill_size for the PR (for Formula BOM / SKU Excel re-import from scratch). */
 router.post('/:id([0-9]+)/bom/full-reset', requireCatalogueModule, clearPrBomFullForExcelReimport);
+router.get('/:id([0-9]+)/approval-status/history', requireCatalogueModule, getProductApprovalStatusHistory);
 router.patch('/:id([0-9]+)/approval-status', requireCatalogueModule, requireMasterApprovalUpdate('PR'), patchProductApprovalStatus);
 router.put('/:id', requireCatalogueModule, updateProduct);
 router.delete('/:id([0-9]+)', requireCatalogueModule, deleteProduct);

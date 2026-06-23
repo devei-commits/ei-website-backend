@@ -10,6 +10,7 @@ const {
   createPackMaterial,
   updatePackMaterial,
   patchPackMaterialApprovalStatus,
+  getPackMaterialApprovalStatusHistory,
   deletePackMaterial,
   getReservedStock,
   resetAllPackMaterials,
@@ -56,6 +57,7 @@ router.post('/import-excel', requirePackMaterials, uploadPmMasterExcelSafe, post
 router.post('/', requirePackMaterials, createPackMaterial);
 router.get('/:id/reserved-stock', requirePackMaterials, getReservedStock);
 router.get('/:id', requirePackMaterials, cachePackMaterialsOne, getPackMaterialById);
+router.get('/:id/approval-status/history', requirePackMaterialsListRead, getPackMaterialApprovalStatusHistory);
 router.patch('/:id/approval-status', requirePackMaterials, requireMasterApprovalUpdate('PM'), patchPackMaterialApprovalStatus);
 router.put('/:id', requirePackMaterials, updatePackMaterial);
 router.delete('/:id', requirePackMaterials, deletePackMaterial);

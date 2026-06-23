@@ -64,12 +64,12 @@ describe('masterApprovalAuth', () => {
     await expect(canApproveAssignedMaster(req, 'PR', null)).resolves.toBe(false);
   });
 
-  test('canApproveAtCurrentStage allows open stage for team members', async () => {
+  test('canApproveAtCurrentStage denies open stage for team members', async () => {
     isPrivilegedRole.mockReturnValue(false);
     hasGranularAccess.mockResolvedValue(true);
     const req = { user: { id: 7, roleId: 5 } };
     const openAssignees = { drafter: null, reviewer: null, approver: null };
-    await expect(canApproveAtCurrentStage(req, 'RM', 'Draft', openAssignees)).resolves.toBe(true);
+    await expect(canApproveAtCurrentStage(req, 'RM', 'Draft', openAssignees)).resolves.toBe(false);
   });
 
   test('canApproveAtCurrentStage requires drafter when assigned at Draft', async () => {

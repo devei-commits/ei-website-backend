@@ -17,6 +17,10 @@ const {
   canApproveAtCurrentStage,
   sendApprovalForbidden,
 } = require('./masterApprovalAuth');
+const {
+  readActorFromReq,
+  recordMasterApprovalStatusHistory,
+} = require('./masterApprovalStatusHistory');
 
 /**
  * @param {import('express').Request} req
@@ -25,6 +29,8 @@ const {
  * @param {import('sequelize').Model} row
  * @param {{
  *   readCurrentStatus: (row: import('sequelize').Model) => string,
+ *   readMasterId?: (row: import('sequelize').Model) => number,
+ *   readMasterCode?: (row: import('sequelize').Model) => string | null,
  *   applyStatus: (row: import('sequelize').Model, status: string) => Promise<void>,
  *   formatResponse: (row: import('sequelize').Model) => Record<string, unknown>,
  * }} hooks
@@ -67,7 +73,7 @@ async function handleMasterApprovalPatch(req, res, kind, row, hooks) {
     if (!(await canApproveAtCurrentStage(req, kind, current, stageAssignees))) {
       sendApprovalForbidden(
         res,
-        'Only the assigned person for this stage, an open stage holder, or an admin may change approval status.'
+        'Only the person assigned to this approval stage (or an admin) may advance the status.'
       );
       return false;
     }
@@ -80,7 +86,23 @@ async function handleMasterApprovalPatch(req, res, kind, row, hooks) {
       });
       return false;
     }
+    const fromStatus = normalizeMasterApprovalStatus(current);
+    const toStatus = normalizeMasterApprovalStatus(resolved.status);
     await hooks.applyStatus(row, resolved.status);
+    if (fromStatus !== toStatus) {
+      const masterId = hooks.readMasterId
+        ? hooks.readMasterId(row)
+        : parseInt(String(row.get('id') ?? row.get('product_id') ?? ''), 10);
+      await recordMasterApprovalStatusHistory({
+        kind,
+        masterId,
+        masterCode: hooks.readMasterCode ? hooks.readMasterCode(row) : null,
+        fromStatus,
+        toStatus,
+        actor: readActorFromReq(req),
+        source: body.advance === true ? 'advance' : 'status_set',
+      });
+    }
   }
 
   await row.reload();
@@ -93,6 +115,13 @@ function rmApprovalHooks(formatRawMaterial) {
     readCurrentStatus(row) {
       const d = row.get({ plain: true });
       return d.status ?? 'Draft';
+    },
+    readMasterId(row) {
+      return row.get('id');
+    },
+    readMasterCode(row) {
+      const d = row.get({ plain: true });
+      return d.code ?? null;
     },
     async applyStatus(row, status) {
       await row.update({ status, updated_at: new Date() });
@@ -108,6 +137,13 @@ function pmApprovalHooks(formatPackMaterialFull) {
     readCurrentStatus(row) {
       const d = row.get({ plain: true });
       return readMasterApprovalStatusFromFormData(d.form_data, 'Draft');
+    },
+    readMasterId(row) {
+      return row.get('id');
+    },
+    readMasterCode(row) {
+      const d = row.get({ plain: true });
+      return d.code ?? null;
     },
     async applyStatus(row, status) {
       const d = row.get({ plain: true });
@@ -130,6 +166,13 @@ function prApprovalHooks() {
     readCurrentStatus(row) {
       const d = row.get({ plain: true });
       return normalizeMasterApprovalStatus(d.status ?? d.lifecycle_status) || 'Draft';
+    },
+    readMasterId(row) {
+      return row.get('product_id');
+    },
+    readMasterCode(row) {
+      const d = row.get({ plain: true });
+      return d.product_code ?? null;
     },
     async applyStatus(row, status) {
       await row.update({
