@@ -8,6 +8,7 @@ const { Product } = require('../products/models');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const BOM = require('../bom/models');
+const { assertPrLicenceClearForBatchPatch } = require('../products/prFacilityLicenceGate');
 const { syncWarehouseReserved } = require('../planningExtracted/controller');
 const { logReservedChange, logLocationMovement } = require('../warehouseInventory/locationHistoryHelpers');
 const PlanningExtracted = require('../planningExtracted/models');
@@ -2365,6 +2366,11 @@ async function updateBatch(req, res) {
     const packagingGateErr = assertPackagingRequiresBmrCleared(prevPlain, nextPreview);
     if (packagingGateErr) {
       return res.status(400).json({ error: packagingGateErr });
+    }
+
+    const licenceGateErr = await assertPrLicenceClearForBatchPatch(prevPlain, nextPreview, req.body || {});
+    if (licenceGateErr) {
+      return res.status(400).json({ error: licenceGateErr, code: 'PR_LICENCE_BLOCKED' });
     }
 
     if (scheduleFieldsInBody(req.body || {})) {

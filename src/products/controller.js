@@ -36,6 +36,10 @@ const {
   hydratePrQualityDispatchSubSpecRowsByPathFromBom,
   prQualitySpecBomColumnPatch,
 } = require('./prQualitySpecStorage');
+const {
+  hydratePrFacilityLicencesFromBom,
+  flattenPrFacilityLicencesForStorage,
+} = require('./prFacilityLicenceStorage');
 const { linkMaterialMastersToProductCode } = require('./linkMaterialMastersToProduct');
 const { normalizePmSubCategorySlug, pmLevelForSubCategorySlug } = require('../lib/pmSubCategoryRules');
 const { nextNumericSuffixAfterMax } = require('../lib/nextNumericMasterCode');
@@ -701,6 +705,9 @@ const createPRRegistration = async (req, res) => {
         spec_bulk: b.specific_gravity ?? b.specificGravity ?? null,
         stability_summary: productRow.stability_summary,
         ...prQsPatch,
+        pr_facility_licences: flattenPrFacilityLicencesForStorage(
+          b.pr_facility_licences ?? b.prFacilityLicences
+        ),
         rm_lines,
         sku_rm_lines: Array.isArray(b.sku_rm_lines) ? b.sku_rm_lines : [],
         sku_bom_limit_qty:
@@ -1208,12 +1215,14 @@ const getProductDetail = async (req, res) => {
     const pr_quality_final_sub_spec_rows_by_path = hydratePrQualityFinalSubSpecRowsByPathFromBom(bomPlain);
     const pr_quality_dispatch_sub_spec_rows_by_path =
       hydratePrQualityDispatchSubSpecRowsByPathFromBom(bomPlain);
+    const pr_facility_licences = hydratePrFacilityLicencesFromBom(bomPlain);
     res.json({
       ...plain,
       pr_quality_spec_rows_by_section,
       pr_quality_bulk_sub_spec_rows_by_path,
       pr_quality_final_sub_spec_rows_by_path,
       pr_quality_dispatch_sub_spec_rows_by_path,
+      pr_facility_licences,
       internal_sku_code: plain.product_code ?? null,
       zoho_sku_code: plain.zoho_sku_code ?? null,
       bom_composite_item: bom ? bom.bom_composite_item : null,
@@ -1395,6 +1404,9 @@ const updateProduct = async (req, res) => {
             bomPayload.pr_quality_final_sub_spec_rows_by_path ?? bomPayload.prQualityFinalSubSpecRowsByPath,
             bomPayload.pr_quality_dispatch_sub_spec_rows_by_path ??
               bomPayload.prQualityDispatchSubSpecRowsByPath
+          ),
+          pr_facility_licences: flattenPrFacilityLicencesForStorage(
+            bomPayload.pr_facility_licences ?? bomPayload.prFacilityLicences
           ),
           notes: (() => {
             const parts = [];
@@ -1582,6 +1594,14 @@ const updateProduct = async (req, res) => {
             )
           );
         }
+        if (
+          bomPayload.pr_facility_licences !== undefined ||
+          bomPayload.prFacilityLicences !== undefined
+        ) {
+          bomUpdate.pr_facility_licences = flattenPrFacilityLicencesForStorage(
+            bomPayload.pr_facility_licences ?? bomPayload.prFacilityLicences
+          );
+        }
         await bom.update(bomUpdate);
       }
     }
@@ -1607,6 +1627,7 @@ const updateProduct = async (req, res) => {
     delete body.brand_client;
     delete body.applicable_regulation;
     delete body.claims_substantiation;
+    delete body.pr_facility_licences;
 
     await preservePrApprovalOnWrite(req, body, {
       status: product.status,

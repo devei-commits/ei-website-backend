@@ -49,6 +49,11 @@ const PATCHES = [
       WHERE "product_id" IS NOT NULL
         AND COALESCE("bom_composite_item", false) IS NOT TRUE`,
   },
+  {
+    name: 'boms.pr_facility_licences',
+    table: 'boms',
+    sql: 'ALTER TABLE "boms" ADD COLUMN IF NOT EXISTS "pr_facility_licences" JSON',
+  },
   // boms — pack lines + process steps + stability + linkage to products (long-running drift)
   {
     name: 'boms.pm_lines',
