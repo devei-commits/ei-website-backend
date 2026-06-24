@@ -266,7 +266,32 @@ function bodyRequestsAssigneeUpdate(body) {
 function bodyRequestsStatusUpdate(body) {
   if (!body || typeof body !== 'object') return false;
   if (body.advance === true) return true;
+  if (body.revert === true) return true;
   return body.status !== undefined && body.status !== null && String(body.status).trim() !== '';
+}
+
+/**
+ * Resolve a stage slot for a logged-in user id (for auto-assign on create/touch).
+ * @param {number} userId
+ * @param {{ displayName?: string | null }} [fallback]
+ */
+async function buildStageSlotForUserId(userId, fallback = {}) {
+  const id = parseInt(String(userId), 10);
+  if (!Number.isFinite(id) || id <= 0) return null;
+  const user = await User.findOne({
+    where: activeRowWhere({ userid: id }),
+    attributes: ['userid', 'display_name', 'fname', 'lname', 'email', 'usertype'],
+  });
+  if (!user) {
+    const displayName =
+      fallback.displayName != null && String(fallback.displayName).trim() !== ''
+        ? String(fallback.displayName).trim()
+        : `User #${id}`;
+    return { userId: id, displayName, roleName: null };
+  }
+  const rolesByCode = await getRolesByCodeMap();
+  const { displayName, roleName } = displayNameForUser(user, rolesByCode);
+  return { userId: id, displayName, roleName };
 }
 
 module.exports = {
@@ -278,4 +303,6 @@ module.exports = {
   resolveAssigneeUpdateFromBody,
   bodyRequestsAssigneeUpdate,
   bodyRequestsStatusUpdate,
+  buildStageSlotForUserId,
+  emptyStageAssignees,
 };

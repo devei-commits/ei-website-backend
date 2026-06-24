@@ -31,6 +31,11 @@ const {
 } = require('../lib/masterApprovalAuth');
 const { formatMasterApprovalAssigneeFields } = require('../lib/masterApprovalAssignee');
 const {
+  readApprovalStatusFromMasterRow,
+  applyAutoAssignDrafterOnCreate,
+  applyAutoAssignOnTouch,
+} = require('../lib/masterApprovalAutoAssign');
+const {
   handleMasterApprovalPatch,
   pmApprovalHooks,
 } = require('../lib/masterApprovalPatchHandlers');
@@ -361,6 +366,7 @@ async function applyPmApprovalOnCreate(req, fields, existingFormData = null) {
     forCreate: true,
   });
   fields.form_data = { ...fd, masterApprovalStatus: status, status };
+  await applyAutoAssignDrafterOnCreate(req, fields);
 }
 
 async function destroyPackMaterialDraft(row) {
@@ -397,8 +403,14 @@ async function syncPmZoho(req, res) {
       if (dupSku) {
         return res.status(409).json({ error: 'A pack material with this code or SKU already exists' });
       }
-      Object.keys(fields).forEach((key) => {
-        if (fields[key] !== undefined) row.set(key, fields[key]);
+      const touchFields = await applyAutoAssignOnTouch(
+        req,
+        row,
+        readApprovalStatusFromMasterRow('PM', row),
+        fields
+      );
+      Object.keys(touchFields).forEach((key) => {
+        if (touchFields[key] !== undefined) row.set(key, touchFields[key]);
       });
       if (b.form_data !== undefined) row.set('form_data', b.form_data);
       await row.save();
@@ -408,6 +420,7 @@ async function syncPmZoho(req, res) {
       if (dup) {
         return res.status(409).json({ error: 'A pack material with this code or SKU already exists' });
       }
+      await applyPmApprovalOnCreate(req, fields);
       row = await PackMaterial.create(fields);
       createdNewRow = true;
       await WarehouseInventory.findOrCreate({
@@ -556,8 +569,14 @@ async function createPackMaterial(req, res) {
       let zohoBooksItemToDelete = null;
       const t = await db.transaction();
       try {
-        Object.keys(fields).forEach((key) => {
-          if (fields[key] !== undefined) existingRow.set(key, fields[key]);
+        const mergedFields = await applyAutoAssignOnTouch(
+          req,
+          existingRow,
+          readApprovalStatusFromMasterRow('PM', existingRow),
+          fields
+        );
+        Object.keys(mergedFields).forEach((key) => {
+          if (mergedFields[key] !== undefined) existingRow.set(key, mergedFields[key]);
         });
         await existingRow.save({ transaction: t });
         await existingRow.reload({ transaction: t });
@@ -752,14 +771,20 @@ async function updatePackMaterial(req, res) {
         : null;
     const fields = bodyToPackMaterial(b, true, exFd);
     await preservePmApprovalOnWrite(req, fields, exFd);
+    const mergedFields = await applyAutoAssignOnTouch(
+      req,
+      row,
+      readApprovalStatusFromMasterRow('PM', row),
+      fields
+    );
     const nextCode = String(row.code || '').trim();
     if (!nextCode) {
       return res.status(400).json({ error: 'Existing pack material has no internal code' });
     }
-    fields.code = nextCode;
-    delete fields.zoho_sku_code;
-    Object.keys(fields).forEach((key) => {
-      if (fields[key] !== undefined) row.set(key, fields[key]);
+    mergedFields.code = nextCode;
+    delete mergedFields.zoho_sku_code;
+    Object.keys(mergedFields).forEach((key) => {
+      if (mergedFields[key] !== undefined) row.set(key, mergedFields[key]);
     });
     await row.save();
     res.json(formatPackMaterialFull(row));

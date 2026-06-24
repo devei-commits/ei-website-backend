@@ -4,6 +4,7 @@ const {
   readMasterApprovalStatusFromFormData,
   mergeFormDataWithApprovalStatus,
   getNextMasterApprovalStatus,
+  getPreviousMasterApprovalStatus,
   resolveMasterApprovalPatch,
   isMasterPickerRequest,
   resolveApprovalStatusListFilter,
@@ -42,6 +43,27 @@ describe('masterApprovalStatus', () => {
 
   test('resolveMasterApprovalPatch supports advance', () => {
     expect(resolveMasterApprovalPatch({ advance: true }, 'Draft')).toEqual({ status: 'Under Review' });
+    expect(resolveMasterApprovalPatch({ advance: true }, 'Under Approval')).toEqual({ status: 'Active' });
+  });
+
+  test('resolveMasterApprovalPatch supports explicit status', () => {
+    expect(resolveMasterApprovalPatch({ status: 'Active' }, 'Under Approval')).toEqual({
+      status: 'Active',
+    });
+  });
+
+  test('getPreviousMasterApprovalStatus walks back the chain', () => {
+    expect(getPreviousMasterApprovalStatus('Under Review')).toBe('Draft');
+    expect(getPreviousMasterApprovalStatus('Under Approval')).toBe('Under Review');
+    expect(getPreviousMasterApprovalStatus('Active')).toBe('Under Approval');
+    expect(getPreviousMasterApprovalStatus('Draft')).toBeNull();
+  });
+
+  test('resolveMasterApprovalPatch supports revert', () => {
+    expect(resolveMasterApprovalPatch({ revert: true }, 'Under Review')).toEqual({ status: 'Draft' });
+    expect(resolveMasterApprovalPatch({ revert: true }, 'Draft')).toMatchObject({
+      code: 'APPROVAL_NO_PREVIOUS',
+    });
   });
 
   test('isMasterPickerRequest detects picker query flag', () => {

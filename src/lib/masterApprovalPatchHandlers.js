@@ -5,6 +5,7 @@ const {
   resolveMasterApprovalPatch,
   readMasterApprovalStatusFromFormData,
   normalizeMasterApprovalStatus,
+  MASTER_APPROVAL_STATUSES,
 } = require('./masterApprovalStatus');
 const {
   readMasterApprovalStageAssignees,
@@ -21,6 +22,7 @@ const {
   readActorFromReq,
   recordMasterApprovalStatusHistory,
 } = require('./masterApprovalStatusHistory');
+const { touchAutoAssignOpenStage } = require('./masterApprovalAutoAssign');
 
 /**
  * @param {import('express').Request} req
@@ -35,11 +37,27 @@ const {
  *   formatResponse: (row: import('sequelize').Model) => Record<string, unknown>,
  * }} hooks
  */
+function readNoteFromBody(body) {
+  const raw = body && typeof body === 'object' ? body.note ?? body.comment : null;
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  return s || null;
+}
+
+function readRmApprovalStatusFromRow(row) {
+  const d = row.get({ plain: true });
+  const colStatus = normalizeMasterApprovalStatus(d.status);
+  if (colStatus && MASTER_APPROVAL_STATUSES.includes(colStatus)) {
+    return colStatus;
+  }
+  return readMasterApprovalStatusFromFormData(d.form_data, 'Draft');
+}
+
 async function handleMasterApprovalPatch(req, res, kind, row, hooks) {
   const body = req.body || {};
   if (!bodyRequestsAssigneeUpdate(body) && !bodyRequestsStatusUpdate(body)) {
     res.status(400).json({
-      error: 'Provide status, advance, and/or approval_stage_assignees',
+      error: 'Provide status, advance, revert, and/or approval_stage_assignees',
       code: 'APPROVAL_PATCH_EMPTY',
     });
     return false;
@@ -68,7 +86,10 @@ async function handleMasterApprovalPatch(req, res, kind, row, hooks) {
 
   if (bodyRequestsStatusUpdate(body)) {
     await row.reload();
-    const current = hooks.readCurrentStatus(row);
+    let current = hooks.readCurrentStatus(row);
+    await touchAutoAssignOpenStage(req, row, current);
+    await row.reload();
+    current = hooks.readCurrentStatus(row);
     const stageAssignees = readMasterApprovalStageAssignees(row);
     if (!(await canApproveAtCurrentStage(req, kind, current, stageAssignees))) {
       sendApprovalForbidden(
@@ -93,6 +114,8 @@ async function handleMasterApprovalPatch(req, res, kind, row, hooks) {
       const masterId = hooks.readMasterId
         ? hooks.readMasterId(row)
         : parseInt(String(row.get('id') ?? row.get('product_id') ?? ''), 10);
+      const source =
+        body.advance === true ? 'advance' : body.revert === true ? 'revert' : 'status_set';
       await recordMasterApprovalStatusHistory({
         kind,
         masterId,
@@ -100,7 +123,8 @@ async function handleMasterApprovalPatch(req, res, kind, row, hooks) {
         fromStatus,
         toStatus,
         actor: readActorFromReq(req),
-        source: body.advance === true ? 'advance' : 'status_set',
+        source,
+        note: readNoteFromBody(body),
       });
     }
   }
@@ -113,8 +137,7 @@ async function handleMasterApprovalPatch(req, res, kind, row, hooks) {
 function rmApprovalHooks(formatRawMaterial) {
   return {
     readCurrentStatus(row) {
-      const d = row.get({ plain: true });
-      return d.status ?? 'Draft';
+      return readRmApprovalStatusFromRow(row);
     },
     readMasterId(row) {
       return row.get('id');
@@ -124,7 +147,13 @@ function rmApprovalHooks(formatRawMaterial) {
       return d.code ?? null;
     },
     async applyStatus(row, status) {
-      await row.update({ status, updated_at: new Date() });
+      const d = row.get({ plain: true });
+      const exFd =
+        d.form_data != null && typeof d.form_data === 'object' && !Array.isArray(d.form_data)
+          ? d.form_data
+          : {};
+      const nextFd = { ...exFd, masterApprovalStatus: status, status };
+      await row.update({ status, form_data: nextFd, updated_at: new Date() });
     },
     formatResponse(row) {
       return formatRawMaterial(row);

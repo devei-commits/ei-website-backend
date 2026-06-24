@@ -31,6 +31,11 @@ const {
 } = require('../lib/masterApprovalPatchHandlers');
 const { createMasterApprovalStatusHistoryHandler } = require('../lib/masterApprovalStatusHistory');
 const {
+  readApprovalStatusFromMasterRow,
+  applyAutoAssignDrafterOnCreate,
+  applyAutoAssignOnTouch,
+} = require('../lib/masterApprovalAutoAssign');
+const {
   hydratePrQualitySpecRowsBySectionFromBom,
   hydratePrQualityBulkSubSpecRowsByPathFromBom,
   hydratePrQualityFinalSubSpecRowsByPathFromBom,
@@ -142,6 +147,18 @@ function skuLimitQtyClose(a, b) {
 
 function skuLimitUomClose(a, b) {
   return normSkuLimitUom(a) === normSkuLimitUom(b);
+}
+
+/** True when saving a PR master as Draft (formula/pack lines optional). */
+function isPrDraftWrite(body, existingProduct) {
+  const raw =
+    body?.status ??
+    body?.lifecycle_status ??
+    (existingProduct
+      ? existingProduct.status ?? existingProduct.lifecycle_status
+      : null) ??
+    'Draft';
+  return String(raw).trim().toLowerCase() === 'draft';
 }
 
 /** At least one non-empty formula line (INCI / RM code / positive %). */
@@ -353,7 +370,14 @@ const syncPrProductZoho = async (req, res) => {
           });
         }
       }
-      await product.update(productRow);
+      await product.update(
+        await applyAutoAssignOnTouch(
+          req,
+          product,
+          readApprovalStatusFromMasterRow('PR', product),
+          productRow
+        )
+      );
     } else {
       const nameTaken = await Product.findOne({ where: { product_name } });
       if (nameTaken) {
@@ -371,6 +395,7 @@ const syncPrProductZoho = async (req, res) => {
           });
         }
       }
+      await applyAutoAssignDrafterOnCreate(req, productRow);
       product = await Product.create({
         ...productRow,
         created_at: now,
@@ -540,36 +565,50 @@ const createPRRegistration = async (req, res) => {
     const pm_lines = Array.isArray(b.pm_lines) ? b.pm_lines : (Array.isArray(b.pmLines) ? b.pmLines : []);
     const process_steps = Array.isArray(b.process_steps) ? b.process_steps : (Array.isArray(b.processSteps) ? b.processSteps : []);
 
-    if (countMeaningfulRmLines(rm_lines) < 1) {
-      return res.status(400).json({
-        error:
-          'At least one formula (RM) line is required. Add ingredients in Formula BOM before registering.',
-        code: 'PR_MISSING_RM_LINES',
-      });
-    }
-    const formulaPctV = validateFormulaPctNotOver100(rm_lines);
-    if (!formulaPctV.ok) {
-      return res.status(400).json({
-        error: formulaPctV.error,
-        code: formulaPctV.code,
-      });
-    }
-    if (countMeaningfulPmLines(pm_lines) < 1) {
-      return res.status(400).json({
-        error:
-          'At least one packaging (PM) line is required. Add pack components in Pack BOM before registering.',
-        code: 'PR_MISSING_PM_LINES',
-      });
+    const isDraftSave = isPrDraftWrite(b, preProduct);
+
+    if (!isDraftSave) {
+      if (countMeaningfulRmLines(rm_lines) < 1) {
+        return res.status(400).json({
+          error:
+            'At least one formula (RM) line is required. Add ingredients in Formula BOM before registering.',
+          code: 'PR_MISSING_RM_LINES',
+        });
+      }
+      const formulaPctV = validateFormulaPctNotOver100(rm_lines);
+      if (!formulaPctV.ok) {
+        return res.status(400).json({
+          error: formulaPctV.error,
+          code: formulaPctV.code,
+        });
+      }
+      if (countMeaningfulPmLines(pm_lines) < 1) {
+        return res.status(400).json({
+          error:
+            'At least one packaging (PM) line is required. Add pack components in Pack BOM before registering.',
+          code: 'PR_MISSING_PM_LINES',
+        });
+      }
+    } else {
+      const formulaPctDraft = validateFormulaPctNotOver100(rm_lines);
+      if (!formulaPctDraft.ok) {
+        return res.status(400).json({
+          error: formulaPctDraft.error,
+          code: formulaPctDraft.code,
+        });
+      }
     }
 
     const skuRegLines = Array.isArray(b.sku_rm_lines) ? b.sku_rm_lines : [];
-    const skuRegV = validateSkuBomTotals({
-      lines: skuRegLines,
-      limitQty: b.sku_bom_limit_qty ?? b.skuBomLimitQty,
-      limitUom: b.sku_bom_limit_uom ?? b.skuBomLimitUom,
-    });
-    if (!skuRegV.ok) {
-      return res.status(400).json({ error: skuRegV.error, code: skuRegV.code });
+    if (!isDraftSave) {
+      const skuRegV = validateSkuBomTotals({
+        lines: skuRegLines,
+        limitQty: b.sku_bom_limit_qty ?? b.skuBomLimitQty,
+        limitUom: b.sku_bom_limit_uom ?? b.skuBomLimitUom,
+      });
+      if (!skuRegV.ok) {
+        return res.status(400).json({ error: skuRegV.error, code: skuRegV.code });
+      }
     }
 
     const mrpRaw = b.mrp_price ?? b.mrp;
@@ -609,8 +648,13 @@ const createPRRegistration = async (req, res) => {
       stability_summary: b.stability_summary ?? null,
       approved_claims: b.approved_claims ?? null,
       zoho_item_id: zohoFromForm || (preProduct && preProduct.zoho_item_id) || null,
+      form_data:
+        b.form_data != null && typeof b.form_data === 'object' && !Array.isArray(b.form_data)
+          ? b.form_data
+          : null,
       updated_at: now,
     };
+    await applyAutoAssignDrafterOnCreate(req, productRow);
 
     const notesParts = [];
     if (b.pr_qc_group) notesParts.push(`QC Group: ${b.pr_qc_group}`);
@@ -629,7 +673,13 @@ const createPRRegistration = async (req, res) => {
     try {
       let product;
       if (preProduct) {
-        await preProduct.update({ ...productRow }, { transaction: t });
+        const mergedRow = await applyAutoAssignOnTouch(
+          req,
+          preProduct,
+          readApprovalStatusFromMasterRow('PR', preProduct),
+          productRow
+        );
+        await preProduct.update({ ...mergedRow }, { transaction: t });
         product = preProduct;
       } else {
         product = await Product.create(
@@ -1347,6 +1397,7 @@ const updateProduct = async (req, res) => {
 
     // Optional: update linked BOM (formula, pack, process, specs); create BOM if missing
     const bomPayload = req.body.bom;
+    const isDraftSave = isPrDraftWrite(req.body, product);
     if (bomPayload && typeof bomPayload === 'object') {
       let bom = await BOM.findOne({ where: { product_id: productId } });
       const rmFromPayload = Array.isArray(bomPayload.rm_lines);
@@ -1355,7 +1406,7 @@ const updateProduct = async (req, res) => {
       if (!bom) {
         const nextRm = rmFromPayload ? bomPayload.rm_lines : [];
         const nextPm = pmFromPayload ? bomPayload.pm_lines : [];
-        if (countMeaningfulRmLines(nextRm) < 1 || countMeaningfulPmLines(nextPm) < 1) {
+        if (!isDraftSave && (countMeaningfulRmLines(nextRm) < 1 || countMeaningfulPmLines(nextPm) < 1)) {
           return res.status(400).json({
             error:
               'BOM must include at least one formula (RM) line and one packaging (PM) line.',
@@ -1370,13 +1421,15 @@ const updateProduct = async (req, res) => {
           });
         }
         const nextSkuCreate = Array.isArray(bomPayload.sku_rm_lines) ? bomPayload.sku_rm_lines : [];
-        const skuCreateV = validateSkuBomTotals({
-          lines: nextSkuCreate,
-          limitQty: bomPayload.sku_bom_limit_qty ?? bomPayload.skuBomLimitQty,
-          limitUom: bomPayload.sku_bom_limit_uom ?? bomPayload.skuBomLimitUom,
-        });
-        if (!skuCreateV.ok) {
-          return res.status(400).json({ error: skuCreateV.error, code: skuCreateV.code });
+        if (!isDraftSave) {
+          const skuCreateV = validateSkuBomTotals({
+            lines: nextSkuCreate,
+            limitQty: bomPayload.sku_bom_limit_qty ?? bomPayload.skuBomLimitQty,
+            limitUom: bomPayload.sku_bom_limit_uom ?? bomPayload.skuBomLimitUom,
+          });
+          if (!skuCreateV.ok) {
+            return res.status(400).json({ error: skuCreateV.error, code: skuCreateV.code });
+          }
         }
         const productCode = (product && product.product_code) ? product.product_code : `PR-${productId}`;
         bom = await BOM.create({
@@ -1439,7 +1492,7 @@ const updateProduct = async (req, res) => {
       } else {
         const mergedRm = rmFromPayload ? bomPayload.rm_lines : bom.rm_lines || [];
         const mergedPm = pmFromPayload ? bomPayload.pm_lines : bom.pm_lines || [];
-        if (rmFromPayload || pmFromPayload) {
+        if (!isDraftSave && (rmFromPayload || pmFromPayload)) {
           if (countMeaningfulRmLines(mergedRm) < 1 || countMeaningfulPmLines(mergedPm) < 1) {
             return res.status(400).json({
               error:
@@ -1455,6 +1508,14 @@ const updateProduct = async (req, res) => {
                 code: formulaPctUpd.code,
               });
             }
+          }
+        } else if (isDraftSave && rmFromPayload) {
+          const formulaPctDraft = validateFormulaPctNotOver100(mergedRm);
+          if (!formulaPctDraft.ok) {
+            return res.status(400).json({
+              error: formulaPctDraft.error,
+              code: formulaPctDraft.code,
+            });
           }
         }
         const payloadSkuRm = Array.isArray(bomPayload.sku_rm_lines) ? bomPayload.sku_rm_lines : null;
@@ -1477,8 +1538,9 @@ const updateProduct = async (req, res) => {
         const meaningfulStoredSku = countMeaningfulSkuRmLines(storedSkuLines) > 0;
 
         const mustValidateSkuBom =
-          meaningfulSkuInPayload ||
-          ((limitQtyChanged || limitUomChanged) && meaningfulStoredSku);
+          !isDraftSave &&
+          (meaningfulSkuInPayload ||
+            ((limitQtyChanged || limitUomChanged) && meaningfulStoredSku));
 
         if (mustValidateSkuBom) {
           const nextSkuLines = meaningfulSkuInPayload ? payloadSkuRm : storedSkuLines;
@@ -1636,8 +1698,15 @@ const updateProduct = async (req, res) => {
       lifecycle_status: product.lifecycle_status,
     });
 
+    const mergedBody = await applyAutoAssignOnTouch(
+      req,
+      product,
+      readApprovalStatusFromMasterRow('PR', product),
+      body
+    );
+
     await product.update({
-      ...body,
+      ...mergedBody,
       updated_at: new Date(),
     });
 

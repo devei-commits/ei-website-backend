@@ -49,6 +49,14 @@ function getNextMasterApprovalStatus(current) {
   return MASTER_APPROVAL_STATUSES[idx + 1];
 }
 
+/** Previous step in the approval chain, or null when already Draft / unknown. */
+function getPreviousMasterApprovalStatus(current) {
+  const norm = normalizeMasterApprovalStatus(current) || 'Draft';
+  const idx = MASTER_APPROVAL_STATUSES.indexOf(norm);
+  if (idx <= 0) return null;
+  return MASTER_APPROVAL_STATUSES[idx - 1];
+}
+
 /**
  * Resolve target status from PATCH body ({ status } or { advance: true }).
  * @param {Record<string, unknown>} body
@@ -56,6 +64,12 @@ function getNextMasterApprovalStatus(current) {
  */
 function resolveMasterApprovalPatch(body, currentStatus) {
   const b = body && typeof body === 'object' ? body : {};
+  if (b.advance === true && b.revert === true) {
+    return {
+      error: 'Send only one of advance or revert',
+      code: 'APPROVAL_PATCH_CONFLICT',
+    };
+  }
   if (b.advance === true) {
     const next = getNextMasterApprovalStatus(currentStatus);
     if (!next) {
@@ -63,9 +77,19 @@ function resolveMasterApprovalPatch(body, currentStatus) {
     }
     return { status: next };
   }
+  if (b.revert === true) {
+    const prev = getPreviousMasterApprovalStatus(currentStatus);
+    if (!prev) {
+      return { error: 'Item is already at the first approval stage', code: 'APPROVAL_NO_PREVIOUS' };
+    }
+    return { status: prev };
+  }
   const raw = b.status ?? b.masterApprovalStatus ?? b.master_approval_status;
   if (raw == null || String(raw).trim() === '') {
-    return { error: 'status is required (or send { advance: true })', code: 'APPROVAL_STATUS_REQUIRED' };
+    return {
+      error: 'status is required (or send { advance: true } or { revert: true })',
+      code: 'APPROVAL_STATUS_REQUIRED',
+    };
   }
   const status = normalizeMasterApprovalStatus(raw);
   if (!status || !MASTER_APPROVAL_STATUSES.includes(status)) {
@@ -121,6 +145,7 @@ function mergeFormDataWithApprovalStatus(b, opts = {}) {
       existing: readMasterApprovalStatusFromFormData(exFd, null),
       forCreate,
     });
+    merged.status = merged.masterApprovalStatus;
   }
   return stripDeprecatedMasterFormKeys(merged);
 }
@@ -152,6 +177,7 @@ module.exports = {
   normalizeMasterApprovalStatus,
   resolveMasterApprovalStatus,
   getNextMasterApprovalStatus,
+  getPreviousMasterApprovalStatus,
   resolveMasterApprovalPatch,
   readMasterApprovalStatusFromFormData,
   mergeFormDataWithApprovalStatus,

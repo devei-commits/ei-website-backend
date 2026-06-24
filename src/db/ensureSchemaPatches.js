@@ -429,6 +429,11 @@ const PATCHES = [
     sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "approval_stage_assignees" JSONB',
   },
   {
+    name: 'products.form_data',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "form_data" JSONB',
+  },
+  {
     name: 'users.last_login_at',
     table: 'users',
     sql: 'ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "last_login_at" TIMESTAMPTZ',

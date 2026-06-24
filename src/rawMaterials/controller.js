@@ -33,6 +33,11 @@ const {
 } = require('../lib/masterApprovalAuth');
 const { formatMasterApprovalAssigneeFields } = require('../lib/masterApprovalAssignee');
 const {
+  readApprovalStatusFromMasterRow,
+  applyAutoAssignDrafterOnCreate,
+  applyAutoAssignOnTouch,
+} = require('../lib/masterApprovalAutoAssign');
+const {
   handleMasterApprovalPatch,
   rmApprovalHooks,
 } = require('../lib/masterApprovalPatchHandlers');
@@ -372,6 +377,7 @@ async function applyRmApprovalOnCreate(req, fields) {
       status: fields.status,
     };
   }
+  await applyAutoAssignDrafterOnCreate(req, fields);
 }
 
 async function destroyRawMaterialDraft(row) {
@@ -408,12 +414,19 @@ async function syncRmZoho(req, res) {
       if (dupSku) {
         return res.status(409).json({ error: 'A raw material with this code or SKU already exists' });
       }
-      await row.update(fields);
+      const touchFields = await applyAutoAssignOnTouch(
+        req,
+        row,
+        readApprovalStatusFromMasterRow('RM', row),
+        fields
+      );
+      await row.update(touchFields);
     } else {
       const dup = await findConflictingMasterRow(RawMaterial, fields.code, fields.zoho_sku_code, null);
       if (dup) {
         return res.status(409).json({ error: 'A raw material with this code or SKU already exists' });
       }
+      await applyRmApprovalOnCreate(req, fields);
       row = await RawMaterial.create(fields);
       createdNewRow = true;
       await WarehouseInventory.findOrCreate({
@@ -555,7 +568,13 @@ async function createRawMaterial(req, res) {
       let zohoBooksItemToDelete = null;
       const t = await db.transaction();
       try {
-        await existingRow.update(fields, { transaction: t });
+        const mergedFields = await applyAutoAssignOnTouch(
+          req,
+          existingRow,
+          readApprovalStatusFromMasterRow('RM', existingRow),
+          fields
+        );
+        await existingRow.update(mergedFields, { transaction: t });
         await existingRow.reload({ transaction: t });
         let zoho = await syncZohoItemForNewRawMaterial(existingRow, b);
         if (zoho.error === 'already_has_zoho_id') {
@@ -727,14 +746,21 @@ async function updateRawMaterial(req, res) {
     if (!row) return res.status(404).json({ error: 'Raw material not found' });
     const b = req.body || {};
     const fields = payloadToListFields(b, true);
-    await preserveRmApprovalOnWrite(req, fields, row.get({ plain: true }));
+    const exPlain = row.get({ plain: true });
+    await preserveRmApprovalOnWrite(req, fields, exPlain);
+    const mergedFields = await applyAutoAssignOnTouch(
+      req,
+      row,
+      readApprovalStatusFromMasterRow('RM', row),
+      fields
+    );
     const nextCode = String(row.code || '').trim();
     if (!nextCode) {
       return res.status(400).json({ error: 'Existing raw material has no internal code' });
     }
-    fields.code = nextCode;
-    delete fields.zoho_sku_code;
-    await row.update(fields);
+    mergedFields.code = nextCode;
+    delete mergedFields.zoho_sku_code;
+    await row.update(mergedFields);
     res.json(formatRawMaterialFull(row));
   } catch (err) {
     console.error('updateRawMaterial error', err);

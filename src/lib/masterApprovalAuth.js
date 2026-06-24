@@ -92,7 +92,7 @@ async function canApproveAtCurrentStage(req, kind, currentStatus, stageAssignees
   const stageKey = stageKeyForCurrentStatus(currentStatus);
   if (!stageKey) return false;
   const slot = stageAssignees[stageKey];
-  if (!slot || !slot.userId) return false;
+  if (!slot || !slot.userId) return true;
   const callerId = parseInt(String(req.user.id), 10);
   return Number.isFinite(callerId) && callerId === slot.userId;
 }
