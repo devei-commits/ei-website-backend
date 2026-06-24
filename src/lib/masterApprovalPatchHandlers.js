@@ -19,6 +19,12 @@ const {
   sendApprovalForbidden,
 } = require('./masterApprovalAuth');
 const {
+  readPendingFromRow,
+  formatPendingForApi,
+  canPrApproveAtCurrentStage,
+  applyPrTeamStatusUpdate,
+} = require('./prMasterTeamApproval');
+const {
   readActorFromReq,
   recordMasterApprovalStatusHistory,
 } = require('./masterApprovalStatusHistory');
@@ -80,7 +86,11 @@ async function handleMasterApprovalPatch(req, res, kind, row, hooks) {
       return false;
     }
     if (assignPatch) {
-      await row.update({ ...assignPatch, updated_at: new Date() });
+      const assignUpdate =
+        kind === 'PR'
+          ? { ...assignPatch, approval_team_pending: null, updated_at: new Date() }
+          : { ...assignPatch, updated_at: new Date() };
+      await row.update(assignUpdate);
     }
   }
 
@@ -91,10 +101,16 @@ async function handleMasterApprovalPatch(req, res, kind, row, hooks) {
     await row.reload();
     current = hooks.readCurrentStatus(row);
     const stageAssignees = readMasterApprovalStageAssignees(row);
-    if (!(await canApproveAtCurrentStage(req, kind, current, stageAssignees))) {
+    const canApprove =
+      kind === 'PR'
+        ? await canPrApproveAtCurrentStage(req, current, row)
+        : await canApproveAtCurrentStage(req, kind, current, stageAssignees);
+    if (!canApprove) {
       sendApprovalForbidden(
         res,
-        'Only the person assigned to this approval stage (or an admin) may advance the status.'
+        kind === 'PR'
+          ? 'Only the assigned RM team or Pack team member (or an admin) may advance PR approval status.'
+          : 'Only the person assigned to this approval stage (or an admin) may advance the status.'
       );
       return false;
     }
@@ -109,23 +125,44 @@ async function handleMasterApprovalPatch(req, res, kind, row, hooks) {
     }
     const fromStatus = normalizeMasterApprovalStatus(current);
     const toStatus = normalizeMasterApprovalStatus(resolved.status);
-    await hooks.applyStatus(row, resolved.status);
-    if (fromStatus !== toStatus) {
-      const masterId = hooks.readMasterId
-        ? hooks.readMasterId(row)
-        : parseInt(String(row.get('id') ?? row.get('product_id') ?? ''), 10);
-      const source =
-        body.advance === true ? 'advance' : body.revert === true ? 'revert' : 'status_set';
-      await recordMasterApprovalStatusHistory({
-        kind,
-        masterId,
-        masterCode: hooks.readMasterCode ? hooks.readMasterCode(row) : null,
-        fromStatus,
-        toStatus,
-        actor: readActorFromReq(req),
-        source,
+
+    if (kind === 'PR') {
+      const prResult = await applyPrTeamStatusUpdate({
+        req,
+        row,
+        targetStatus: resolved.status,
+        readCurrentStatus: hooks.readCurrentStatus,
+        applyStatus: hooks.applyStatus,
+        readMasterId: hooks.readMasterId
+          ? (r) => hooks.readMasterId(r)
+          : (r) => parseInt(String(r.get('id') ?? r.get('product_id') ?? ''), 10),
+        readMasterCode: hooks.readMasterCode ? (r) => hooks.readMasterCode(r) : () => null,
         note: readNoteFromBody(body),
+        isRevert: body.revert === true,
       });
+      if (prResult.error) {
+        res.status(400).json({ error: prResult.error, code: prResult.code });
+        return false;
+      }
+    } else {
+      await hooks.applyStatus(row, resolved.status);
+      if (fromStatus !== toStatus) {
+        const masterId = hooks.readMasterId
+          ? hooks.readMasterId(row)
+          : parseInt(String(row.get('id') ?? row.get('product_id') ?? ''), 10);
+        const source =
+          body.advance === true ? 'advance' : body.revert === true ? 'revert' : 'status_set';
+        await recordMasterApprovalStatusHistory({
+          kind,
+          masterId,
+          masterCode: hooks.readMasterCode ? hooks.readMasterCode(row) : null,
+          fromStatus,
+          toStatus,
+          actor: readActorFromReq(req),
+          source,
+          note: readNoteFromBody(body),
+        });
+      }
     }
   }
 
@@ -212,12 +249,14 @@ function prApprovalHooks() {
     },
     formatResponse(row) {
       const d = row.get({ plain: true });
+      const pending = readPendingFromRow(row);
       return {
         product_id: d.product_id,
         product_code: d.product_code,
         product_name: d.product_name,
         status: d.status,
         lifecycle_status: d.lifecycle_status,
+        approval_team_pending: formatPendingForApi(pending),
         ...formatMasterApprovalAssigneeFields(row),
       };
     },

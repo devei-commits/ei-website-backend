@@ -60,7 +60,7 @@ async function recordMasterApprovalStatusHistory(opts) {
     ? normalizeMasterApprovalStatus(opts.fromStatus)
     : null;
   const toNorm = normalizeMasterApprovalStatus(opts.toStatus, 'Draft');
-  if (fromNorm === toNorm) return null;
+  if (fromNorm === toNorm && !opts.allowSameStatus) return null;
 
   const actor = opts.actor ?? {};
   try {

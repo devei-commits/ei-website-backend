@@ -147,6 +147,7 @@ Product.init(
     approval_assigned_user_id: { type: DataTypes.INTEGER, allowNull: true },
     approval_assigned_display_name: { type: DataTypes.STRING(255), allowNull: true },
     approval_stage_assignees: { type: DataTypes.JSON, allowNull: true },
+    approval_team_pending: { type: DataTypes.JSON, allowNull: true },
     form_data: { type: DataTypes.JSON, allowNull: true },
   },
   {

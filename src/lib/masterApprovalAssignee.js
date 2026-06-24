@@ -7,7 +7,7 @@ const { activeRowWhere } = require('./softDelete');
 
 /** @typedef {'drafter' | 'reviewer' | 'approver'} MasterApprovalStageKey */
 
-const STAGE_KEYS = /** @type {const} */ (['drafter', 'reviewer', 'approver']);
+const STAGE_KEYS = /** @type {const} */ (['drafter', 'reviewer', 'approver', 'rm_team', 'pack_team']);
 
 const USERTYPE_TO_ROLE_NAME = {
   super_admin: 'Super Admin',
@@ -58,7 +58,7 @@ function normalizeStageSlot(raw) {
  * @returns {Record<MasterApprovalStageKey, { userId: number, displayName: string, roleName: string | null } | null>}
  */
 function emptyStageAssignees() {
-  return { drafter: null, reviewer: null, approver: null };
+  return { drafter: null, reviewer: null, approver: null, rm_team: null, pack_team: null };
 }
 
 /**
