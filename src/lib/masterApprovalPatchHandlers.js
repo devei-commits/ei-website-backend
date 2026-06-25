@@ -23,6 +23,7 @@ const {
   formatPendingForApi,
   canPrApproveAtCurrentStage,
   applyPrTeamStatusUpdate,
+  assertPrTeamAssignPatchAllowed,
 } = require('./prMasterTeamApproval');
 const {
   readActorFromReq,
@@ -86,6 +87,17 @@ async function handleMasterApprovalPatch(req, res, kind, row, hooks) {
       return false;
     }
     if (assignPatch) {
+      if (kind === 'PR') {
+        const forbidden = assertPrTeamAssignPatchAllowed(req, row, assignPatch);
+        if (forbidden) {
+          res.status(403).json({
+            error: forbidden.error,
+            message: forbidden.error,
+            code: forbidden.code,
+          });
+          return false;
+        }
+      }
       const assignUpdate =
         kind === 'PR'
           ? { ...assignPatch, approval_team_pending: null, updated_at: new Date() }

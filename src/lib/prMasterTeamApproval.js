@@ -313,6 +313,46 @@ async function applyPrTeamStatusUpdate(opts) {
   };
 }
 
+/**
+ * RM / Pack assignees may only update their own team slot (admins bypass).
+ * @param {import('express').Request} req
+ * @param {import('sequelize').Model | Record<string, unknown>} row
+ * @param {{ approval_stage_assignees?: unknown }} assignPatch
+ */
+function assertPrTeamAssignPatchAllowed(req, row, assignPatch) {
+  if (!req?.user || isPrivilegedRole(req.user)) return null;
+  const actor = readActorFromReq(req);
+  const actorId = actor.userId;
+  if (!actorId) return null;
+
+  const current = readMasterApprovalStageAssignees(row);
+  const isRm = current.rm_team?.userId === actorId;
+  const isPack = current.pack_team?.userId === actorId;
+  if (!isRm && !isPack) return null;
+
+  const incoming = readMasterApprovalStageAssignees({
+    approval_stage_assignees: assignPatch.approval_stage_assignees,
+  });
+  const curRm = current.rm_team?.userId ?? null;
+  const curPack = current.pack_team?.userId ?? null;
+  const incRm = incoming.rm_team?.userId ?? null;
+  const incPack = incoming.pack_team?.userId ?? null;
+
+  if (isRm && !isPack && incPack !== curPack) {
+    return {
+      error: 'RM team assignee cannot change Pack team assignment',
+      code: 'PR_TEAM_ASSIGN_FORBIDDEN',
+    };
+  }
+  if (isPack && !isRm && incRm !== curRm) {
+    return {
+      error: 'Pack team assignee cannot change RM team assignment',
+      code: 'PR_TEAM_ASSIGN_FORBIDDEN',
+    };
+  }
+  return null;
+}
+
 module.exports = {
   PR_TEAM_KEYS,
   readPrTeamAssignees,
@@ -323,5 +363,6 @@ module.exports = {
   canPrTeamMemberAct,
   canPrApproveAtCurrentStage,
   applyPrTeamStatusUpdate,
+  assertPrTeamAssignPatchAllowed,
   teamLabel,
 };

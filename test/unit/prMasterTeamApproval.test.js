@@ -3,6 +3,7 @@ const {
   formatPendingForApi,
   resolveCallerTeamKey,
   canPrTeamMemberAct,
+  assertPrTeamAssignPatchAllowed,
 } = require('../../src/lib/prMasterTeamApproval');
 
 describe('prMasterTeamApproval', () => {
@@ -63,5 +64,32 @@ describe('prMasterTeamApproval', () => {
     });
     expect(api.target_status).toBe('Under Approval');
     expect(api.pack_signed_by.user_id).toBe(3);
+  });
+
+  test('assertPrTeamAssignPatchAllowed blocks cross-team assign edits', () => {
+    const row = {
+      approval_stage_assignees: {
+        drafter: null,
+        reviewer: null,
+        approver: null,
+        rm_team: { user_id: 10, display_name: 'RM', role_name: null },
+        pack_team: { user_id: 20, display_name: 'Pack', role_name: null },
+      },
+    };
+    const reqRm = { user: { id: 10, usertype: 'user' } };
+    const okPatch = {
+      approval_stage_assignees: {
+        rm_team: { user_id: 11, display_name: 'New RM', role_name: null },
+        pack_team: { user_id: 20, display_name: 'Pack', role_name: null },
+      },
+    };
+    expect(assertPrTeamAssignPatchAllowed(reqRm, row, okPatch)).toBeNull();
+    const badPatch = {
+      approval_stage_assignees: {
+        rm_team: { user_id: 10, display_name: 'RM', role_name: null },
+        pack_team: { user_id: 99, display_name: 'Other', role_name: null },
+      },
+    };
+    expect(assertPrTeamAssignPatchAllowed(reqRm, row, badPatch)?.code).toBe('PR_TEAM_ASSIGN_FORBIDDEN');
   });
 });

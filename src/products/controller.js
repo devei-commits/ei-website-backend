@@ -32,7 +32,7 @@ const {
 const { createMasterApprovalStatusHistoryHandler } = require('../lib/masterApprovalStatusHistory');
 const {
   readApprovalStatusFromMasterRow,
-  applyAutoAssignDrafterOnCreate,
+  applyAutoAssignPrCreatorOnCreate,
   applyAutoAssignOnTouch,
 } = require('../lib/masterApprovalAutoAssign');
 const {
@@ -395,7 +395,7 @@ const syncPrProductZoho = async (req, res) => {
           });
         }
       }
-      await applyAutoAssignDrafterOnCreate(req, productRow);
+      await applyAutoAssignPrCreatorOnCreate(req, productRow);
       product = await Product.create({
         ...productRow,
         created_at: now,
@@ -654,7 +654,7 @@ const createPRRegistration = async (req, res) => {
           : null,
       updated_at: now,
     };
-    await applyAutoAssignDrafterOnCreate(req, productRow);
+    await applyAutoAssignPrCreatorOnCreate(req, productRow);
 
     const notesParts = [];
     if (b.pr_qc_group) notesParts.push(`QC Group: ${b.pr_qc_group}`);

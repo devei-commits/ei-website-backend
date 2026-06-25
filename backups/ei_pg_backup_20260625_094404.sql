@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict VTwQP5m6rl8k7hl4PB6XEOS9FSeoql0m5TEnjaqtMiEohdcOWvgezS9Bltb1A3P
+\restrict s7UFN8GF9kAfdXa3zndz8sYXPrmhbRlpvY4AxMnLhMIT0UmxayKBc4rLnWQhyfC
 
 -- Dumped from database version 16.14 (Debian 16.14-1.pgdg13+1)
 -- Dumped by pg_dump version 16.14 (Debian 16.14-1.pgdg12+1)
@@ -4749,6 +4749,7 @@ COPY public.boms (id, bom_code, bom_sku, zoho_id, bom_category, bom_unit, bom_hs
 8252	BOM-PR0007315	\N	\N	\N	\N	\N	\N	\N	\N	t	FG	Draft	\N	\N	SKINNABLE ULTRA PROTECTIVE HYDRA MOISTURISER 200ML	\N	200 ML	\N	\N	\N	\N	\N	\N	\N	\N	0.752	\N	\N	\N	\N	\N	\N	\N	\N	\N	PR Sub-category: Hydrating	\N	\N	\N	[{"phase":"Main","inci_name":"Niacinamide","rm_code":"1000511","zoho_sku_code":"1000511","raw_material_id":3355,"pct_w_w":2,"uom":"KG"},{"phase":"Main","inci_name":"LK 145 D","rm_code":"1000520","zoho_sku_code":"1000520","raw_material_id":3362,"pct_w_w":2,"uom":"KG"},{"phase":"Main","inci_name":"CRESMER EW (TH)","rm_code":"1000138","zoho_sku_code":"1000138","raw_material_id":3068,"pct_w_w":2,"uom":"KG"},{"phase":"Main","inci_name":"OPTINOV GREEN","rm_code":"1000319","zoho_sku_code":"1000319","raw_material_id":3201,"pct_w_w":0.5,"uom":"KG"},{"phase":"Main","inci_name":"DS CERAMIX V","rm_code":"1001146","zoho_sku_code":"1001146","raw_material_id":3470,"pct_w_w":0.1,"uom":"KG"},{"phase":"Main","inci_name":"LONDON FANTASY 36.35545","rm_code":"2000048","zoho_sku_code":"2000048","raw_material_id":3675,"pct_w_w":0.1,"uom":"KG"},{"phase":"Main","inci_name":"Sodium Hydroxide","rm_code":"1000425","zoho_sku_code":"1000425","raw_material_id":3286,"pct_w_w":0.1,"uom":"KG"},{"phase":"Main","inci_name":"AQUA","rm_code":"1000612","zoho_sku_code":"1000612","raw_material_id":3411,"pct_w_w":93.2,"uom":"KG"}]	[{"pm_code":"4000688","zoho_sku_code":"4000688","description":"200gm PP ROUND CREAM JAR - WHITE, PLUG FOR 200gm PP ROUND JAR - WHITE, CAP FOR 200gm PP ROUND CREAM JAR - WHITE","pm_description":"200gm PP ROUND CREAM JAR - WHITE, PLUG FOR 200gm PP ROUND JAR - WHITE, CAP FOR 200gm PP ROUND CREAM JAR - WHITE","pack_material_id":6860,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"5000091","zoho_sku_code":"5000091","description":"300ml Monocarton SHRINK SLEEVE ( 145 x 185 mm )","pm_description":"300ml Monocarton SHRINK SLEEVE ( 145 x 185 mm )","pack_material_id":8869,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"","zoho_sku_code":"5S00002","description":"200 ML SHIPPER 500x250x200 mm with printing and 2 pads","pm_description":"200 ML SHIPPER 500x250x200 mm with printing and 2 pads","pack_material_id":null,"pack_type":"Primary","qty_per_unit":0.05,"uom":"nos"},{"pm_code":"5L00055","zoho_sku_code":"5L00055","description":"FRAGILE STICKER","pm_description":"FRAGILE STICKER","pack_material_id":7156,"pack_type":"Primary","qty_per_unit":0.05,"uom":"nos"},{"pm_code":"5L00661","zoho_sku_code":"5L00661","description":"SKINNABLE ULTRA PROTECTIVE HYDRA MOISTURIZER 200 ML TOP LABEL","pm_description":"SKINNABLE ULTRA PROTECTIVE HYDRA MOISTURIZER 200 ML TOP LABEL","pack_material_id":7488,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"5L01713","zoho_sku_code":"5L01713","description":"SKINNABLE ULTRA PROTECTIVE HYDRA MOISTURIZER 200 ML SIDE LABEL","pm_description":"SKINNABLE ULTRA PROTECTIVE HYDRA MOISTURIZER 200 ML SIDE LABEL","pack_material_id":8914,"pack_type":"Secondary","qty_per_unit":1,"uom":"nos"}]	[]	\N	8283	2026-06-01 07:47:42.94+00	2026-06-01 07:47:46.938+00	[]	200.000000	ML	\N	active	\N
 8271	BOM-PR0004226-KC	\N	\N	\N	\N	\N	\N	\N	\N	t	FG	Draft	\N	\N	PERSONIKS NORMAL SKIN SUNSCREEN SPF 50 PA++++ 50 ML	\N	50 ML	\N	\N	\N	\N	\N	\N	\N	\N	1	\N	\N	\N	\N	\N	\N	\N	\N	\N	PR Sub-category: Sun Protection	\N	\N	\N	[{"phase":"Main","inci_name":"INHOUSE SUNSCREEN BLEND - 1","rm_code":"1001265","zoho_sku_code":"1001265","raw_material_id":3534,"pct_w_w":8,"uom":"KG"},{"phase":"Main","inci_name":"Paraffinum Liquidum","rm_code":"1000265","zoho_sku_code":"1000265","raw_material_id":3165,"pct_w_w":4,"uom":"KG"},{"phase":"Main","inci_name":"HYSTERIC","rm_code":"1000234","zoho_sku_code":"1000234","raw_material_id":3142,"pct_w_w":4,"uom":"KG"},{"phase":"Main","inci_name":"VEGAROL 1698","rm_code":"1000473","zoho_sku_code":"1000473","raw_material_id":3327,"pct_w_w":3.5,"uom":"KG"},{"phase":"Main","inci_name":"ARLACEL 2121","rm_code":"1000040","zoho_sku_code":"1000040","raw_material_id":2998,"pct_w_w":3,"uom":"KG"},{"phase":"Main","inci_name":"Cocos Nucifera Oil","rm_code":"1000665","zoho_sku_code":"1000665","raw_material_id":3422,"pct_w_w":3,"uom":"KG"},{"phase":"Main","inci_name":"KOPCERIN PE","rm_code":"1001312","zoho_sku_code":"1001312","raw_material_id":3559,"pct_w_w":0.7,"uom":"KG"},{"phase":"Main","inci_name":"BIOPOL CRYSTAL","rm_code":"1000076","zoho_sku_code":"1000076","raw_material_id":3026,"pct_w_w":0.55,"uom":"KG"},{"phase":"Main","inci_name":"CCTG","rm_code":"1001284","zoho_sku_code":"1001284","raw_material_id":3542,"pct_w_w":0.5,"uom":"KG"},{"phase":"Main","inci_name":"Disodium EDTA","rm_code":"1000153","zoho_sku_code":"1000153","raw_material_id":3074,"pct_w_w":0.2,"uom":"KG"},{"phase":"Main","inci_name":"Sodium Hydroxide","rm_code":"1000425","zoho_sku_code":"1000425","raw_material_id":3286,"pct_w_w":0.066,"uom":"KG"},{"phase":"Main","inci_name":"AQUA","rm_code":"1000612","zoho_sku_code":"1000612","raw_material_id":3411,"pct_w_w":72.484,"uom":"KG"}]	[{"pm_code":"4001079","zoho_sku_code":"4001079","description":"50 ml white airless bottle and pump set ( India )","pm_description":"50 ml white airless bottle and pump set ( India )","pack_material_id":7013,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"5L01705","zoho_sku_code":"5L01705","description":"PERSONIKS SUNSCREEN LOTION SPF 50 PA++++ FOR NORMAL SKIN 50 ML LABEL (indian airless)","pm_description":"PERSONIKS SUNSCREEN LOTION SPF 50 PA++++ FOR NORMAL SKIN 50 ML LABEL (indian airless)","pack_material_id":8911,"pack_type":"Secondary","qty_per_unit":1,"uom":"nos"}]	[]	\N	8302	2026-06-01 07:47:43.051+00	2026-06-01 07:47:47.181+00	[]	50.000000	ML	\N	active	\N
 8273	BOM-PR0004688	\N	\N	\N	\N	\N	\N	\N	\N	t	FG	Draft	\N	\N	ROMA DERMA ULTRA SHIELD SUN-SAFE SUNSCREEN SPF 30 PA++++ 100 ML	\N	100 ML	\N	\N	\N	\N	\N	\N	\N	\N	0.905	\N	\N	\N	\N	\N	\N	\N	\N	\N	PR Sub-category: Sun Protection	\N	\N	\N	[{"phase":"Main","inci_name":"INHOUSE SUNSCREEN BLEND - 1","rm_code":"1001265","zoho_sku_code":"1001265","raw_material_id":3534,"pct_w_w":6,"uom":"KG"},{"phase":"Main","inci_name":"BIOPOL CRYSTAL","rm_code":"1000076","zoho_sku_code":"1000076","raw_material_id":3026,"pct_w_w":0.5,"uom":"KG"},{"phase":"Main","inci_name":"FM-proVB5","rm_code":"1001182","zoho_sku_code":"1001182","raw_material_id":3486,"pct_w_w":0.5,"uom":"KG"},{"phase":"Main","inci_name":"ICS-HEU (HYDROXYETHYL UREA)","rm_code":"1001461","zoho_sku_code":"1001461","raw_material_id":3808,"pct_w_w":0.1,"uom":"KG"},{"phase":"Main","inci_name":"Citric Acid","rm_code":"1000121","zoho_sku_code":"1000121","raw_material_id":3057,"pct_w_w":0.04,"uom":"KG"},{"phase":"Main","inci_name":"AQUA","rm_code":"1000612","zoho_sku_code":"1000612","raw_material_id":3411,"pct_w_w":92.86,"uom":"KG"}]	[{"pm_code":"4000011","zoho_sku_code":"4000011","description":"100 ML PET SLEEK BOTTLE - WHITE","pm_description":"100 ML PET SLEEK BOTTLE - WHITE","pack_material_id":6516,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"4000065","zoho_sku_code":"4000065","description":"24/410 MM ON OFF DISPENSER WHITE (WITHOUT KNURLING)","pm_description":"24/410 MM ON OFF DISPENSER WHITE (WITHOUT KNURLING)","pack_material_id":6538,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"4000148","zoho_sku_code":"4000148","description":"LOCK UP CLIP - WHITE","pm_description":"LOCK UP CLIP - WHITE","pack_material_id":6590,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"5L00283","zoho_sku_code":"5L00283","description":"ROMA DERMA ULTRA SHIELD SUN SAFE SUNSCREEN SPF 30 PA++++ 100 ML LABEL","pm_description":"ROMA DERMA ULTRA SHIELD SUN SAFE SUNSCREEN SPF 30 PA++++ 100 ML LABEL","pack_material_id":7254,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"5M00181","zoho_sku_code":"5M00181","description":"ROMA DERMA ULTRA SHIELD SUN SAFE SUNSCREEN SPF 30 PA++++ 100 ML MONOCARTON","pm_description":"ROMA DERMA ULTRA SHIELD SUN SAFE SUNSCREEN SPF 30 PA++++ 100 ML MONOCARTON","pack_material_id":8206,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"5000290","zoho_sku_code":"5000290","description":"MONOCARTON SHRINKING (10 INCHES/ 15 MICRONS)","pm_description":"MONOCARTON SHRINKING (10 INCHES/ 15 MICRONS)","pack_material_id":8895,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"","zoho_sku_code":"5S00002","description":"200 ML SHIPPER 500x250x200 mm with printing and 2 pads","pm_description":"200 ML SHIPPER 500x250x200 mm with printing and 2 pads","pack_material_id":null,"pack_type":"Primary","qty_per_unit":0.031,"uom":"nos"},{"pm_code":"5L00055","zoho_sku_code":"5L00055","description":"FRAGILE STICKER","pm_description":"FRAGILE STICKER","pack_material_id":7156,"pack_type":"Primary","qty_per_unit":0.031,"uom":"nos"}]	[]	\N	8304	2026-06-01 07:47:43.062+00	2026-06-01 07:47:47.216+00	[]	100.000000	ML	\N	active	\N
+8350	PR00301	PR00301	3529895000000479002	\N	\N	\N	Taxable	f	\N	f	\N	Draft	\N	\N	HHHH	\N	\N	\N	Hair Care	\N	\N	\N	\N	\N	\N	1	{"Hair Care::Shampoo":[{"id":"qs-1782379953471-4pthw5c","parameter":"Appearance","specLimit":"Clear / pearl viscous liquid","method":"Visual","mandatory":true,"tolerance":"Clear / pearl viscous liquid","frequency":"","sample":"","acceptance":"Clear / pearl viscous liquid","attachments":[]},{"id":"qs-1782379953471-xomkc24","parameter":"pH","specLimit":"5.0–6.5","method":"pH meter","mandatory":true,"tolerance":"5–6.5 pH","frequency":"","sample":"","acceptance":"5.0–6.5","attachments":[]},{"id":"qs-1782379953471-dhb20u3","parameter":"Viscosity","specLimit":"3500–6500 cP","method":"RVT spindle 4","mandatory":true,"tolerance":"3500–6500 cP","frequency":"","sample":"","acceptance":"3500–6500 cP","attachments":[]},{"id":"qs-1782379953471-i51n41s","parameter":"Foam Volume (Ross-Miles)","specLimit":"≥ 150 mm","method":"Ross-Miles","mandatory":false,"tolerance":"≥ 150 mm","frequency":"","sample":"","acceptance":"≥ 150 mm","attachments":[]},{"id":"qs-1782379953471-4t8y8t6","parameter":"TAMC","specLimit":"≤ 100 CFU/g","method":"USP <61>","mandatory":true,"tolerance":"≤ 100 CFU/g","frequency":"","sample":"","acceptance":"≤ 100 CFU/g","attachments":[]},{"id":"qs-1782379953471-q3rpk2b","parameter":"COA + Retain","specLimit":"COA + 3 retains","method":"Doc + Sampling","mandatory":true,"tolerance":"","frequency":"","sample":"","acceptance":"Attached","attachments":[]}]}	{"common":[{"id":"qs-1782379953471-nytrkf9","parameter":"Fill Volume","specLimit":"Per label ±2%","method":"Balance","mandatory":true,"tolerance":"±2%","frequency":"Every 30 min","sample":"10/check","acceptance":"Within range","attachments":[]},{"id":"qs-1782379953471-lwtdh5s","parameter":"Coding + Labels + Carton","specLimit":"Per Master","method":"Visual","mandatory":true,"tolerance":"100%","frequency":"Every shift","sample":"AQL","acceptance":"Pass","attachments":[]}],"subByPath":{"Hair Care::Shampoo":[{"id":"qs-1782379953471-2drmgxq","parameter":"Net Volume","specLimit":"200 ml ± 3%","method":"Scale","mandatory":true,"tolerance":"194–206 ml","frequency":"","sample":"","acceptance":"200 ml ± 3%","attachments":[]},{"id":"qs-1782379953471-95rf0i1","parameter":"Gross Weight","specLimit":"232–250 g","method":"Scale","mandatory":true,"tolerance":"232–250 g","frequency":"","sample":"","acceptance":"232–250 g","attachments":[]},{"id":"qs-1782379953471-mse7i6b","parameter":"Cap Torque + leak","specLimit":"Torque 10-15 in-lbs · 0 leaks","method":"Torque + invert","mandatory":true,"tolerance":"true","frequency":"","sample":"","acceptance":"Pass","attachments":[]},{"id":"qs-1782379953471-a5ouwmn","parameter":"Components","specLimit":"Bottle + cap + label + shrink + monocarton","method":"Visual","mandatory":true,"tolerance":"true","frequency":"","sample":"","acceptance":"Pass","attachments":[]},{"id":"qs-1782379953471-oneuu42","parameter":"Label / MRP / Batch / MFG / EXP","specLimit":"Per print spec","method":"Visual","mandatory":true,"tolerance":"true","frequency":"","sample":"","acceptance":"Pass","attachments":[]},{"id":"qs-1782379953471-tylw69y","parameter":"Barcode","specLimit":"Pass","method":"Scanner","mandatory":true,"tolerance":"true","frequency":"","sample":"","acceptance":"Pass","attachments":[]},{"id":"qs-1782379953471-ai42q5y","parameter":"Pack photo","specLimit":"4 angles","method":"Camera","mandatory":true,"tolerance":"","frequency":"","sample":"","acceptance":"Attached","attachments":[]}]}}	\N	[{"id":"qs-1782379953471-numjz80","parameter":"Appearance","specLimit":"Per Master","method":"Visual","mandatory":false,"tolerance":"Match","frequency":"Per batch","sample":"10g","acceptance":"Match","attachments":[]},{"id":"qs-1782379953471-nxqa5uu","parameter":"pH","specLimit":"Per Master","method":"pH meter","mandatory":false,"tolerance":"±0.3","frequency":"Per batch","sample":"100g","acceptance":"Within range","attachments":[]},{"id":"qs-1782379953471-1sd5hbw","parameter":"Viscosity","specLimit":"Per Master","method":"Brookfield","mandatory":false,"tolerance":"±20%","frequency":"Per batch","sample":"250g","acceptance":"Within range","attachments":[]},{"id":"qs-1782379953471-0kgu1lb","parameter":"Active Matter (surfactants)","specLimit":"Per Master","method":"Two-phase titration","mandatory":false,"tolerance":"±2%","frequency":"Per batch","sample":"2g","acceptance":"Within range","attachments":[]},{"id":"qs-1782379953471-w5tgfhg","parameter":"Microbial","specLimit":"Per IS 14648","method":"USP <61>/<62>","mandatory":false,"tolerance":"≤ Limit","frequency":"Per batch","sample":"1g","acceptance":"Pass","attachments":[]}]	{"common":[{"id":"qs-1782379953471-0fdsni8","parameter":"SO + Picking Match","specLimit":"Exact","method":"Manual + system","mandatory":true,"tolerance":"Exact","frequency":"Per dispatch","sample":"All","acceptance":"Match","attachments":[]},{"id":"qs-1782379953471-8padry6","parameter":"FIFO Compliance","specLimit":"Oldest batch first","method":"Batch No. check","mandatory":true,"tolerance":"FIFO","frequency":"Per dispatch","sample":"All","acceptance":"FIFO","attachments":[]},{"id":"qs-1782379953471-aq6jvrz","parameter":"Shelf Life Compliance","specLimit":"≥ Client min (80% residual)","method":"Exp date calc","mandatory":true,"tolerance":"≥ Client min","frequency":"Per dispatch","sample":"All","acceptance":"Pass","attachments":[]},{"id":"qs-1782379953471-t7nv77f","parameter":"Pallet Stack & Wrap","specLimit":"Per Master","method":"Visual","mandatory":true,"tolerance":"Tight wrap","frequency":"Per pallet","sample":"All","acceptance":"Pass","attachments":[]},{"id":"qs-1782379953471-9nwahah","parameter":"Vehicle Cleanliness","specLimit":"Clean, dry, no odor","method":"Visual + Olfactory","mandatory":true,"tolerance":"Clean","frequency":"Per vehicle","sample":"1","acceptance":"Pass","attachments":[]},{"id":"qs-1782379953471-80xpopa","parameter":"Tax Invoice + E-way Bill + Packing List + COA","specLimit":"Generated","method":"Doc generation","mandatory":true,"tolerance":"Complete","frequency":"Per dispatch","sample":"1 set","acceptance":"Complete","attachments":[]}],"subByPath":{"Hair Care::Shampoo":[{"id":"qs-1782379953471-ugeixc7","parameter":"Packs per Shipper","specLimit":"12 units / shipper","method":"Count","mandatory":true,"tolerance":"= 12 units","frequency":"","sample":"","acceptance":"12 units / shipper","attachments":[]},{"id":"qs-1782379953471-o7uhtwc","parameter":"Total Shippers","specLimit":"Match dispatch qty","method":"Count","mandatory":true,"tolerance":"≥ 1 shippers","frequency":"","sample":"","acceptance":"Match dispatch qty","attachments":[]},{"id":"qs-1782379953471-uxdj2lc","parameter":"Shipper Marking","specLimit":"Brand + batch + qty + invoice","method":"Visual","mandatory":true,"tolerance":"true","frequency":"","sample":"","acceptance":"Pass","attachments":[]},{"id":"qs-1782379953471-b9cz5di","parameter":"Address + Barcode","specLimit":"Pass first scan","method":"Visual + Scanner","mandatory":true,"tolerance":"true","frequency":"","sample":"","acceptance":"Pass","attachments":[]},{"id":"qs-1782379953471-3wo42mt","parameter":"Loading Photo","specLimit":"2 angles","method":"Camera","mandatory":true,"tolerance":"","frequency":"","sample":"","acceptance":"Attached","attachments":[]},{"id":"qs-1782379953471-hk1ujzd","parameter":"Dispatch Note","specLimit":"Signed","method":"Doc","mandatory":true,"tolerance":"","frequency":"","sample":"","acceptance":"Attached","attachments":[]}]}}	\N	\N	\N	\N	PR Sub-category: Shampoo	\N	\N	\N	[{"phase":"","inci_name":"Salicylic Acida","rm_code":"1000002","raw_material_id":2969,"pct_w_w":80,"uom":"KG","specific_gravity":1},{"phase":"","inci_name":"AQUA","rm_code":"1000612","raw_material_id":3411,"pct_w_w":20,"uom":"KG","specific_gravity":1}]	[{"pm_code":"10CT001-19 DIA SKINQ ACNE CONTROL FACE MASK 10GM TUBE","pack_material_id":6505,"description":"Seamless Printed SkinQ Acne control mask-10gm ( 19 Dia) White Tube with white standy screw Cap , 3 Layer","pack_type":"Primary","pm_sku_category":"tpm-tertiary","pm_sub_category":"Other Components","optional_pm_sub_category":"Other Components","qty_per_unit":1,"uom":"PCS"}]	[]	\N	8381	2026-06-25 09:32:38.945+00	2026-06-25 09:32:41.212+00	[]	\N	GM	\N	active	\N
 8253	BOM-PR0007032	\N	\N	\N	\N	\N	\N	\N	\N	t	FG	Draft	\N	\N	SKINQ RX HYDRA FIX BALM 50ML	\N	50 ML	\N	\N	\N	\N	\N	\N	\N	\N	1	\N	\N	\N	\N	\N	\N	\N	\N	\N	PR Sub-category: Hydrating	\N	\N	\N	[{"phase":"Main","inci_name":"Paraffinum Liquidum","rm_code":"1000265","zoho_sku_code":"1000265","raw_material_id":3165,"pct_w_w":5,"uom":"KG"},{"phase":"Main","inci_name":"Paraffinum Liquidum","rm_code":"1000265","zoho_sku_code":"1000265","raw_material_id":3165,"pct_w_w":5,"uom":"KG"},{"phase":"Main","inci_name":"Propylene Glycol","rm_code":"1000358","zoho_sku_code":"1000358","raw_material_id":3230,"pct_w_w":2.5,"uom":"KG"},{"phase":"Main","inci_name":"Propylene Glycol","rm_code":"CLUB00004","zoho_sku_code":"CLUB00004","raw_material_id":3750,"pct_w_w":2.5,"uom":"KG"},{"phase":"Main","inci_name":"VEGAROL 1698","rm_code":"1000473","zoho_sku_code":"1000473","raw_material_id":3327,"pct_w_w":1,"uom":"KG"},{"phase":"Main","inci_name":"CRESMER EW (TH)","rm_code":"1000138","zoho_sku_code":"1000138","raw_material_id":3068,"pct_w_w":1,"uom":"KG"},{"phase":"Main","inci_name":"SERASENSE GB 10","rm_code":"1000408","zoho_sku_code":"1000408","raw_material_id":3273,"pct_w_w":1,"uom":"KG"},{"phase":"Main","inci_name":"Cetyl Alcohol","rm_code":"CLUB00059","zoho_sku_code":"CLUB00059","raw_material_id":3803,"pct_w_w":1,"uom":"KG"},{"phase":"Main","inci_name":"CRESMER EW (TH)","rm_code":"1000138","zoho_sku_code":"1000138","raw_material_id":3068,"pct_w_w":1,"uom":"KG"},{"phase":"Main","inci_name":"SERASENSE GB 10","rm_code":"1000408","zoho_sku_code":"1000408","raw_material_id":3273,"pct_w_w":1,"uom":"KG"},{"phase":"Main","inci_name":"HYSTERIC","rm_code":"1000234","zoho_sku_code":"1000234","raw_material_id":3142,"pct_w_w":0.5,"uom":"KG"},{"phase":"Main","inci_name":"CAPRYLIC CAPRIC TRIGLYCERIDE - CLUB","rm_code":"CLUB00044","zoho_sku_code":"CLUB00044","raw_material_id":3790,"pct_w_w":0.5,"uom":"KG"},{"phase":"Main","inci_name":"HYSTERIC","rm_code":"1000234","zoho_sku_code":"1000234","raw_material_id":3142,"pct_w_w":0.5,"uom":"KG"},{"phase":"Main","inci_name":"CCTG","rm_code":"1001284","zoho_sku_code":"1001284","raw_material_id":3542,"pct_w_w":0.5,"uom":"KG"},{"phase":"Main","inci_name":"PRESERVATIVE CLUB","rm_code":"","zoho_sku_code":"CLUB00038","raw_material_id":null,"pct_w_w":0.4,"uom":"KG"},{"phase":"Main","inci_name":"KOPCERIN PE","rm_code":"1001312","zoho_sku_code":"1001312","raw_material_id":3559,"pct_w_w":0.4,"uom":"KG"},{"phase":"Main","inci_name":"Sodium Hydroxide","rm_code":"1000425","zoho_sku_code":"1000425","raw_material_id":3286,"pct_w_w":0.35,"uom":"KG"},{"phase":"Main","inci_name":"Sodium Hydroxide","rm_code":"1000425","zoho_sku_code":"1000425","raw_material_id":3286,"pct_w_w":0.35,"uom":"KG"},{"phase":"Main","inci_name":"ETHO HCO -40","rm_code":"1000178","zoho_sku_code":"1000178","raw_material_id":3093,"pct_w_w":0.25,"uom":"KG"},{"phase":"Main","inci_name":"ETHO HCO -40","rm_code":"1000178","zoho_sku_code":"1000178","raw_material_id":3093,"pct_w_w":0.25,"uom":"KG"},{"phase":"Main","inci_name":"AQUAGEL 35 S","rm_code":"1000033","zoho_sku_code":"1000033","raw_material_id":2994,"pct_w_w":0.15,"uom":"KG"},{"phase":"Main","inci_name":"AQUAGEL - SEPIGEL - CLUB","rm_code":"CLUB00022","zoho_sku_code":"CLUB00022","raw_material_id":3768,"pct_w_w":0.15,"uom":"KG"},{"phase":"Main","inci_name":"REAQUA-SODIUM PCA (INNOVISION)","rm_code":"1001466","zoho_sku_code":"1001466","raw_material_id":3819,"pct_w_w":0.05,"uom":"KG"},{"phase":"Main","inci_name":"SODIUM HYALURONATE - CLUB","rm_code":"CLUB00028","zoho_sku_code":"CLUB00028","raw_material_id":3774,"pct_w_w":0.05,"uom":"KG"},{"phase":"Main","inci_name":"SODIUM PCA - CLUB","rm_code":"","zoho_sku_code":"CLUB00075","raw_material_id":null,"pct_w_w":0.05,"uom":"KG"},{"phase":"Main","inci_name":"BUTYROSPERMUM PARKII BUTTER - CLUB","rm_code":"CLUB00005","zoho_sku_code":"CLUB00005","raw_material_id":3751,"pct_w_w":0.05,"uom":"KG"},{"phase":"Main","inci_name":"Panthenol","rm_code":"CLUB00072","zoho_sku_code":"CLUB00072","raw_material_id":3816,"pct_w_w":0.05,"uom":"KG"},{"phase":"Main","inci_name":"ICS-HEU (HYDROXYETHYL UREA)","rm_code":"1001461","zoho_sku_code":"1001461","raw_material_id":3808,"pct_w_w":0.05,"uom":"KG"},{"phase":"Main","inci_name":"FM-proVB5","rm_code":"1001182","zoho_sku_code":"1001182","raw_material_id":3486,"pct_w_w":0.05,"uom":"KG"},{"phase":"Main","inci_name":"Disodium EDTA","rm_code":"CLUB00053","zoho_sku_code":"CLUB00053","raw_material_id":3797,"pct_w_w":0.05,"uom":"KG"},{"phase":"Main","inci_name":"Niacinamide","rm_code":"1000511","zoho_sku_code":"1000511","raw_material_id":3355,"pct_w_w":0.05,"uom":"KG"},{"phase":"Main","inci_name":"Butyrospermum Parkii Butter","rm_code":"1000412","zoho_sku_code":"1000412","raw_material_id":3277,"pct_w_w":0.05,"uom":"KG"},{"phase":"Main","inci_name":"SODIUM HYALURONATE (CHEMICORE)","rm_code":"1001210","zoho_sku_code":"1001210","raw_material_id":3496,"pct_w_w":0.05,"uom":"KG"},{"phase":"Main","inci_name":"Disodium EDTA","rm_code":"1000153","zoho_sku_code":"1000153","raw_material_id":3074,"pct_w_w":0.05,"uom":"KG"},{"phase":"Main","inci_name":"DS CERAMIX V","rm_code":"1001146","zoho_sku_code":"1001146","raw_material_id":3470,"pct_w_w":0.05,"uom":"KG"},{"phase":"Main","inci_name":"BIOPOL CRYSTAL","rm_code":"1000076","zoho_sku_code":"1000076","raw_material_id":3026,"pct_w_w":0.05,"uom":"KG"},{"phase":"Main","inci_name":"PURAC HS 88","rm_code":"1000255","zoho_sku_code":"1000255","raw_material_id":3157,"pct_w_w":0.05,"uom":"KG"},{"phase":"Main","inci_name":"Niacinamide","rm_code":"1000511","zoho_sku_code":"1000511","raw_material_id":3355,"pct_w_w":0.05,"uom":"KG"},{"phase":"Main","inci_name":"DS CERAMIX V","rm_code":"1001146","zoho_sku_code":"1001146","raw_material_id":3470,"pct_w_w":0.05,"uom":"KG"},{"phase":"Main","inci_name":"BIOPOL CRYSTAL","rm_code":"1000076","zoho_sku_code":"1000076","raw_material_id":3026,"pct_w_w":0.05,"uom":"KG"},{"phase":"Main","inci_name":"PURAC HS 88","rm_code":"1000255","zoho_sku_code":"1000255","raw_material_id":3157,"pct_w_w":0.05,"uom":"KG"},{"phase":"Main","inci_name":"HYDROXYETHYL UREA - CLUB","rm_code":"","zoho_sku_code":"CLUB00064","raw_material_id":null,"pct_w_w":0.05,"uom":"KG"},{"phase":"Main","inci_name":"CMPD SUPER GF:PEACH FR PUNCH","rm_code":"2000168","zoho_sku_code":"2000168","raw_material_id":3722,"pct_w_w":0.01,"uom":"KG"},{"phase":"Main","inci_name":"CMPD SUPER GF:PEACH FR PUNCH","rm_code":"2000168","zoho_sku_code":"2000168","raw_material_id":3722,"pct_w_w":0.01,"uom":"KG"},{"phase":"Main","inci_name":"AQUA","rm_code":"1000612","zoho_sku_code":"1000612","raw_material_id":3411,"pct_w_w":73.68,"uom":"KG"},{"phase":"Main","inci_name":"TOTAL","rm_code":"","zoho_sku_code":null,"raw_material_id":null,"pct_w_w":100,"uom":"KG"}]	[{"pm_code":"4001142","zoho_sku_code":"4001142","description":"SKINQ RX HYDRA FIX BALM 50 ML PRINTED OUTER BOTTLE","pm_description":"SKINQ RX HYDRA FIX BALM 50 ML PRINTED OUTER BOTTLE","pack_material_id":7056,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"4001142","zoho_sku_code":"4001142","description":"SKINQ RX HYDRA FIX BALM 50 ML PRINTED OUTER BOTTLE","pm_description":"SKINQ RX HYDRA FIX BALM 50 ML PRINTED OUTER BOTTLE","pack_material_id":7056,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"4001144","zoho_sku_code":"4001144","description":"SKINQ RX 50 ML WHITE INNER AIRLESS BOTTLE","pm_description":"SKINQ RX 50 ML WHITE INNER AIRLESS BOTTLE","pack_material_id":7058,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"4001145","zoho_sku_code":"4001145","description":"SKINQ RX 30 ML/50 ML AIRLESS PUMP WITH OVERCAP","pm_description":"SKINQ RX 30 ML/50 ML AIRLESS PUMP WITH OVERCAP","pack_material_id":7059,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"5L00055","zoho_sku_code":"5L00055","description":"FRAGILE STICKER","pm_description":"FRAGILE STICKER","pack_material_id":7156,"pack_type":"Primary","qty_per_unit":0.025,"uom":"nos"},{"pm_code":"5M01003","zoho_sku_code":"5M01003","description":"SKINQ RX HYDRA FIX BALM 50 ML MONOCARTON","pm_description":"SKINQ RX HYDRA FIX BALM 50 ML MONOCARTON","pack_material_id":8774,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"","zoho_sku_code":"5P00049","description":"SKINQ RX 50 ML OUTER SHIPPER","pm_description":"SKINQ RX 50 ML OUTER SHIPPER","pack_material_id":null,"pack_type":"Primary","qty_per_unit":0.025,"uom":"nos"},{"pm_code":"4001144","zoho_sku_code":"4001144","description":"SKINQ RX 50 ML WHITE INNER AIRLESS BOTTLE","pm_description":"SKINQ RX 50 ML WHITE INNER AIRLESS BOTTLE","pack_material_id":7058,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"4001145","zoho_sku_code":"4001145","description":"SKINQ RX 30 ML/50 ML AIRLESS PUMP WITH OVERCAP","pm_description":"SKINQ RX 30 ML/50 ML AIRLESS PUMP WITH OVERCAP","pack_material_id":7059,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"5L00055","zoho_sku_code":"5L00055","description":"FRAGILE STICKER","pm_description":"FRAGILE STICKER","pack_material_id":7156,"pack_type":"Primary","qty_per_unit":0.025,"uom":"nos"},{"pm_code":"5M01003","zoho_sku_code":"5M01003","description":"SKINQ RX HYDRA FIX BALM 50 ML MONOCARTON","pm_description":"SKINQ RX HYDRA FIX BALM 50 ML MONOCARTON","pack_material_id":8774,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"","zoho_sku_code":"5P00049","description":"SKINQ RX 50 ML OUTER SHIPPER","pm_description":"SKINQ RX 50 ML OUTER SHIPPER","pack_material_id":null,"pack_type":"Primary","qty_per_unit":0.025,"uom":"nos"},{"pm_code":"","zoho_sku_code":"5P00050","description":"SKINQ RX 50 ML INNER SHIPPER","pm_description":"SKINQ RX 50 ML INNER SHIPPER","pack_material_id":null,"pack_type":"Primary","qty_per_unit":0.1,"uom":"nos"},{"pm_code":"5000132","zoho_sku_code":"5000132","description":"SKINQ RX 50 ML MONOCARTON SHRINK SLEEVE","pm_description":"SKINQ RX 50 ML MONOCARTON SHRINK SLEEVE","pack_material_id":8890,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"","zoho_sku_code":"5P00050","description":"SKINQ RX 50 ML INNER SHIPPER","pm_description":"SKINQ RX 50 ML INNER SHIPPER","pack_material_id":null,"pack_type":"Primary","qty_per_unit":0.1,"uom":"nos"},{"pm_code":"5000132","zoho_sku_code":"5000132","description":"SKINQ RX 50 ML MONOCARTON SHRINK SLEEVE","pm_description":"SKINQ RX 50 ML MONOCARTON SHRINK SLEEVE","pack_material_id":8890,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"}]	[]	\N	8284	2026-06-01 07:47:42.946+00	2026-06-01 07:47:46.96+00	[]	50.000000	ML	\N	active	\N
 8254	BOM-PR0007104	\N	\N	\N	\N	\N	\N	\N	\N	t	FG	Draft	\N	\N	SKINQ RX HYDRA FIX FACE MASK 10 GM	\N	10 G	\N	\N	\N	\N	\N	\N	\N	\N	1.003	\N	\N	\N	\N	\N	\N	\N	\N	\N	PR Sub-category: Hydrating	\N	\N	\N	[{"phase":"Main","inci_name":"GLYCERINE IP - GODREJ","rm_code":"1001427","zoho_sku_code":"1001427","raw_material_id":3749,"pct_w_w":10,"uom":"KG"},{"phase":"Main","inci_name":"Aloe Barbadensis Leaf Juice","rm_code":"1000016","zoho_sku_code":"1000016","raw_material_id":2981,"pct_w_w":5,"uom":"KG"},{"phase":"Main","inci_name":"Betaine","rm_code":"1000194","zoho_sku_code":"1000194","raw_material_id":3108,"pct_w_w":3,"uom":"KG"},{"phase":"Main","inci_name":"PURAC HS 88","rm_code":"1000255","zoho_sku_code":"1000255","raw_material_id":3157,"pct_w_w":1,"uom":"KG"},{"phase":"Main","inci_name":"Niacinamide","rm_code":"1000511","zoho_sku_code":"1000511","raw_material_id":3355,"pct_w_w":1,"uom":"KG"},{"phase":"Main","inci_name":"BIOPOL CRYSTAL","rm_code":"1000076","zoho_sku_code":"1000076","raw_material_id":3026,"pct_w_w":1,"uom":"KG"},{"phase":"Main","inci_name":"DS CERAMIX V","rm_code":"1001146","zoho_sku_code":"1001146","raw_material_id":3470,"pct_w_w":0.5,"uom":"KG"},{"phase":"Main","inci_name":"PRODEW 500","rm_code":"1000353","zoho_sku_code":"1000353","raw_material_id":3225,"pct_w_w":0.5,"uom":"KG"},{"phase":"Main","inci_name":"PHYTOSQUALAN (VIVVAN)","rm_code":"1001411","zoho_sku_code":"1001411","raw_material_id":3805,"pct_w_w":0.26,"uom":"KG"},{"phase":"Main","inci_name":"SODIUM HYALURONATE (CHEMICORE)","rm_code":"1001210","zoho_sku_code":"1001210","raw_material_id":3496,"pct_w_w":0.26,"uom":"KG"},{"phase":"Main","inci_name":"Panthenol","rm_code":"1000780","zoho_sku_code":"1000780","raw_material_id":3433,"pct_w_w":0.26,"uom":"KG"},{"phase":"Main","inci_name":"PHYTOSQUALAN","rm_code":"1000345","zoho_sku_code":"1000345","raw_material_id":3218,"pct_w_w":0.26,"uom":"KG"},{"phase":"Main","inci_name":"FM-proVB5","rm_code":"1001182","zoho_sku_code":"1001182","raw_material_id":3486,"pct_w_w":0.26,"uom":"KG"},{"phase":"Main","inci_name":"PATENT BLUE V (KOELOW-024)","rm_code":"1000334","zoho_sku_code":"1000334","raw_material_id":3210,"pct_w_w":0.2,"uom":"KG"},{"phase":"Main","inci_name":"SODIUM GLUCONATE","rm_code":"1000422","zoho_sku_code":"1000422","raw_material_id":3285,"pct_w_w":0.2,"uom":"KG"},{"phase":"Main","inci_name":"VITAMINE E ACETATE 96.5% USP","rm_code":"1000477","zoho_sku_code":"1000477","raw_material_id":3330,"pct_w_w":0.2,"uom":"KG"},{"phase":"Main","inci_name":"Sodium Hydroxide","rm_code":"1000425","zoho_sku_code":"1000425","raw_material_id":3286,"pct_w_w":0.16,"uom":"KG"},{"phase":"Main","inci_name":"Aloe Barbadensis Leaf Juice","rm_code":"2000106","zoho_sku_code":"2000106","raw_material_id":3701,"pct_w_w":0.02,"uom":"KG"},{"phase":"Main","inci_name":"AQUA","rm_code":"1000612","zoho_sku_code":"1000612","raw_material_id":3411,"pct_w_w":75.92,"uom":"KG"}]	[{"pm_code":"","zoho_sku_code":"5P00001","description":"30GB SHIPPER WITH PARTITION 370x370x120 5ply with printing & partion 10x10","pm_description":"30GB SHIPPER WITH PARTITION 370x370x120 5ply with printing & partion 10x10","pack_material_id":null,"pack_type":"Primary","qty_per_unit":0.005,"uom":"nos"},{"pm_code":"5L00055","zoho_sku_code":"5L00055","description":"FRAGILE STICKER","pm_description":"FRAGILE STICKER","pack_material_id":7156,"pack_type":"Primary","qty_per_unit":0.005,"uom":"nos"},{"pm_code":"4001153","zoho_sku_code":"4001153","description":"SKINQ RX HYDRA FIX FACE MASK 10 GM PRINTED TUBE WITH NOZZLE SCREW CAP","pm_description":"SKINQ RX HYDRA FIX FACE MASK 10 GM PRINTED TUBE WITH NOZZLE SCREW CAP","pack_material_id":7067,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"}]	[]	\N	8285	2026-06-01 07:47:42.95+00	2026-06-01 07:47:46.97+00	[]	10.000000	GM	\N	active	\N
 8256	BOM-PR0006719	\N	\N	\N	\N	\N	\N	\N	\N	t	FG	Draft	\N	\N	Skn Snax - Barrier Relief Cream 50ml	\N	50 ML	\N	\N	\N	\N	\N	\N	\N	\N	0.995	\N	\N	\N	\N	\N	\N	\N	\N	\N	PR Sub-category: Hydrating	\N	\N	\N	[{"phase":"Main","inci_name":"CCTG","rm_code":"1001284","zoho_sku_code":"1001284","raw_material_id":3542,"pct_w_w":8,"uom":"KG"},{"phase":"Main","inci_name":"Dimethicone","rm_code":"1000418","zoho_sku_code":"1000418","raw_material_id":3282,"pct_w_w":5,"uom":"KG"},{"phase":"Main","inci_name":"GLYCERINE IP - GODREJ","rm_code":"1001427","zoho_sku_code":"1001427","raw_material_id":3749,"pct_w_w":5,"uom":"KG"},{"phase":"Main","inci_name":"ARLACEL 2121","rm_code":"1000040","zoho_sku_code":"1000040","raw_material_id":2998,"pct_w_w":2,"uom":"KG"},{"phase":"Main","inci_name":"Niacinamide","rm_code":"1000511","zoho_sku_code":"1000511","raw_material_id":3355,"pct_w_w":2,"uom":"KG"},{"phase":"Main","inci_name":"VEGAROL 1698","rm_code":"1000473","zoho_sku_code":"1000473","raw_material_id":3327,"pct_w_w":2,"uom":"KG"},{"phase":"Main","inci_name":"PHYTOSQUALAN (VIVVAN)","rm_code":"1001411","zoho_sku_code":"1001411","raw_material_id":3805,"pct_w_w":1,"uom":"KG"},{"phase":"Main","inci_name":"Gotu Kola Extract","rm_code":"1000207","zoho_sku_code":"1000207","raw_material_id":3119,"pct_w_w":1,"uom":"KG"},{"phase":"Main","inci_name":"Olea Europaea Fruit Oil","rm_code":"1000314","zoho_sku_code":"1000314","raw_material_id":3196,"pct_w_w":1,"uom":"KG"},{"phase":"Main","inci_name":"ETHO HCO -40","rm_code":"1000178","zoho_sku_code":"1000178","raw_material_id":3093,"pct_w_w":1,"uom":"KG"},{"phase":"Main","inci_name":"BIOPOL CRYSTAL","rm_code":"1000076","zoho_sku_code":"1000076","raw_material_id":3026,"pct_w_w":0.6,"uom":"KG"},{"phase":"Main","inci_name":"ACB FRUIT MIX","rm_code":"1001129","zoho_sku_code":"1001129","raw_material_id":3462,"pct_w_w":0.5,"uom":"KG"},{"phase":"Main","inci_name":"VITAMINE E ACETATE 96.5% USP","rm_code":"1000477","zoho_sku_code":"1000477","raw_material_id":3330,"pct_w_w":0.2,"uom":"KG"},{"phase":"Main","inci_name":"FM-proVB5","rm_code":"1001182","zoho_sku_code":"1001182","raw_material_id":3486,"pct_w_w":0.2,"uom":"KG"},{"phase":"Main","inci_name":"DS CERAMIX V","rm_code":"1001146","zoho_sku_code":"1001146","raw_material_id":3470,"pct_w_w":0.2,"uom":"KG"},{"phase":"Main","inci_name":"HYDRABOND (ALLANTOIN) - FLYCHEM","rm_code":"1001437","zoho_sku_code":"1001437","raw_material_id":3813,"pct_w_w":0.2,"uom":"KG"},{"phase":"Main","inci_name":"Disodium EDTA","rm_code":"1000153","zoho_sku_code":"1000153","raw_material_id":3074,"pct_w_w":0.2,"uom":"KG"},{"phase":"Main","inci_name":"Saffron Extract","rm_code":"1000671","zoho_sku_code":"1000671","raw_material_id":3424,"pct_w_w":0.1,"uom":"KG"},{"phase":"Main","inci_name":"Seabuckthorn Oil Extract","rm_code":"1000505","zoho_sku_code":"1000505","raw_material_id":3351,"pct_w_w":0.1,"uom":"KG"},{"phase":"Main","inci_name":"Goji Berry Extract","rm_code":"1000206","zoho_sku_code":"1000206","raw_material_id":3118,"pct_w_w":0.1,"uom":"KG"},{"phase":"Main","inci_name":"ADIPOLESS","rm_code":"1000009","zoho_sku_code":"1000009","raw_material_id":2975,"pct_w_w":0.1,"uom":"KG"},{"phase":"Main","inci_name":"Lemon Peel Extract","rm_code":"1000261","zoho_sku_code":"1000261","raw_material_id":3162,"pct_w_w":0.1,"uom":"KG"},{"phase":"Main","inci_name":"SODIUM HYALURONATE (CHEMICORE)","rm_code":"1001210","zoho_sku_code":"1001210","raw_material_id":3496,"pct_w_w":0.1,"uom":"KG"},{"phase":"Main","inci_name":"OLIGOGELINE SPE","rm_code":"1000610","zoho_sku_code":"1000610","raw_material_id":3410,"pct_w_w":0.1,"uom":"KG"},{"phase":"Main","inci_name":"Sodium Hydroxide","rm_code":"1000425","zoho_sku_code":"1000425","raw_material_id":3286,"pct_w_w":0.08,"uom":"KG"},{"phase":"Main","inci_name":"AQUA","rm_code":"1000612","zoho_sku_code":"1000612","raw_material_id":3411,"pct_w_w":69.12,"uom":"KG"}]	[{"pm_code":"5000290","zoho_sku_code":"5000290","description":"MONOCARTON SHRINKING (10 INCHES/ 15 MICRONS)","pm_description":"MONOCARTON SHRINKING (10 INCHES/ 15 MICRONS)","pack_material_id":8895,"pack_type":"Primary","qty_per_unit":0.001,"uom":"nos"},{"pm_code":"","zoho_sku_code":"5S00002","description":"200 ML SHIPPER 500x250x200 mm with printing and 2 pads","pm_description":"200 ML SHIPPER 500x250x200 mm with printing and 2 pads","pack_material_id":null,"pack_type":"Primary","qty_per_unit":0.016,"uom":"nos"},{"pm_code":"5L00055","zoho_sku_code":"5L00055","description":"FRAGILE STICKER","pm_description":"FRAGILE STICKER","pack_material_id":7156,"pack_type":"Primary","qty_per_unit":0.016,"uom":"nos"},{"pm_code":"4001198","zoho_sku_code":"4001198","description":"50 ML WHITE AIRLESS PP BOTTLE WITH WHITE CAP","pm_description":"50 ML WHITE AIRLESS PP BOTTLE WITH WHITE CAP","pack_material_id":7108,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"5L01679","zoho_sku_code":"5L01679","description":"SKN SNAX BARRIER RELIEF CREAM 50 ML LABEL","pm_description":"SKN SNAX BARRIER RELIEF CREAM 50 ML LABEL","pack_material_id":8035,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"5M01032","zoho_sku_code":"5M01032","description":"SKN SNAX BARRIER RELIEF CREAM 50 ML OUTER MONOCARTON","pm_description":"SKN SNAX BARRIER RELIEF CREAM 50 ML OUTER MONOCARTON","pack_material_id":8793,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"5M01033","zoho_sku_code":"5M01033","description":"SKN SNAX BARRIER RELIEF CREAM 50 ML INNER MONOCARTON","pm_description":"SKN SNAX BARRIER RELIEF CREAM 50 ML INNER MONOCARTON","pack_material_id":8794,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"},{"pm_code":"5F00044","zoho_sku_code":"5F00044","description":"SKN 50 ML MONOCARTON FITMENT","pm_description":"SKN 50 ML MONOCARTON FITMENT","pack_material_id":8132,"pack_type":"Primary","qty_per_unit":1,"uom":"nos"}]	[]	\N	8287	2026-06-01 07:47:42.961+00	2026-06-01 07:47:46.993+00	[]	50.000000	ML	\N	active	\N
@@ -7531,7 +7532,6 @@ COPY public.pack_materials (id, code, description, type, level, "group", materia
 8778	5M01007	YplayZ SLIDE & GLIDE  YOU'RE THE ZEST 40ML MONOCARTON"}, {"type": "text", "text": "	Packaging	Primary	Printed Monocartons	Monocartons	\N	0.00	\N	\N	\N	["PR0006701"]	1252231000039711265	5M01007	48191010	PCS	Taxable	\N	\N	\N	{"subCategory":"Printed Monocartons","pmCategory":"Monocartons","matBody":"Monocartons","excelCategory":"Monocartons","excelSubCategory":"Printed Monocartons","masterApprovalStatus":"Under Review","status":"Under Review"}	2026-05-10 11:20:38.827+00	2026-06-19 13:36:06.63+00	\N	active	\N	\N	\N
 8782	5M01013	SKINNEEDS RETINEW NIGHT CREAM 50 GM MONO CARTON	Packaging	Primary	Printed Monocartons	Monocartons	\N	0.00	\N	\N	\N	["PR0007099"]	1252231000039942162	5M01013	48191010	PCS	Taxable	\N	\N	\N	{"subCategory":"Printed Monocartons","pmCategory":"Monocartons","matBody":"Monocartons","excelCategory":"Monocartons","excelSubCategory":"Printed Monocartons","masterApprovalStatus":"Under Review","status":"Under Review"}	2026-05-10 11:20:39.069+00	2026-06-19 13:36:06.631+00	\N	active	\N	\N	\N
 8787	5M01026	SKN SNAX GEL FACE WASH 75 ML INNER MONOCARTON	Packaging	Primary	Printed Monocartons	Monocartons	\N	0.00	\N	\N	\N	["PR0006716"]	1252231000040248044	5M01026	48191010	PCS	Taxable	\N	\N	\N	{"subCategory":"Printed Monocartons","pmCategory":"Monocartons","matBody":"Monocartons","excelCategory":"Monocartons","excelSubCategory":"Printed Monocartons","masterApprovalStatus":"Under Review","status":"Under Review"}	2026-05-10 11:20:39.297+00	2026-06-19 13:36:06.631+00	\N	active	\N	\N	\N
-6505	10CT001-19 DIA SKINQ ACNE CONTROL FACE MASK 10GM TUBE	Seamless Printed SkinQ Acne control mask-10gm ( 19 Dia) White Tube with white standy screw Cap , 3 Layer	Packaging	Primary	Other Components	Other Components	\N	3.75	\N	\N	\N	[]	1252231000000938367	10CT001-19 DIA SKINQ ACNE CONTROL FACE MASK 10GM TUBE	39233090	PCS	Taxable	\N	\N	\N	{"subCategory":"Other Components","pmCategory":"Other Components","matBody":"Other Components","excelCategory":"Other Components","excelSubCategory":"Other Components","masterApprovalStatus":"Under Review","status":"Under Review"}	2026-05-10 11:18:52.324+00	2026-06-19 13:36:06.632+00	\N	active	\N	\N	\N
 8796	5M01048	SKINQ RX DERMA  BRIGHT AHA SERUM 30 ML MONOCARTON	Packaging	Primary	Printed Monocartons	Monocartons	\N	0.00	\N	\N	\N	["PR0007034"]	3529895000000415823	5M01048	48191010	PCS	Taxable	\N	\N	\N	{"subCategory":"Printed Monocartons","pmCategory":"Monocartons","matBody":"Monocartons","excelCategory":"Monocartons","excelSubCategory":"Printed Monocartons","masterApprovalStatus":"Under Review","status":"Under Review"}	2026-05-10 11:20:39.642+00	2026-06-19 13:36:06.632+00	\N	active	\N	\N	\N
 8893	5000232	PVC SHRINK SLEEVE 70mm x 210mm FOR UNDERATED 50G FACE MOISTURIZER	Packaging	Primary	Other Components	Other Components	\N	0.29	\N	\N	\N	["PR0004586"]	1252231000012970675	5000232	39201019	PCS	Taxable	\N	\N	\N	{"subCategory":"Other Components","pmCategory":"Other Components","matBody":"Other Components","excelCategory":"Other Components","excelSubCategory":"Other Components","masterApprovalStatus":"Under Review","status":"Under Review"}	2026-05-10 11:20:44.028+00	2026-06-19 13:36:06.632+00	\N	active	\N	\N	\N
 8896	PVCS12*16	PVC SHRINK POUCH 120*160 TRU HAIR SHAMPOO 200 ML	Packaging	Primary	Other Components	Other Components	\N	0.53	\N	\N	\N	[]	1252231000000938962	PVCS12*16	39201019	PCS	Taxable	\N	\N	\N	{"subCategory":"Other Components","pmCategory":"Other Components","matBody":"Other Components","excelCategory":"Other Components","excelSubCategory":"Other Components","masterApprovalStatus":"Under Review","status":"Under Review"}	2026-05-10 11:20:44.168+00	2026-06-19 13:36:06.633+00	\N	active	\N	\N	\N
@@ -9060,6 +9060,7 @@ COPY public.pack_materials (id, code, description, type, level, "group", materia
 8922	400301	b	\N	Primary	ppm	ppm	jj	\N	\N	\N	\N	[]	3529895000000474003	400301	09090	PCS	Taxable	f	\N	\N	{"itemCode":"400301","tradeCommercialName":"b","pmAssemblyCode":"","pmComponentBreakdown":"","pmSkuVolume":"","intendedUse":"","reusability":"","pmLifecycleStatus":"Active","pkgUnit":"PCS","pkgUnitsPerShipperRoll":"","pkgHsn":"09090","pkgGst":"5","specNominal":"jj","specBrimful":"","overflowCapacityOfcMl":"","pmOverallHeightMm":"","pmShoulderHeightMm":"","pmOuterDiameterMm":"","pmInnerDiameterNeckMm":"","pmCircumferenceMm":"","neckFinishStandard":"","neckHeightHMmTEHSpec":"","threadMajorDiaTMm":"","insideBoreDiaIMm":"","specWeight":"","wallThicknessSidewallMm":"","wallThicknessBaseMm":"","baseType":"","headspaceAtFillMmMl":"","tubeLengthMm":"kjj","pmOrificeMm":"j","shoulderStyle":"","crimpEndWidthMm":"","pmClosureType":"","pmPumpCcDosage":"","primingStrokesCount":"","dipTubeLengthMm":"","springMaterial":"","pmPipetteLengthMm":"","pipetteTipDiameterMm":"","teatMaterial":"","calibrationMarks":"","ballMaterial":"","ballDiameterMm":"","pushUpMechanism":"","fillingHeightMm":"","sachetWidthMm":"","sachetHeightMm":"","pmFillVolumeMl":"","pmSealLaminateWidthMm":"","tearNotch":"","labelWidthMm":"","labelHeightMm":"","sheetRollFormat":"","labelsPerSheet":"","sheetSizeMm":"","rollCoreInnerDiameterMm":"","rollOuterDiameterMm":"","labelsPerRoll":"","rollDirection":"","pmCartonLengthMm":"","pmCartonWidthMm":"","pmCartonHeightMm":"","glueFlapWidthMm":"","tuckLengthMm":"","dustFlapLengthMm":"","bottomLockType":"","sleeveLayflatWidthMm":"","sleeveCutLengthMm":"","shrinkRatioTdMd":"","openLeafletSizeMm":"","closedLeafletSizeMm":"","pageCount":"","foldPattern":"","fitmentOuterDiameterMm":"","fitmentInsertDepthMm":"","stickerDiameterMm":"","stickerLengthWidthMm":"","qrCardSizeMm":"","qrModuleResolutionDpi":"","shipperLengthWidthHeightMm":"","unitsPerShipper":"","palletSizeMm":"","palletLoadCapacityKg":"","filmRollWidthMm":"","filmRollLengthM":"","tapeWidthMm":"","tapeLengthPerRollM":"","strapWidthMm":"","strapThicknessMm":"","lengthMm":"","diameterWidthMm":"","bristleLengthMm":"","bristleDensity":"","spongeCellDensityPpi":"","desiccantSachetSizeMm":"","materialGradeStandard":"","polymerType":"","resinSource":"","pcrContent":"","densityGCm":"","mfiMfrG10min":"","ivIntrinsicViscosity":"","shoreHardness":"","topLoadResistanceKg":"","burstPressureResistanceKpa":"","escrHours":"","glassType":"","annealingClass":"","hydrolyticResistanceClass":"","thermalShockResistanceTC":"","aluminiumAlloy":"","internalCoatingType":"","externalLacquer":"","laminationStructure":"","barrierLayerEvohFoilMet":"","otrCcMDay":"","wvtrGMDay":"","pmmaOpticalClarity":"","substrate":"","substrateGsm":"","pmMaterialThicknessMicron":"","adhesiveType":"","adhesiveTackG25mm":"","releaseLiner":"","pmBoardPaperType":"","pmGsm":"","boardCaliperMm":"","boardBurstingFactor":"","coating":"","sachetLaminateStructure":"","sachetFoilThicknessMicrons":"","fluteType":"","plies3Ply5Ply7Ply":"","gsmPerLinerOutMidIn":"","ectEdgeCrushTestKnM":"","bctBoxCompressionTestKg":"","burstStrengthKpa":"","woodType":"","ispm15Stamp":"","palletMaterialType":"","filmThicknessMicrons":"","preStretch":"","clingType":"","tensileStrengthMpa":"","elongationBreak":"","backingMaterial":"","tapeAdhesion180PeelN25mm":"","bristleMaterial":"","spongeMaterial":"","wandTipStyle":"","desiccantActivityWWAdsorption":"","desiccantIndicator":"","storeLoc":"","regRecyclabilityCode":"","regFoodCosmeticCompliance":"","colorType":"","colorCode":"","transparencyLevel":"","finish":"","surfaceTexture":"","pmShoulderColour":"","pmCapOvercapColour":"","pmActuatorColourStyle":"","pmCollarFinish":"","pmTeatColour":"","frostingType":"","decorationMethod":"","numberOfColours":"","printColours":"","printCoverage":"","foilColour":"","spotUvSpecialEffects":"","embossingDebossing":"","pmLamination":"","metallisedEffect":"","premiumLookFeel":"","sustainabilityLookEcoClaim":"","artworkReferenceAwVersion":"","dielineReference":"","images":"","codingTemplateBatchMfgExpMrp":"","barcodeType":"","arNumber":"","qaQcTestPlanRef":"","aqlSamplingPlan":"","qaCoaRequired":"","qcDecisionAuthority":"","preferredVendor":"","alternateVendor":"","moqStandard":"","leadTimeDays":"","standardUnitCost":"","currency":"","printingPlateCostColourDevelopment":"","paymentTerms":"","pmSupplyLocation":"","priceTiers":"","priceValidityUntil":"","status":"Draft","masterApprovalStatus":"Draft","version":"v1.0","level":"Primary","zohoId":"","pkgSku":"","pkgTaxPreference":"Taxable","pkgReturnable":"No","pkgAssociateItems":"","products":[],"name":"b","preferredVendorClientId":"","alternateVendorClientId":"","pmQualitySpecRows":[{"id":"qs-1782211615050-byxtu4x","parameter":"COA from Vendor","specLimit":"Signed","method":"Doc review","mandatory":true,"tolerance":"—","frequency":"Per lot","sample":"1","acceptance":"Signed","attachments":[]},{"id":"qs-1782211615050-1xpuejq","parameter":"Visual Damage / Defect","specLimit":"No cracks / dents / scratches","method":"Visual @AQL 1.0 critical","mandatory":true,"tolerance":"0 critical","frequency":"Per lot","sample":"AQL","acceptance":"Pass","attachments":[]},{"id":"qs-1782211615050-h7eg53i","parameter":"Cleanliness","specLimit":"No particles / foreign matter","method":"Visual + Air-blast","mandatory":true,"tolerance":"0 contaminants","frequency":"Per lot","sample":"AQL","acceptance":"Clean","attachments":[]},{"id":"qs-1782211615050-isymin8","parameter":"Material Identity (HDPE/PET/PP/Glass)","specLimit":"Per Master","method":"COA + FTIR (random)","mandatory":true,"tolerance":"Exact","frequency":"Per vendor / quarterly","sample":"1","acceptance":"Match","attachments":[]},{"id":"qs-1782211615050-wsqljl8","parameter":"Color / Opacity Match","specLimit":"Per artwork master","method":"Visual + Spectrophotometer","mandatory":true,"tolerance":"ΔE ≤ 3","frequency":"Per lot","sample":"5/lot","acceptance":"Match","attachments":[]},{"id":"qs-1782211615050-e4gou43","parameter":"Weight per Unit","specLimit":"Per Master","method":"Balance ±0.01g","mandatory":true,"tolerance":"±5%","frequency":"Per lot","sample":"10/lot","acceptance":"Within ±5%","attachments":[]},{"id":"qs-1782211615050-4p4k8jp","parameter":"Lot Marking Visible","specLimit":"Vendor lot No. on carton","method":"Visual","mandatory":true,"tolerance":"—","frequency":"Per lot","sample":"All cartons","acceptance":"Visible","attachments":[]},{"id":"qs-1782211615050-0n8yfcw","parameter":"Leak Test (general)","specLimit":"No leak under standard test for that pack format","method":"Water inversion / Pressure decay / Vacuum / Dye penetration — per sub-cat method below","mandatory":true,"tolerance":"0 leaks","frequency":"Per lot","sample":"AQL 1.0 (critical) / 2.5 (major)","acceptance":"0 leaks","attachments":[]},{"id":"qs-1782211615050-ey00pmq","parameter":"Closure Integrity Test (capped/sealed pack)","specLimit":"No leak when capped + inverted 5 min","method":"Capped + inversion @25°C","mandatory":true,"tolerance":"0 leaks","frequency":"Per lot","sample":"10/lot","acceptance":"0 leaks","attachments":[]}],"pmQualitySubSpecRowsByPath":{},"vendors":[],"tests":[],"masterCustomDropdownOptions":{},"subCategory":"ppm","pmSkuCategory":"ppm","optionalPmSubCategory":"TUBES"}	2026-06-23 10:50:53.361+00	2026-06-23 10:50:54.599+00	\N	active	\N	\N	\N
 8127	5F00026	ANISE SKINCARE MONOCARTON FITMENT 150ML	\N	Secondary	spm-monocarton	Packaging - Secondary	\N	\N	\N	\N	\N	["PR0004158"]	1252231000015770526	5F00026	48191010	PCS	ExemptedServices	f	\N	\N	{"subCategory":"spm-monocarton","pmCategory":"Packaging - Secondary","matBody":"Packaging - Secondary","excelCategory":"Packaging - Secondary","excelSubCategory":"Packaging - Secondary","masterApprovalStatus":"Under Approval","status":"Under Approval","itemCode":"5F00026","tradeCommercialName":"ANISE SKINCARE MONOCARTON FITMENT 150ML","pmAssemblyCode":"","pmComponentBreakdown":"","pmSkuVolume":"","intendedUse":"","reusability":"","pmLifecycleStatus":"Active","pkgUnit":"PCS","pkgUnitsPerShipperRoll":"","pkgHsn":"48191010","pkgGst":"5","specNominal":"","specBrimful":"","overflowCapacityOfcMl":"","pmOverallHeightMm":"","pmShoulderHeightMm":"","pmOuterDiameterMm":"","pmInnerDiameterNeckMm":"","pmCircumferenceMm":"","neckFinishStandard":"","neckHeightHMmTEHSpec":"","threadMajorDiaTMm":"","insideBoreDiaIMm":"","specWeight":"","wallThicknessSidewallMm":"","wallThicknessBaseMm":"","baseType":"","headspaceAtFillMmMl":"","tubeLengthMm":"","pmOrificeMm":"","shoulderStyle":"","crimpEndWidthMm":"","pmClosureType":"","pmPumpCcDosage":"","primingStrokesCount":"","dipTubeLengthMm":"","springMaterial":"","pmPipetteLengthMm":"","pipetteTipDiameterMm":"","teatMaterial":"","calibrationMarks":"","ballMaterial":"","ballDiameterMm":"","pushUpMechanism":"","fillingHeightMm":"","sachetWidthMm":"","sachetHeightMm":"","pmFillVolumeMl":"","pmSealLaminateWidthMm":"","tearNotch":"","labelWidthMm":"","labelHeightMm":"","sheetRollFormat":"","labelsPerSheet":"","sheetSizeMm":"","rollCoreInnerDiameterMm":"","rollOuterDiameterMm":"","labelsPerRoll":"","rollDirection":"","pmCartonLengthMm":"","pmCartonWidthMm":"","pmCartonHeightMm":"","glueFlapWidthMm":"","tuckLengthMm":"","dustFlapLengthMm":"","bottomLockType":"","sleeveLayflatWidthMm":"","sleeveCutLengthMm":"","shrinkRatioTdMd":"","openLeafletSizeMm":"","closedLeafletSizeMm":"","pageCount":"","foldPattern":"","fitmentOuterDiameterMm":"","fitmentInsertDepthMm":"","stickerDiameterMm":"","stickerLengthWidthMm":"","qrCardSizeMm":"","qrModuleResolutionDpi":"","shipperLengthWidthHeightMm":"","unitsPerShipper":"","palletSizeMm":"","palletLoadCapacityKg":"","filmRollWidthMm":"","filmRollLengthM":"","tapeWidthMm":"","tapeLengthPerRollM":"","strapWidthMm":"","strapThicknessMm":"","lengthMm":"","diameterWidthMm":"","bristleLengthMm":"","bristleDensity":"","spongeCellDensityPpi":"","desiccantSachetSizeMm":"","materialGradeStandard":"","polymerType":"","resinSource":"","pcrContent":"","densityGCm":"","mfiMfrG10min":"","ivIntrinsicViscosity":"","shoreHardness":"","topLoadResistanceKg":"","burstPressureResistanceKpa":"","escrHours":"","glassType":"","annealingClass":"","hydrolyticResistanceClass":"","thermalShockResistanceTC":"","aluminiumAlloy":"","internalCoatingType":"","externalLacquer":"","laminationStructure":"","barrierLayerEvohFoilMet":"","otrCcMDay":"","wvtrGMDay":"","pmmaOpticalClarity":"","substrate":"","substrateGsm":"","pmMaterialThicknessMicron":"","adhesiveType":"","adhesiveTackG25mm":"","releaseLiner":"","pmBoardPaperType":"","pmGsm":"","boardCaliperMm":"","boardBurstingFactor":"","coating":"","sachetLaminateStructure":"","sachetFoilThicknessMicrons":"","fluteType":"","plies3Ply5Ply7Ply":"","gsmPerLinerOutMidIn":"","ectEdgeCrushTestKnM":"","bctBoxCompressionTestKg":"","burstStrengthKpa":"","woodType":"","ispm15Stamp":"","palletMaterialType":"","filmThicknessMicrons":"","preStretch":"","clingType":"","tensileStrengthMpa":"","elongationBreak":"","backingMaterial":"","tapeAdhesion180PeelN25mm":"","bristleMaterial":"","spongeMaterial":"","wandTipStyle":"","desiccantActivityWWAdsorption":"","desiccantIndicator":"","storeLoc":"","regRecyclabilityCode":"","regFoodCosmeticCompliance":"","colorType":"","colorCode":"","transparencyLevel":"","finish":"","surfaceTexture":"","pmShoulderColour":"","pmCapOvercapColour":"","pmActuatorColourStyle":"","pmCollarFinish":"","pmTeatColour":"","frostingType":"","decorationMethod":"","numberOfColours":"","printColours":"","printCoverage":"","foilColour":"","spotUvSpecialEffects":"","embossingDebossing":"","pmLamination":"","metallisedEffect":"","premiumLookFeel":"","sustainabilityLookEcoClaim":"","artworkReferenceAwVersion":"","dielineReference":"","images":"","codingTemplateBatchMfgExpMrp":"","barcodeType":"","arNumber":"","qaQcTestPlanRef":"","aqlSamplingPlan":"","qaCoaRequired":"","qcDecisionAuthority":"","preferredVendor":"","alternateVendor":"","moqStandard":"","leadTimeDays":"","standardUnitCost":"","currency":"","printingPlateCostColourDevelopment":"","paymentTerms":"","pmSupplyLocation":"","priceTiers":"","priceValidityUntil":"","version":"v1.0","level":"Secondary","zohoId":"1252231000015770526","pkgSku":"5F00026","pkgTaxPreference":"ExemptedServices","pkgReturnable":"No","pkgAssociateItems":"","products":["PR0004158"],"name":"ANISE SKINCARE MONOCARTON FITMENT 150ML","preferredVendorClientId":"","alternateVendorClientId":"","pmQualitySpecRows":[],"pmQualitySubSpecRowsByPath":{},"vendors":[],"tests":[],"pmClientScope":"","pmOwner":"","masterCustomDropdownOptions":{},"masterCustomFields":{"SPM — Labels (5LXXXXX)|SHEET FORM|Laminated":{"ART":[{"id":"cf-1782213382576-bzu45qz","label":"3r3r","type":"date","required":false}]}},"pmSkuCategory":"spm-monocarton","optionalPmSubCategory":"LOCK BOTTOM","optionalPmSubSubCategory":"Standard"}	2026-05-10 11:20:04.763+00	2026-06-24 08:34:58.276+00	\N	active	\N	\N	\N
 8923	400602	uuuuu	\N	Primary	ppm	ppm	\N	\N	\N	\N	\N	[]	\N	400602	73873	PCS	Taxable	f	\N	\N	{"itemCode":"400602","tradeCommercialName":"uuuuu","pmAssemblyCode":"","pmComponentBreakdown":"","pmSkuVolume":"","intendedUse":"","reusability":"","pmLifecycleStatus":"Active","pkgUnit":"PCS","pkgUnitsPerShipperRoll":"","pkgHsn":"73873","pkgGst":"5","specNominal":"","specBrimful":"","overflowCapacityOfcMl":"","pmOverallHeightMm":"","pmShoulderHeightMm":"","pmOuterDiameterMm":"","pmInnerDiameterNeckMm":"","pmCircumferenceMm":"","neckFinishStandard":"","neckHeightHMmTEHSpec":"","threadMajorDiaTMm":"","insideBoreDiaIMm":"","specWeight":"","wallThicknessSidewallMm":"","wallThicknessBaseMm":"","baseType":"","headspaceAtFillMmMl":"","tubeLengthMm":"","pmOrificeMm":"","shoulderStyle":"","crimpEndWidthMm":"","pmClosureType":"","pmPumpCcDosage":"","primingStrokesCount":"","dipTubeLengthMm":"","springMaterial":"","pmPipetteLengthMm":"","pipetteTipDiameterMm":"","teatMaterial":"","calibrationMarks":"","ballMaterial":"","ballDiameterMm":"","pushUpMechanism":"","fillingHeightMm":"","sachetWidthMm":"","sachetHeightMm":"","pmFillVolumeMl":"","pmSealLaminateWidthMm":"","tearNotch":"","labelWidthMm":"","labelHeightMm":"","sheetRollFormat":"","labelsPerSheet":"","sheetSizeMm":"","rollCoreInnerDiameterMm":"","rollOuterDiameterMm":"","labelsPerRoll":"","rollDirection":"","pmCartonLengthMm":"","pmCartonWidthMm":"","pmCartonHeightMm":"","glueFlapWidthMm":"","tuckLengthMm":"","dustFlapLengthMm":"","bottomLockType":"","sleeveLayflatWidthMm":"","sleeveCutLengthMm":"","shrinkRatioTdMd":"","openLeafletSizeMm":"","closedLeafletSizeMm":"","pageCount":"","foldPattern":"","fitmentOuterDiameterMm":"","fitmentInsertDepthMm":"","stickerDiameterMm":"","stickerLengthWidthMm":"","qrCardSizeMm":"","qrModuleResolutionDpi":"","shipperLengthWidthHeightMm":"","unitsPerShipper":"","palletSizeMm":"","palletLoadCapacityKg":"","filmRollWidthMm":"","filmRollLengthM":"","tapeWidthMm":"","tapeLengthPerRollM":"","strapWidthMm":"","strapThicknessMm":"","lengthMm":"","diameterWidthMm":"","bristleLengthMm":"","bristleDensity":"","spongeCellDensityPpi":"","desiccantSachetSizeMm":"","materialGradeStandard":"","polymerType":"","resinSource":"","pcrContent":"","densityGCm":"","mfiMfrG10min":"","ivIntrinsicViscosity":"","shoreHardness":"","topLoadResistanceKg":"","burstPressureResistanceKpa":"","escrHours":"","glassType":"","annealingClass":"","hydrolyticResistanceClass":"","thermalShockResistanceTC":"","aluminiumAlloy":"","internalCoatingType":"","externalLacquer":"","laminationStructure":"","barrierLayerEvohFoilMet":"","otrCcMDay":"","wvtrGMDay":"","pmmaOpticalClarity":"","substrate":"","substrateGsm":"","pmMaterialThicknessMicron":"","adhesiveType":"","adhesiveTackG25mm":"","releaseLiner":"","pmBoardPaperType":"","pmGsm":"","boardCaliperMm":"","boardBurstingFactor":"","coating":"","sachetLaminateStructure":"","sachetFoilThicknessMicrons":"","fluteType":"","plies3Ply5Ply7Ply":"","gsmPerLinerOutMidIn":"","ectEdgeCrushTestKnM":"","bctBoxCompressionTestKg":"","burstStrengthKpa":"","woodType":"","ispm15Stamp":"","palletMaterialType":"","filmThicknessMicrons":"","preStretch":"","clingType":"","tensileStrengthMpa":"","elongationBreak":"","backingMaterial":"","tapeAdhesion180PeelN25mm":"","bristleMaterial":"","spongeMaterial":"","wandTipStyle":"","desiccantActivityWWAdsorption":"","desiccantIndicator":"","storeLoc":"","regRecyclabilityCode":"","regFoodCosmeticCompliance":"","colorType":"","colorCode":"","transparencyLevel":"","finish":"","surfaceTexture":"","pmShoulderColour":"","pmCapOvercapColour":"","pmActuatorColourStyle":"","pmCollarFinish":"","pmTeatColour":"","frostingType":"","decorationMethod":"","numberOfColours":"","printColours":"","printCoverage":"","foilColour":"","spotUvSpecialEffects":"","embossingDebossing":"","pmLamination":"","metallisedEffect":"","premiumLookFeel":"","sustainabilityLookEcoClaim":"","artworkReferenceAwVersion":"","dielineReference":"","images":"","codingTemplateBatchMfgExpMrp":"","barcodeType":"","arNumber":"","qaQcTestPlanRef":"","aqlSamplingPlan":"","qaCoaRequired":"","qcDecisionAuthority":"","preferredVendor":"","alternateVendor":"","moqStandard":"","leadTimeDays":"","standardUnitCost":"","currency":"","printingPlateCostColourDevelopment":"","paymentTerms":"","pmSupplyLocation":"","priceTiers":"","priceValidityUntil":"","status":"Under Approval","masterApprovalStatus":"Under Approval","version":"v1.0","level":"Primary","zohoId":"","pkgSku":"","pkgTaxPreference":"Taxable","pkgReturnable":"No","pkgAssociateItems":"","products":[],"name":"uuuuu","preferredVendorClientId":"","alternateVendorClientId":"","pmQualitySpecRows":[],"pmQualitySubSpecRowsByPath":{},"vendors":[],"tests":[],"masterCustomDropdownOptions":{},"masterCustomFields":{"SPM — Labels (5LXXXXX)|SHEET FORM|Laminated":{"ART":[{"id":"cf-1782213382576-bzu45qz","label":"3r3r","type":"date","required":false}]}},"subCategory":"ppm","pmSkuCategory":"ppm","optionalPmSubCategory":"BOTTLES","optionalPmSubSubCategory":"PET","pmClientScope":"","pmOwner":""}	2026-06-24 08:44:22.786+00	2026-06-24 08:45:01.078+00	\N	active	\N	\N	{"drafter":{"user_id":579,"display_name":"Super Admin","role_name":"Super Admin"},"reviewer":{"user_id":579,"display_name":"Super Admin","role_name":"Super Admin"},"approver":null}
+6505	10CT001-19 DIA SKINQ ACNE CONTROL FACE MASK 10GM TUBE	Seamless Printed SkinQ Acne control mask-10gm ( 19 Dia) White Tube with white standy screw Cap , 3 Layer	Packaging	Primary	Other Components	Other Components	\N	3.75	\N	\N	\N	["PR00301"]	1252231000000938367	10CT001-19 DIA SKINQ ACNE CONTROL FACE MASK 10GM TUBE	39233090	PCS	Taxable	\N	\N	\N	{"subCategory":"Other Components","pmCategory":"Other Components","matBody":"Other Components","excelCategory":"Other Components","excelSubCategory":"Other Components","masterApprovalStatus":"Under Review","status":"Under Review"}	2026-05-10 11:18:52.324+00	2026-06-25 09:32:41.227+00	\N	active	\N	\N	\N
 \.
 
 
@@ -10414,6 +10415,7 @@ COPY public.products (product_id, status, availability, deleted_at, product_code
 8248	Draft	\N	\N	PR0004665	PR0004665	\N	\N	\N	\N	\N	\N	2026-06-01 07:47:42.732+00	2026-06-05 09:56:57.362+00	\N	\N	RESVA CUTISPARK FACE WASH 80ML	\N	Face Care	Draft	\N	80 ML	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 8227	Draft	\N	\N	PR0002557	PR0002557	\N	\N	\N	\N	\N	\N	2026-06-01 07:47:42.593+00	2026-06-05 13:51:15.479+00	\N	\N	ROMA DERMA SKINLY INSTANT GLOW FACE WASH 100ML	\N	Face Care	Draft	\N	100 ML	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 8380	Draft	\N	\N	TPR00301	TPR00301	Face Care	\N	\N	\N	\N	\N	2026-06-05 18:33:40.49+00	2026-06-05 18:33:41.476+00	\N	\N	test pr	\N	Face Care	Draft	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	3529895000000469002	temporary	\N	\N	\N	\N	\N
+8381	Draft	\N	\N	PR00301	PR00301	Hair Care	\N	\N	\N	\N	\N	2026-06-25 09:32:38.945+00	2026-06-25 09:32:41.206+00	\N	\N	HHHH	\N	Hair Care	Draft	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	3529895000000479002	permanent	\N	\N	{"drafter":{"user_id":579,"display_name":"Super Admin","role_name":"Super Admin"},"reviewer":null,"approver":null,"rm_team":{"user_id":579,"display_name":"Super Admin","role_name":"Super Admin"},"pack_team":null}	{"masterCustomFields":{},"masterApprovalStatus":"Draft","status":"Draft"}	\N
 \.
 
 
@@ -11401,18 +11403,18 @@ COPY public.raw_materials (id, code, name, inci, category, rm_type, uom, price_p
 3592	1001376	WATER MELON 50812 W/S	Aqua	Bulk Raw Materials	\N	kg	920.00	18.00	\N	1.000	\N	Under Review	["PR0003868","PR0003890","PR0003891","PR0003905","PR0003925","PR0003971","PR0004054","PR0004055","PR0004056","PR0004057","PR0004087","PR0004092","PR0004101","PR0004166","PR0005617","PR0005862","PR0007255","N2207IIBS","OL2205DSK","OL2205NSK","OL2207TCD","PR0002965","PR0004164","PR0004229","PR0004239","PR0004265","PR0004272","PR0004277","PR0004282","PR0004287","PR0004295","PR0004351","PR0004376","PR0004408","PR0004455","PR0004468","PR0004641","PR0004647","PR0004682","PR0004693","PR0004827","PR0004828","PR0004874","PR0004897","PR0004905","PR0004913","PR0004927","PR0005139","PR0005340","PR0005344","PR0005348","PR0005352","PR0005788","PR0005979","PR0005980"]	General	1252231000008987998	1001376	33021090	Taxable	\N	{"subCategory":"General","rmCategoryKey":"MISC","rmCategory":"Bulk Raw Materials","rmType":"Bulk Raw Materials","excelCategory":"Bulk Raw Materials","excelSubCategory":"General","masterApprovalStatus":"Under Review","status":"Under Review"}	2026-05-10 10:44:45.253+00	2026-06-19 13:36:06.185+00	\N	active	\N	\N	\N	\N	\N	\N	\N
 3114	1000200	GLYCERINE IP (SUVARNA)	Glycerin	Bulk Raw Materials	\N	kg	0.00	18.00	\N	1.000	\N	Under Review	["AC2303CMDS","AC2303ECRC","AC2303SSDR","AC2303SSFS","AE2208HS","CS2303AANS","DD2210SPED","DD2305GHGC","DE2207HBPS","DI2302IRM","DP2112RUC","DP2112SLO","DP2112ZFF","DQ2108FM","DQ2108RL","DSN2301FC","DSN2301MDM","DSN2301MNM","DSN2301MOM","DSN2301SLC","EX2201FM","HW2202SBC","HZ2303HGS","IS2208OBH","IS2703AGS","JG2304HSAG","JN2207REPS","JN2207RESS","KD2203DGC","KD2203UMB","LJ2203GGL","ME2208GEHS","MF2204HRS","MM2206ML","MM2306CUER","MS2206AG","MS2206LC","MS2206LCS","MS2206WB","MS2212NR","MS2212NR(EIMFR)","N2201NS","ND2303MFW","NS2304RLNS","OL2108HC","OL2108HCI","OL2108RFC","OL2108RMG","OL2205GFC","OL2205SFC","OL2207TCD","OL2207TSD","OL2207TSNO","OL2301BM","OL2308BMI","PB2108DCS","PB2108EBC","PB2201HRM","PB2201IHM","PB2201OML","PB2201RML","PP2109DAM","PP2109DNM","PP2204CDT","PP2302DAMM","PP2303GTG","PR0000806","PR0000809","PR0000815","PR0000816","PR0000928","PR0000930","PR0001070","PR0001886","PR0001959","PR0002001","PR0002005","PR0002013","PR0002212","PR0002229","PR0002371","PR0002374","PR0002539","PR0002540","PR0002541","PR0002544","PR0002545","PR0002644","PR0002708","PR0002871","PR0002881","PR0002882","PR0002889","PR0002892","PR0002897","PR0002934","PR0002935","PR0002936","PR0002938","PR0002945","PR0002997","PR0003129","PR0003169","PR0003176","PR0003203","PR0003374","PR0003400","PR0003464","PR0003465","PR0003509","PR0003510","PR0003543","PR0003544","PR0003547","PR0003550","PR0003554","PR0003590","PR0003610","PR0003614","PR0003616","PR0003619","PR0003704","PR0003710","PR0003724","PR0003732","PR0003747","PR0003748","PR0003749","PR0003758","PR0003771","PR0003789","PR0003819","PR0003820","PR0003828","PR0003830","PR0003836","PR0003853","PR0003860","PR0003861","PR0003893","PR0003898","PR0003921","PR0003924","PR0003990","PR0004006","PR0004030","PR0004035","PR0004036","PR0004037","PR0004038","PR0004054","PR0004055","PR0004056","PR0004058","PR0004097","PR0004100","PR0004101","PR0004131","PR0004148","PR0004156","PR0004157","PR0004162","PR0004164","PR0004185","PR0004187","PR0004188","PR0004197","PR0004204","PR0004211","PR0004235","PR0004258","PR0004268","PR0004307","PR0004314","PR0004349","PR0004350","PR0004386","PR0004388","PR0004389","PR0004390","PR0004391","PR0004392","PR0004393","PR0004399","PR0004408","PR0004410","PR0004455","PR0004456","PR0004457","PR0004458","PR0004483","PR0004515","PR0004516","PR0004523","PR0004570","PR0004585","PR0004586","PR0004587","PR0004588","PR0004609","PR0004618","PR0004619","PR0004641","PR0004644","PR0004645","PR0004647","PR0004674","PR0004680","PR0004681","PR0004686","PR0004687","PR0004697","PR0004704","PR0004708","PR0004716","PR0004734","PR0004735","PR0004737","PR0004759","PR0004773","PR0004787","PR0004788","PR0004789","PR0004806","PR0004828","PR0004846","PR0004848","PR0004895","PR0004905","PR0004913","PR0004915","PR0004917","PR0004918","PR0004919","PR0004920","PR0004921","PR0004927","PR0004943","PR0004947","PR0004950","PR0004959","PR0004971","PR0005013","PR0005015","PR0005018","PR0005019","PR0005027","PR0005028","PR0005029","PR0005032","PR0005033","PR0005041","PR0005043","PR0005044","PR0005048","PR0005052","PR0005054","PR0005060","PR0005062","PR0005063","PR0005077","PR0005080","PR0005081","PR0005126","PR0005127","PR0005130","PR0005133","PR0005147","PR0005154","PR0005157","PR0005174","PR0005177","PR0005189","PR0005204","PR0005205","PR0005234","PR0005235","PR0005339","PR0005341","PR0005346","PR0005350","PR0005354","PR0005369","PR0005375","PR0005388","PR0005426","PR0005427","PR0005429","PR0005430","PR0005435","PR0005438","PR0005441","PR0005448","PR0005450","PR0005452","PR0005485","PR0005486","PR0005541","PR0005543","PR0005550","PR0005552","PR0005588","PR0005617","PR0005620","PR0005629","PR0005653","PR0005721","PR0005741","PR0005778","PR0005784","PR0005798","PR0005799","PR0005809","PR0005877","PR0005900","PR0005912","PR0005978","PR0005984","PR0006015","PR0006016","PR0006184","PR0006222","PR0006223","PR0006224","PR0006276","PR0006302","PR0006352","PR0006353","PS2303CC","RD2205USS","RD2211UNHS","RP2108NGNS","RP2111UES","SF2206HUMM","SK2202HMFS","SK2202OFM","SK2202PFCS","SK2202RFSD","SN0201CM","SN0201RHS","SN2203LW","SN2203UPHM","SN2207PSSP","SN2305UPSS","SOS2312FHL","SQ2202MGB (N)","SQ2212ACMT","SQ2212BGST","SS2206AAFW","SS2206AAPS","SS2206AAT","SS2206ABP","SS2206HHCM","SS2208AFFS","SS2208BFW","SS2208BFWS","SS2208HGC","SS2208HGCS","SS2209ABPS","SS2303ACFW","SS2303DSVM","SS2305HHCC","TT2210INUC","TT2210SHRS","TT2212NRHC","TT2305KBFC","UR2208NBS","VB2206BFS","VB2206RBS","VB2206WRS","PR0007100"]	General	1252231000000888507	1000200	33021090	Taxable	\N	{"subCategory":"General","rmCategoryKey":"MISC","rmCategory":"Bulk Raw Materials","rmType":"Bulk Raw Materials","excelCategory":"Bulk Raw Materials","excelSubCategory":"General","masterApprovalStatus":"Under Review","status":"Under Review"}	2026-05-10 10:44:27.04+00	2026-06-19 13:36:06.185+00	\N	active	\N	\N	\N	\N	\N	\N	\N
 3471	1001149	RICE WATER EXTRACT	Aqua	Bulk Raw Materials	\N	kg	250.00	18.00	\N	1.000	\N	Under Review	["MM2210THM","MM2210THSV","MS2210GLB","MY2304RHS","N2201NS","N2207IIBS","OL2207TCD","OL2207TSD","PB2201LLB","PR0000578","PR0000607","PR0000815","PR0002022","PR0002187-1","PR0002372","PR0002543","PR0002711","PR0002718","PR0002965","PR0003003","PR0003419","PR0003590","PR0005019","PR0005127","PR0005154","PR0005418","PR0005813","PR0006170","PR0006171","PR0006462","PR0006490","PR0006524","PR0006603","PR0006604","PR0006605","PR0006606","PR0006774","PR0006870","PR0006872","PR0007046","PR0007064","PR0007199","RD2211UNHS","RP2108NGNS","RP2111UES","SC2207SCM","SK2111CFLC","SN0201CM","SN2207GLYA","SOS2312FHL","SOS2312HSS","SS2208BFWS","SS2208HGC","SS2208HGCS","SS2208HS","OL2301RBBK","PR0003555","PR0006082","PR0006222","PR0006224","PR0006229","PR0006276","PR0006352","PR0006736","PR0007194","PRINB0005","SN2203YCS","SS2209RNS","TPR0003276","VB2206BFS","VB2206HMOM","VB2206MNM","VB2206RBS","VB2206SCFM","VB2206WRS","AE2208HS","DD2210BRS","DQ2108RL","EI2207MOIS","EI2207SSWS","JN2207REPS","JN2207RESS","MM2206ML"]	Extracts & Powders	1252231000012104380	1001149	33021090	Taxable	\N	{"subCategory":"Extracts & Powders","rmCategoryKey":"MISC","rmCategory":"Bulk Raw Materials","rmType":"Bulk Raw Materials","excelCategory":"Bulk Raw Materials","excelSubCategory":"Extracts & Powders","masterApprovalStatus":"Under Review","status":"Under Review"}	2026-05-10 10:44:39.171+00	2026-06-19 13:36:06.186+00	\N	active	\N	\N	\N	\N	\N	\N	\N
-3411	1000612	AQUA	\N	Bulk Raw Materials	\N	kg	0.01	18.00	\N	1.000	\N	Under Review	["AC2303CMDS","AC2303DRPM","AC2303ECRC","AC2303SSDR","AC2303SSFS","CM2302AAMG","CS2303AANS","CS2303SDSS","CS2303SDUT","CS2303USDS","DD2206NHAS","DD2305GHGC","DE2305SBW","DE2305SFBR","DE2305SFBW","DE2305SPW","DI2302IRM","DP2112ZFF","DSN2301ASS","DSN2301FC","DSN2301MDM","DSN2301MNM","DSN2301MOM","DSN2301NGS","DSN2301SLC","EC2305SBC","EI2207ALSE","EIDSNS072022","EISUGS062022","EU2303SFS","EX2201FM","FL2212BSS","HZ2303HGS","IG2212HSS","IG2305MYCL","IS2208OBH","IS2703AGS","JG2304HSAG","KD2109ABCS","KD2109MBC1","KD2109PPSG","KD2203DGC","KD2203HBG","KD2203MBC","KD2203UMB","LJ2203GGL","LP2303HS","ME2206BFFW","ME2208GEHS","ME2303RS","MM2207TBS","MM2207TBSs","MM2207TOS","MM2207TOSs","MM2304HMS","MM2305PHSP","MM2305THVS","MM2306CUER","MO2208ASGS","MS2206WB","MS2212BW","MS2212NR","MS2212NR(EIMFR)","ND2303MFW","NS2108FSL","NS2108SD","NS2110HS","NS2304ACCS","NS2304LLGS","NS2304OSS","NS2304RHSS","NS2304RLNS","NS2304RMDS","OL2108HC","OL2108HCI","OL2108RFC","OL2108RMG","OL2205DTC","OL2205GFC","OL2205SFC","OL2205SL","OL2301BM","OL2301BS","OL2301BW","OL2308BMI","PP2108DBS","PP2109DAM","PP2109DNM","PP2302DAMM","PP2303GTG","PR0000735","PR0000804","PR0000805","PR0000806","PR0000807","PR0000808","PR0000809","PR0000816","PR0000847","PR0000928","PR0000930","PR0000931","PR0001070","PR0001393","PR0001394","PR0001852","PR0001886","PR0001962","PR0002001","PR0002005","PR0002013","PR0002136","PR0002212","PR0002229","PR0002317","PR0002371","PR0002373","PR0002374","PR0002375","PR0002376","PR0002496","PR0002539","PR0002540","PR0002541","PR0002544","PR0002545","PR0002557","PR0002558","PR0002559","PR0002644","PR0002708","PR0002768","PR0002783","PR0002841","PR0002844","PR0002871","PR0002872","PR0002873","PR0002875","PR0002881","PR0002882","PR0002884","PR0002889","PR0002900","PR0002934","PR0002935","PR0002936","PR0002938","PR0002945","PR0003012","PR0003016","PR0003129","PR0003146","PR0003169","PR0003176","PR0003203","PR0003346","PR0003347","PR0003361","PR0003373","PR0003374","PR0003379","PR0003400","PR0003425","PR0003440","PR0003464","PR0003495","PR0003496","PR0003497","PR0003507","PR0003509","PR0003510","PR0003511","PR0003515","PR0003516","PR0003517","PR0003539","PR0003540","PR0003541","PR0003542","PR0003543","PR0003544","PR0003545","PR0003546","PR0003547","PR0003548","PR0003549","PR0003550","PR0003551","PR0003553","PR0003554","PR0003567","PR0003569","PR0003599","PR0003610","PR0003612","PR0003615","PR0003616","PR0003619","PR0003621","PR0003630","PR0003704","PR0003710","PR0003724","PR0003732","PR0003747","PR0003748","PR0003749","PR0003750","PR0003758","PR0003759","PR0003760","PR0003766","PR0003767","PR0003774","PR0003789","PR0003805","PR0003819","PR0003823","PR0003828","PR0003860","PR0003861","PR0003867","PR0003869","PR0003870","PR0003874","PR0003893","PR0003895","PR0003922","PR0003923","PR0003924","PR0003926","PR0003927","PR0003932","PR0003986","PR0003987","PR0003988","PR0003990","PR0003990-KC","PR0003991","PR0003991-KC","PR0003992","PR0003992-KC","PR0003997","PR0004006","PR0004010","PR0004015","PR0004032","PR0004035","PR0004036","PR0004037","PR0004038","PR0004053","PR0004076","PR0004085","PR0004095","PR0004096","PR0004097","PR0004103","PR0004108","PR0004110","PR0004131","PR0004135","PR0004138","PR0004143","PR0004145","PR0004148","PR0004153","PR0004156","PR0004162","PR0004166","PR0004170","PR0004185","PR0004187","PR0004188","PR0004195","PR0004196","PR0004197","PR0004204","PR0004205","PR0004211","PR0004224-KC","PR0004225-KC","PR0004226-KC","PR0004227","PR0004233","PR0004235","PR0004236","PR0004237","PR0004238","PR0004241","PR0004250","PR0004258","PR0004259","PR0004268","PR0004270","PR0004307","PR0004312","PR0004313","PR0004314","PR0004345","PR0004347","PR0004348","PR0004349","PR0004350","PR0004370","PR0004382","PR0004383","PR0004384","PR0004386","PR0004387","PR0004388","PR0004389","PR0004390","PR0004391","PR0004392","PR0004393","PR0004399","PR0004404","PR0004405","PR0004407","PR0004409","PR0004410","PR0004413","PR0004415","PR0004423","PR0004443","PR0004456","PR0004457","PR0004458","PR0004483","PR0004485","PR0004486","PR0004515","PR0004516","PR0004523","PR0004570","PR0004571","PR0004585","PR0004586","PR0004587","PR0004588","PR0004598","PR0004602","PR0004609","PR0004614","PR0004618","PR0004619","PR0004625","PR0004626","PR0004627","PR0004628","PR0004629","PR0004630","PR0004644","PR0004645","PR0004665","PR0004672","PR0004674","PR0004675","PR0004680","PR0004681","PR0004683","PR0004685","PR0004686","PR0004687","PR0004688","PR0004694","PR0004697","PR0004704","PR0004708","PR0004715","PR0004716","PR0004718","PR0004720","PR0004733..","PR0004734","PR0004735","PR0004737","PR0004759","PR0004773","PR0004774","PR0004787","PR0004788","PR0004789","PR0004791","PR0004792","PR0004795","PR0004799","PR0004801","PR0004806","PR0004829","PR0004830","PR0004842","PR0004843","PR0004844","PR0004845","PR0004846","PR0004847","PR0004848","PR0004850","PR0004851","PR0004873","PR0004890","PR0004891","PR0004895","PR0004906","PR0004915","PR0004917","PR0004918","PR0004919","PR0004920","PR0004921","PR0004943","PR0004947","PR0004950","PR0004959","PR0004961","PR0004970","PR0004971","PR0004974","PR0004981","PR0004982","PR0004983","PR0004987","PR0004990","PR0004993","PR0004994","PR0004995","PR0005004","PR0005005","PR0005007","PR0005008","PR0005009","PR0005013","PR0005015","PR0005016","PR0005017","PR0005018","PR0005019","PR0005020","PR0005021","PR0005025","PR0005027","PR0005028","PR0005029","PR0005030","PR0005031","PR0005032","PR0005033","PR0005037","PR0005038","PR0005041","PR0005043","PR0005044","PR0005047","PR0005048","PR0005052","PR0005054","PR0005057","PR0005060","PR0005062","PR0005063","PR0005064","PR0005077","PR0005078","PR0005080","PR0005081","PR0005086","PR0005087","PR0005089","PR0005091","PR0005092","PR0005124","PR0005125","PR0005126","PR0005127","PR0005130","PR0005133","PR0005135","PR0005145","PR0005147","PR0005152","PR0005154","PR0005157","PR0005158","PR0005161","PR0005166","PR0005167","PR0005174","PR0005176","PR0005177","PR0005189","PR0005203","PR0005204","PR0005205","PR0005227","PR0005234","PR0005235","PR0005242","PR0005243","PR0005304","PR0005311","PR0005324","PR0005339","PR0005341","PR0005342","PR0005343","PR0005345","PR0005346","PR0005347","PR0005349","PR0005350","PR0005353","PR0005354","PR0005355","PR0005367","PR0005368","PR0005369","PR0005373","PR0005375","PR0005376","PR0005377","PR0005378","PR0005379","PR0005380","PR0005388","PR0005411","PR0005418","PR0005425","PR0005426","PR0005427","PR0005428","PR0005429","PR0005430","PR0005431","PR0005432","PR0005435","PR0005438","PR0005441","PR0005445","PR0005446","PR0005448","PR0005450","PR0005452","PR0005453","PR0005458","PR0005459","PR0005469","PR0005473","PR0005474","PR0005475","PR0005476","PR0005485","PR0005486","PR0005504","PR0005507","PR0005517","PR0005541","PR0005543","PR0005544","PR0005550","PR0005552","PR0005588","PR0005612","PR0005617","PR0005620","PR0005626","PR0005629","PR0005652","PR0005653","PR0005656","PR0005689","PR0005690","PR0005691","PR0005692","PR0005697","PR0005699","PR0005701","PR0005713","PR0005721","PR0005725","PR0005741","PR0005763","PR0005778","PR0005780","PR0005781","PR0005782","PR0005784","PR0005785","PR0005787","PR0005789","PR0005790","PR0005797","PR0005798","PR0005799","PR0005809","PR0005818","PR0005836","PR0005859","PR0005862","PR0005866","PR0005868","PR0005877","PR0005887","PR0005900","PR0005901","PR0005911","PR0005912","PR0005918","PR0005932","PR0005933","PR0005934","PR0005935","PR0005983","PR0006013","PR0006014","PR0006015","PR0006016","PR0006018","PR0006023","PR0006036","PR0006037","PR0006055","PR0006062","PR0006084","PR0006087","PR0006089","PR0006090","PR0006091","PR0006092","PR0006098","PR0006105","PR0006106","PR0006107","PR0006111","PR0006112","PR0006114","PR0006115","PR0006121","PR0006126","PR0006129","PR0006132","PR0006155","PR0006156","PR0006159","PR0006166","PR0006170","PR0006171","PR0006174","PR0006183","PR0006184","PR0006213","PR0006216","PR0006223","PR0006237","PR0006253","PR0006262","PR0006277","PR0006302","PR0006305","PR0006306","PR0006307","PR0006312","PR0006323","PR0006342","PR0006343","PR0006353","PR0006367","PR0006373","PR0006381","PR0006385","PR0006393","PR0006394","PR0006401","PR0006408","PR0006409","PR0006410","PR0006411","PR0006412","PR0006413","PR0006416","PR0006417","PR0006418","PR0006419","PR0006420","PR0006421","PR0006422","PR0006437","PR0006448","PR0006450","PR0006453","PR0006454","PR0006455","PR0006457","PR0006458","PR0006461","PR0006462","PR0006472","PR0006474","PR0006490","PR0006491","PR0006495","PR0006496","PR0006500","PR0006516","PR0006517","PR0006519","PR0006520","PR0006521","PR0006522","PR0006523","PR0006524","PR0006540","PR0006542","PR0006543","PR0006573","PR0006574","PR0006576","PR0006597","PR0006603","PR0006604","PR0006605","PR0006606","PR0006607","PR0006615","PR0006637","PR0006638","PR0006639","PR0006647","PR0006650","PR0006651","PR0006652","PR0006653","PR0006660","PR0006661","PR0006663","PR0006665","PR0006668","PR0006683","PR0006700","PR0006701","PR0006702","PR0006706","PR0006709","PR0006713","PR0006714","PR0006716","PR0006718","PR0006719","PR0006725","PR0006726","PR0006729","PR0006733","PR0006734","PR0006735","PR0006740","PR0006742","PR0006746","PR0006757","PR0006760","PR0006775","PR0006780","PR0006781","PR0006791","PR0006792","PR0006805","PR0006806","PR0006807","PR0006808","PR0006809","PR0006810","PR0006811","PR0006814","PR0006815","PR0006816","PR0006818","PR0006819","PR0006831","PR0006832","PR0006847","PR0006848","PR0006850","PR0006851","PR0006852","PR0006853","PR0006854","PR0006855","PR0006863","PR0006871","PR0006872","PR0006879","PR0006893","PR0006894","PR0006895","PR0006896","PR0006906","PR0006907","PR0006908","PR0006909","PR0006910","PR0006911","PR0006913","PR0006914","PR0006915","PR0006916","PR0006917","PR0006918","PR0006919","PR0006920","PR0006921","PR0006922","PR0006923","PR0006925","PR0006926","PR0006944","PR0006945","PR0006951","PR0006953","PR0006954","PR0006989","PR0007031","PR0007032","PR0007033","PR0007034","PR0007035","PR0007036","PR0007039","PR0007043","PR0007044","PR0007045","PR0007047","PR0007048","PR0007050","PR0007060","PR0007061","PR0007062","PR0007063","PR0007065","PR0007066","PR0007097","PR0007099","PR0007100","PR0007101","PR0007102","PR0007103","PR0007104","PR0007105","PR0007139","PR0007189","PR0007190","PR0007191","PR0007192","PR0007195","PR0007196","PR0007197","PR0007198","PR0007210","PR0007211","PR0007212","PR0007213","PR0007215","PR0007216","PR0007255","PR0007277","PRINB0001","PRINB0003","PRINB0004","PS2303CC","RV2211DCS","RV2211UTS","SC2303HES","SF2206HUMM","SH2303HAS","SK0312URM","SK2108AEC","SK2108AFC","SK2108BFS","SK2108BSFS","SK2108CSRS","SK2108FFS","SK2108GHS","SK2109AAFS","SK2109DRFS","SK2109HDNS","SK2109MBRG","SK2109MBRL","SK2109MBRS","SK2109NBLO","SK2109NBLS","SK2109NBRC","SK2109NBRG","SK2109NBRS","SK2109NMC","SK2109NSFC","SK2109NUFC","SK2109SDC","SK2109SPS","SK2109SUCG","SK2109URG","SK2110AGFM","SK2110FEFM","SK2110NLDS","SK2110NPFM","SK2110SFCN","SK2110SNFM","SK2111CSNC","SK2111GABS","SK2111MDS","SK2111MMC","SK2111VCSM","SK2112ALS","SK2112ASFC","SK2112LMTIO2","SK2112MRL","SK2112RHFBW","SK2201BSNC","SK2201HMDS","SK2201MAAS","SK2201MALC","SK2201MBFS","SK2201MBRC","SK2201MCSR","SK2201MDRS","SK2201MEFC","SK2201MSPS","SK2202AFCD","SK2202AFCN","SK2202ASFT","SK2202ATD","SK2202BDRC","SK2202BMOS","SK2202BSFT","SK2202CNC","SK2202DFCO","SK2202GFTD","SK2202HMFS","SK2202IMDRC","SK2202MRS","SK2202MSCC","SK2202MSFC","SK2202MUSC","SK2202OFM","SK2202PFCS","SK2202PFSD","SK2202RADS","SK2202RFSD","SK2202STADS","SK2202VOBS","SK2308SUCGT","SK2308SUCGT-EI","SK2309RSAGA","SK2309RSDA","SK2309RSOA","SN0201RHS","SN2203LW","SN2203UPHM","SN2207PSSP","SN2304GRFW","SN2305UPSS","SQ2202MGB (N)","SQ2212ACMT","SQ2212BGST","SQ2212SPGT","SS2206AAFW","SS2206AAPS","SS2206AAT","SS2206ABP","SS2206HHCM","SS2209ABPS","SS2210AGPS","SS2212HRC","SS2303ACFW","SS2303DSVM","SS2305HHCC","SV2305ISBC","SV2305SSUC","SV2305SSUR","SV2305SUCS","SV2305SURS","TT2210INUC","TT2210SHRS","UR2208NBS","TPR000999","PR0000607","PR0003561","MM2210THM","MM2210THSV","N2201NS","N2207IIBS","OL2205DSK","OL2205NSK","OL2301RBBK","PR0000815","PR0002022","PR0002711","PR0002965","PR0003419","PR0003555","PR0003590","PR0003771","VB2206HMOM","VB2206MNM","VB2206RBS","VB2206SCFM","VB2206WRS","PR0007383","PR0006812","PR0004905","PR0004101","PR0007315","PR0007380","PR0003864"]	2	1252231000000934490	1000612	33021090	Taxable	\N	{"subCategory":"General","rmCategoryKey":"MISC","rmCategory":"Bulk Raw Materials","rmType":"Bulk Raw Materials","excelCategory":"Bulk Raw Materials","excelSubCategory":"General","masterApprovalStatus":"Under Review","status":"Under Review"}	2026-05-10 10:44:36.646+00	2026-06-19 13:36:06.186+00	\N	active	\N	\N	\N	\N	\N	\N	\N
 3257	1000392	SALICYLIC ACID	Salicylic Acid	Bulk raw materials	Bulk Raw Materials	L	\N	18.00	12	0.900	\N	Under Review	["TPR00301"]	Acids	1252231000000888813	1000392	33021090	Taxable		{"zohoId":"1252231000000888813","rmTaxPreference":"Taxable","rmReturnable":"No","rmAssociateItems":"AC2303CMDS\\nCM2302AAMG\\nDD2210SPED\\nDP2112ZFF\\nDSN2301FC\\nDSN2301MOM\\nDSN2301SLC\\nHW2202SBC\\nME2206BFFW\\nMM2207TBS\\nMM2207TBSs\\nMM2207TOS\\nMM2207TOSs\\nMO2208ASGS\\nMS2212NR\\nMS2212NR(EIMFR)\\nOL2207TSNO\\nPB2108DCS\\nPB2201HRM\\nPP2109DNM\\nPP2204CDT\\nPR0000806\\nPR0000809\\nPR0001070\\nPR0002001\\nPR0002005\\nPR0002317\\nPR0002540\\nPR0002557\\nPR0002783\\nPR0002841\\nPR0002875\\nPR0002889\\nPR0002935\\nPR0002965\\nPR0003012\\nPR0003146\\nPR0003203\\nPR0003374\\nPR0003400\\nPR0003507\\nPR0003543\\nPR0003616\\nPR0003749\\nPR0003805\\nPR0003861\\nPR0003870\\nPR0003924\\nPR0004036\\nPR0004037\\nPR0004038\\nPR0004143\\nPR0004145\\nPR0004162\\nPR0004166\\nPR0004188\\nPR0004211\\nPR0004241\\nPR0004312\\nPR0004313\\nPR0004345\\nPR0004386\\nPR0004389\\nPR0004391\\nPR0004392\\nPR0004485\\nPR0004570\\nPR0004585\\nPR0004609\\nPR0004614\\nPR0004628\\nPR0004630\\nPR0004647\\nPR0004704\\nPR0004716\\nPR0004735\\nPR0004787\\nPR0004828\\nPR0004869\\nPR0004950\\nPR0005005\\nPR0005009\\nPR0005020\\nPR0005021\\nPR0005028\\nPR0005032\\nPR0005043\\nPR0005044\\nPR0005063\\nPR0005086\\nPR0005087\\nPR0005126\\nPR0005177\\nPR0005235\\nPR0005378\\nPR0005380\\nPR0005418\\nPR0005452\\nPR0005485\\nPR0005588\\nPR0005652\\nPR0005689\\nPR0005781\\nPR0005784\\nPR0005785\\nPR0005798\\nPR0005978\\nPR0005979\\nPR0006084\\nPR0006089\\nPR0006090\\nPR0006112\\nPR0006159\\nPR0006213\\nPR0006353\\nPR0006385\\nPR0006411\\nPR0006413\\nPR0006437\\nPR0006448\\nPR0006454\\nPR0006462\\nPR0006496\\nPR0006519\\nPR0006522\\nPR0006542\\nPR0006574\\nPR0006597\\nPR0006647\\nPR0006651\\nPR0006665\\nPR0006700\\nPR0006736\\nPR0006740\\nPR0006746\\nPR0006775\\nPR0006781\\nPR0006791\\nPR0006792\\nPR0006894\\nPR0006895\\nPR0006911\\nPR0006920\\nPR0006925\\nPR0006944\\nPR0007035\\nPR0007039\\nPR0007100\\nPR0007103\\nSK2110SNFM\\nSK2202ASFT\\nSK2202ATD\\nSK2202RADS\\nSK2202RFSD\\nSK2202STADS\\nSN2203LW\\nSN2304GRFW\\nSQ2212ACMT\\nSS2206AAFW\\nSS2206AAPS\\nSS2206AAT\\nSS2206ABP\\nSS2209ABPS\\nSS2303ACFW\\nSV2305ISBC\\nPR0007380","rmCategoryKey":"MISC","rmCategory":"Bulk raw materials","qcInspectionGroup":"","subCategory":"Bulk raw materials","optionalRmSubCategory":"","optionalRmSubSubCategory":"","hazardHandlingClass":"","seriesPrefix":"EI-RM-MISC","rmDefaultStorageType":"","inciName":"Salicylic Acid","tradeCommercialName":"SALICYLIC ACID","functionRole":"","rmType":"Bulk Raw Materials","casNo":"","einecs":"","countryOfOrigin":"","manufacturer":"","synonyms":"","internalNotes":"","primaryUom":"L","issueUom":"","standardPackSize":"","hsnCode":"33021090","gst":"18","preferredCurrency":"INR","grade":"IP","bisCompliance":"","animalOrigin":"","compliance":"","allergenRequired":false,"gmoRequired":false,"sdsAvailable":false,"coaAvailable":false,"regulatoryNotes":"","regMaxUseLevelPct":"","regAllergenDeclarationEu26":"","regIfraCategoryLimit":"","regCiNumber":"","regApprovedArea":"","rmState":"Liquid","appearance":"white","odour":"","activeContentPurityPct":"","viscosityP":"","meltingPointC":"","boilingPointC":"","flashPointC":"","specificGravity":"0.9","refractiveIndex":"","chargeType":"","activeMatterPct":"","hlbValue":"","residualSolventsPpm":"","pathogen":"","moistureContentPct":"","doseUseLevel":"","ph":"","vocPct":"","opticalSpectroscopy":"","colourImpartToFormulation":"","msdsSdsNotesLink":"NA","storageCondition":"below 30","dispensingDirection":"","arNumber":"11223","coaRequired":"No","acceptanceSpecMin":"","acceptanceSpecMax":"","physicalFormSolid":"","physicalFormLiquid":"","preferredVendor":"","preferredVendorClientId":"","alternateVendors":"","alternateVendorClientId":"","sourcingCountryOfOrigin":"","sourcingMoq":"","sourcingLeadTimeDays":"","sourcingStandardUom":"L","sourcingCurrency":"INR","assayPurity":"","appearanceSpec":"","phSpec":"","moistureLod":"","heavyMetalsSpec":"","microbialSpec":"","odorColorSpec":"","otherSpecs":"","recommendedUseLevel":"","maxUseLevel":"","solubility":"","processingGuidance":"","incompatibilities":"","stabilityNotes":"","claims":"","storageConditions":"","shelfLife":"12","retestPeriod":"","warehouseLocation":"","batchTracking":"","fifoFefo":"","minimumStock":"","reorderLevel":"","dispensingBatchNo":"","masterLifecycleStatus":"Active","rmOwner":"","universalSwapEligibility":"","functionalEquivalents":"","handlingNotes":"","vendors":[{"id":"1780652750719","name":"ASHIRWAD POLYMERS","location":"India","moq":10,"unitPrice":20,"leadTime":0,"approved":"","priceValidTill":"","currency":"INR","advancePct":"0","preShipmentPct":"0","postShipmentPct":"0","creditDays":"","tiers":[{"moq":"10","price":"20","validTill":"2026-06-06","note":""}]}],"documents":[],"tests":[],"accountingCategory":"","category":"Bulk raw materials","masterApprovalStatus":"Under Review","status":"Under Review"}	2026-05-10 10:44:31.355+00	2026-06-19 13:36:06.186+00	\N	active	Active		\N		\N	\N	\N
 3578	1001357	VITAMIN F-WATER SOLUABLE	Aqua	Bulk Raw Materials	\N	KG	4908.86	18.00	\N	1.000	\N	Under Review	["PR0003689","PR0003771","PR0003788","PR0003820","PR0003830","PR0003836","PR0003852","PR0006726","SK2108BSFS","SK2201MBFS","SS2208SS","SS2209RNS","SV2305DND","VB2206BFS","VB2206HMOM","VB2206MNM","VB2206RBS","VB2206SCFM","VB2206WRS","MM2210THSV","PR0002022","PR0003891","PR0003920","OL2207TCD","PR0003985","PR0004054","PR0004055","PR0004056","PR0004057","PR0004087","PR0004101","PR0004164","PR0004229","PR0004239","PR0004265","PR0004272","PR0004277","PR0004282","PR0004287","PR0004295","PR0004351","PR0004376","PR0004408","PR0004455","PR0004468","PR0004641","PR0004647","PR0004682","PR0004693","PR0004827"]	Actives & Vitamins	1252231000013723108	1001357	33021090	Taxable	\N	{"subCategory":"Actives & Vitamins","rmCategoryKey":"MISC","rmCategory":"Bulk Raw Materials","rmType":"Bulk Raw Materials","excelCategory":"Bulk Raw Materials","excelSubCategory":"Actives & Vitamins","masterApprovalStatus":"Under Review","status":"Under Review"}	2026-05-10 10:44:44.765+00	2026-06-19 13:36:06.188+00	\N	active	\N	\N	\N	\N	\N	\N	\N
 3168	1000269	LIQUORICE ROOT PG BASE EXTRACT (PHYTO)	Liquorice Root Pg Base Extract	Bulk Raw Materials	\N	kg	1400.00	18.00	\N	1.000	\N	Under Review	["PR0002022","PR0002540","PR0002892","PR0002997","PR0003732","PR0004827","PR0005054","PR0005147","PR0005205","PR0005429","VB2206HMOM","VB2206MNM","VB2206RBS","PR0006740","SK2111CSNC","SK2109SPS","PR0006810","SK2202GFTD","SK2202BSFT","SK2108BFS","SK2110NLDS","PR0006907","PR0007101","PR0007105","PR0006954","PR0007097","SK2112LMTIO2","PR0004974","PR0006918","PR0006917"]	Extracts & Powders	1252231000000890632	1000269	33021090	Taxable	\N	{"subCategory":"Extracts & Powders","rmCategoryKey":"MISC","rmCategory":"Bulk Raw Materials","rmType":"Bulk Raw Materials","excelCategory":"Bulk Raw Materials","excelSubCategory":"Extracts & Powders","masterApprovalStatus":"Under Review","status":"Under Review"}	2026-05-10 10:44:28.636+00	2026-06-19 13:36:05.782+00	\N	active	\N	\N	\N	\N	\N	\N	\N
 3496	1001210	SODIUM HYALURONATE (CHEMICORE)	\N	Bulk Raw Materials	\N	kg	10000.00	18.00	\N	1.000	\N	Under Review	["DD2206NHAS","DD2210BRS","DD2305GHGC","DE2207HBPS","DI2302IRM","DP2112ZFF","DQ2108FM","DQ2108RL","DSN2301MDM","DSN2301MNM","DSN2301NGS","EC2305SBC","EIDSNS072022","IG2212HSS","JG2304HSAG","KD2109MBC1","KD2203HBG","KD2203MBC","ME2303RS","MM2207TBS","MM2207TOS","MM2207TOSs","MM2210THSV","MM2305THVS","N2201NS","NS2304RMDS","PB2201AFC","PB2201VCS","PP2108DBS","PR0000805","PR0000807","PR0000808","PR0000847","PR0001394","PR0001852","PR0002005","PR0002317","PR0002711","PR0002713","PR0002768","PR0002871","PR0002935","PR0002938","PR0003012","PR0003129","PR0003146","PR0003374","PR0003379","PR0003548","PR0003549","PR0003550","PR0003554","PR0003590","PR0003610","PR0003612","PR0003614","PR0003630","PR0003710","PR0003771","PR0003805","PR0003820","PR0003830","PR0003853","PR0004006","PR0004030","PR0004032","PR0004035","PR0004058","PR0004100","PR0004101","PR0004131","PR0004197","PR0004270","PR0004307","PR0004383","PR0004384","PR0004388","PR0004390","PR0004391","PR0004399","PR0004408","PR0004409","PR0004423","PR0004609","PR0004647","PR0004674","PR0004682","PR0004687","PR0004715","PR0004716","PR0004735","PR0004787","PR0004795","PR0004846","PR0004890","PR0004905","PR0004915","PR0004943","PR0004950","PR0005018","PR0005019","PR0005041","PR0005048","PR0005054","PR0005060","PR0005062","PR0005080","PR0005189","PR0005324","PR0005375","PR0005430","PR0005432","PR0005469","PR0005474","PR0005550","PR0005620","PR0005653","PR0005699","PR0005721","PR0005784","PR0005859","PR0005868","PR0005900","PR0005901","PR0005912","PR0005979","PR0005984","PR0006013","PR0006014","PR0006016","PR0006115","PR0006170","PR0006222","PR0006223","PR0006352","PR0006353","PR0006603","PRINB0004","SD2209SSSS","SH2303HAS","SK2111GABS","SK2112ALS","SK2202HMFS","SN2203YCS","SN2207GLYA","SQ2212BGST","SS2303DSVM","UR2208NBS","VB2206HMOM","VB2206MNM","VB2206SCFM","PR0007099","PR0005243","PR0004844","SK2109DRFS","PR0006913","PR0006907","PR0007101","PR0006597","PR0006815","PR0006812","PR0005017","PR0005428","PR0004015","PR0004983","PR0004407","PR0004970","PR0004405","PR0006401","PR0004225-KC","PR0005544","SK2109NBLO","PR0007032","PR0007104","PR0007033","PR0006719","PR0006718","PR0006216","PR0006342","PR0006702","PR0006701","PR0006497","PR0007216","PR0006500","PR0006951","PR0005008","PR0006780","PR0007212","PR0007198","PR0007047","PR0007065","PR0006919","PR0006918","PR0006921","PR0006922","PR0006923"]	General	1252231000000889136	1001210	33021090	Taxable	\N	{"subCategory":"General","rmCategoryKey":"MISC","rmCategory":"Bulk Raw Materials","rmType":"Bulk Raw Materials","excelCategory":"Bulk Raw Materials","excelSubCategory":"General","masterApprovalStatus":"Under Review","status":"Under Review"}	2026-05-10 10:44:39.94+00	2026-06-19 13:36:05.784+00	\N	active	\N	\N	\N	\N	\N	\N	\N
+3411	1000612	AQUA	\N	Bulk Raw Materials	\N	kg	0.01	18.00	\N	1.000	\N	Under Review	["AC2303CMDS","AC2303DRPM","AC2303ECRC","AC2303SSDR","AC2303SSFS","CM2302AAMG","CS2303AANS","CS2303SDSS","CS2303SDUT","CS2303USDS","DD2206NHAS","DD2305GHGC","DE2305SBW","DE2305SFBR","DE2305SFBW","DE2305SPW","DI2302IRM","DP2112ZFF","DSN2301ASS","DSN2301FC","DSN2301MDM","DSN2301MNM","DSN2301MOM","DSN2301NGS","DSN2301SLC","EC2305SBC","EI2207ALSE","EIDSNS072022","EISUGS062022","EU2303SFS","EX2201FM","FL2212BSS","HZ2303HGS","IG2212HSS","IG2305MYCL","IS2208OBH","IS2703AGS","JG2304HSAG","KD2109ABCS","KD2109MBC1","KD2109PPSG","KD2203DGC","KD2203HBG","KD2203MBC","KD2203UMB","LJ2203GGL","LP2303HS","ME2206BFFW","ME2208GEHS","ME2303RS","MM2207TBS","MM2207TBSs","MM2207TOS","MM2207TOSs","MM2304HMS","MM2305PHSP","MM2305THVS","MM2306CUER","MO2208ASGS","MS2206WB","MS2212BW","MS2212NR","MS2212NR(EIMFR)","ND2303MFW","NS2108FSL","NS2108SD","NS2110HS","NS2304ACCS","NS2304LLGS","NS2304OSS","NS2304RHSS","NS2304RLNS","NS2304RMDS","OL2108HC","OL2108HCI","OL2108RFC","OL2108RMG","OL2205DTC","OL2205GFC","OL2205SFC","OL2205SL","OL2301BM","OL2301BS","OL2301BW","OL2308BMI","PP2108DBS","PP2109DAM","PP2109DNM","PP2302DAMM","PP2303GTG","PR0000735","PR0000804","PR0000805","PR0000806","PR0000807","PR0000808","PR0000809","PR0000816","PR0000847","PR0000928","PR0000930","PR0000931","PR0001070","PR0001393","PR0001394","PR0001852","PR0001886","PR0001962","PR0002001","PR0002005","PR0002013","PR0002136","PR0002212","PR0002229","PR0002317","PR0002371","PR0002373","PR0002374","PR0002375","PR0002376","PR0002496","PR0002539","PR0002540","PR0002541","PR0002544","PR0002545","PR0002557","PR0002558","PR0002559","PR0002644","PR0002708","PR0002768","PR0002783","PR0002841","PR0002844","PR0002871","PR0002872","PR0002873","PR0002875","PR0002881","PR0002882","PR0002884","PR0002889","PR0002900","PR0002934","PR0002935","PR0002936","PR0002938","PR0002945","PR0003012","PR0003016","PR0003129","PR0003146","PR0003169","PR0003176","PR0003203","PR0003346","PR0003347","PR0003361","PR0003373","PR0003374","PR0003379","PR0003400","PR0003425","PR0003440","PR0003464","PR0003495","PR0003496","PR0003497","PR0003507","PR0003509","PR0003510","PR0003511","PR0003515","PR0003516","PR0003517","PR0003539","PR0003540","PR0003541","PR0003542","PR0003543","PR0003544","PR0003545","PR0003546","PR0003547","PR0003548","PR0003549","PR0003550","PR0003551","PR0003553","PR0003554","PR0003567","PR0003569","PR0003599","PR0003610","PR0003612","PR0003615","PR0003616","PR0003619","PR0003621","PR0003630","PR0003704","PR0003710","PR0003724","PR0003732","PR0003747","PR0003748","PR0003749","PR0003750","PR0003758","PR0003759","PR0003760","PR0003766","PR0003767","PR0003774","PR0003789","PR0003805","PR0003819","PR0003823","PR0003828","PR0003860","PR0003861","PR0003867","PR0003869","PR0003870","PR0003874","PR0003893","PR0003895","PR0003922","PR0003923","PR0003924","PR0003926","PR0003927","PR0003932","PR0003986","PR0003987","PR0003988","PR0003990","PR0003990-KC","PR0003991","PR0003991-KC","PR0003992","PR0003992-KC","PR0003997","PR0004006","PR0004010","PR0004015","PR0004032","PR0004035","PR0004036","PR0004037","PR0004038","PR0004053","PR0004076","PR0004085","PR0004095","PR0004096","PR0004097","PR0004103","PR0004108","PR0004110","PR0004131","PR0004135","PR0004138","PR0004143","PR0004145","PR0004148","PR0004153","PR0004156","PR0004162","PR0004166","PR0004170","PR0004185","PR0004187","PR0004188","PR0004195","PR0004196","PR0004197","PR0004204","PR0004205","PR0004211","PR0004224-KC","PR0004225-KC","PR0004226-KC","PR0004227","PR0004233","PR0004235","PR0004236","PR0004237","PR0004238","PR0004241","PR0004250","PR0004258","PR0004259","PR0004268","PR0004270","PR0004307","PR0004312","PR0004313","PR0004314","PR0004345","PR0004347","PR0004348","PR0004349","PR0004350","PR0004370","PR0004382","PR0004383","PR0004384","PR0004386","PR0004387","PR0004388","PR0004389","PR0004390","PR0004391","PR0004392","PR0004393","PR0004399","PR0004404","PR0004405","PR0004407","PR0004409","PR0004410","PR0004413","PR0004415","PR0004423","PR0004443","PR0004456","PR0004457","PR0004458","PR0004483","PR0004485","PR0004486","PR0004515","PR0004516","PR0004523","PR0004570","PR0004571","PR0004585","PR0004586","PR0004587","PR0004588","PR0004598","PR0004602","PR0004609","PR0004614","PR0004618","PR0004619","PR0004625","PR0004626","PR0004627","PR0004628","PR0004629","PR0004630","PR0004644","PR0004645","PR0004665","PR0004672","PR0004674","PR0004675","PR0004680","PR0004681","PR0004683","PR0004685","PR0004686","PR0004687","PR0004688","PR0004694","PR0004697","PR0004704","PR0004708","PR0004715","PR0004716","PR0004718","PR0004720","PR0004733..","PR0004734","PR0004735","PR0004737","PR0004759","PR0004773","PR0004774","PR0004787","PR0004788","PR0004789","PR0004791","PR0004792","PR0004795","PR0004799","PR0004801","PR0004806","PR0004829","PR0004830","PR0004842","PR0004843","PR0004844","PR0004845","PR0004846","PR0004847","PR0004848","PR0004850","PR0004851","PR0004873","PR0004890","PR0004891","PR0004895","PR0004906","PR0004915","PR0004917","PR0004918","PR0004919","PR0004920","PR0004921","PR0004943","PR0004947","PR0004950","PR0004959","PR0004961","PR0004970","PR0004971","PR0004974","PR0004981","PR0004982","PR0004983","PR0004987","PR0004990","PR0004993","PR0004994","PR0004995","PR0005004","PR0005005","PR0005007","PR0005008","PR0005009","PR0005013","PR0005015","PR0005016","PR0005017","PR0005018","PR0005019","PR0005020","PR0005021","PR0005025","PR0005027","PR0005028","PR0005029","PR0005030","PR0005031","PR0005032","PR0005033","PR0005037","PR0005038","PR0005041","PR0005043","PR0005044","PR0005047","PR0005048","PR0005052","PR0005054","PR0005057","PR0005060","PR0005062","PR0005063","PR0005064","PR0005077","PR0005078","PR0005080","PR0005081","PR0005086","PR0005087","PR0005089","PR0005091","PR0005092","PR0005124","PR0005125","PR0005126","PR0005127","PR0005130","PR0005133","PR0005135","PR0005145","PR0005147","PR0005152","PR0005154","PR0005157","PR0005158","PR0005161","PR0005166","PR0005167","PR0005174","PR0005176","PR0005177","PR0005189","PR0005203","PR0005204","PR0005205","PR0005227","PR0005234","PR0005235","PR0005242","PR0005243","PR0005304","PR0005311","PR0005324","PR0005339","PR0005341","PR0005342","PR0005343","PR0005345","PR0005346","PR0005347","PR0005349","PR0005350","PR0005353","PR0005354","PR0005355","PR0005367","PR0005368","PR0005369","PR0005373","PR0005375","PR0005376","PR0005377","PR0005378","PR0005379","PR0005380","PR0005388","PR0005411","PR0005418","PR0005425","PR0005426","PR0005427","PR0005428","PR0005429","PR0005430","PR0005431","PR0005432","PR0005435","PR0005438","PR0005441","PR0005445","PR0005446","PR0005448","PR0005450","PR0005452","PR0005453","PR0005458","PR0005459","PR0005469","PR0005473","PR0005474","PR0005475","PR0005476","PR0005485","PR0005486","PR0005504","PR0005507","PR0005517","PR0005541","PR0005543","PR0005544","PR0005550","PR0005552","PR0005588","PR0005612","PR0005617","PR0005620","PR0005626","PR0005629","PR0005652","PR0005653","PR0005656","PR0005689","PR0005690","PR0005691","PR0005692","PR0005697","PR0005699","PR0005701","PR0005713","PR0005721","PR0005725","PR0005741","PR0005763","PR0005778","PR0005780","PR0005781","PR0005782","PR0005784","PR0005785","PR0005787","PR0005789","PR0005790","PR0005797","PR0005798","PR0005799","PR0005809","PR0005818","PR0005836","PR0005859","PR0005862","PR0005866","PR0005868","PR0005877","PR0005887","PR0005900","PR0005901","PR0005911","PR0005912","PR0005918","PR0005932","PR0005933","PR0005934","PR0005935","PR0005983","PR0006013","PR0006014","PR0006015","PR0006016","PR0006018","PR0006023","PR0006036","PR0006037","PR0006055","PR0006062","PR0006084","PR0006087","PR0006089","PR0006090","PR0006091","PR0006092","PR0006098","PR0006105","PR0006106","PR0006107","PR0006111","PR0006112","PR0006114","PR0006115","PR0006121","PR0006126","PR0006129","PR0006132","PR0006155","PR0006156","PR0006159","PR0006166","PR0006170","PR0006171","PR0006174","PR0006183","PR0006184","PR0006213","PR0006216","PR0006223","PR0006237","PR0006253","PR0006262","PR0006277","PR0006302","PR0006305","PR0006306","PR0006307","PR0006312","PR0006323","PR0006342","PR0006343","PR0006353","PR0006367","PR0006373","PR0006381","PR0006385","PR0006393","PR0006394","PR0006401","PR0006408","PR0006409","PR0006410","PR0006411","PR0006412","PR0006413","PR0006416","PR0006417","PR0006418","PR0006419","PR0006420","PR0006421","PR0006422","PR0006437","PR0006448","PR0006450","PR0006453","PR0006454","PR0006455","PR0006457","PR0006458","PR0006461","PR0006462","PR0006472","PR0006474","PR0006490","PR0006491","PR0006495","PR0006496","PR0006500","PR0006516","PR0006517","PR0006519","PR0006520","PR0006521","PR0006522","PR0006523","PR0006524","PR0006540","PR0006542","PR0006543","PR0006573","PR0006574","PR0006576","PR0006597","PR0006603","PR0006604","PR0006605","PR0006606","PR0006607","PR0006615","PR0006637","PR0006638","PR0006639","PR0006647","PR0006650","PR0006651","PR0006652","PR0006653","PR0006660","PR0006661","PR0006663","PR0006665","PR0006668","PR0006683","PR0006700","PR0006701","PR0006702","PR0006706","PR0006709","PR0006713","PR0006714","PR0006716","PR0006718","PR0006719","PR0006725","PR0006726","PR0006729","PR0006733","PR0006734","PR0006735","PR0006740","PR0006742","PR0006746","PR0006757","PR0006760","PR0006775","PR0006780","PR0006781","PR0006791","PR0006792","PR0006805","PR0006806","PR0006807","PR0006808","PR0006809","PR0006810","PR0006811","PR0006814","PR0006815","PR0006816","PR0006818","PR0006819","PR0006831","PR0006832","PR0006847","PR0006848","PR0006850","PR0006851","PR0006852","PR0006853","PR0006854","PR0006855","PR0006863","PR0006871","PR0006872","PR0006879","PR0006893","PR0006894","PR0006895","PR0006896","PR0006906","PR0006907","PR0006908","PR0006909","PR0006910","PR0006911","PR0006913","PR0006914","PR0006915","PR0006916","PR0006917","PR0006918","PR0006919","PR0006920","PR0006921","PR0006922","PR0006923","PR0006925","PR0006926","PR0006944","PR0006945","PR0006951","PR0006953","PR0006954","PR0006989","PR0007031","PR0007032","PR0007033","PR0007034","PR0007035","PR0007036","PR0007039","PR0007043","PR0007044","PR0007045","PR0007047","PR0007048","PR0007050","PR0007060","PR0007061","PR0007062","PR0007063","PR0007065","PR0007066","PR0007097","PR0007099","PR0007100","PR0007101","PR0007102","PR0007103","PR0007104","PR0007105","PR0007139","PR0007189","PR0007190","PR0007191","PR0007192","PR0007195","PR0007196","PR0007197","PR0007198","PR0007210","PR0007211","PR0007212","PR0007213","PR0007215","PR0007216","PR0007255","PR0007277","PRINB0001","PRINB0003","PRINB0004","PS2303CC","RV2211DCS","RV2211UTS","SC2303HES","SF2206HUMM","SH2303HAS","SK0312URM","SK2108AEC","SK2108AFC","SK2108BFS","SK2108BSFS","SK2108CSRS","SK2108FFS","SK2108GHS","SK2109AAFS","SK2109DRFS","SK2109HDNS","SK2109MBRG","SK2109MBRL","SK2109MBRS","SK2109NBLO","SK2109NBLS","SK2109NBRC","SK2109NBRG","SK2109NBRS","SK2109NMC","SK2109NSFC","SK2109NUFC","SK2109SDC","SK2109SPS","SK2109SUCG","SK2109URG","SK2110AGFM","SK2110FEFM","SK2110NLDS","SK2110NPFM","SK2110SFCN","SK2110SNFM","SK2111CSNC","SK2111GABS","SK2111MDS","SK2111MMC","SK2111VCSM","SK2112ALS","SK2112ASFC","SK2112LMTIO2","SK2112MRL","SK2112RHFBW","SK2201BSNC","SK2201HMDS","SK2201MAAS","SK2201MALC","SK2201MBFS","SK2201MBRC","SK2201MCSR","SK2201MDRS","SK2201MEFC","SK2201MSPS","SK2202AFCD","SK2202AFCN","SK2202ASFT","SK2202ATD","SK2202BDRC","SK2202BMOS","SK2202BSFT","SK2202CNC","SK2202DFCO","SK2202GFTD","SK2202HMFS","SK2202IMDRC","SK2202MRS","SK2202MSCC","SK2202MSFC","SK2202MUSC","SK2202OFM","SK2202PFCS","SK2202PFSD","SK2202RADS","SK2202RFSD","SK2202STADS","SK2202VOBS","SK2308SUCGT","SK2308SUCGT-EI","SK2309RSAGA","SK2309RSDA","SK2309RSOA","SN0201RHS","SN2203LW","SN2203UPHM","SN2207PSSP","SN2304GRFW","SN2305UPSS","SQ2202MGB (N)","SQ2212ACMT","SQ2212BGST","SQ2212SPGT","SS2206AAFW","SS2206AAPS","SS2206AAT","SS2206ABP","SS2206HHCM","SS2209ABPS","SS2210AGPS","SS2212HRC","SS2303ACFW","SS2303DSVM","SS2305HHCC","SV2305ISBC","SV2305SSUC","SV2305SSUR","SV2305SUCS","SV2305SURS","TT2210INUC","TT2210SHRS","UR2208NBS","TPR000999","PR0000607","PR0003561","MM2210THM","MM2210THSV","N2201NS","N2207IIBS","OL2205DSK","OL2205NSK","OL2301RBBK","PR0000815","PR0002022","PR0002711","PR0002965","PR0003419","PR0003555","PR0003590","PR0003771","VB2206HMOM","VB2206MNM","VB2206RBS","VB2206SCFM","VB2206WRS","PR0007383","PR0006812","PR0004905","PR0004101","PR0007315","PR0007380","PR0003864","PR00301"]	2	1252231000000934490	1000612	33021090	Taxable	\N	{"subCategory":"General","rmCategoryKey":"MISC","rmCategory":"Bulk Raw Materials","rmType":"Bulk Raw Materials","excelCategory":"Bulk Raw Materials","excelSubCategory":"General","masterApprovalStatus":"Under Review","status":"Under Review"}	2026-05-10 10:44:36.646+00	2026-06-25 09:32:41.222+00	\N	active	\N	\N	\N	\N	\N	\N	\N
 3667	2000030	COOL WATER W 3415	Aqua	Pre-mixed Bases	\N	kg	2423.00	18.00	\N	1.000	\N	Under Review	["KD2203DGC","PR0003517","PR0003546","PR0003759","PR0004150","PR0004158","PR0004164","PR0004229","PR0004259","PR0004408","PR0004411","PR0004792","PR0004847","PR0006015","PR0006909","PR0006915","PR0006926","PR0006954","PR0007050","N2201NS","PR0002711","PR0003985","OL2207TSD","PR0004828","PR0004874","PR0004897","PR0004905","PR0004913","PR0004927","PR0005139","PR0005340","PR0005344","PR0005348","PR0005352","PR0005788","PR0005979","PR0005980","PR0006082","PR0006222","PR0006224","PR0006229","PR0006276","PR0006352","PR0006736","PR0007194","PRINB0005","RD2211UNHS","RP2108NGNS","RP2111UES","SN0201CM","SN2203YCS","SN2207GLYA","SOS2312FHL","SOS2312HSS","SS2208BFWS","SS2208HGC","SS2208HGCS","SS2208HS","SS2209RNS","TPR0003276","VB2206BFS"]	Pre-mixed Bases	1252231000000896429	2000030	33012990	Taxable	\N	{"subCategory":"Pre-mixed Bases","rmCategoryKey":"MISC","rmCategory":"Pre-mixed Bases","rmType":"Pre-mixed Bases","excelCategory":"Pre-mixed Bases","excelSubCategory":"Pre-mixed Bases","masterApprovalStatus":"Under Review","status":"Under Review"}	2026-05-10 10:44:48.31+00	2026-06-19 13:36:06.188+00	\N	active	\N	\N	\N	\N	\N	\N	\N
 2970	1000003	AC 506 PCA-ZN	AC 506 PCA-ZN	Bulk raw materials	Bulk Raw Materials	KG	\N	18.00		1.000	\N	Under Review	["AE2208HS","DP2112SLO","EIDSNS072022","IS2208OBH","N2201NS","PR0002935","PR0003543","PR0003828","PR0003861","PR0003864","PR0003924","PR0004131","PR0004188","PR0004383","PR0004630","PR0004708","PR0005021","PR0005203","PR0005588","PR0005629","PR0006183","PR0006306","PR0006352","PR0006448","PR0006651","PR0006718","PR0006920","PR0006944","PR0007039","PR0007103","RD2211UNHS","SK2202PFSD","SK2202RFSD","SN2304GRFW","SQ2212ACMT"]	General	1252231000000889578	1000003	33021090	Taxable	\N	{"zohoId":"1252231000000889578","rmTaxPreference":"Taxable","rmReturnable":"No","rmAssociateItems":"AE2208HS\\nDP2112SLO\\nEIDSNS072022\\nIS2208OBH\\nN2201NS\\nPR0002935\\nPR0003543\\nPR0003828\\nPR0003861\\nPR0003864\\nPR0003924\\nPR0004131\\nPR0004188\\nPR0004383\\nPR0004630\\nPR0004708\\nPR0005021\\nPR0005203\\nPR0005588\\nPR0005629\\nPR0006183\\nPR0006306\\nPR0006352\\nPR0006448\\nPR0006651\\nPR0006718\\nPR0006920\\nPR0006944\\nPR0007039\\nPR0007103\\nRD2211UNHS\\nSK2202PFSD\\nSK2202RFSD\\nSN2304GRFW\\nSQ2212ACMT","products":["AE2208HS","DP2112SLO","EIDSNS072022","IS2208OBH","N2201NS","PR0002935","PR0003543","PR0003828","PR0003861","PR0003864","PR0003924","PR0004131","PR0004188","PR0004383","PR0004630","PR0004708","PR0005021","PR0005203","PR0005588","PR0005629","PR0006183","PR0006306","PR0006352","PR0006448","PR0006651","PR0006718","PR0006920","PR0006944","PR0007039","PR0007103","RD2211UNHS","SK2202PFSD","SK2202RFSD","SN2304GRFW","SQ2212ACMT"],"rmCategoryKey":"MISC","rmCategory":"Bulk raw materials","qcInspectionGroup":"","subCategory":"Bulk raw materials","optionalRmSubCategory":"Excipient","optionalRmSubSubCategory":"","hazardHandlingClass":"","seriesPrefix":"EI-RM-MISC","rmDefaultStorageType":"","inciName":"AC 506 PCA-ZN","tradeCommercialName":"AC 506 PCA-ZN","functionRole":"","rmType":"Bulk Raw Materials","casNo":"","einecs":"","countryOfOrigin":"","manufacturer":"","synonyms":"","internalNotes":"","primaryUom":"KG","issueUom":"","standardPackSize":"","hsnCode":"33021090","gst":"18","preferredCurrency":"INR","grade":"","bisCompliance":"","animalOrigin":"","compliance":"","allergenRequired":false,"gmoRequired":false,"sdsAvailable":false,"coaAvailable":false,"regulatoryNotes":"","regMaxUseLevelPct":"","regAllergenDeclarationEu26":"","regIfraCategoryLimit":"","regCiNumber":"","regApprovedArea":"","rmState":"","appearance":"","odour":"","activeContentPurityPct":"","viscosityP":"","meltingPointC":"","boilingPointC":"","flashPointC":"","specificGravity":"1","refractiveIndex":"","chargeType":"","activeMatterPct":"","hlbValue":"","residualSolventsPpm":"","pathogen":"","moistureContentPct":"","doseUseLevel":"","ph":"","vocPct":"","opticalSpectroscopy":"","colourImpartToFormulation":"","msdsSdsNotesLink":"","storageCondition":"","dispensingDirection":"","coaRequired":"","acceptanceSpecMin":"","acceptanceSpecMax":"","rmQualitySpecRows":[{"id":"qs-1781591972943-3b1as15","parameter":"Appearance","specLimit":"Per Master","method":"Visual","mandatory":false,"tolerance":"Match","frequency":"Per batch","sample":"10g","acceptance":"Match","attachments":[]},{"id":"qs-1781591972943-491hcve","parameter":"Color","specLimit":"Per Master","method":"Visual vs standard","mandatory":false,"tolerance":"Match","frequency":"Per batch","sample":"10g","acceptance":"Match","attachments":[]},{"id":"qs-1781591972943-5brch10","parameter":"Odor","specLimit":"Per Master","method":"Olfactory","mandatory":false,"tolerance":"Match","frequency":"Per batch","sample":"10g","acceptance":"Match","attachments":[]},{"id":"qs-1781591972943-xivsprp","parameter":"pH","specLimit":"Per Master","method":"pH meter @25°C","mandatory":false,"tolerance":"±0.3","frequency":"Per batch","sample":"100g","acceptance":"Within range","attachments":[]},{"id":"qs-1781591972943-kzbg4r7","parameter":"Viscosity","specLimit":"Per Master (cps)","method":"Brookfield @25°C","mandatory":false,"tolerance":"±20%","frequency":"Per batch","sample":"250g","acceptance":"Within range","attachments":[]},{"id":"qs-1781591972943-8x3mslv","parameter":"TAMC / TYMC","specLimit":"≤ 100 / 10 CFU/g","method":"IS 14648","mandatory":false,"tolerance":"≤ Limit","frequency":"Per batch","sample":"1g","acceptance":"Pass","attachments":[]},{"id":"qs-1781591972943-ioy878m","parameter":"Pathogens (E.coli/Salmonella/P.aeruginosa/S.aureus)","specLimit":"Absent","method":"IS 14648","mandatory":false,"tolerance":"Absent","frequency":"Per batch","sample":"1g/10g","acceptance":"Absent","attachments":[]},{"id":"qs-1781591972943-oy58z9h","parameter":"Bulk Yield","specLimit":"≥ 95% of theoretical","method":"Weigh","mandatory":false,"tolerance":"≥ 95%","frequency":"Per batch","sample":"Full bulk","acceptance":"≥ 95%","attachments":[]},{"id":"qs-1781591972943-zowqrvk","parameter":"Hold Time (bulk)","specLimit":"≤ 24 hr","method":"BMR timestamp","mandatory":false,"tolerance":"≤ 24 hr","frequency":"Per batch","sample":"BMR","acceptance":"Within hold","attachments":[]}],"rmQualitySubSpecRowsByPath":{},"physicalFormSolid":"","physicalFormLiquid":"","preferredVendor":"","preferredVendorClientId":"","alternateVendors":"","alternateVendorClientId":"","sourcingCountryOfOrigin":"","sourcingMoq":"","sourcingLeadTimeDays":"","sourcingStandardUom":"KG","sourcingCurrency":"INR","assayPurity":"","appearanceSpec":"","phSpec":"","moistureLod":"","heavyMetalsSpec":"","microbialSpec":"","odorColorSpec":"","otherSpecs":"","recommendedUseLevel":"","maxUseLevel":"","solubility":"","processingGuidance":"","incompatibilities":"","stabilityNotes":"","claims":"","storageConditions":"","shelfLife":"","retestPeriod":"","warehouseLocation":"","batchTracking":"","fifoFefo":"","minimumStock":"","reorderLevel":"","dispensingBatchNo":"","masterLifecycleStatus":"Active","rmOwner":"","universalSwapEligibility":"","functionalEquivalents":"","handlingNotes":"","vendors":[{"id":"1781591990238","name":"20 MICRONS LTD","location":"Gujarat","moq":90,"unitPrice":89.98,"leadTime":0,"approved":"","priceValidTill":"","currency":"INR","advancePct":"0","preShipmentPct":"100","postShipmentPct":"0","creditDays":"60","tiers":[{"moq":"90","price":"89.98","validTill":"","note":""}]}],"documents":[],"tests":[],"arNumber":"","category":"Bulk raw materials","masterApprovalStatus":"Under Review","status":"Under Review"}	2026-05-10 10:44:21.957+00	2026-06-19 13:36:06.189+00	\N	active	Active		\N		\N	\N	\N
 3108	1000194	GENENCARE OSMS BA (BETAINE)	Betaine	Bulk Raw Materials	\N	KG	830.00	18.00	\N	1.000	\N	Under Review	["CM2302AAMG","DD2206NHAS","DD2210BRS","DD2305GHGC","DSN2301MOM","DSN2301NGS","EC2305SBC","EI2207ALSE","EI2207BESE","EI2207GASE","EI2207MOIS","EISUGS062022","IG2212HSS","IS2208OBH","IS2703AGS","ME2208GEHS","ME2303RS","MM2210THSV","MM2305THVS","MO2208ASGS","N2201NS","OL2301BM","OL2301BW","OL2308BMI","PB2201OML","PB2201RML","PP2108DBS","PR0000805","PR0001393","PR0001394","PR0001852","PR0002005","PR0002136","PR0002376","PR0002768","PR0002783","PR0002841","PR0002871","PR0002872","PR0002873","PR0002881","PR0002889","PR0002938","PR0003146","PR0003347","PR0003374","PR0003464","PR0003494","PR0003495","PR0003496","PR0003497","PR0003509","PR0003539","PR0003544","PR0003545","PR0003548","PR0003553","PR0003554","PR0003599","PR0003612","PR0003630","PR0003766","PR0003771","PR0003836","PR0003860","PR0003874","PR0003924","PR0003926","PR0003932","PR0003997","PR0004030","PR0004076","PR0004095","PR0004096","PR0004100","PR0004156","PR0004157","PR0004162","PR0004170","PR0004187","PR0004196","PR0004197","PR0004236","PR0004237","PR0004241","PR0004307","PR0004348","PR0004349","PR0004382","PR0004384","PR0004388","PR0004390","PR0004391","PR0004409","PR0004423","PR0004457","PR0004483","PR0004516","PR0004614","PR0004628","PR0004630","PR0004644","PR0004674","PR0004680","PR0004681","PR0004682","PR0004715","PR0004716","PR0004735","PR0004795","PR0004869","PR0004890","PR0004895","PR0004905","PR0004920","PR0004927","PR0004987","PR0005038","PR0005060","PR0005077","PR0005078","PR0005080","PR0005161","PR0005189","PR0005243","PR0005349","PR0005350","PR0005367","PR0005368","PR0005369","PR0005450","PR0005469","PR0005473","PR0005476","PR0005550","PR0005552","PR0005690","PR0005699","PR0005701","PR0005788","PR0005868","PR0005918","PR0005978","PR0005979","PR0005980","PR0005983","PR0005984","PR0006014","PR0006018","PR0006105","PR0006106","PR0006126","PR0006153","PR0006183","PR0006184","PR0006222","PR0006224","PR0006237","PR0006276","PR0006277","PR0006352","PR0006420","PR0006472","PR0006519","PR0006639","PR0006652","PR0006700","PR0006718","PR0006740","PR0006780","PR0006791","PR0006807","PR0006810","PR0006811","PR0006815","PR0006818","PR0006831","PR0006832","PR0006847","PR0006848","PR0006853","PR0006855","PR0006893","PR0006896","PR0006913","PR0006917","PR0006919","PR0006921","PR0006945","PR0007036","PR0007104","PR0007105","PS2303CC","SC2303HES","SD2209SSSS","SK2109MBRL","SK2202HMFS","SK2202PFSD","SK2202RFSD","SN2207GLYA","SQ2202MGB (N)","SS2206AAPS","SS2209RNS","SV2305ISBC","UR2208NBS","PR0007383"]	Surfactants	1252231000000888388	1000194	33021090	Taxable	\N	{"subCategory":"Surfactants","rmCategoryKey":"MISC","rmCategory":"Bulk Raw Materials","rmType":"Bulk Raw Materials","excelCategory":"Bulk Raw Materials","excelSubCategory":"Surfactants","masterApprovalStatus":"Under Review","status":"Under Review"}	2026-05-10 10:44:26.877+00	2026-06-19 13:36:05.786+00	\N	active	\N	\N	\N	\N	\N	\N	\N
 3156	1000254	L ASCORBIC ACID	Ascorbic Acid	Bulk Raw Materials	\N	KG	460.00	18.00	\N	1.000	\N	Under Review	["DSN2301MNM","FL2212BSS","MM2210THSV","MM2305THVS","PB2201OML","PB2201RML","PP2108DBS","PR0000607","PR0000807","PR0002544","PR0003146","PR0003539","PR0003548","PR0003612","PR0003891","PR0004032","PR0004390","PR0004393","PR0004409","PR0004423","PR0004680","PR0004681","PR0004682","PR0004715","PR0004795","PR0004846","PR0004913","PR0005029","PR0005030","PR0005054","PR0005158","PR0005243","PR0005324","PR0005469","PR0005617","PR0005690","PR0005789","PR0005859","PR0005979","PR0006014","PR0006055","PR0006307","PR0006457","PR0006661","PR0006806","PR0006818","PR0006853","PR0006913","PR0006919","PR0006954","PR0007036","PR0007255","SH2303HAS","SK2111VCSM","SK2202PFSD","SK2202RFSD","SN2203YCS","SS2209RNS","PR0007383"]	Acids	1252231000000890343	1000254	33021090	Taxable	\N	{"subCategory":"Acids","rmCategoryKey":"MISC","rmCategory":"Bulk Raw Materials","rmType":"Bulk Raw Materials","excelCategory":"Bulk Raw Materials","excelSubCategory":"Acids","masterApprovalStatus":"Under Review","status":"Under Review"}	2026-05-10 10:44:28.337+00	2026-06-19 13:36:05.79+00	\N	active	\N	\N	\N	\N	\N	\N	\N
 3117	1000205	GMS-SE	Glyceryl Stearate	Bulk Raw Materials	\N	kg	175.00	18.00	\N	1.000	\N	Under Review	["DSN2301SLC","EI2207MOIS","HW2202SBC","MM2210THM","MM2304HMS","MS2212NR(EIMFR)","OL2207TCD","PR0000816","PR0001886","PR0002708","PR0002997","PR0004038","PR0004056","PR0004185","PR0004269","PR0004313","PR0004585","PR0004641","PR0004788","PR0004806","PR0004829","PR0004913","PR0005043","PR0005147","PR0005205","PR0005339","PR0005459","PR0005652","PR0005799","PR0006421","PR0006576","SN2203UPHM","PR0005311","PR0004404","PR0004970","PR0006906"]	General	1252231000000901648	1000205	33021090	Taxable	\N	{"subCategory":"General","rmCategoryKey":"MISC","rmCategory":"Bulk Raw Materials","rmType":"Bulk Raw Materials","excelCategory":"Bulk Raw Materials","excelSubCategory":"General","masterApprovalStatus":"Under Review","status":"Under Review"}	2026-05-10 10:44:27.127+00	2026-06-19 13:36:05.796+00	\N	active	\N	\N	\N	\N	\N	\N	\N
 3057	1000121	CITRIC ACID MONO HYDRATE	Citric Acid	Bulk Raw Materials	\N	KG	115.00	18.00	\N	1.000	\N	Under Review	["AE2208HS","CS2303SDUT","DD2305GHGC","DE2305SBW","DE2305SFBR","DE2305SFBW","DE2305SPW","DE2305SSSS","JN2207REPS","JN2207RESS","MM2210THM","MM2304HMS","MS2206WB","N2201NS","NS2304OSS","OL2205DTC","OL2207TSD","OL2207TSNO","PR0000809","PR0002229","PR0002935","PR0003203","PR0003374","PR0003569","PR0003704","PR0003819","PR0003864","PR0003893","PR0003992","PR0003992-KC","PR0004095","PR0004143","PR0004162","PR0004211","PR0004227","PR0004269","PR0004455","PR0004456","PR0004683","PR0004688","PR0004716","PR0004842","PR0004918","PR0004919","PR0004961","PR0005028","PR0005091","PR0005235","PR0005347","PR0005377","PR0005378","PR0005379","PR0005380","PR0005446","PR0005474","PR0005629","PR0005780","PR0005781","PR0005934","PR0006156","PR0006159","PR0006213","PR0006253","PR0006305","PR0006352","PR0006373","PR0006393","PR0006394","PR0006401","PR0006408","PR0006409","PR0006410","PR0006411","PR0006412","PR0006413","PR0006417","PR0006418","PR0006500","PR0006517","PR0006520","PR0006665","PR0006726","PR0006736","RD2205USS","RD2211UNHS","RV2211DCS","SK2108BSFS","SK2109NUFC","SK2111GABS","SK2201MBFS","SK2202MUSC","SN2203LW","TT2210INUC","SK2109NBLO","PR0007380"]	Acids	1252231000000888660	1000121	33021090	Taxable	\N	{"subCategory":"Acids","rmCategoryKey":"MISC","rmCategory":"Bulk Raw Materials","rmType":"Bulk Raw Materials","excelCategory":"Bulk Raw Materials","excelSubCategory":"Acids","masterApprovalStatus":"Under Review","status":"Under Review"}	2026-05-10 10:44:25.401+00	2026-06-19 13:36:05.798+00	\N	active	\N	\N	\N	\N	\N	\N	\N
-2969	1000002	AC 224 LENOCARE SMCT	Salicylic Acida	RAW MATERIALS	\N	GM	\N	18.00	8	1.000	\N	Under Review	["AC2303DRPM","LJ2203GGL","PR0006276","SS2208AFFS","SS2208BFW","SS2208BFWS","TPR000999"]	General	1252231000000893607	1000002	33021090	Taxable	\N	{"inciName":"Salicylic Acida","tradeCommercialName":"AC 224 LENOCARE SMCT","casNo":"","functionRole":"","primaryUom":"GM","hsnCode":"33021090","gst":"18","grade":"Cosmetic","compliance":"","bisCompliance":"","regMaxUseLevelPct":"","regAllergenDeclarationEu26":"","regIfraCategoryLimit":"","regCiNumber":"","regApprovedArea":"","animalOrigin":"","rmState":"Solid","appearance":"guyibijk","odour":"","activeContentPurityPct":"","solubility":"","viscosityP":"","meltingPointC":"","boilingPointC":"","flashPointC":"","specificGravity":"1","refractiveIndex":"","chargeType":"","activeMatterPct":"","hlbValue":"","residualSolventsPpm":"","pathogen":"","moistureContentPct":"","doseUseLevel":"","ph":"","vocPct":"","opticalSpectroscopy":"","colourImpartToFormulation":"","msdsSdsNotesLink":"j","storageCondition":"kj","dispensingDirection":"","arNumber":"89","coaRequired":"No","acceptanceSpecMin":"","acceptanceSpecMax":"","physicalFormSolid":"","physicalFormLiquid":"","preferredVendor":"20 MICRONS NANO MINERALS LIMITED","alternateVendors":"","sourcingCountryOfOrigin":"Gujarat","sourcingMoq":"9","sourcingLeadTimeDays":"","sourcingStandardUom":"GM","sourcingCurrency":"INR","shelfLife":"8","retestPeriod":"","reorderLevel":"","dispensingBatchNo":"","masterLifecycleStatus":"Active","rmOwner":"","universalSwapEligibility":"","functionalEquivalents":"","zohoId":"1252231000000893607","rmTaxPreference":"Taxable","rmReturnable":"No","rmAssociateItems":"AC2303DRPM\\nLJ2203GGL\\nPR0006276\\nSS2208AFFS\\nSS2208BFW\\nSS2208BFWS\\nTPR000999","products":["AC2303DRPM","LJ2203GGL","PR0006276","SS2208AFFS","SS2208BFW","SS2208BFWS","TPR000999"],"rmCategoryKey":"MISC","rmCategory":"RAW MATERIALS","qcInspectionGroup":"","subCategory":"RAW MATERIALS","optionalRmSubCategory":"SURFACTANTS","optionalRmSubSubCategory":"NON-IONIC","seriesPrefix":"EI-RM-MISC","rmDefaultStorageType":"","preferredVendorClientId":"","alternateVendorClientId":"","masterApprovalStatus":"Under Review","rmQualitySpecRows":[],"rmQualitySubSpecRowsByPath":{},"vendors":[{"id":"1780562087495","name":"20 MICRONS NANO MINERALS LIMITED","location":"Gujarat","moq":9,"unitPrice":9,"leadTime":0,"approved":"","priceValidTill":"","currency":"INR","advancePct":"0","preShipmentPct":"0","postShipmentPct":"0","creditDays":"0","tiers":[{"moq":"9.0000","price":"9","validTill":"2026-06-05","note":""},{"moq":"9.0000","price":"9","validTill":"2026-06-05","note":""}]}],"documents":[],"tests":[],"hazardHandlingClass":"","einecs":"","countryOfOrigin":"","manufacturer":"","synonyms":"","internalNotes":"","issueUom":"","standardPackSize":"","preferredCurrency":"INR","allergenRequired":false,"gmoRequired":false,"sdsAvailable":false,"coaAvailable":false,"regulatoryNotes":"","assayPurity":"","appearanceSpec":"","phSpec":"","moistureLod":"","heavyMetalsSpec":"","microbialSpec":"","odorColorSpec":"","otherSpecs":"","recommendedUseLevel":"","maxUseLevel":"","processingGuidance":"","incompatibilities":"","stabilityNotes":"","claims":"","storageConditions":"","warehouseLocation":"","batchTracking":"","fifoFefo":"","minimumStock":"","handlingNotes":"","category":"RAW MATERIALS","status":"Under Review","masterCustomDropdownOptions":{},"masterCustomFields":{},"lifecycle_status":"Under Review"}	2026-05-10 10:44:21.604+00	2026-06-23 19:15:00.132+00	\N	active	Active		\N		\N	\N	\N
+2969	1000002	AC 224 LENOCARE SMCT	Salicylic Acida	RAW MATERIALS	\N	GM	\N	18.00	8	1.000	\N	Under Review	["AC2303DRPM","LJ2203GGL","PR0006276","SS2208AFFS","SS2208BFW","SS2208BFWS","TPR000999","PR00301"]	General	1252231000000893607	1000002	33021090	Taxable	\N	{"inciName":"Salicylic Acida","tradeCommercialName":"AC 224 LENOCARE SMCT","casNo":"","functionRole":"","primaryUom":"GM","hsnCode":"33021090","gst":"18","grade":"Cosmetic","compliance":"","bisCompliance":"","regMaxUseLevelPct":"","regAllergenDeclarationEu26":"","regIfraCategoryLimit":"","regCiNumber":"","regApprovedArea":"","animalOrigin":"","rmState":"Solid","appearance":"guyibijk","odour":"","activeContentPurityPct":"","solubility":"","viscosityP":"","meltingPointC":"","boilingPointC":"","flashPointC":"","specificGravity":"1","refractiveIndex":"","chargeType":"","activeMatterPct":"","hlbValue":"","residualSolventsPpm":"","pathogen":"","moistureContentPct":"","doseUseLevel":"","ph":"","vocPct":"","opticalSpectroscopy":"","colourImpartToFormulation":"","msdsSdsNotesLink":"j","storageCondition":"kj","dispensingDirection":"","arNumber":"89","coaRequired":"No","acceptanceSpecMin":"","acceptanceSpecMax":"","physicalFormSolid":"","physicalFormLiquid":"","preferredVendor":"20 MICRONS NANO MINERALS LIMITED","alternateVendors":"","sourcingCountryOfOrigin":"Gujarat","sourcingMoq":"9","sourcingLeadTimeDays":"","sourcingStandardUom":"GM","sourcingCurrency":"INR","shelfLife":"8","retestPeriod":"","reorderLevel":"","dispensingBatchNo":"","masterLifecycleStatus":"Active","rmOwner":"","universalSwapEligibility":"","functionalEquivalents":"","zohoId":"1252231000000893607","rmTaxPreference":"Taxable","rmReturnable":"No","rmAssociateItems":"AC2303DRPM\\nLJ2203GGL\\nPR0006276\\nSS2208AFFS\\nSS2208BFW\\nSS2208BFWS\\nTPR000999","products":["AC2303DRPM","LJ2203GGL","PR0006276","SS2208AFFS","SS2208BFW","SS2208BFWS","TPR000999"],"rmCategoryKey":"MISC","rmCategory":"RAW MATERIALS","qcInspectionGroup":"","subCategory":"RAW MATERIALS","optionalRmSubCategory":"SURFACTANTS","optionalRmSubSubCategory":"NON-IONIC","seriesPrefix":"EI-RM-MISC","rmDefaultStorageType":"","preferredVendorClientId":"","alternateVendorClientId":"","masterApprovalStatus":"Under Review","rmQualitySpecRows":[],"rmQualitySubSpecRowsByPath":{},"vendors":[{"id":"1780562087495","name":"20 MICRONS NANO MINERALS LIMITED","location":"Gujarat","moq":9,"unitPrice":9,"leadTime":0,"approved":"","priceValidTill":"","currency":"INR","advancePct":"0","preShipmentPct":"0","postShipmentPct":"0","creditDays":"0","tiers":[{"moq":"9.0000","price":"9","validTill":"2026-06-05","note":""},{"moq":"9.0000","price":"9","validTill":"2026-06-05","note":""}]}],"documents":[],"tests":[],"hazardHandlingClass":"","einecs":"","countryOfOrigin":"","manufacturer":"","synonyms":"","internalNotes":"","issueUom":"","standardPackSize":"","preferredCurrency":"INR","allergenRequired":false,"gmoRequired":false,"sdsAvailable":false,"coaAvailable":false,"regulatoryNotes":"","assayPurity":"","appearanceSpec":"","phSpec":"","moistureLod":"","heavyMetalsSpec":"","microbialSpec":"","odorColorSpec":"","otherSpecs":"","recommendedUseLevel":"","maxUseLevel":"","processingGuidance":"","incompatibilities":"","stabilityNotes":"","claims":"","storageConditions":"","warehouseLocation":"","batchTracking":"","fifoFefo":"","minimumStock":"","handlingNotes":"","category":"RAW MATERIALS","status":"Under Review","masterCustomDropdownOptions":{},"masterCustomFields":{},"lifecycle_status":"Under Review"}	2026-05-10 10:44:21.604+00	2026-06-25 09:32:41.225+00	\N	active	Active		\N		\N	\N	\N
 2998	1000040	ARLACEL 2121	\N	Bulk Raw Materials	\N	KG	1350.00	18.00	\N	1.000	\N	Under Review	["AC2303CMDS","AC2303SSFS","DE2305SSSS","EC2305SBC","EI2207ALSE","EI2207BESE","EI2207GASE","EISUGS062022","EX2201FM","FL2212BSS","IS2208OBH","JG2304HSAG","MM2206ML","NS2108FSL","NS2108SD","NS2304OSS","OL2108HC","OL2108HCI","OL2205DTC","OL2205SL","PP2303GTG","PR0001886","PR0002644","PR0002708","PR0002768","PR0002872","PR0002875","PR0002897","PR0002934","PR0002936","PR0002997","PR0003361","PR0003440","PR0003494","PR0003495","PR0003496","PR0003497","PR0003515","PR0003517","PR0003823","PR0003874","PR0003891","PR0003923","PR0003991","PR0003991-KC","PR0003992","PR0003992-KC","PR0003997","PR0004010","PR0004015","PR0004053","PR0004110","PR0004226-KC","PR0004382","PR0004399","PR0004404","PR0004405","PR0004407","PR0004571","PR0004588","PR0004641","PR0004681","PR0004689","PR0004788","PR0004842","PR0004943","PR0004970","PR0004982","PR0004983","PR0004990","PR0005021","PR0005047","PR0005078","PR0005081","PR0005092","PR0005130","PR0005147","PR0005161","PR0005339","PR0005346","PR0005347","PR0005355","PR0005368","PR0005411","PR0005445","PR0005459","PR0005473","PR0005485","PR0005544","PR0005626","PR0005725","PR0005799","PR0005809","PR0005818","PR0005918","PR0006089","PR0006090","PR0006091","PR0006092","PR0006156","PR0006262","PR0006302","PR0006385","PR0006450","PR0006491","PR0006495","PR0006615","PR0006639","PR0006663","PR0006719","PR0006815","PR0006847","PR0006863","PR0006872","PR0006989","PR0007097","PR0007139","RD2302UHS","SK0312URM","SK2109NBRC","SK2109SDC","SK2110AGFM","SK2110FEFM","SK2110NPFM","SK2110SNFM","SK2112LMTIO2","SK2201BSNC","SK2201MBRC","SK2202CNC","SN0201CM","SV2305SSUC","SV2305SSUR","SV2305SUCS","SV2305SURS","PR0006812"]	General	1252231000000886189	1000040	33021090	Taxable	\N	{"subCategory":"General","rmCategoryKey":"MISC","rmCategory":"Bulk Raw Materials","rmType":"Bulk Raw Materials","excelCategory":"Bulk Raw Materials","excelSubCategory":"General","masterApprovalStatus":"Under Review","status":"Under Review"}	2026-05-10 10:44:24.983+00	2026-06-19 13:36:05.8+00	\N	active	\N	\N	\N	\N	\N	\N	\N
 3326	1000472	VEGAROL 1618 TA	\N	Bulk Raw Materials	\N	KG	245.00	18.00	\N	1.000	\N	Under Review	["AC2303CMDS","AC2303SSFS","CS2303SDUT","DI2302IRM","DP2112RUC","DQ2108FM","DSN2301MNM","DSN2301SLC","HW2202SBC","MM2210THM","MM2304HMS","NS2304RMDS","OL2207TCD","PB2201HRM","PB2201OML","PB2201RML","PP2109DAM","PP2109DNM","PP2302DAMM","PR0000847","PR0001959","PR0002013","PR0002375","PR0002540","PR0002708","PR0002712","PR0002714","PR0002881","PR0002882","PR0002997","PR0003614","PR0003704","PR0003771","PR0003830","PR0003867","PR0004097","PR0004101","PR0004103","PR0004108","PR0004110","PR0004138","PR0004170","PR0004211","PR0004269","PR0004313","PR0004386","PR0004392","PR0004457","PR0004458","PR0004629","PR0004675","PR0004687","PR0004689","PR0004773","PR0004788","PR0004806","PR0004827","PR0004913","PR0004920","PR0004921","PR0004995","PR0005008","PR0005013","PR0005021","PR0005027","PR0005033","PR0005041","PR0005052","PR0005054","PR0005080","PR0005092","PR0005147","PR0005234","PR0005339","PR0005368","PR0005426","PR0005438","PR0005459","PR0005474","PR0005504","PR0005544","PR0005612","PR0005652","PR0005653","PR0005901","PR0005934","PR0006055","PR0006089","PR0006090","PR0006091","PR0006092","PR0006105","PR0006155","PR0006166","PR0006170","PR0006222","PR0006408","PR0006419","PR0006420","PR0006454","PR0006474","PR0006521","PR0006603","PR0006605","PR0006647","PR0006663","PR0006668","PR0006780","PR0006811","PR0006871","PR0006872","RD2302UHS","RP2111UES","RV2211UTS","SK2110AGFM","SK2110FEFM","SK2110NPFM","SK2110SNFM","SK2202BDRC","SK2202IMDRC","SS2305HHCC","PR0006812"]	General	1252231000000888592	1000472	33021090	Taxable	\N	{"subCategory":"General","rmCategoryKey":"MISC","rmCategory":"Bulk Raw Materials","rmType":"Bulk Raw Materials","excelCategory":"Bulk Raw Materials","excelSubCategory":"General","masterApprovalStatus":"Under Review","status":"Under Review"}	2026-05-10 10:44:33.894+00	2026-06-19 13:36:05.805+00	\N	active	\N	\N	\N	\N	\N	\N	\N
 3068	1000138	CRESMER EW (TH)	\N	Bulk Raw Materials	\N	KG	385.00	18.00	\N	1.000	\N	Under Review	["AC2303ECRC","DQ2108RL","DSN2301SLC","EI2207MOIS","HW2202SBC","KD2109MBC1","KD2203MBC","KD2203UMB","MM2210THM","MM2304HMS","MS2212NR(EIMFR)","NS2108FSL","PP2303GTG","PR0000735","PR0002013","PR0002373","PR0002375","PR0002541","PR0002644","PR0002708","PR0002881","PR0003542","PR0003551","PR0003567","PR0003747","PR0003748","PR0003771","PR0003820","PR0003823","PR0003874","PR0003895","PR0004038","PR0004055","PR0004108","PR0004110","PR0004138","PR0004148","PR0004197","PR0004269","PR0004313","PR0004386","PR0004457","PR0004486","PR0004515","PR0004585","PR0004587","PR0004628","PR0004720","PR0004891","PR0004920","PR0004990","PR0005008","PR0005027","PR0005043","PR0005080","PR0005089","PR0005124","PR0005145","PR0005339","PR0005428","PR0005430","PR0005432","PR0005438","PR0005445","PR0005458","PR0005459","PR0005504","PR0005612","PR0005652","PR0005725","PR0005813","PR0005836","PR0005900","PR0006013","PR0006036","PR0006037","PR0006098","PR0006105","PR0006155","PR0006166","PR0006171","PR0006222","PR0006302","PR0006323","PR0006385","PR0006393","PR0006394","PR0006420","PR0006455","PR0006474","PR0006521","PR0006604","PR0006606","PR0006647","PR0006706","PR0006733","PR0006734","PR0006780","PR0006811","PR0006815","PR0006872","PR0006908","PR0006923","PR0006951","PR0007032","PR0007044","PR0007047","PR0007062","PR0007065","PR0007139","PR0007191","PR0007197","PR0007210","PR0007212","PR0007277","PRINB0001","SN2203UPHM","SOS2312FHL","SS2212HRC","SV2305ISBC","SK2109NBLO","PR0007315"]	General	1252231000000886087	1000138	33021090	Taxable	\N	{"subCategory":"General","rmCategoryKey":"MISC","rmCategory":"Bulk Raw Materials","rmType":"Bulk Raw Materials","excelCategory":"Bulk Raw Materials","excelSubCategory":"General","masterApprovalStatus":"Under Review","status":"Under Review"}	2026-05-10 10:44:25.745+00	2026-06-19 13:36:05.807+00	\N	active	\N	\N	\N	\N	\N	\N	\N
@@ -13687,6 +13689,7 @@ COPY public.warehouse_inventory (id, item_type, raw_material_id, pack_material_i
 5292	PM	\N	6837	\N	\N	\N	0.0000000000000000	KG	0.0000000000000000	0.0000000000000000	0.0000000000000000	0.0000000000000000	0.0000000000000000	0.00	0.00	Out of Stock	\N	\N	2026-05-10 11:18:59.269+00	2026-06-14 09:43:22.018+00	\N	active
 5293	PM	\N	6838	\N	\N	\N	0.0000000000000000	KG	0.0000000000000000	0.0000000000000000	0.0000000000000000	0.0000000000000000	0.0000000000000000	0.00	0.00	Out of Stock	\N	\N	2026-05-10 11:18:59.291+00	2026-06-14 09:43:22.018+00	\N	active
 9798	PM	\N	8923	\N	\N	\N	0.0000000000000000	PCS	0.0000000000000000	0.0000000000000000	0.0000000000000000	0.0000000000000000	0.0000000000000000	0.00	0.00	Out of Stock	\N	\N	2026-06-24 08:44:22.793+00	2026-06-24 08:44:22.793+00	\N	active
+9799	PR	\N	\N	8381	\N	\N	0.0000000000000000	PCS	0.0000000000000000	0.0000000000000000	0.0000000000000000	0.0000000000000000	0.0000000000000000	0.00	0.00	Out of Stock	\N	\N	2026-06-25 09:32:41.232+00	2026-06-25 09:32:41.232+00	\N	active
 4350	RM	3212	\N	\N	RM Store	A1	889.0000000000000000	KG	1.0000000000000000	0.0000000000000000	890.0000000000000000	0.0000000000000000	0.0000000000000000	0.00	0.00	In Stock	\N	\N	2026-05-10 10:44:29.907+00	2026-06-21 12:27:36.688+00	\N	active
 4977	PM	\N	6522	\N	Finished Goods Store · Zone C · Zone D	DEFAULT	1000.0000000000000000	PCS	0.0000000000000000	0.0000000000000000	1000.0000000000000000	0.0000000000000000	0.0000000000000000	0.00	0.00	In Stock	\N	\N	2026-05-10 11:18:52.858+00	2026-06-23 15:13:26.973+00	\N	active
 5268	PM	\N	6813	\N	\N	\N	0.0000000000000000	KG	0.0000000000000000	0.0000000000000000	0.0000000000000000	0.0000000000000000	0.0000000000000000	0.00	0.00	Out of Stock	\N	\N	2026-05-10 11:18:58.563+00	2026-06-14 09:43:22.018+00	\N	active
@@ -17024,7 +17027,7 @@ SELECT pg_catalog.setval('public.authentication_id_seq', 1, true);
 -- Name: boms_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.boms_id_seq', 8349, true);
+SELECT pg_catalog.setval('public.boms_id_seq', 8350, true);
 
 
 --
@@ -17332,7 +17335,7 @@ SELECT pg_catalog.setval('public.production_team_members_id_seq', 1, false);
 -- Name: products_product_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.products_product_id_seq', 8380, true);
+SELECT pg_catalog.setval('public.products_product_id_seq', 8382, true);
 
 
 --
@@ -17493,7 +17496,7 @@ SELECT pg_catalog.setval('public.vendor_clients_id_seq', 1856, true);
 -- Name: warehouse_inventory_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.warehouse_inventory_id_seq', 9798, true);
+SELECT pg_catalog.setval('public.warehouse_inventory_id_seq', 9799, true);
 
 
 --
@@ -21234,6 +21237,30 @@ ALTER TABLE ONLY public.customization_packaging_options
 
 ALTER TABLE ONLY public.customization_packaging_options
     ADD CONSTRAINT customization_packaging_options_option_id_key506 UNIQUE (option_id);
+
+
+--
+-- Name: customization_packaging_options customization_packaging_options_option_id_key507; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customization_packaging_options
+    ADD CONSTRAINT customization_packaging_options_option_id_key507 UNIQUE (option_id);
+
+
+--
+-- Name: customization_packaging_options customization_packaging_options_option_id_key508; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customization_packaging_options
+    ADD CONSTRAINT customization_packaging_options_option_id_key508 UNIQUE (option_id);
+
+
+--
+-- Name: customization_packaging_options customization_packaging_options_option_id_key509; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customization_packaging_options
+    ADD CONSTRAINT customization_packaging_options_option_id_key509 UNIQUE (option_id);
 
 
 --
@@ -25309,6 +25336,30 @@ ALTER TABLE ONLY public.departments
 
 
 --
+-- Name: departments departments_code_key507; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_code_key507 UNIQUE (code);
+
+
+--
+-- Name: departments departments_code_key508; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_code_key508 UNIQUE (code);
+
+
+--
+-- Name: departments departments_code_key509; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_code_key509 UNIQUE (code);
+
+
+--
 -- Name: departments departments_code_key51; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -29373,11 +29424,35 @@ ALTER TABLE ONLY public.departments
 
 
 --
+-- Name: departments departments_name_key508; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_name_key508 UNIQUE (name);
+
+
+--
+-- Name: departments departments_name_key509; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_name_key509 UNIQUE (name);
+
+
+--
 -- Name: departments departments_name_key51; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.departments
     ADD CONSTRAINT departments_name_key51 UNIQUE (name);
+
+
+--
+-- Name: departments departments_name_key510; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_name_key510 UNIQUE (name);
 
 
 --
@@ -33813,11 +33888,43 @@ ALTER TABLE ONLY public.enquiries
 
 
 --
+-- Name: enquiries enquiries_ticket_number_key548; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enquiries
+    ADD CONSTRAINT enquiries_ticket_number_key548 UNIQUE (ticket_number);
+
+
+--
+-- Name: enquiries enquiries_ticket_number_key549; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enquiries
+    ADD CONSTRAINT enquiries_ticket_number_key549 UNIQUE (ticket_number);
+
+
+--
 -- Name: enquiries enquiries_ticket_number_key55; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.enquiries
     ADD CONSTRAINT enquiries_ticket_number_key55 UNIQUE (ticket_number);
+
+
+--
+-- Name: enquiries enquiries_ticket_number_key550; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enquiries
+    ADD CONSTRAINT enquiries_ticket_number_key550 UNIQUE (ticket_number);
+
+
+--
+-- Name: enquiries enquiries_ticket_number_key551; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enquiries
+    ADD CONSTRAINT enquiries_ticket_number_key551 UNIQUE (ticket_number);
 
 
 --
@@ -37941,11 +38048,35 @@ ALTER TABLE ONLY public.facility_areas
 
 
 --
+-- Name: facility_areas facility_areas_code_key519; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_code_key519 UNIQUE (code);
+
+
+--
 -- Name: facility_areas facility_areas_code_key52; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.facility_areas
     ADD CONSTRAINT facility_areas_code_key52 UNIQUE (code);
+
+
+--
+-- Name: facility_areas facility_areas_code_key520; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_code_key520 UNIQUE (code);
+
+
+--
+-- Name: facility_areas facility_areas_code_key521; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_code_key521 UNIQUE (code);
 
 
 --
@@ -40810,6 +40941,30 @@ ALTER TABLE ONLY public.facility_areas
 
 ALTER TABLE ONLY public.facility_areas
     ADD CONSTRAINT facility_areas_zoho_location_id_key373 UNIQUE (zoho_location_id);
+
+
+--
+-- Name: facility_areas facility_areas_zoho_location_id_key374; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_zoho_location_id_key374 UNIQUE (zoho_location_id);
+
+
+--
+-- Name: facility_areas facility_areas_zoho_location_id_key375; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_zoho_location_id_key375 UNIQUE (zoho_location_id);
+
+
+--
+-- Name: facility_areas facility_areas_zoho_location_id_key376; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facility_areas
+    ADD CONSTRAINT facility_areas_zoho_location_id_key376 UNIQUE (zoho_location_id);
 
 
 --
@@ -45226,6 +45381,30 @@ ALTER TABLE ONLY public.fulfillment_invoices
 
 ALTER TABLE ONLY public.fulfillment_invoices
     ADD CONSTRAINT fulfillment_invoices_invoice_no_key532 UNIQUE (invoice_no);
+
+
+--
+-- Name: fulfillment_invoices fulfillment_invoices_invoice_no_key533; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_invoices
+    ADD CONSTRAINT fulfillment_invoices_invoice_no_key533 UNIQUE (invoice_no);
+
+
+--
+-- Name: fulfillment_invoices fulfillment_invoices_invoice_no_key534; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_invoices
+    ADD CONSTRAINT fulfillment_invoices_invoice_no_key534 UNIQUE (invoice_no);
+
+
+--
+-- Name: fulfillment_invoices fulfillment_invoices_invoice_no_key535; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_invoices
+    ADD CONSTRAINT fulfillment_invoices_invoice_no_key535 UNIQUE (invoice_no);
 
 
 --
@@ -49829,11 +50008,43 @@ ALTER TABLE ONLY public.fulfillment_orders
 
 
 --
+-- Name: fulfillment_orders fulfillment_orders_so_no_key569; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_orders
+    ADD CONSTRAINT fulfillment_orders_so_no_key569 UNIQUE (so_no);
+
+
+--
 -- Name: fulfillment_orders fulfillment_orders_so_no_key57; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.fulfillment_orders
     ADD CONSTRAINT fulfillment_orders_so_no_key57 UNIQUE (so_no);
+
+
+--
+-- Name: fulfillment_orders fulfillment_orders_so_no_key570; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_orders
+    ADD CONSTRAINT fulfillment_orders_so_no_key570 UNIQUE (so_no);
+
+
+--
+-- Name: fulfillment_orders fulfillment_orders_so_no_key571; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_orders
+    ADD CONSTRAINT fulfillment_orders_so_no_key571 UNIQUE (so_no);
+
+
+--
+-- Name: fulfillment_orders fulfillment_orders_so_no_key572; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fulfillment_orders
+    ADD CONSTRAINT fulfillment_orders_so_no_key572 UNIQUE (so_no);
 
 
 --
@@ -58421,6 +58632,54 @@ ALTER TABLE ONLY public.orders
 
 
 --
+-- Name: orders orders_so_no_key664; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key664 UNIQUE (so_no);
+
+
+--
+-- Name: orders orders_so_no_key665; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key665 UNIQUE (so_no);
+
+
+--
+-- Name: orders orders_so_no_key666; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key666 UNIQUE (so_no);
+
+
+--
+-- Name: orders orders_so_no_key667; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key667 UNIQUE (so_no);
+
+
+--
+-- Name: orders orders_so_no_key668; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key668 UNIQUE (so_no);
+
+
+--
+-- Name: orders orders_so_no_key669; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.orders
+    ADD CONSTRAINT orders_so_no_key669 UNIQUE (so_no);
+
+
+--
 -- Name: orders orders_so_no_key67; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -62933,6 +63192,30 @@ ALTER TABLE ONLY public.production_batches
 
 
 --
+-- Name: production_batches production_batches_bmr_no_key561; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bmr_no_key561 UNIQUE (bmr_no);
+
+
+--
+-- Name: production_batches production_batches_bmr_no_key562; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bmr_no_key562 UNIQUE (bmr_no);
+
+
+--
+-- Name: production_batches production_batches_bmr_no_key563; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bmr_no_key563 UNIQUE (bmr_no);
+
+
+--
 -- Name: production_batches production_batches_bmr_no_key57; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -67397,11 +67680,35 @@ ALTER TABLE ONLY public.production_batches
 
 
 --
+-- Name: production_batches production_batches_bpr_no_key559; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bpr_no_key559 UNIQUE (bpr_no);
+
+
+--
 -- Name: production_batches production_batches_bpr_no_key56; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.production_batches
     ADD CONSTRAINT production_batches_bpr_no_key56 UNIQUE (bpr_no);
+
+
+--
+-- Name: production_batches production_batches_bpr_no_key560; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bpr_no_key560 UNIQUE (bpr_no);
+
+
+--
+-- Name: production_batches production_batches_bpr_no_key561; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_batches
+    ADD CONSTRAINT production_batches_bpr_no_key561 UNIQUE (bpr_no);
 
 
 --
@@ -71450,6 +71757,30 @@ ALTER TABLE ONLY public.production_equipment
 
 ALTER TABLE ONLY public.production_equipment
     ADD CONSTRAINT production_equipment_equipment_id_key51 UNIQUE (equipment_id);
+
+
+--
+-- Name: production_equipment production_equipment_equipment_id_key510; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_equipment
+    ADD CONSTRAINT production_equipment_equipment_id_key510 UNIQUE (equipment_id);
+
+
+--
+-- Name: production_equipment production_equipment_equipment_id_key511; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_equipment
+    ADD CONSTRAINT production_equipment_equipment_id_key511 UNIQUE (equipment_id);
+
+
+--
+-- Name: production_equipment production_equipment_equipment_id_key512; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_equipment
+    ADD CONSTRAINT production_equipment_equipment_id_key512 UNIQUE (equipment_id);
 
 
 --
@@ -75538,6 +75869,30 @@ ALTER TABLE ONLY public.production_team_members
 
 ALTER TABLE ONLY public.production_team_members
     ADD CONSTRAINT production_team_members_member_id_key51 UNIQUE (member_id);
+
+
+--
+-- Name: production_team_members production_team_members_member_id_key510; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_team_members
+    ADD CONSTRAINT production_team_members_member_id_key510 UNIQUE (member_id);
+
+
+--
+-- Name: production_team_members production_team_members_member_id_key511; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_team_members
+    ADD CONSTRAINT production_team_members_member_id_key511 UNIQUE (member_id);
+
+
+--
+-- Name: production_team_members production_team_members_member_id_key512; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.production_team_members
+    ADD CONSTRAINT production_team_members_member_id_key512 UNIQUE (member_id);
 
 
 --
@@ -82069,11 +82424,83 @@ ALTER TABLE ONLY public."refreshTokens"
 
 
 --
+-- Name: refreshTokens refreshTokens_email_key773; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key773" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key774; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key774" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key775; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key775" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key776; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key776" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key777; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key777" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key778; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key778" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key779; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key779" UNIQUE (email);
+
+
+--
 -- Name: refreshTokens refreshTokens_email_key78; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public."refreshTokens"
     ADD CONSTRAINT "refreshTokens_email_key78" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key780; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key780" UNIQUE (email);
+
+
+--
+-- Name: refreshTokens refreshTokens_email_key781; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."refreshTokens"
+    ADD CONSTRAINT "refreshTokens_email_key781" UNIQUE (email);
 
 
 --
@@ -88205,11 +88632,83 @@ ALTER TABLE ONLY public.roles
 
 
 --
+-- Name: roles roles_role_code_key764; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key764 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key765; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key765 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key766; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key766 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key767; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key767 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key768; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key768 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key769; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key769 UNIQUE (role_code);
+
+
+--
 -- Name: roles roles_role_code_key77; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.roles
     ADD CONSTRAINT roles_role_code_key77 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key770; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key770 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key771; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key771 UNIQUE (role_code);
+
+
+--
+-- Name: roles roles_role_code_key772; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.roles
+    ADD CONSTRAINT roles_role_code_key772 UNIQUE (role_code);
 
 
 --
@@ -92362,6 +92861,30 @@ ALTER TABLE ONLY public.transporters
 
 ALTER TABLE ONLY public.transporters
     ADD CONSTRAINT transporters_code_key540 UNIQUE (code);
+
+
+--
+-- Name: transporters transporters_code_key541; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.transporters
+    ADD CONSTRAINT transporters_code_key541 UNIQUE (code);
+
+
+--
+-- Name: transporters transporters_code_key542; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.transporters
+    ADD CONSTRAINT transporters_code_key542 UNIQUE (code);
+
+
+--
+-- Name: transporters transporters_code_key543; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.transporters
+    ADD CONSTRAINT transporters_code_key543 UNIQUE (code);
 
 
 --
@@ -99293,11 +99816,83 @@ ALTER TABLE ONLY public.users
 
 
 --
+-- Name: users users_email_key832; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key832 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key833; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key833 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key834; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key834 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key835; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key835 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key836; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key836 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key837; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key837 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key838; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key838 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key839; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key839 UNIQUE (email);
+
+
+--
 -- Name: users users_email_key84; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT users_email_key84 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key840; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key840 UNIQUE (email);
 
 
 --
@@ -104949,11 +105544,83 @@ ALTER TABLE ONLY public.vendor_clients
 
 
 --
+-- Name: vendor_clients vendor_clients_entity_code_key719; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key719 UNIQUE (entity_code);
+
+
+--
 -- Name: vendor_clients vendor_clients_entity_code_key72; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.vendor_clients
     ADD CONSTRAINT vendor_clients_entity_code_key72 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key720; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key720 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key721; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key721 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key722; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key722 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key723; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key723 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key724; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key724 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key725; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key725 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key726; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key726 UNIQUE (entity_code);
+
+
+--
+-- Name: vendor_clients vendor_clients_entity_code_key727; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_clients
+    ADD CONSTRAINT vendor_clients_entity_code_key727 UNIQUE (entity_code);
 
 
 --
@@ -108965,6 +109632,30 @@ ALTER TABLE ONLY public.warehouse_locations
 
 
 --
+-- Name: warehouse_locations warehouse_locations_code_key516; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_code_key516 UNIQUE (code);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_code_key517; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_code_key517 UNIQUE (code);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_code_key518; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_code_key518 UNIQUE (code);
+
+
+--
 -- Name: warehouse_locations warehouse_locations_code_key52; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -111821,6 +112512,30 @@ ALTER TABLE ONLY public.warehouse_locations
 
 
 --
+-- Name: warehouse_locations warehouse_locations_zoho_warehouse_id_key372; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_zoho_warehouse_id_key372 UNIQUE (zoho_warehouse_id);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_zoho_warehouse_id_key373; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_zoho_warehouse_id_key373 UNIQUE (zoho_warehouse_id);
+
+
+--
+-- Name: warehouse_locations warehouse_locations_zoho_warehouse_id_key374; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warehouse_locations
+    ADD CONSTRAINT warehouse_locations_zoho_warehouse_id_key374 UNIQUE (zoho_warehouse_id);
+
+
+--
 -- Name: warehouse_locations warehouse_locations_zoho_warehouse_id_key38; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -112973,5 +113688,5 @@ ALTER TABLE ONLY public.warehouse_racks
 -- PostgreSQL database dump complete
 --
 
-\unrestrict VTwQP5m6rl8k7hl4PB6XEOS9FSeoql0m5TEnjaqtMiEohdcOWvgezS9Bltb1A3P
+\unrestrict s7UFN8GF9kAfdXa3zndz8sYXPrmhbRlpvY4AxMnLhMIT0UmxayKBc4rLnWQhyfC
 

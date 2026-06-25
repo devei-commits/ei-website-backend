@@ -1,6 +1,7 @@
 const {
   readApprovalStatusFromMasterRow,
   applyAutoAssignDrafterOnCreate,
+  applyAutoAssignPrCreatorOnCreate,
   buildAutoAssignPatchForOpenStage,
 } = require('../../src/lib/masterApprovalAutoAssign');
 
@@ -52,6 +53,14 @@ describe('masterApprovalAutoAssign', () => {
       user_id: 42,
       display_name: 'Jane Doe',
     });
+  });
+
+  test('applyAutoAssignPrCreatorOnCreate sets drafter and rm_team when slots are open', async () => {
+    const req = { user: { id: 42, fullName: 'Jane Doe' } };
+    const fields = {};
+    await applyAutoAssignPrCreatorOnCreate(req, fields);
+    expect(fields.approval_stage_assignees.drafter).toMatchObject({ user_id: 42 });
+    expect(fields.approval_stage_assignees.rm_team).toMatchObject({ user_id: 42 });
   });
 
   test('applyAutoAssignDrafterOnCreate does not override existing drafter', async () => {

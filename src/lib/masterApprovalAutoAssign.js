@@ -78,6 +78,27 @@ async function applyAutoAssignDrafterOnCreate(req, fields) {
 }
 
 /**
+ * PR create: assign creator as drafter and RM team lead when those slots are open.
+ * @param {import('express').Request} req
+ * @param {Record<string, unknown>} fields
+ */
+async function applyAutoAssignPrCreatorOnCreate(req, fields) {
+  await applyAutoAssignDrafterOnCreate(req, fields);
+  if (!req?.user) return fields;
+
+  const fromFields = readMasterApprovalStageAssignees({ approval_stage_assignees: fields.approval_stage_assignees });
+  const stages = { ...emptyStageAssignees(), ...fromFields };
+  if (stages.rm_team?.userId) return fields;
+
+  const slot = await actorStageSlotFromReq(req);
+  if (!slot) return fields;
+
+  stages.rm_team = slot;
+  writeAssigneeFields(fields, stages);
+  return fields;
+}
+
+/**
  * When the current approval stage is open, assign the acting user to that stage.
  * @param {import('express').Request} req
  * @param {import('sequelize').Model | Record<string, unknown>} row
@@ -131,6 +152,7 @@ async function touchAutoAssignOpenStage(req, row, currentStatus) {
 module.exports = {
   readApprovalStatusFromMasterRow,
   applyAutoAssignDrafterOnCreate,
+  applyAutoAssignPrCreatorOnCreate,
   applyAutoAssignOnTouch,
   touchAutoAssignOpenStage,
   buildAutoAssignPatchForOpenStage,
