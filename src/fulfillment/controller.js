@@ -1,7 +1,7 @@
 const { Op } = require('sequelize');
 const { softDeleteInstance, softDeleteWhere, activeRowWhere, productActiveWhere } = require('../lib/softDelete');
 const { normalizeMasterApprovalStatus } = require('../lib/masterApprovalStatus');
-const { FulfillmentOrder, FulfillmentOrderItem, FulfillmentBatchSplit, Transporter, FulfillmentInvoice, ReservedBatchItem } = require('./models');
+const { FulfillmentOrder, FulfillmentOrderItem, FulfillmentBatchSplit, Transporter, FulfillmentInvoice, ReservedBatchItem, BatchStageLog } = require('./models');
 const BOM = require('../bom/models');
 const { ProductionBatch } = require('../production/models');
 const SalesOrder = require('../salesOrders/models');
@@ -21,6 +21,7 @@ const {
 } = require('../planningExtracted/orderKgMath');
 const { packSizeFromBomRow } = require('../lib/skuBomPackSize');
 const zohoEnv = require('../services/zohoEnv');
+const { openStageLog, closeStageLog, computeCommercialStatusFromShippedQty } = require('./dashboardController');
 
 function zohoInvoiceSyncRollbackMessage(zohoError) {
   const zohoErr = String(zohoError || 'unknown_error');
@@ -127,6 +128,7 @@ function formatOrder(row, batchMap = {}) {
     dueDate: d.due_date,
     priority: d.priority,
     soStatus,
+    commercialStatus: d.commercial_status || 'received',
     soValue: d.so_value != null ? Number(d.so_value) : 0,
     shipAddress: d.ship_address || '',
     paymentTerms: d.payment_terms || '',
@@ -608,10 +610,12 @@ async function createOrder(req, res) {
       sales_order_id: resolvedSalesOrderId,
       customer_name: customer,
       customer_city: customerCity || null,
+      vendor_client_id: clientMaster.id,
       order_date: orderDate || null,
       due_date: dueDate || null,
       priority: priority || 'normal',
       so_status: 'planned',
+      commercial_status: 'received',
       so_value: soValue,
       ship_address: shipAddress || null,
       payment_terms: paymentTerms || null,
@@ -624,11 +628,23 @@ async function createOrder(req, res) {
       const totalSplits = items.reduce((sum, it) => sum + (it.batchSplits?.length || 1), 0);
 
       for (const item of items) {
+        // Resolve product_code for dashboard display (best-effort; falls back to null)
+        let itemProductCode = null;
+        if (item.sku) {
+          const prod = await Product.findOne({ where: { zoho_sku_code: item.sku }, attributes: ['product_code'] });
+          if (prod) itemProductCode = prod.product_code || null;
+        }
+        if (!itemProductCode && item.productName) {
+          const prod = await Product.findOne({ where: { product_name: item.productName }, attributes: ['product_code'] });
+          if (prod) itemProductCode = prod.product_code || null;
+        }
+
         const orderItem = await FulfillmentOrderItem.create({
           fulfillment_order_id: order.id,
           item_no: item.itemNo || '001',
           sku: item.sku || null,
           product_name: item.productName,
+          product_code: itemProductCode,
           pack: normalizePackSizeForOrder(item.pack) || null,
           ordered_qty: item.orderedQty || 0,
           rate: item.unitPrice || 0,
@@ -971,6 +987,17 @@ async function pickSplits(req, res) {
           remarks: remarks || null,
         });
         await split.save();
+        // Open stage log for picking (best-effort; don't let log failure block the pick)
+        try {
+          await openStageLog({
+            splitId: split.id,
+            orderId: id,
+            stage: 'picking',
+            actorName: pickerName,
+            actorUserId: req.user ? (req.user.id || req.user.userId || null) : null,
+            productId: null,
+          });
+        } catch (_logErr) { console.warn('pickSplits: stage log write failed', _logErr.message); }
       }
     }
 
@@ -1014,10 +1041,31 @@ async function invoiceSplits(req, res) {
     if (Array.isArray(bprNos) && bprNos.length > 0) {
       where.bpr_no = { [Op.in]: bprNos };
     }
+
+    // Capture split IDs before updating so we can transition stage logs
+    const pickingSplits = await FulfillmentBatchSplit.findAll({ where, attributes: ['id'], transaction: tx });
+    const pickingSplitIds = pickingSplits.map((s) => s.id);
+
     await FulfillmentBatchSplit.update(
       { ff_status: 'invoiced', invoice_no: invoiceNo },
       { where, transaction: tx }
     );
+
+    // Transition stage logs inside tx so a Zoho rollback also reverts the log entries
+    for (const splitId of pickingSplitIds) {
+      try {
+        await closeStageLog({ splitId, stage: 'picking', transaction: tx });
+        await openStageLog({
+          splitId,
+          orderId: id,
+          stage: 'invoiced',
+          actorName: req.user ? (req.user.fullName || req.user.email || null) : null,
+          actorUserId: req.user ? (req.user.id || req.user.userId || null) : null,
+          productId: null,
+          transaction: tx,
+        });
+      } catch (_logErr) { console.warn('invoiceSplits: stage log transition failed', _logErr.message); }
+    }
 
     order.set({
       invoice_no: invoiceNo,
@@ -1086,6 +1134,11 @@ async function shipSplits(req, res) {
     if (Array.isArray(bprNos) && bprNos.length > 0) {
       where.bpr_no = { [Op.in]: bprNos };
     }
+
+    // Capture split IDs for stage log transitions
+    const invoicedSplits = await FulfillmentBatchSplit.findAll({ where, attributes: ['id'] });
+    const invoicedSplitIds = invoicedSplits.map((s) => s.id);
+
     await FulfillmentBatchSplit.update(
       {
         ff_status: 'shipped',
@@ -1097,6 +1150,21 @@ async function shipSplits(req, res) {
       { where }
     );
 
+    // Transition stage logs: close invoiced → open shipped
+    for (const splitId of invoicedSplitIds) {
+      try {
+        await closeStageLog({ splitId, stage: 'invoiced' });
+        await openStageLog({
+          splitId,
+          orderId: id,
+          stage: 'shipped',
+          actorName: req.user ? (req.user.fullName || req.user.email || null) : null,
+          actorUserId: req.user ? (req.user.id || req.user.userId || null) : null,
+          productId: null,
+        });
+      } catch (_logErr) { console.warn('shipSplits: stage log transition failed', _logErr.message); }
+    }
+
     order.set({
       awb_no: awbNo || null,
       dispatch_date: dispatchDate || new Date().toISOString().slice(0, 10),
@@ -1105,6 +1173,19 @@ async function shipSplits(req, res) {
 
     const allSplits = await FulfillmentBatchSplit.findAll({ where: { fulfillment_order_id: id } });
     order.set('so_status', recalculateSOStatus(allSplits));
+
+    // Auto-advance commercial_status based on shipped qty (approved → partial_closed or closed)
+    try {
+      const orderItems = await FulfillmentOrderItem.findAll({ where: { fulfillment_order_id: id }, attributes: ['ordered_qty'] });
+      const totalOrdered = orderItems.reduce((s, it) => s + (Number(it.ordered_qty) || 0), 0);
+      const totalShipped = allSplits
+        .filter((s) => ['shipped', 'delivered', 'closed'].includes(s.ff_status))
+        .reduce((sum, s) => sum + (Number(s.picked_qty) || 0), 0);
+      const currentCommercial = order.commercial_status || 'received';
+      const nextCommercial = computeCommercialStatusFromShippedQty(currentCommercial, totalOrdered, totalShipped);
+      if (nextCommercial) order.set('commercial_status', nextCommercial);
+    } catch (_csErr) { console.warn('shipSplits: commercial status compute failed', _csErr.message); }
+
     await order.save();
 
     // Mirror stage into website orders table when shipped
@@ -1133,6 +1214,10 @@ async function deliverSplits(req, res) {
       where.bpr_no = { [Op.in]: bprNos };
     }
 
+    // Capture split IDs for stage log close
+    const shippedSplits = await FulfillmentBatchSplit.findAll({ where, attributes: ['id'] });
+    const shippedSplitIds = shippedSplits.map((s) => s.id);
+
     // Mark the delivered batch(es) as closed (done). SO closes only when all batches are closed.
     await FulfillmentBatchSplit.update(
       {
@@ -1144,9 +1229,28 @@ async function deliverSplits(req, res) {
       { where }
     );
 
+    // Close shipped stage logs
+    for (const splitId of shippedSplitIds) {
+      try { await closeStageLog({ splitId, stage: 'shipped' }); }
+      catch (_logErr) { console.warn('deliverSplits: stage log close failed', _logErr.message); }
+    }
+
     const allSplits = await FulfillmentBatchSplit.findAll({ where: { fulfillment_order_id: id } });
     const newStatus = recalculateSOStatus(allSplits);
     order.set('so_status', newStatus);
+
+    // Auto-advance commercial_status to closed if all qty delivered
+    try {
+      const orderItems = await FulfillmentOrderItem.findAll({ where: { fulfillment_order_id: id }, attributes: ['ordered_qty'] });
+      const totalOrdered = orderItems.reduce((s, it) => s + (Number(it.ordered_qty) || 0), 0);
+      const totalShipped = allSplits
+        .filter((s) => ['shipped', 'delivered', 'closed'].includes(s.ff_status))
+        .reduce((sum, s) => sum + (Number(s.picked_qty) || 0), 0);
+      const currentCommercial = order.commercial_status || 'received';
+      const nextCommercial = computeCommercialStatusFromShippedQty(currentCommercial, totalOrdered, totalShipped);
+      if (nextCommercial) order.set('commercial_status', nextCommercial);
+    } catch (_csErr) { console.warn('deliverSplits: commercial status compute failed', _csErr.message); }
+
     await order.save();
 
     const refreshed = await FulfillmentOrder.findByPk(id, { include: INCLUDE_FULL });
