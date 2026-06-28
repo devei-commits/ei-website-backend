@@ -40,6 +40,24 @@ FulfillmentOrder.init(
     awb_no: { type: DataTypes.STRING(100), allowNull: true },
     dispatch_date: { type: DataTypes.DATEONLY, allowNull: true },
     courier: { type: DataTypes.STRING(200), allowNull: true },
+    /**
+     * Commercial/business lifecycle status (separate from execution so_status).
+     * Tracks the SO through approval + payment stages before production kicks off,
+     * then auto-advances to partial_closed / closed based on shipped qty.
+     * Values: draft | received | advance_pending | under_review | approved | partial_closed | closed | on_hold
+     */
+    commercial_status: {
+      type: DataTypes.STRING(30),
+      allowNull: true,
+      defaultValue: 'received',
+      validate: {
+        isIn: [['draft', 'received', 'advance_pending', 'under_review', 'approved', 'partial_closed', 'closed', 'on_hold']],
+      },
+    },
+    /** Stores the commercial_status value to restore when leaving on_hold. */
+    on_hold_previous_status: { type: DataTypes.STRING(30), allowNull: true },
+    /** FK to vendor_clients.id — stored for efficient dashboard grouping by client. */
+    vendor_client_id: { type: DataTypes.INTEGER, allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
     deleted_at: { type: DataTypes.DATE, allowNull: true },
@@ -70,6 +88,8 @@ FulfillmentOrderItem.init(
     },
     item_no: { type: DataTypes.STRING(20), allowNull: true },
     sku: { type: DataTypes.STRING(50), allowNull: true },
+    /** Cached from products.product_code at SO creation for fast dashboard joins. */
+    product_code: { type: DataTypes.STRING(50), allowNull: true },
     product_name: { type: DataTypes.STRING(300), allowNull: false },
     pack: { type: DataTypes.STRING(100), allowNull: true },
     ordered_qty: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
@@ -302,4 +322,120 @@ ReservedBatchItem.init(
   }
 );
 
-module.exports = { FulfillmentOrder, FulfillmentOrderItem, FulfillmentBatchSplit, Transporter, FulfillmentInvoice, ReservedBatchItem };
+/* ── Batch Stage Log ── */
+
+class BatchStageLog extends Model {}
+
+BatchStageLog.init(
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    fulfillment_batch_split_id: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      references: { model: 'fulfillment_batch_splits', key: 'id' },
+      onDelete: 'CASCADE',
+    },
+    fulfillment_order_id: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      references: { model: 'fulfillment_orders', key: 'id' },
+      onDelete: 'CASCADE',
+    },
+    stage: {
+      type: DataTypes.STRING(30),
+      allowNull: false,
+      validate: { isIn: [['picking', 'invoiced', 'shipped', 'delivered']] },
+    },
+    started_at: { type: DataTypes.DATE, allowNull: false },
+    completed_at: { type: DataTypes.DATE, allowNull: true },
+    actor_name: { type: DataTypes.STRING(200), allowNull: true },
+    actor_user_id: { type: DataTypes.INTEGER, allowNull: true },
+    /** Committed duration in business days (from sla_templates at stage start). */
+    committed_days: { type: DataTypes.DECIMAL(5, 1), allowNull: true },
+    created_at: { type: DataTypes.DATE, allowNull: true },
+    updated_at: { type: DataTypes.DATE, allowNull: true },
+  },
+  {
+    sequelize: db,
+    modelName: 'BatchStageLog',
+    tableName: 'fulfillment_batch_stage_logs',
+    timestamps: true,
+    createdAt: 'created_at',
+    updatedAt: 'updated_at',
+  }
+);
+
+/* ── Fulfillment Comments ── */
+
+class FulfillmentComment extends Model {}
+
+FulfillmentComment.init(
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    /** 'so' or 'batch' */
+    entity_type: { type: DataTypes.STRING(10), allowNull: false },
+    /** ID of the SO (fulfillment_orders.id) or batch split (fulfillment_batch_splits.id). */
+    entity_id: { type: DataTypes.INTEGER, allowNull: false },
+    by_user_id: { type: DataTypes.INTEGER, allowNull: true },
+    by_user_name: { type: DataTypes.STRING(200), allowNull: true },
+    text: { type: DataTypes.TEXT, allowNull: false },
+    /** Array of { id, name } user objects tagged in this comment. */
+    tagged_users: { type: DataTypes.JSON, allowNull: true, defaultValue: [] },
+    /** Array of { name, url } attachment references. */
+    attachments: { type: DataTypes.JSON, allowNull: true, defaultValue: [] },
+    resolved: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+    created_at: { type: DataTypes.DATE, allowNull: true },
+    updated_at: { type: DataTypes.DATE, allowNull: true },
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
+    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
+  },
+  {
+    sequelize: db,
+    modelName: 'FulfillmentComment',
+    tableName: 'fulfillment_comments',
+    timestamps: true,
+    createdAt: 'created_at',
+    updatedAt: 'updated_at',
+  }
+);
+
+/* ── SLA Templates ── */
+
+class FulfillmentSlaTemplate extends Model {}
+
+FulfillmentSlaTemplate.init(
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    /** NULL = global default; set = product-specific override. */
+    product_id: { type: DataTypes.INTEGER, allowNull: true },
+    stage: {
+      type: DataTypes.STRING(30),
+      allowNull: false,
+      validate: { isIn: [['picking', 'invoiced', 'shipped', 'delivered']] },
+    },
+    /** Committed duration in business days. */
+    committed_days: { type: DataTypes.DECIMAL(5, 1), allowNull: false },
+    notes: { type: DataTypes.TEXT, allowNull: true },
+    created_at: { type: DataTypes.DATE, allowNull: true },
+    updated_at: { type: DataTypes.DATE, allowNull: true },
+  },
+  {
+    sequelize: db,
+    modelName: 'FulfillmentSlaTemplate',
+    tableName: 'fulfillment_sla_templates',
+    timestamps: true,
+    createdAt: 'created_at',
+    updatedAt: 'updated_at',
+  }
+);
+
+/* ── New Associations ── */
+
+FulfillmentBatchSplit.hasMany(BatchStageLog, { as: 'stageLogs', foreignKey: 'fulfillment_batch_split_id' });
+BatchStageLog.belongsTo(FulfillmentBatchSplit, { as: 'batchSplit', foreignKey: 'fulfillment_batch_split_id' });
+
+module.exports = {
+  FulfillmentOrder, FulfillmentOrderItem, FulfillmentBatchSplit,
+  Transporter, FulfillmentInvoice, ReservedBatchItem,
+  BatchStageLog, FulfillmentComment, FulfillmentSlaTemplate,
+};

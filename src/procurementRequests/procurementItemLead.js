@@ -4,7 +4,7 @@
  */
 
 const { Op } = require('sequelize');
-const { ItemsList, ItemListVendorRate } = require('../itemsList/models');
+const { ItemsList, ItemListVendorRate, ItemListTier } = require('../itemsList/models');
 const VendorClient = require('../vendorClient/models');
 
 function normVendorName(s) {
@@ -183,10 +183,63 @@ function enrichProcurementItemsWithResolvedLead(items, preferredVendor, cache) {
   });
 }
 
+/**
+ * Vendor × MOQ price-list tiers for one item (Procurement spec §3A dual-pane).
+ * Sources items_list → item_list_vendor_rates → item_list_tiers. Rates without
+ * explicit tiers fall back to a single default_rate / default_moq row.
+ * @returns {Promise<Array<{vendor,vendorCode,tier,price,lead}>>}
+ */
+async function getItemPriceListTiers({ rawMaterialId, packMaterialId }) {
+  const rmId = rawMaterialId != null ? Number(rawMaterialId) : NaN;
+  const pmId = packMaterialId != null ? Number(packMaterialId) : NaN;
+  const where = { lifecycle_status: 'active' };
+  if (Number.isFinite(rmId) && rmId > 0) { where.type = 'RM'; where.raw_material_id = rmId; }
+  else if (Number.isFinite(pmId) && pmId > 0) { where.type = 'PM'; where.pack_material_id = pmId; }
+  else return [];
+
+  const itemRow = await ItemsList.findOne({ where });
+  if (!itemRow) return [];
+
+  const rates = await ItemListVendorRate.findAll({
+    where: { items_list_id: itemRow.id, party_type: 'vendor' },
+  });
+  if (!rates.length) return [];
+  const ratesPlain = rates.map((r) => (r.get ? r.get({ plain: true }) : r));
+  const rateIds = ratesPlain.map((r) => r.id);
+  const vendorIds = [...new Set(ratesPlain.map((r) => r.vendor_id).filter(Boolean))];
+
+  const [tiers, vendors] = await Promise.all([
+    ItemListTier.findAll({ where: { item_list_vendor_rate_id: rateIds }, order: [['moq_min', 'ASC']] }),
+    vendorIds.length ? VendorClient.findAll({ where: { id: vendorIds } }) : Promise.resolve([]),
+  ]);
+  const vendorMap = new Map(vendors.map((v) => { const d = v.get ? v.get({ plain: true }) : v; return [d.id, d]; }));
+  const rateMap = new Map(ratesPlain.map((r) => [r.id, r]));
+  const vendorOf = (rate) => {
+    const v = rate ? vendorMap.get(rate.vendor_id) : null;
+    return { vendor: v ? (v.name || '—') : '—', vendorCode: v ? (v.entity_code || null) : null };
+  };
+
+  const out = [];
+  const ratesWithTier = new Set();
+  for (const t of tiers.map((x) => (x.get ? x.get({ plain: true }) : x))) {
+    const rate = rateMap.get(t.item_list_vendor_rate_id);
+    if (!rate) continue;
+    ratesWithTier.add(rate.id);
+    const tierLabel = t.moq_max != null ? `${Number(t.moq_min)}–${Number(t.moq_max)}` : `${Number(t.moq_min)}+`;
+    out.push({ ...vendorOf(rate), tier: tierLabel, price: Number(t.price_per_unit) || 0, lead: rate.lead_time_days != null ? Number(rate.lead_time_days) : 0 });
+  }
+  for (const r of ratesPlain) {
+    if (ratesWithTier.has(r.id) || r.default_rate == null) continue;
+    out.push({ ...vendorOf(r), tier: r.default_moq != null ? `${Number(r.default_moq)}+` : '—', price: Number(r.default_rate) || 0, lead: r.lead_time_days != null ? Number(r.lead_time_days) : 0 });
+  }
+  return out;
+}
+
 module.exports = {
   parseLeadFromLineNotes,
   mergeLeadIntoLineNotes,
   keyForItem,
   buildLeadResolutionCache,
   enrichProcurementItemsWithResolvedLead,
+  getItemPriceListTiers,
 };

@@ -11,6 +11,7 @@ const {
   mergeLeadIntoLineNotes,
   buildLeadResolutionCache,
   enrichProcurementItemsWithResolvedLead,
+  getItemPriceListTiers,
 } = require('./procurementItemLead');
 const { roundPlanningMaterialQty } = require('../planningExtracted/orderKgMath');
 const { applyProcurementRmPrimaryUnits, normRmPrimaryUom } = require('../lib/rmUnitConversion');
@@ -411,10 +412,28 @@ async function deleteProcurementRequest(req, res) {
   }
 }
 
+/**
+ * GET /api/v1/procurement/item-price-list?rawMaterialId=&packMaterialId=
+ * Vendor × MOQ price tiers for an item (PR Edit popup §3A dual-pane).
+ */
+async function getItemPriceList(req, res) {
+  try {
+    const tiers = await getItemPriceListTiers({
+      rawMaterialId: req.query.rawMaterialId,
+      packMaterialId: req.query.packMaterialId,
+    });
+    res.json({ tiers });
+  } catch (err) {
+    console.error('getItemPriceList error', err);
+    res.status(500).json({ error: 'Failed to fetch item price list' });
+  }
+}
+
 module.exports = {
   listProcurementRequests,
   getProcurementRequestById,
   createProcurementRequest,
   updateProcurementRequest,
   deleteProcurementRequest,
+  getItemPriceList,
 };
