@@ -25,6 +25,10 @@ GoodsReceivedNote.init(
     /** Per-line QC test results (master specs + measured result + pass/fail). */
     qc_specs: { type: DataTypes.JSON, allowNull: true },
     status: { type: DataTypes.STRING(50), allowNull: true }, // GRN Complete | Under GRN | In Transit | On Hold | Delayed | Pending
+    // Procurement spec §4/§7: shipment-batch linkage + 6-stage GRN axis.
+    shipment_batch_id: { type: DataTypes.INTEGER, allowNull: true },
+    stage: { type: DataTypes.STRING(30), allowNull: true }, // in_transit|landed|verified|quarantined|qc_tested|grn_completed
+    shipped_qty: { type: DataTypes.DECIMAL(14, 4), allowNull: true },
     line_items: { type: DataTypes.JSON, allowNull: true },
     workflow_steps: { type: DataTypes.JSON, allowNull: true },
     invoice_no: { type: DataTypes.STRING(100), allowNull: true },
