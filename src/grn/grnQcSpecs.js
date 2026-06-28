@@ -32,6 +32,11 @@ function parseQualitySpecRow(raw, idx) {
     sample: String(raw.sample ?? '').trim(),
     acceptance: String(raw.acceptance ?? '').trim(),
     outputType: String(raw.outputType ?? raw.output_type ?? raw.type ?? '').trim() || undefined,
+    selectOptions: Array.isArray(raw.selectOptions)
+      ? raw.selectOptions.map((o) => String(o ?? '').trim()).filter(Boolean)
+      : Array.isArray(raw.select_options)
+        ? raw.select_options.map((o) => String(o ?? '').trim()).filter(Boolean)
+        : undefined,
   };
 }
 
@@ -282,7 +287,9 @@ function buildGrnQcSpecPayload(lineItems, grnType, savedQcSpecs, masters) {
       : {};
     let masterTests = extractMasterTestsFromFormData(fd, masterType);
     let testsSource = 'master';
-    if (masterTests.length === 0 && masterRow) {
+    // Default inbound checklist only when the line is not linked to a master.
+    // Linked masters with empty GRN Quality Checks should stay empty (no synthetic tests).
+    if (masterTests.length === 0 && !masterRow) {
       masterTests = defaultInboundGrnQcTests(masterType);
       testsSource = 'default-inbound';
     }
@@ -299,7 +306,25 @@ function buildGrnQcSpecPayload(lineItems, grnType, savedQcSpecs, masters) {
     });
   }
 
-  return { lines, remarks: String(savedQcSpecs?.remarks ?? '').trim() };
+  return { lines, remarks: String(savedQcSpecs?.remarks ?? '').trim(), attachments: normalizeQcAttachments(savedQcSpecs?.attachments) };
+}
+
+function normalizeQcAttachments(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((att, idx) => {
+      if (!att || typeof att !== 'object') return null;
+      const fileName = String(att.fileName ?? att.file_name ?? '').trim();
+      if (!fileName) return null;
+      return {
+        id: String(att.id ?? `qca-${idx}`),
+        fileName,
+        type: String(att.type ?? 'Other').trim() || 'Other',
+        uploadedAt: String(att.uploadedAt ?? att.uploaded_at ?? new Date().toISOString()),
+        uploadedBy: String(att.uploadedBy ?? att.uploaded_by ?? '').trim() || undefined,
+      };
+    })
+    .filter(Boolean);
 }
 
 function collectAllTests(qcSpecsPayload) {
@@ -396,6 +421,12 @@ function normalizeIncomingQcSpecs(body) {
         frequency: String(t.frequency ?? '').trim(),
         sample: String(t.sample ?? '').trim(),
         acceptance: String(t.acceptance ?? '').trim(),
+        outputType: String(t.outputType ?? t.output_type ?? '').trim() || undefined,
+        selectOptions: Array.isArray(t.selectOptions)
+          ? t.selectOptions.map((o) => String(o ?? '').trim()).filter(Boolean)
+          : Array.isArray(t.select_options)
+            ? t.select_options.map((o) => String(o ?? '').trim()).filter(Boolean)
+            : undefined,
         result: String(t.result ?? '').trim(),
         passed: t.passed === true ? true : t.passed === false ? false : null,
       })).filter((t) => t.parameter),
@@ -404,6 +435,7 @@ function normalizeIncomingQcSpecs(body) {
   return {
     lines,
     remarks: String(raw.remarks ?? '').trim(),
+    attachments: normalizeQcAttachments(raw.attachments),
   };
 }
 

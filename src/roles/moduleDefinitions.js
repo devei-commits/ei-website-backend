@@ -147,6 +147,16 @@ const MODULE_DEFINITIONS = [
         ],
       },
       {
+        subModuleId: 'quality',
+        subModuleName: 'Quality',
+        actions: { ...defaultActions },
+        columns: [
+          col('inbound-qc', 'Inbound QC'),
+          col('quarantine-review', 'Quarantine Review'),
+          col('qc-release', 'QC Release'),
+        ],
+      },
+      {
         subModuleId: 'production-bmr',
         subModuleName: 'Production - BMR',
         actions: { ...defaultActions },

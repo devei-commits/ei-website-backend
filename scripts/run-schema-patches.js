@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * Apply idempotent Postgres schema patches (see src/db/ensureSchemaPatches.js).
- * Use after restoring a backup or when the API reports a missing column.
+ * Run after deploy (when new patches were added), restoring a backup, or when the API
+ * reports a missing column. Safe to re-run; already-applied patches are no-ops.
  *
  *   npm run db:patch
  *   docker exec orders_app npm run db:patch

@@ -19,6 +19,43 @@ async function ensureGrnLocationZoneColumn() {
   }
 }
 
+let grnReceiptSourceColumnEnsured = false;
+async function ensureGrnReceiptSourceColumn() {
+  if (grnReceiptSourceColumnEnsured) return;
+  grnReceiptSourceColumnEnsured = true;
+  try {
+    const dialect = db.getDialect && db.getDialect();
+    if (dialect === 'postgres') {
+      await db.query(
+        "ALTER TABLE goods_received_notes ADD COLUMN IF NOT EXISTS receipt_source VARCHAR(30) DEFAULT 'po'"
+      );
+      await db.query(`
+        UPDATE goods_received_notes
+        SET receipt_source = 'po'
+        WHERE receipt_source IS NULL OR TRIM(receipt_source) = ''
+      `);
+    }
+  } catch (e) {
+    console.warn('[grn] ensure receipt_source column skipped:', e && e.message ? e.message : e);
+  }
+}
+
+let grnSourceDocumentsColumnEnsured = false;
+async function ensureGrnSourceDocumentsColumn() {
+  if (grnSourceDocumentsColumnEnsured) return;
+  grnSourceDocumentsColumnEnsured = true;
+  try {
+    const dialect = db.getDialect && db.getDialect();
+    if (dialect === 'postgres') {
+      await db.query(
+        'ALTER TABLE goods_received_notes ADD COLUMN IF NOT EXISTS source_documents JSONB'
+      );
+    }
+  } catch (e) {
+    console.warn('[grn] ensure source_documents column skipped:', e && e.message ? e.message : e);
+  }
+}
+
 let grnQcSpecsColumnEnsured = false;
 async function ensureGrnQcSpecsColumn() {
   if (grnQcSpecsColumnEnsured) return;
@@ -459,6 +496,64 @@ async function repairLineItemsMasterLinks(rows, transaction) {
   return rows;
 }
 
+function normalizeReceiptSource(raw, fallback = 'po') {
+  const v = String(raw ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_');
+  if (v === 'transfer' || v === 'transfer_order' || v === 'mtr') return 'transfer';
+  if (v === 'return' || v === 'returns' || v === 'rma') return 'return';
+  if (v === 'po' || v === 'purchase_order') return 'po';
+  return fallback;
+}
+
+function resolveReceiptSourceFromRow(d) {
+  const explicit = normalizeReceiptSource(d.receipt_source, '');
+  if (explicit) return explicit;
+  if (d.purchase_order_id != null || String(d.po_no ?? '').trim()) return 'po';
+  return 'po';
+}
+
+function normalizePostRackingPhotos(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const byRackRaw = raw.byRack ?? raw.by_rack;
+  if (!byRackRaw || typeof byRackRaw !== 'object' || Array.isArray(byRackRaw)) return null;
+  const byRack = {};
+  for (const [rackCode, meta] of Object.entries(byRackRaw)) {
+    const code = String(rackCode ?? '').trim();
+    if (!code || !meta || typeof meta !== 'object' || Array.isArray(meta)) continue;
+    const count = Number(meta.photoCount ?? meta.photo_count);
+    if (!Number.isFinite(count) || count < 0) continue;
+    const entry = { photoCount: Math.floor(count) };
+    const updatedAt = meta.updatedAt ?? meta.updated_at;
+    if (updatedAt != null && String(updatedAt).trim()) entry.updatedAt = String(updatedAt).trim();
+    byRack[code] = entry;
+  }
+  return Object.keys(byRack).length > 0 ? { byRack } : null;
+}
+
+function normalizeSourceDocuments(raw) {
+  if (raw == null) return null;
+  if (typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const out = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (key === 'postRackingPhotos' || key === 'post_racking_photos') {
+      const normalized = normalizePostRackingPhotos(value);
+      if (normalized) out.postRackingPhotos = normalized;
+      continue;
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const entry = {};
+    if (value.fileName != null && String(value.fileName).trim()) entry.fileName = String(value.fileName).trim();
+    if (value.ref != null && String(value.ref).trim()) entry.ref = String(value.ref).trim();
+    if (value.url != null && String(value.url).trim()) entry.url = String(value.url).trim();
+    if (value.uploadedAt != null && String(value.uploadedAt).trim()) entry.uploadedAt = String(value.uploadedAt).trim();
+    if (value.uploadedBy != null && String(value.uploadedBy).trim()) entry.uploadedBy = String(value.uploadedBy).trim();
+    if (Object.keys(entry).length > 0) out[key] = entry;
+  }
+  return Object.keys(out).length > 0 ? out : {};
+}
+
 function formatRow(r, enrichedLineItems) {
   if (!r) return null;
   const d = r.get ? r.get({ plain: true }) : r;
@@ -492,6 +587,9 @@ function formatRow(r, enrichedLineItems) {
     expiry: d.expiry || null,
     mfgBatch: d.mfg_batch || null,
     generatedLabels: d.generated_labels || null,
+    receiptSource: resolveReceiptSourceFromRow(d),
+    purchaseOrderId: d.purchase_order_id != null ? Number(d.purchase_order_id) : null,
+    sourceDocuments: d.source_documents || null,
   };
 }
 
@@ -502,6 +600,8 @@ async function list(req, res) {
   try {
     await ensureGrnLocationZoneColumn();
     await ensureGrnQcSpecsColumn();
+    await ensureGrnReceiptSourceColumn();
+    await ensureGrnSourceDocumentsColumn();
     const rows = await GoodsReceivedNote.findAll({
       where: activeRowWhere(),
       order: [['expected_date', 'DESC'], ['id', 'DESC']],
@@ -527,6 +627,8 @@ async function getById(req, res) {
   try {
     await ensureGrnLocationZoneColumn();
     await ensureGrnQcSpecsColumn();
+    await ensureGrnReceiptSourceColumn();
+    await ensureGrnSourceDocumentsColumn();
     const id = parseInt(String(req.params.id), 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await GoodsReceivedNote.findByPk(id);
@@ -547,6 +649,8 @@ async function getById(req, res) {
  */
 async function create(req, res) {
   try {
+    await ensureGrnReceiptSourceColumn();
+    await ensureGrnSourceDocumentsColumn();
     const body = req.body || {};
     const payload = {
       grn_no: body.grnNo || body.grn_no,
@@ -575,6 +679,18 @@ async function create(req, res) {
       expiry: body.expiry,
       mfg_batch: body.mfgBatch ?? body.mfg_batch,
     };
+    const bodySourceDocuments = body.sourceDocuments ?? body.source_documents;
+    if (bodySourceDocuments !== undefined) {
+      payload.source_documents = normalizeSourceDocuments(bodySourceDocuments);
+    }
+    const bodyReceiptSource = body.receiptSource ?? body.receipt_source;
+    if (bodyReceiptSource != null && String(bodyReceiptSource).trim()) {
+      payload.receipt_source = normalizeReceiptSource(bodyReceiptSource, 'po');
+    } else if (payload.purchase_order_id != null || String(payload.po_no ?? '').trim()) {
+      payload.receipt_source = 'po';
+    } else {
+      payload.receipt_source = 'po';
+    }
     // When a PO is referenced, do not blindly expand to all PO items.
     // If client sends line_items, keep it item-scoped (GRN can be per-item even under one PO).
     // We only use PO data to enrich/match those selected lines; fallback to all PO items
@@ -1141,6 +1257,8 @@ async function update(req, res) {
   try {
     await ensureGrnLocationZoneColumn();
     await ensureGrnQcSpecsColumn();
+    await ensureGrnReceiptSourceColumn();
+    await ensureGrnSourceDocumentsColumn();
     const id = parseInt(String(req.params.id), 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await GoodsReceivedNote.findByPk(id);
@@ -1188,6 +1306,8 @@ async function update(req, res) {
     if (body.expiry !== undefined) updates.expiry = body.expiry;
     if (body.mfgBatch !== undefined) updates.mfg_batch = body.mfgBatch;
     if (body.mfg_batch !== undefined) updates.mfg_batch = body.mfg_batch;
+    if (body.sourceDocuments !== undefined) updates.source_documents = normalizeSourceDocuments(body.sourceDocuments);
+    if (body.source_documents !== undefined) updates.source_documents = normalizeSourceDocuments(body.source_documents);
     if (isCustomGrnLocationSource(body)) {
       await normalizeCustomGrnPutawayOnUpdates(body, updates);
     }

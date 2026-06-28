@@ -11,6 +11,7 @@ const ORDER_MANAGEMENT_SUBMODULES = [
   'planning',
   'procurement',
   'warehouse-inventory',
+  'quality',
   'production-bmr',
   'production-bpr',
   'production-transfer-yield',

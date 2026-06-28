@@ -7,8 +7,10 @@
  * Postgres schema drift, queries fail at runtime with `column "X" does not exist`.
  *
  * Each patch here is `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` (Postgres-native and safe
- * to run on every boot). Failures are logged but never fatal — server boot must still
- * succeed even if a patch can't be applied (e.g. missing ALTER privilege on a managed DB).
+ * to run repeatedly). Failures are logged but never fatal.
+ *
+ * Run on demand: `npm run db:patch` (after deploy, backup restore, or missing-column errors).
+ * Not run on every server boot — once applied, patches are no-ops until new entries are added.
  *
  * Add new entries when a model gains a column that older databases don't have. Keep
  * statements ordered by table for readability.

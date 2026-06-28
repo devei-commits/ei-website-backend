@@ -24,7 +24,7 @@ GoodsReceivedNote.init(
     qc_by: { type: DataTypes.STRING(200), allowNull: true }, // display name of user who performed QC
     /** Per-line QC test results (master specs + measured result + pass/fail). */
     qc_specs: { type: DataTypes.JSON, allowNull: true },
-    status: { type: DataTypes.STRING(50), allowNull: true }, // GRN Complete | Under GRN | In Transit | On Hold | Delayed | Pending
+    status: { type: DataTypes.STRING(50), allowNull: true }, // GRN Complete | Verified | Under GRN | In Transit | On Hold | Delayed | Pending
     line_items: { type: DataTypes.JSON, allowNull: true },
     workflow_steps: { type: DataTypes.JSON, allowNull: true },
     invoice_no: { type: DataTypes.STRING(100), allowNull: true },
@@ -41,6 +41,10 @@ GoodsReceivedNote.init(
     expiry: { type: DataTypes.DATEONLY, allowNull: true },
     mfg_batch: { type: DataTypes.STRING(100), allowNull: true },
     generated_labels: { type: DataTypes.JSON, allowNull: true },
+    /** po | transfer | return — where the inbound GRN was initiated. */
+    receipt_source: { type: DataTypes.STRING(30), allowNull: true, defaultValue: 'po' },
+    /** Per-tab source documents: bill, waybill, lr, coa, to_ref, dispatch_labels, credit_note, debit_note. */
+    source_documents: { type: DataTypes.JSON, allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
     deleted_at: { type: DataTypes.DATE, allowNull: true },

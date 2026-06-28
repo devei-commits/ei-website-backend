@@ -111,20 +111,39 @@ describe('grnQcSpecs', () => {
     expect(rows.every((r) => r.mandatory)).toBe(true);
   });
 
-  test('buildGrnQcSpecPayload uses default inbound when master has no specs', () => {
+  test('buildGrnQcSpecPayload keeps empty tests when linked master has no specs', () => {
     const { buildGrnQcSpecPayload } = require('../../src/grn/grnQcSpecs');
     const payload = buildGrnQcSpecPayload(
-      [{ id: 'li-1', itemCode: 'CLUB00053', item: 'DISODIUM EDTA - CLUB', raw_material_id: 1 }],
-      'RM',
+      [{ id: 'li-1', itemCode: '5L00055', item: 'FRAGILE STICKER', pack_material_id: 9 }],
+      'PM',
       null,
       {
-        rmById: new Map([[1, { id: 1, code: 'CLUB00053', name: 'DISODIUM EDTA - CLUB', form_data: {} }]]),
+        rmById: new Map(),
+        pmById: new Map([[9, { id: 9, code: '5L00055', name: 'FRAGILE STICKER', form_data: {} }]]),
+        rmByCode: new Map(),
+        pmByCode: new Map([['5L00055', { id: 9, code: '5L00055', name: 'FRAGILE STICKER', form_data: {} }]]),
+      }
+    );
+    expect(payload.lines[0].testsSource).toBe('master');
+    expect(payload.lines[0].tests).toHaveLength(0);
+    expect(payload.lines[0].masterId).toBe(9);
+  });
+
+  test('buildGrnQcSpecPayload uses default inbound when line is not linked to a master', () => {
+    const { buildGrnQcSpecPayload } = require('../../src/grn/grnQcSpecs');
+    const payload = buildGrnQcSpecPayload(
+      [{ id: 'li-1', itemCode: 'UNKNOWN99', item: 'Unlinked item' }],
+      'PM',
+      null,
+      {
+        rmById: new Map(),
         pmById: new Map(),
-        rmByCode: new Map([['CLUB00053', { id: 1, code: 'CLUB00053', name: 'DISODIUM EDTA - CLUB', form_data: {} }]]),
+        rmByCode: new Map(),
         pmByCode: new Map(),
       }
     );
     expect(payload.lines[0].testsSource).toBe('default-inbound');
     expect(payload.lines[0].tests.length).toBeGreaterThanOrEqual(2);
+    expect(payload.lines[0].masterId).toBeNull();
   });
 });

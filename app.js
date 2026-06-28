@@ -54,7 +54,6 @@ require('./src/customizationPackaging/models');
 const customizationPackagingAdminRouter = require('./src/customizationPackaging/routers');
 const { listPublicCustomizationPackaging } = require('./src/customizationPackaging/controller');
 const { ensureCustomizationPackagingPresets } = require('./src/customizationPackaging/ensureCustomizationPackagingPresets');
-const { ensureSchemaPatches } = require('./src/db/ensureSchemaPatches');
 require('./src/quotations/models');
 const { seedQuotationDefaults } = require('./src/quotations/seedQuotationDefaults');
 const quotationRouters = require('./src/quotations/routers');
@@ -198,9 +197,7 @@ registerActiveReadScopes(db);
 if (process.env.NODE_ENV !== 'test') {
   db.authenticate()
     .then(async () => {
-      await ensureSchemaPatches();
       await db.sync({ alter: true });
-      await ensureSchemaPatches();
       await ensureCustomizationPackagingPresets();
       await seedQuotationDefaults();
       app.listen(port, '0.0.0.0',() => {
