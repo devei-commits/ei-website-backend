@@ -9,7 +9,7 @@ const db = require('../../db');
 const PlanningExtracted = require('../planningExtracted/models');
 const PlanningBatch = require('../planningExtracted/planningBatchModel');
 
-class ProcurementRequest extends Model {}
+class ProcurementRequest extends Model { }
 
 ProcurementRequest.init(
   {

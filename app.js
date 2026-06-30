@@ -41,6 +41,7 @@ const facilityAreasRouters = require('./src/facilityAreas/routers');
 const departmentsRouters = require('./src/departments/routers');
 const fulfillmentRouters = require('./src/fulfillment/routers');
 const clientHubRouters = require('./src/clientHub/routers');
+const bdRouters = require('./src/bd/routers');
 const dashboardRouters = require('./src/dashboard/routers');
 const errorHandler = require('./src/middleware/error_handler');
 const logginHandler = require('./src/middleware/logging')
@@ -125,9 +126,9 @@ const apiPrefix = '/api/v1';
 
 /** Authenticated API responses must not be cached by the browser (Redis handles server-side caching). */
 app.use(apiPrefix, (_req, res, next) => {
-  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-  res.set('Pragma', 'no-cache');
-  next();
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.set('Pragma', 'no-cache');
+    next();
 });
 
 const { mountSwagger } = require('./src/docs/swaggerSetup');
@@ -146,8 +147,8 @@ app.use(`${apiPrefix}/otp`, otpRouters);
 app.use(`${apiPrefix}/orders`, isAuthenticated, orderRouters);
 app.use(`${apiPrefix}/products`, isAuthenticated, productRouters);
 app.use(`${apiPrefix}/payments`, isAuthenticated, paymentRouters);
-app.use(`${apiPrefix}/appointments`,isAuthenticated, appointmentRouters);
-app.use(`${apiPrefix}/newdevelopments`,isAuthenticated, newdevelopmentsRouters);
+app.use(`${apiPrefix}/appointments`, isAuthenticated, appointmentRouters);
+app.use(`${apiPrefix}/newdevelopments`, isAuthenticated, newdevelopmentsRouters);
 app.use(`${apiPrefix}/customizations`, isAuthenticated, customizationRouters);
 app.use(`${apiPrefix}/productCustomizations`, isAuthenticated, productCustomizationRouters);
 app.use(`${apiPrefix}/enquiries`, isAuthenticated, enquiryRouters);
@@ -181,6 +182,7 @@ app.use(`${apiPrefix}/facility-areas`, isAuthenticated, facilityAreasRouters);
 app.use(`${apiPrefix}/departments`, departmentsRouters);
 app.use(`${apiPrefix}/fulfillment`, isAuthenticated, fulfillmentRouters);
 app.use(`${apiPrefix}/client-hub`, isAuthenticated, clientHubRouters);
+app.use(`${apiPrefix}/bd`, isAuthenticated, bdRouters);
 app.use(`${apiPrefix}/dashboard`, isAuthenticated, dashboardRouters);
 app.use(`${apiPrefix}/quotes`, isAuthenticated, authorizeRoles('super_admin'), quotationRouters);
 
@@ -195,19 +197,19 @@ const { registerActiveReadScopes } = require('./src/lib/registerActiveReadScopes
 registerActiveReadScopes(db);
 
 if (process.env.NODE_ENV !== 'test') {
-  db.authenticate()
-    .then(async () => {
-      await db.sync({ alter: true });
-      await ensureCustomizationPackagingPresets();
-      await seedQuotationDefaults();
-      app.listen(port, '0.0.0.0',() => {
-        console.log(`Server is running on port ${port}`);
-      });
-    })
-    .catch((err) => {
-      console.error('Failed to connect to the database', err);
-      process.exit(1);
-    });
+    db.authenticate()
+        .then(async () => {
+            await db.sync({ alter: true });
+            await ensureCustomizationPackagingPresets();
+            await seedQuotationDefaults();
+            app.listen(port, '0.0.0.0', () => {
+                console.log(`Server is running on port ${port}`);
+            });
+        })
+        .catch((err) => {
+            console.error('Failed to connect to the database', err);
+            process.exit(1);
+        });
 }
 
 module.exports = app;

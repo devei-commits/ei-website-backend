@@ -92,9 +92,9 @@ async function loadMasterMapsForItems(itemsArray) {
   const [rms, pms] = await Promise.all([
     rmIds.size
       ? RawMaterial.findAll({
-          where: { id: [...rmIds] },
-          attributes: ['id', 'code', 'name', 'uom', 'specific_gravity'],
-        })
+        where: { id: [...rmIds] },
+        attributes: ['id', 'code', 'name', 'uom', 'specific_gravity'],
+      })
       : Promise.resolve([]),
     pmIds.size
       ? PackMaterial.findAll({ where: { id: [...pmIds] }, attributes: ['id', 'code', 'description'] })
