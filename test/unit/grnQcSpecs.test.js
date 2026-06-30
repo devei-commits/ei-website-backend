@@ -146,4 +146,51 @@ describe('grnQcSpecs', () => {
     expect(payload.lines[0].tests.length).toBeGreaterThanOrEqual(2);
     expect(payload.lines[0].masterId).toBeNull();
   });
+
+  test('buildGrnQcSpecPayload assigns stable line id when line.id is missing', () => {
+    const { buildGrnQcSpecPayload } = require('../../src/grn/grnQcSpecs');
+    const payload = buildGrnQcSpecPayload(
+      [{ itemCode: '1000020', item: 'ALPHA CB', raw_material_id: 42 }],
+      'RM',
+      null,
+      {
+        rmById: new Map([[42, {
+          id: 42,
+          code: 'EI-RM-XXX',
+          zoho_sku_code: '1000020',
+          form_data: {
+            rmQualitySubSpecRowsByPath: {
+              'actives|alpha': [{ id: 'sub1', parameter: 'new field', specLimit: 'ok', mandatory: true }],
+            },
+          },
+        }]]),
+        pmById: new Map(),
+        rmByCode: new Map(),
+        pmByCode: new Map(),
+      }
+    );
+    expect(payload.lines).toHaveLength(1);
+    expect(payload.lines[0].lineItemId).toBe('grn-line-code-1000020');
+    expect(payload.lines[0].tests.some((t) => t.parameter === 'new field')).toBe(true);
+  });
+
+  test('extractMasterTestsFromFormData reads masterSharedQualitySpecs', () => {
+    const rows = extractMasterTestsFromFormData(
+      {
+        masterSharedQualitySpecs: {
+          RM: {
+            common: {
+              actives: [{ id: 'c1', parameter: 'Shared common', specLimit: 'pass', mandatory: true }],
+            },
+            sub: {
+              'actives|alpha': [{ id: 's1', parameter: 'Shared sub', specLimit: 'NLT 98%', mandatory: false }],
+            },
+          },
+        },
+      },
+      'RM'
+    );
+    expect(rows.some((r) => r.parameter === 'Shared common')).toBe(true);
+    expect(rows.some((r) => r.parameter === 'Shared sub')).toBe(true);
+  });
 });

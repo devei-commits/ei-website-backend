@@ -56,6 +56,49 @@ function flattenSubSpecRowsByPath(byPath) {
   return out;
 }
 
+/** Prefer EI / parenthesized SKU in display text, then itemCode field. */
+function resolveLineItemCode(line) {
+  const text = String(line?.item ?? line?.item_text ?? '');
+  const ei = text.match(/EI-[A-Z0-9-]+/i);
+  if (ei && ei[0]) return String(ei[0]).trim().toUpperCase();
+  const paren = text.match(/\(([A-Z0-9-]+)\)/);
+  if (paren && paren[1] && /[0-9]/.test(paren[1])) return String(paren[1]).trim().toUpperCase();
+  return String(line?.itemCode ?? line?.item_code ?? '').trim();
+}
+
+/** Stable line id for GRN QC — legacy rows may lack `id`. */
+function resolveLineItemId(line, index) {
+  const id = String(line?.id ?? line?.lineItemId ?? line?.line_item_id ?? '').trim();
+  if (id) return id;
+  const code = resolveLineItemCode(line);
+  if (code) return `grn-line-code-${code}`;
+  const rmId = line?.raw_material_id;
+  const pmId = line?.pack_material_id;
+  if (rmId != null && !Number.isNaN(Number(rmId))) return `grn-line-rm-${Number(rmId)}`;
+  if (pmId != null && !Number.isNaN(Number(pmId))) return `grn-line-pm-${Number(pmId)}`;
+  return `grn-line-idx-${index}`;
+}
+
+/** Taxonomy-shared custom specs persisted on master save (`masterSharedQualitySpecs`). */
+function extractSharedQualitySpecRowsFromFormData(fd, masterType) {
+  const form = fd && typeof fd === 'object' ? fd : {};
+  const root = form.masterSharedQualitySpecs;
+  if (!root || typeof root !== 'object') return [];
+  const entityKey = masterType === 'PM' ? 'PM' : 'RM';
+  const bucket = root[entityKey];
+  if (!bucket || typeof bucket !== 'object') return [];
+  const out = [];
+  if (bucket.common && typeof bucket.common === 'object' && !Array.isArray(bucket.common)) {
+    for (const rows of Object.values(bucket.common)) {
+      out.push(...parseQualitySpecRows(rows));
+    }
+  }
+  if (bucket.sub && typeof bucket.sub === 'object' && !Array.isArray(bucket.sub)) {
+    out.push(...flattenSubSpecRowsByPath(bucket.sub));
+  }
+  return out;
+}
+
 function legacyBulkRowsFromFormData(fd) {
   if (!fd || typeof fd !== 'object') return [];
   const out = [];
@@ -182,10 +225,11 @@ function extractMasterTestsFromFormData(fd, masterType) {
   const subKey = masterType === 'PM' ? 'pmQualitySubSpecRowsByPath' : 'rmQualitySubSpecRowsByPath';
   const common = parseQualitySpecRows(form[commonKey]);
   const sub = flattenSubSpecRowsByPath(form[subKey]);
+  const shared = extractSharedQualitySpecRowsFromFormData(form, masterType);
   const legacyBulk = legacyBulkRowsFromFormData(form);
   const legacyFlat = masterType === 'RM' ? legacyRmFlatQualityRowsFromFormData(form) : [];
   const scalar = masterType === 'RM' ? scalarQualityRowsFromFormData(form) : [];
-  const merged = [...common, ...sub, ...legacyFlat, ...scalar, ...legacyBulk];
+  const merged = [...common, ...sub, ...shared, ...legacyFlat, ...scalar, ...legacyBulk];
   const deduped = [];
   const seenParams = new Set();
   for (const row of merged) {
@@ -245,8 +289,9 @@ function buildGrnQcSpecPayload(lineItems, grnType, savedQcSpecs, masters) {
   const lines = [];
   const seenLineIds = new Set();
 
-  for (const line of lineItems || []) {
-    const lineItemId = String(line.id ?? '');
+  for (let idx = 0; idx < (lineItems || []).length; idx += 1) {
+    const line = lineItems[idx];
+    const lineItemId = resolveLineItemId(line, idx);
     if (!lineItemId || seenLineIds.has(lineItemId)) continue;
     seenLineIds.add(lineItemId);
 
@@ -254,7 +299,7 @@ function buildGrnQcSpecPayload(lineItems, grnType, savedQcSpecs, masters) {
     let masterType = typeU === 'PM' ? 'PM' : 'RM';
     const rmId = line.raw_material_id != null ? Number(line.raw_material_id) : null;
     const pmId = line.pack_material_id != null ? Number(line.pack_material_id) : null;
-    const code = String(line.itemCode ?? line.item_code ?? '').trim();
+    const code = resolveLineItemCode(line);
 
     if (typeU === 'PM' && pmId != null && masters.pmById.has(pmId)) {
       masterRow = masters.pmById.get(pmId);
@@ -448,4 +493,5 @@ module.exports = {
   collectAllTests,
   defaultInboundGrnQcTests,
   legacyRmFlatQualityRowsFromFormData,
+  resolveLineItemId,
 };

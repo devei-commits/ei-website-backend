@@ -185,7 +185,8 @@ async function assignableUsers(req, res) {
 function enrichLineItems(lineItems, rmMap, pmMap, productMap, grnType) {
   if (!Array.isArray(lineItems)) return [];
   const typeU = String(grnType || '').trim().toUpperCase();
-  return lineItems.map((line) => {
+  const { resolveLineItemId } = require('./grnQcSpecs');
+  return lineItems.map((line, index) => {
     const poQty = Number(line.poQty ?? line.po_qty) || 0;
     const rcvdQty = Number(line.rcvdQty ?? line.rcvd_qty) || 0;
     const diff = rcvdQty - poQty;
@@ -206,7 +207,7 @@ function enrichLineItems(lineItems, rmMap, pmMap, productMap, grnType) {
     }
     const qcStatus = diff < 0 ? 'Hold' : (line.qcStatus || 'Pending');
     return {
-      id: line.id,
+      id: line.id || resolveLineItemId(line, index),
       raw_material_id: line.raw_material_id,
       pack_material_id: line.pack_material_id,
       product_id: line.product_id,
@@ -420,16 +421,25 @@ async function repairLineItemsMasterLinks(rows, transaction) {
   const names = [...nameSet];
   if (!codes.length && !names.length) return rows;
 
-  const rmWhere = codes.length > 0 && names.length > 0
-    ? { [Op.or]: [{ code: { [Op.in]: codes } }, { name: { [Op.in]: names } }] }
-    : (codes.length > 0 ? { code: { [Op.in]: codes } } : { name: { [Op.in]: names } });
-  const pmWhere = codes.length > 0 && names.length > 0
-    ? { [Op.or]: [{ code: { [Op.in]: codes } }, { description: { [Op.in]: names } }] }
-    : (codes.length > 0 ? { code: { [Op.in]: codes } } : { description: { [Op.in]: names } });
+  const codeOrSkuClause = (list) => (list.length > 0
+    ? [{ code: { [Op.in]: list } }, { zoho_sku_code: { [Op.in]: list } }]
+    : []);
+  const rmOrClauses = [...codeOrSkuClause(codes), ...(names.length ? [{ name: { [Op.in]: names } }] : [])];
+  const pmOrClauses = [...codeOrSkuClause(codes), ...(names.length ? [{ description: { [Op.in]: names } }] : [])];
+  const rmWhere = rmOrClauses.length > 1 ? { [Op.or]: rmOrClauses } : rmOrClauses[0];
+  const pmWhere = pmOrClauses.length > 1 ? { [Op.or]: pmOrClauses } : pmOrClauses[0];
 
   const [rms, pms] = await Promise.all([
-    RawMaterial.findAll({ where: rmWhere, attributes: ['id', 'code', 'name'], ...(transaction ? { transaction } : {}) }),
-    PackMaterial.findAll({ where: pmWhere, attributes: ['id', 'code', 'description'], ...(transaction ? { transaction } : {}) }),
+    RawMaterial.findAll({
+      where: rmWhere,
+      attributes: ['id', 'code', 'name', 'zoho_sku_code'],
+      ...(transaction ? { transaction } : {}),
+    }),
+    PackMaterial.findAll({
+      where: pmWhere,
+      attributes: ['id', 'code', 'description', 'zoho_sku_code'],
+      ...(transaction ? { transaction } : {}),
+    }),
   ]);
 
   const rmByCode = {};
@@ -439,11 +449,13 @@ async function repairLineItemsMasterLinks(rows, transaction) {
   rms.forEach((r) => {
     const d = r.get ? r.get({ plain: true }) : r;
     if (d.code) rmByCode[String(d.code).trim().toUpperCase()] = Number(d.id);
+    if (d.zoho_sku_code) rmByCode[String(d.zoho_sku_code).trim().toUpperCase()] = Number(d.id);
     if (d.name) rmByName[String(d.name).trim().toLowerCase()] = Number(d.id);
   });
   pms.forEach((p) => {
     const d = p.get ? p.get({ plain: true }) : p;
     if (d.code) pmByCode[String(d.code).trim().toUpperCase()] = Number(d.id);
+    if (d.zoho_sku_code) pmByCode[String(d.zoho_sku_code).trim().toUpperCase()] = Number(d.id);
     if (d.description) pmByName[String(d.description).trim().toLowerCase()] = Number(d.id);
   });
 
