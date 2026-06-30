@@ -35,6 +35,7 @@ function formatGrnLite(g) {
     shipmentBatchId: d.shipment_batch_id, stage: d.stage, status: d.status,
     shippedQty: d.shipped_qty != null ? Number(d.shipped_qty) : null,
     expectedDate: d.expected_date, lineItems: d.line_items || [],
+    workflowSteps: d.workflow_steps || [],
   };
 }
 
@@ -160,7 +161,12 @@ async function advanceGrnStage(req, res) {
     const grn = await GoodsReceivedNote.findByPk(id);
     if (!grn) return res.status(404).json({ error: 'GRN not found' });
     const steps = Array.isArray(grn.workflow_steps) ? grn.workflow_steps : [];
-    steps.push({ stage, at: new Date().toISOString() });
+    const actor = String((req.body || {}).actor || '').trim();
+    steps.push({
+      stage,
+      at: new Date().toISOString(),
+      ...(actor ? { actor } : {}),
+    });
     grn.stage = stage;
     grn.status = stageToStatus(stage);
     grn.workflow_steps = steps;
@@ -206,6 +212,7 @@ function formatTrackerRow(g) {
     stage: d.stage || statusToStage(d.status),
     status: d.status || null,
     vehicleNo: sb.vehicle_no || null,
+    workflowSteps: d.workflow_steps || [],
   };
 }
 
