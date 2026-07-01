@@ -16,12 +16,12 @@ ensure_pg_client() {
 }
 
 # Restore from backups/*.dump when DB is empty (or always when DB_AUTO_RESTORE=always).
-echo "[entrypoint] Database auto-restore..."
-if ensure_pg_client; then
-  sh "$APP_DIR/scripts/db-auto-restore.sh"
-else
-  echo "[entrypoint] Skipping DB auto-restore (no Postgres client)."
-fi
+# echo "[entrypoint] Database auto-restore..."
+# if ensure_pg_client; then
+#   sh "$APP_DIR/scripts/db-auto-restore.sh"
+# else
+#   echo "[entrypoint] Skipping DB auto-restore (no Postgres client)."
+# fi
 
 # Optional: run seed when DB was not restored and seed is enabled.
 # node seed.js
