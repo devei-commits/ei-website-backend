@@ -14,24 +14,46 @@ const poolMin = Math.max(
 );
 
 const databaseUrl = process.env.DATABASE_URL || '';
-// SSL only for AWS RDS (or explicit DB_SSL=true). Do not key off sslmode=require — local Docker/tunnels often have no SSL.
 const useRdsSsl =
   process.env.DB_SSL === 'true' ||
   (process.env.DB_SSL !== 'false' && databaseUrl.includes('rds.amazonaws.com'));
+
+/**
+ * Sequelize assigns pg-connection-string.parse(url) into dialectOptions, which overwrites
+ * our ssl settings. `sslmode=require` becomes `ssl: {}` and Node verifies the RDS cert chain.
+ */
+function resolveSequelizeDatabaseUrl(rawUrl, needsSsl) {
+  if (!rawUrl || !needsSsl) {
+    return rawUrl;
+  }
+  try {
+    const parsed = new URL(rawUrl.replace(/^postgresql:/i, 'postgres:'));
+    parsed.searchParams.delete('sslmode');
+    parsed.searchParams.delete('ssl');
+    const query = parsed.searchParams.toString();
+    parsed.search = query ? `?${query}` : '';
+    return parsed.toString().replace(/^postgres:/i, 'postgresql:');
+  } catch {
+    return rawUrl
+      .replace(/([?&])sslmode=[^&]*&?/g, '$1')
+      .replace(/([?&])ssl=[^&]*&?/g, '$1')
+      .replace(/[?&]$/, '');
+  }
+}
+
+const sequelizeDatabaseUrl = resolveSequelizeDatabaseUrl(databaseUrl, useRdsSsl);
 
 const dialectOptions = {
   connectTimeout: 120000,
 };
 
 if (useRdsSsl) {
-  // node-pg verifies the cert chain; psql with sslmode=require does not — required for AWS RDS.
   dialectOptions.ssl = {
-    require: true,
     rejectUnauthorized: false,
   };
 }
 
-const db = new Sequelize(databaseUrl, {
+const db = new Sequelize(sequelizeDatabaseUrl, {
   pool: {
     max: poolMax,
     min: poolMin,
