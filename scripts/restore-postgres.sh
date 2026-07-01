@@ -71,6 +71,8 @@ load_pg_conn_from_env() {
       console.log('PG_USE_SSL=' + esc(
         rawUrl.includes('rds.amazonaws.com') || rawUrl.includes('sslmode=require') ? '1' : '0'
       ));
+      console.log('DATABASE_URL=' + esc(rawUrl));
+      console.log('POSTGRES_RESTORE_VIA=' + esc(process.env.POSTGRES_RESTORE_VIA || ''));
     "
   )"
 }
@@ -88,7 +90,7 @@ resolve_restore_mode() {
     return
   fi
 
-  if [[ -n "${DATABASE_URL:-}" ]] && [[ "${PGHOST:-}" != "db" ]]; then
+  if [[ -n "${PGHOST:-}" ]] && [[ "${PGHOST:-}" != "db" ]]; then
     echo "network"
     return
   fi
@@ -253,13 +255,6 @@ done
 if [[ ! -f "$BACKUP_PATH" ]]; then
   echo "Backup not found: $BACKUP_PATH" >&2
   exit 1
-fi
-
-if [[ -f "$BACKEND_DIR/.env" ]]; then
-  set -a
-  # shellcheck source=/dev/null
-  source "$BACKEND_DIR/.env"
-  set +a
 fi
 
 if ! load_pg_conn_from_env; then
