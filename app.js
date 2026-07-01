@@ -196,10 +196,22 @@ app.use((req, res) => {
 const { registerActiveReadScopes } = require('./src/lib/registerActiveReadScopes');
 registerActiveReadScopes(db);
 
+function shouldRunSyncAlter() {
+    const override = String(process.env.DB_SYNC_ALTER || '').toLowerCase();
+    if (override === 'true' || override === '1') return true;
+    if (override === 'false' || override === '0') return false;
+    if (process.env.NODE_ENV === 'production') return false;
+    const databaseUrl = process.env.DATABASE_URL || '';
+    if (databaseUrl.includes('rds.amazonaws.com')) return false;
+    return true;
+}
+
 if (process.env.NODE_ENV !== 'test') {
     db.authenticate()
         .then(async () => {
-            await db.sync({ alter: true });
+            if (shouldRunSyncAlter()) {
+                await db.sync({ alter: true });
+            }
             await ensureCustomizationPackagingPresets();
             await seedQuotationDefaults();
             app.listen(port, '0.0.0.0', () => {
