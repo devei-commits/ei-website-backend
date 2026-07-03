@@ -75,23 +75,55 @@ resolve_mode() {
   fi
   docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null | grep -q true || return
   case "${PGHOST}" in
-    db|localhost|127.0.0.1) MODE="docker" ;;
+    db|localhost|127.0.0.1)
+      # Prefer host/network client (often PG18+) — PG16 container pg_restore cannot read newer dumps.
+      if command -v pg_restore >/dev/null 2>&1 && command -v psql >/dev/null 2>&1; then
+        MODE="network"
+      elif [[ -n "$CONTAINER" ]]; then
+        MODE="docker"
+      fi
+      ;;
   esac
+}
+
+resolve_backup_kind() {
+  local path="$1"
+  local ext
+  ext="$(printf '%s' "${path##*.}" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$ext" == "dump" || "$ext" == "sql" ]]; then
+    echo "$ext"
+    return 0
+  fi
+  if command -v file >/dev/null 2>&1; then
+    local kind
+    kind="$(file -b "$path")"
+    if [[ "$kind" == *"PostgreSQL custom database dump"* ]]; then
+      echo "dump"
+      return 0
+    fi
+    if [[ "$kind" == *"ASCII text"* || "$kind" == *"Unicode text"* ]]; then
+      echo "sql"
+      return 0
+    fi
+  fi
+  echo ""
+  return 1
 }
 
 require_network_pg_client() {
   local tool="$1"
-  command -v "$tool" >/dev/null 2>&1 && return 0
-  install_postgres_client && command -v "$tool" >/dev/null 2>&1 && return 0
-  if [[ -f /.dockerenv ]]; then
-    echo "postgresql-client-16 missing inside orders_app. Run from the Mac host instead:" >&2
-    echo "  npm run db:restore -- <backup> --force" >&2
-  elif [[ -n "${CONTAINER:-}" ]]; then
-    echo "Run from the Mac host (not docker exec orders_app):" >&2
-    echo "  npm run db:restore -- <backup> --force" >&2
-  else
-    echo "Install postgresql-client-16 or start Docker Postgres (docker compose up -d db)" >&2
+  if [[ "$tool" == "pg_restore" ]]; then
+    local major
+    major="$(pg_client_major || true)"
+    if [[ -n "${major:-}" && "$major" -ge "$PG_CLIENT_RESTORE_MIN_MAJOR" ]]; then
+      return 0
+    fi
+    ensure_pg_restore_client && return 0
+    return 1
   fi
+  command -v "$tool" >/dev/null 2>&1 && return 0
+  install_postgres_client "$PG_CLIENT_MIN_MAJOR" && command -v "$tool" >/dev/null 2>&1 && return 0
+  pg_client_install_hint restore
   return 1
 }
 
@@ -130,7 +162,7 @@ recreate_database_network() {
 }
 
 FORCE=0
-[[ $# -ge 1 ]] || { echo "Usage: $0 <backup.dump|backup.sql> [--force]" >&2; exit 1; }
+[[ $# -ge 1 ]] || { echo "Usage: $0 <backup> [--force]  (.dump, .sql, or extensionless pg dump)" >&2; exit 1; }
 BACKUP_PATH="$1"; shift
 for arg in "$@"; do [[ "$arg" == "--force" || "$arg" == "-f" ]] && FORCE=1; done
 [[ -f "$BACKUP_PATH" ]] || { echo "Backup not found: $BACKUP_PATH" >&2; exit 1; }
@@ -138,8 +170,8 @@ for arg in "$@"; do [[ "$arg" == "--force" || "$arg" == "-f" ]] && FORCE=1; done
 load_pg_conn
 resolve_mode
 
-ext_lower="$(printf '%s' "${BACKUP_PATH##*.}" | tr '[:upper:]' '[:lower:]')"
-[[ "$ext_lower" == "dump" || "$ext_lower" == "sql" ]] || { echo "Use .dump or .sql" >&2; exit 1; }
+backup_kind="$(resolve_backup_kind "$BACKUP_PATH" || true)"
+[[ -n "$backup_kind" ]] || { echo "Unrecognized backup (use .dump, .sql, or a PostgreSQL custom dump file)" >&2; exit 1; }
 
 if [[ "$FORCE" -ne 1 ]]; then
   echo "WARNING: DROP database and restore from $BACKUP_PATH"
@@ -153,10 +185,20 @@ if [[ "$MODE" == "docker" ]]; then
   user="$(docker exec "$CONTAINER" printenv POSTGRES_USER | tr -d '\r')"
   db="$(docker exec "$CONTAINER" printenv POSTGRES_DB | tr -d '\r')"
   recreate_database_docker "$CONTAINER" "$user" "$db"
-  if [[ "$ext_lower" == "dump" ]]; then
+  if [[ "$backup_kind" == "dump" ]]; then
     docker cp "$BACKUP_PATH" "${CONTAINER}:/tmp/restore.dump"
+    set +e
     docker exec "$CONTAINER" pg_restore -U "$user" -d "$db" "${restore_flags[@]}" --clean --if-exists /tmp/restore.dump
+    docker_restore_code=$?
+    set -e
     docker exec "$CONTAINER" rm -f /tmp/restore.dump
+    if [[ "$docker_restore_code" -ne 0 ]]; then
+      echo "Container pg_restore failed; retrying with host/network client..." >&2
+      require_network_pg_client pg_restore || exit 1
+      [[ "$PG_USE_SSL" == "1" ]] && export PGSSLMODE=require
+      export PGPASSWORD
+      run_pg_restore "$BACKUP_PATH" "${restore_flags[@]}" || exit 1
+    fi
   else
     docker exec -i "$CONTAINER" psql -U "$user" -d "$db" -v ON_ERROR_STOP=1 < "$BACKUP_PATH"
   fi
@@ -166,10 +208,9 @@ else
   [[ "$PG_USE_SSL" == "1" ]] && export PGSSLMODE=require
   export PGPASSWORD
   recreate_database_network "$PGDATABASE" "$PGUSER"
-  if [[ "$ext_lower" == "dump" ]]; then
+  if [[ "$backup_kind" == "dump" ]]; then
     require_network_pg_client pg_restore || exit 1
-    pg_restore -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
-      "${restore_flags[@]}" --clean --if-exists "$BACKUP_PATH" || true
+    run_pg_restore "$BACKUP_PATH" "${restore_flags[@]}" || exit 1
   else
     psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 -f "$BACKUP_PATH"
   fi
