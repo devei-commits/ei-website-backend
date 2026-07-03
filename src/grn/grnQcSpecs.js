@@ -197,7 +197,7 @@ function scalarQualityRowsFromFormData(fd) {
 /** Standard inbound checklist when master has no configured quality specs. */
 function defaultInboundGrnQcTests(masterType) {
   const typeLabel = masterType === 'PM' ? 'PM' : 'RM';
-  return [
+  const rows = [
     {
       specId: 'default-inbound-visual',
       parameter: 'Visual / packaging inspection',
@@ -213,6 +213,20 @@ function defaultInboundGrnQcTests(masterType) {
       ...emptyTestTail(),
     },
   ];
+  if (masterType !== 'PM') {
+    rows.push({
+      specId: 'default-inbound-3rd-party-microbial',
+      parameter: 'Microbial Count (TVC)',
+      specLimit: 'Per RM acceptance spec / COA · typical < 100 cfu/g',
+      mandatory: true,
+      ...emptyTestTail(),
+      method: 'External lab · Plate count, 3rd-party NABL',
+      frequency: 'Per GRN lot',
+      sample: '2 samples × 100 g',
+      acceptance: '3rd-party lab COA required',
+    });
+  }
+  return rows;
 }
 
 /**
@@ -257,6 +271,9 @@ function savedResultsMap(savedQcSpecs) {
       map.set(key, {
         result: String(t.result ?? '').trim(),
         passed: t.passed === true ? true : t.passed === false ? false : null,
+        acceptance: String(t.acceptance ?? '').trim(),
+        thirdPartyOrder:
+          t.thirdPartyOrder && typeof t.thirdPartyOrder === 'object' ? { ...t.thirdPartyOrder } : null,
       });
     }
   }
@@ -271,6 +288,8 @@ function attachResultsToTests(lineItemId, masterTests, savedMap) {
       ...t,
       result: saved ? saved.result : '',
       passed: saved ? saved.passed : null,
+      acceptance: saved && saved.acceptance != null ? saved.acceptance : String(t.acceptance ?? '').trim(),
+      thirdPartyOrder: saved && saved.thirdPartyOrder ? saved.thirdPartyOrder : t.thirdPartyOrder ?? undefined,
     };
   });
 }
@@ -474,6 +493,12 @@ function normalizeIncomingQcSpecs(body) {
             : undefined,
         result: String(t.result ?? '').trim(),
         passed: t.passed === true ? true : t.passed === false ? false : null,
+        thirdPartyOrder:
+          t.thirdPartyOrder && typeof t.thirdPartyOrder === 'object'
+            ? t.thirdPartyOrder
+            : t.third_party_order && typeof t.third_party_order === 'object'
+              ? t.third_party_order
+              : undefined,
       })).filter((t) => t.parameter),
     };
   }).filter((l) => l.lineItemId);

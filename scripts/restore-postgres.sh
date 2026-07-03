@@ -1,300 +1,177 @@
 #!/usr/bin/env bash
-# Restore a .dump or .sql backup into Postgres (drops and recreates the target DB).
+# Restore a .dump or .sql backup (drops and recreates target DB).
 #
-# Target is chosen from ei-website-backend/.env:
-#   - DATABASE_URL → RDS / remote / host tunnel (psql + pg_restore on this machine)
-#   - host `db` + running sprdlx_postgres_temp / orders_postgres → docker exec restore
+# Uses DATABASE_URL from .env (RDS) or local Docker Postgres container.
 #
-# Usage:
-#   ./scripts/restore-postgres.sh backups/ei_pg_backup_YYYYMMDD_HHMMSS.dump
-#   ./scripts/restore-postgres.sh backups/ei_pg_backup_YYYYMMDD_HHMMSS.dump --force
-#   POSTGRES_RESTORE_VIA=network ./scripts/restore-postgres.sh backups/foo.dump --force
-#   POSTGRES_CONTAINER=sprdlx_postgres_temp ./scripts/restore-postgres.sh /path/to/backup.dump --force
+#   ./scripts/restore-postgres.sh backups/ei_pg_backup_YYYYMMDD.dump --force
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=pg-client.sh
+source "$SCRIPT_DIR/pg-client.sh"
 
-resolve_postgres_container() {
-  if [[ -n "${POSTGRES_CONTAINER:-}" ]]; then
-    echo "$POSTGRES_CONTAINER"
-    return
-  fi
+load_pg_conn() {
+  local env_file="$BACKEND_DIR/.env"
+  [[ -f "$env_file" ]] || { echo ".env not found" >&2; return 1; }
+  eval "$(node -e "
+    const fs = require('fs');
+    const env = {};
+    const envFile = '$env_file';
+    if (fs.existsSync(envFile)) {
+      for (const line of fs.readFileSync(envFile, 'utf8').split(/\\r?\\n/)) {
+        const t = line.trim();
+        if (!t || t.startsWith('#')) continue;
+        const i = t.indexOf('=');
+        if (i <= 0) continue;
+        let v = t.slice(i + 1).trim();
+        if ((v.startsWith('\"') && v.endsWith('\"')) || (v.startsWith(\"'\") && v.endsWith(\"'\"))) v = v.slice(1, -1);
+        env[t.slice(0, i).trim()] = v;
+      }
+    }
+    for (const k of ['DATABASE_URL', 'POSTGRES_HOST', 'POSTGRES_PORT', 'POSTGRES_USER', 'POSTGRES_PASSWORD', 'POSTGRES_DB']) {
+      if (process.env[k]) env[k] = process.env[k];
+    }
+    const raw = env.DATABASE_URL || '';
+    let host, port, user, password, database;
+    if (raw) {
+      const u = new URL(raw.replace(/^postgresql:/i, 'postgres:'));
+      host = u.hostname; port = u.port || '5432';
+      user = decodeURIComponent(u.username);
+      password = decodeURIComponent(u.password);
+      database = decodeURIComponent(u.pathname.replace(/^\\//, ''));
+    } else {
+      host = env.POSTGRES_HOST || 'db';
+      port = env.POSTGRES_PORT || '5432';
+      user = env.POSTGRES_USER || '';
+      password = env.POSTGRES_PASSWORD || '';
+      database = env.POSTGRES_DB || '';
+    }
+    if (!host || !user || !database) process.exit(2);
+    const q = (s) => \"'\" + String(s).replace(/'/g, \"'\\\\''\") + \"'\";
+    const ssl = raw.includes('rds.amazonaws.com') || raw.includes('sslmode=require') ? '1' : '0';
+    console.log('PGHOST=' + q(host));
+    console.log('PGPORT=' + q(port));
+    console.log('PGUSER=' + q(user));
+    console.log('PGPASSWORD=' + q(password));
+    console.log('PGDATABASE=' + q(database));
+    console.log('PG_USE_SSL=' + q(ssl));
+  ")"
+}
+
+resolve_container() {
   for c in sprdlx_postgres_temp orders_postgres; do
-    if docker inspect "$c" >/dev/null 2>&1; then
-      echo "$c"
-      return
-    fi
+    docker inspect "$c" >/dev/null 2>&1 && echo "$c" && return
   done
   echo ""
 }
 
-load_pg_conn_from_env() {
-  if ! command -v node >/dev/null 2>&1; then
-    echo "node is required to read DATABASE_URL from .env." >&2
-    return 1
-  fi
-  eval "$(
-    cd "$BACKEND_DIR" && node -e "
-      const dotenv = require('dotenv');
-      dotenv.config({ path: '.env' });
-      const esc = (value) => \"'\" + String(value ?? '').replace(/'/g, \"'\\\\''\") + \"'\";
-      let host = '';
-      let port = '5432';
-      let user = '';
-      let password = '';
-      let database = '';
-      const rawUrl = process.env.DATABASE_URL || '';
-      if (rawUrl) {
-        const parsed = new URL(rawUrl.replace(/^postgresql:/i, 'postgres:'));
-        host = parsed.hostname;
-        port = parsed.port || '5432';
-        user = decodeURIComponent(parsed.username);
-        password = decodeURIComponent(parsed.password);
-        database = decodeURIComponent(parsed.pathname.replace(/^\\//, ''));
-      } else {
-        host = process.env.PM2_POSTGRES_HOST || process.env.POSTGRES_HOST || '';
-        port = process.env.POSTGRES_PORT || '5432';
-        user = process.env.POSTGRES_USER || '';
-        password = process.env.POSTGRES_PASSWORD || '';
-        database = process.env.POSTGRES_DB || '';
-      }
-      if (!host || !user || !database) {
-        process.exit(2);
-      }
-      console.log('PGHOST=' + esc(host));
-      console.log('PGPORT=' + esc(port));
-      console.log('PGUSER=' + esc(user));
-      console.log('PGPASSWORD=' + esc(password));
-      console.log('PGDATABASE=' + esc(database));
-      console.log('PG_USE_SSL=' + esc(
-        rawUrl.includes('rds.amazonaws.com') || rawUrl.includes('sslmode=require') ? '1' : '0'
-      ));
-      console.log('DATABASE_URL=' + esc(rawUrl));
-      console.log('POSTGRES_RESTORE_VIA=' + esc(process.env.POSTGRES_RESTORE_VIA || ''));
-    "
-  )"
-}
-
-resolve_restore_mode() {
-  local container="$1"
-  local via="${POSTGRES_RESTORE_VIA:-}"
-
-  if [[ "$via" == "network" ]]; then
-    echo "network"
+resolve_mode() {
+  CONTAINER="$(resolve_container)"
+  MODE="network"
+  if ! command -v docker >/dev/null 2>&1 || [[ -z "$CONTAINER" ]]; then
     return
   fi
-  if [[ "$via" == "docker" ]]; then
-    echo "docker"
-    return
-  fi
-
-  if [[ -n "${PGHOST:-}" ]] && [[ "${PGHOST:-}" != "db" ]]; then
-    echo "network"
-    return
-  fi
-
-  if [[ -n "$container" ]] && docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null | grep -q true; then
-    echo "docker"
-    return
-  fi
-
-  if [[ -n "${PGHOST:-}" ]]; then
-    echo "network"
-    return
-  fi
-
-  echo ""
-}
-
-require_network_client() {
-  if ! command -v psql >/dev/null 2>&1; then
-    echo "psql not found. Install postgresql-client (e.g. sudo apt install postgresql-client)." >&2
-    exit 1
-  fi
-  if [[ "$1" == "dump" ]] && ! command -v pg_restore >/dev/null 2>&1; then
-    echo "pg_restore not found. Install postgresql-client." >&2
-    exit 1
-  fi
-}
-
-configure_ssl() {
-  if [[ "${PG_USE_SSL:-0}" == "1" ]]; then
-    export PGSSLMODE="${PGSSLMODE:-require}"
-  fi
-}
-
-drop_and_create_db_network() {
-  export PGPASSWORD
-  psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres -v ON_ERROR_STOP=1 \
-    -c "DROP DATABASE IF EXISTS \"$PGDATABASE\" WITH (FORCE);"
-  psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres -v ON_ERROR_STOP=1 \
-    -c "CREATE DATABASE \"$PGDATABASE\" OWNER \"$PGUSER\";"
-}
-
-count_public_tables_network() {
-  psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc \
-    "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE';" \
-    2>/dev/null | tr -d '[:space:]'
-}
-
-restore_dump_network() {
-  local backup_path="$1"
-  set +e
-  pg_restore -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
-    --no-owner --no-acl --clean --if-exists "$backup_path" 2> /tmp/pg_restore.err
-  local restore_exit=$?
-  set -e
-  local table_count
-  table_count="$(count_public_tables_network || echo 0)"
-  if [[ "${table_count:-0}" -eq 0 ]]; then
-    local sql_fallback="${backup_path%.dump}.sql"
-    if [[ -f "$sql_fallback" ]]; then
-      echo "pg_restore failed (exit $restore_exit); trying SQL fallback ..."
-      cat /tmp/pg_restore.err 2>/dev/null || true
-      psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 -f "$sql_fallback"
-      table_count="$(count_public_tables_network || echo 0)"
-    fi
-  fi
-  if [[ "${table_count:-0}" -eq 0 ]]; then
-    echo "Restore failed and no tables were created." >&2
-    cat /tmp/pg_restore.err 2>/dev/null || true
-    exit 1
-  fi
-  if [[ "$restore_exit" -ne 0 ]]; then
-    echo "pg_restore reported warnings (exit $restore_exit); ${table_count} table(s) present — continuing."
-  fi
-}
-
-restore_via_network() {
-  local backup_path="$1"
-  local ext_lower="$2"
-
-  require_network_client "$ext_lower"
-  configure_ssl
-  export PGPASSWORD
-
-  echo "Restoring into '$PGDATABASE' at ${PGHOST}:${PGPORT} (from .env DATABASE_URL) ..."
-  drop_and_create_db_network
-
-  if [[ "$ext_lower" == "dump" ]]; then
-    restore_dump_network "$backup_path"
-  else
-    psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 -f "$backup_path"
-  fi
-
-  echo "Restore finished into '$PGDATABASE' at ${PGHOST}:${PGPORT}."
-}
-
-restore_via_docker() {
-  local container="$1"
-  local backup_path="$2"
-  local ext_lower="$3"
-
-  echo "Using Postgres container: $CONTAINER"
-
-  local user db
-  user="$(docker exec "$container" printenv POSTGRES_USER 2>/dev/null | head -n1 | tr -d '\r')"
-  db="$(docker exec "$container" printenv POSTGRES_DB 2>/dev/null | head -n1 | tr -d '\r')"
-
-  if [[ -z "$user" || -z "$db" ]]; then
-    echo "Could not read POSTGRES_USER / POSTGRES_DB from container '$container'." >&2
-    exit 1
-  fi
-
-  echo "Dropping and recreating database '$db' ..."
-  docker exec "$container" psql -U "$user" -d postgres -v ON_ERROR_STOP=1 \
-    -c "DROP DATABASE IF EXISTS \"$db\" WITH (FORCE);"
-  docker exec "$container" psql -U "$user" -d postgres -v ON_ERROR_STOP=1 \
-    -c "CREATE DATABASE \"$db\" OWNER \"$user\";"
-
-  if [[ "$ext_lower" == "dump" ]]; then
-    local remote="/tmp/restore.dump"
-    docker cp "$backup_path" "${container}:${remote}"
-    docker exec "$container" pg_restore -U "$user" -d "$db" --no-owner --no-acl --clean --if-exists "$remote"
-    docker exec "$container" rm -f "$remote"
-  else
-    docker exec -i "$container" psql -U "$user" -d "$db" -v ON_ERROR_STOP=1 < "$backup_path"
-  fi
-
-  echo "Restore finished into '$db' on container '$container'."
-}
-
-CONTAINER="$(resolve_postgres_container)"
-FORCE=0
-
-usage() {
-  echo "Usage: $0 <backup.sql|backup.dump> [--force]" >&2
-  exit 1
-}
-
-if [[ $# -lt 1 ]]; then
-  usage
-fi
-
-BACKUP_PATH="$1"
-shift
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --force|-f)
-      FORCE=1
-      ;;
-    -h|--help)
-      usage
-      ;;
-    *)
-      echo "Unknown option: $1" >&2
-      usage
-      ;;
+  docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null | grep -q true || return
+  case "${PGHOST}" in
+    db|localhost|127.0.0.1) MODE="docker" ;;
   esac
-  shift
-done
+}
 
-if [[ ! -f "$BACKUP_PATH" ]]; then
-  echo "Backup not found: $BACKUP_PATH" >&2
-  exit 1
-fi
+require_network_pg_client() {
+  local tool="$1"
+  command -v "$tool" >/dev/null 2>&1 && return 0
+  install_postgres_client && command -v "$tool" >/dev/null 2>&1 && return 0
+  if [[ -f /.dockerenv ]]; then
+    echo "postgresql-client-16 missing inside orders_app. Run from the Mac host instead:" >&2
+    echo "  npm run db:restore -- <backup> --force" >&2
+  elif [[ -n "${CONTAINER:-}" ]]; then
+    echo "Run from the Mac host (not docker exec orders_app):" >&2
+    echo "  npm run db:restore -- <backup> --force" >&2
+  else
+    echo "Install postgresql-client-16 or start Docker Postgres (docker compose up -d db)" >&2
+  fi
+  return 1
+}
 
-if ! load_pg_conn_from_env; then
-  echo "Could not resolve Postgres connection from $BACKEND_DIR/.env (set DATABASE_URL or POSTGRES_*)." >&2
-  exit 1
-fi
+# Cannot DROP DATABASE postgres while connected to postgres — use template1 instead.
+admin_database() {
+  local target="$1"
+  if [[ "$target" == "postgres" ]]; then
+    echo "template1"
+  else
+    echo "postgres"
+  fi
+}
 
-MODE="$(resolve_restore_mode "$CONTAINER")"
-if [[ -z "$MODE" ]]; then
-  echo "No Postgres target found." >&2
-  echo "Set DATABASE_URL in .env for RDS, or start docker compose db for local restore." >&2
-  exit 1
-fi
+recreate_database_docker() {
+  local container="$1" user="$2" db="$3"
+  local admin_db
+  admin_db="$(admin_database "$db")"
+  docker exec "$container" psql -U "$user" -d "$admin_db" -v ON_ERROR_STOP=1 -c \
+    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$db' AND pid <> pg_backend_pid();"
+  docker exec "$container" psql -U "$user" -d "$admin_db" -v ON_ERROR_STOP=1 -c \
+    "DROP DATABASE IF EXISTS \"$db\" WITH (FORCE);"
+  docker exec "$container" psql -U "$user" -d "$admin_db" -v ON_ERROR_STOP=1 -c \
+    "CREATE DATABASE \"$db\" OWNER \"$user\";"
+}
 
-TARGET_LABEL="$PGDATABASE @ ${PGHOST}:${PGPORT}"
-if [[ "$MODE" == "docker" ]]; then
-  TARGET_LABEL="$(docker exec "$CONTAINER" printenv POSTGRES_DB 2>/dev/null | head -n1 | tr -d '\r') on $CONTAINER"
-fi
+recreate_database_network() {
+  local db="$1" user="$2"
+  local admin_db
+  admin_db="$(admin_database "$db")"
+  psql -h "$PGHOST" -p "$PGPORT" -U "$user" -d "$admin_db" -v ON_ERROR_STOP=1 -c \
+    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$db' AND pid <> pg_backend_pid();"
+  psql -h "$PGHOST" -p "$PGPORT" -U "$user" -d "$admin_db" -v ON_ERROR_STOP=1 -c \
+    "DROP DATABASE IF EXISTS \"$db\" WITH (FORCE);"
+  psql -h "$PGHOST" -p "$PGPORT" -U "$user" -d "$admin_db" -v ON_ERROR_STOP=1 -c \
+    "CREATE DATABASE \"$db\" OWNER \"$user\";"
+}
+
+FORCE=0
+[[ $# -ge 1 ]] || { echo "Usage: $0 <backup.dump|backup.sql> [--force]" >&2; exit 1; }
+BACKUP_PATH="$1"; shift
+for arg in "$@"; do [[ "$arg" == "--force" || "$arg" == "-f" ]] && FORCE=1; done
+[[ -f "$BACKUP_PATH" ]] || { echo "Backup not found: $BACKUP_PATH" >&2; exit 1; }
+
+load_pg_conn
+resolve_mode
+
+ext_lower="$(printf '%s' "${BACKUP_PATH##*.}" | tr '[:upper:]' '[:lower:]')"
+[[ "$ext_lower" == "dump" || "$ext_lower" == "sql" ]] || { echo "Use .dump or .sql" >&2; exit 1; }
 
 if [[ "$FORCE" -ne 1 ]]; then
-  echo "WARNING: This will DROP the target database and restore from:"
-  echo "  $BACKUP_PATH"
-  echo "Target: $TARGET_LABEL (mode=$MODE)"
+  echo "WARNING: DROP database and restore from $BACKUP_PATH"
   read -r -p "Type YES to continue: " confirm
-  if [[ "$confirm" != "YES" ]]; then
-    echo "Aborted."
-    exit 0
+  [[ "$confirm" == "YES" ]] || { echo "Aborted."; exit 0; }
+fi
+
+restore_flags=(--no-owner --no-acl --no-privileges)
+
+if [[ "$MODE" == "docker" ]]; then
+  user="$(docker exec "$CONTAINER" printenv POSTGRES_USER | tr -d '\r')"
+  db="$(docker exec "$CONTAINER" printenv POSTGRES_DB | tr -d '\r')"
+  recreate_database_docker "$CONTAINER" "$user" "$db"
+  if [[ "$ext_lower" == "dump" ]]; then
+    docker cp "$BACKUP_PATH" "${CONTAINER}:/tmp/restore.dump"
+    docker exec "$CONTAINER" pg_restore -U "$user" -d "$db" "${restore_flags[@]}" --clean --if-exists /tmp/restore.dump
+    docker exec "$CONTAINER" rm -f /tmp/restore.dump
+  else
+    docker exec -i "$CONTAINER" psql -U "$user" -d "$db" -v ON_ERROR_STOP=1 < "$BACKUP_PATH"
   fi
-fi
-
-ext="${BACKUP_PATH##*.}"
-ext_lower="$(printf '%s' "$ext" | tr '[:upper:]' '[:lower:]')"
-
-if [[ "$ext_lower" != "dump" && "$ext_lower" != "sql" ]]; then
-  echo "Use a .sql or .dump file (pg_dump custom format)." >&2
-  exit 1
-fi
-
-if [[ "$MODE" == "network" ]]; then
-  restore_via_network "$BACKUP_PATH" "$ext_lower"
+  echo "Restore finished on $CONTAINER."
 else
-  restore_via_docker "$CONTAINER" "$BACKUP_PATH" "$ext_lower"
+  require_network_pg_client psql || exit 1
+  [[ "$PG_USE_SSL" == "1" ]] && export PGSSLMODE=require
+  export PGPASSWORD
+  recreate_database_network "$PGDATABASE" "$PGUSER"
+  if [[ "$ext_lower" == "dump" ]]; then
+    require_network_pg_client pg_restore || exit 1
+    pg_restore -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
+      "${restore_flags[@]}" --clean --if-exists "$BACKUP_PATH" || true
+  else
+    psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 -f "$BACKUP_PATH"
+  fi
+  echo "Restore finished at ${PGHOST}:${PGPORT}/${PGDATABASE}."
 fi

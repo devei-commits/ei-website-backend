@@ -107,8 +107,11 @@ describe('grnQcSpecs', () => {
   test('defaultInboundGrnQcTests provides mandatory inbound checklist', () => {
     const { defaultInboundGrnQcTests } = require('../../src/grn/grnQcSpecs');
     const rows = defaultInboundGrnQcTests('RM');
-    expect(rows.length).toBeGreaterThanOrEqual(2);
+    expect(rows.length).toBeGreaterThanOrEqual(3);
     expect(rows.every((r) => r.mandatory)).toBe(true);
+    const microbial = rows.find((r) => String(r.specId).includes('3rd-party'));
+    expect(microbial).toBeTruthy();
+    expect(String(microbial.method)).toMatch(/external|3rd/i);
   });
 
   test('buildGrnQcSpecPayload keeps empty tests when linked master has no specs', () => {
