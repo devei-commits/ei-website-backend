@@ -160,13 +160,13 @@ async function advanceGrnStage(req, res) {
     if (!STAGE_ORDER.includes(stage)) return res.status(400).json({ error: 'Invalid stage' });
     const grn = await GoodsReceivedNote.findByPk(id);
     if (!grn) return res.status(404).json({ error: 'GRN not found' });
-    const steps = Array.isArray(grn.workflow_steps) ? grn.workflow_steps : [];
+    const existingSteps = Array.isArray(grn.workflow_steps) ? grn.workflow_steps : [];
     const actor = String((req.body || {}).actor || '').trim();
-    steps.push({
+    const steps = [...existingSteps, {
       stage,
       at: new Date().toISOString(),
       ...(actor ? { actor } : {}),
-    });
+    }];
     grn.stage = stage;
     grn.status = stageToStatus(stage);
     grn.workflow_steps = steps;

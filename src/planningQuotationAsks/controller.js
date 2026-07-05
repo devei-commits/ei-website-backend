@@ -227,6 +227,15 @@ async function updatePlanningQuotationAsk(req, res) {
 
     if (body.notes !== undefined) updates.notes = body.notes;
 
+    const qtyRaw = body.quantityRequested ?? body.quantity_requested;
+    if (qtyRaw !== undefined) {
+      const qty = Number(qtyRaw);
+      if (!Number.isFinite(qty) || qty <= 0) {
+        return res.status(400).json({ error: 'quantityRequested must be a positive number' });
+      }
+      updates.quantity_requested = qty;
+    }
+
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: 'No updates provided' });
     }
