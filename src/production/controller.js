@@ -13,11 +13,17 @@ const { syncWarehouseReserved } = require('../planningExtracted/controller');
 const { logReservedChange, logLocationMovement } = require('../warehouseInventory/locationHistoryHelpers');
 const PlanningExtracted = require('../planningExtracted/models');
 const PlanningBatch = require('../planningExtracted/planningBatchModel');
-const { createRworkPlanningBatch } = require('../planningExtracted/controller');
+const { createRworkPlanningBatch, createSplitPlanningBatch } = require('../planningExtracted/controller');
 const SalesOrder = require('../salesOrders/models');
 const ProcurementRequest = require('../procurementRequests/models');
 const { hasGranularAccess } = require('../middleware/security');
 const { roundPlanningMaterialQty } = require('../planningExtracted/orderKgMath');
+const {
+  assertBatchEligibleForVesselSplit,
+  hasDispensingProgress,
+  scaleDispensingJsonLines,
+  MIN_REMAINDER_KG,
+} = require('./vesselSplitMath');
 const {
   muZoneCodeToMlBucket,
   muBucketLabelForZone,
@@ -248,6 +254,8 @@ function formatBatch(row, visibility = { canViewBmr: true, canViewBpr: true, can
     shrink: !!d.shrink,
     teamBMR: d.team_bmr || [],
     teamBPR: d.team_bpr || [],
+    shiftLeadBMR: d.shift_lead_bmr || '',
+    shiftLeadBPR: d.shift_lead_bpr || '',
     qcOfficerBMR: d.qc_officer_bmr || '',
     qcOfficerBPR: d.qc_officer_bpr || '',
     scheduledMuZone: d.scheduled_mu_zone || '',
@@ -285,6 +293,7 @@ function formatBatch(row, visibility = { canViewBmr: true, canViewBpr: true, can
     payload.bmrNo = null;
     payload.bmrStatus = null;
     payload.teamBMR = [];
+    payload.shiftLeadBMR = '';
     payload.qcOfficerBMR = '';
     payload.rmReserved = false;
     payload.rmConnected = false;
@@ -295,6 +304,7 @@ function formatBatch(row, visibility = { canViewBmr: true, canViewBpr: true, can
     payload.bprNo = null;
     payload.bprStatus = null;
     payload.teamBPR = [];
+    payload.shiftLeadBPR = '';
     payload.qcOfficerBPR = '';
     payload.pmReserved = false;
     payload.pmConnected = false;
@@ -347,7 +357,7 @@ const BATCH_ALLOWED_FIELDS = [
   'batch_no', 'batch_index', 'total_batches', 'bmr_status', 'bpr_status', 'color',
   'process_type', 'homogenizer', 'main_vessel', 'supporting_tanks',
   'filling_line', 'filling_type', 'packaging_line', 'monocarton', 'shrink',
-  'team_bmr', 'team_bpr', 'qc_officer_bmr', 'qc_officer_bpr',
+  'team_bmr', 'team_bpr', 'shift_lead_bmr', 'shift_lead_bpr', 'qc_officer_bmr', 'qc_officer_bpr',
   'scheduled_mu_zone', 'schedule_remarks',
   'mfg_date', 'fill_date', 'pack_date', 'fg_date', 'rm_connect_date', 'pm_connect_date',
   'rm_reserved', 'pm_reserved', 'rm_connected', 'pm_connected',
@@ -368,6 +378,7 @@ const BATCH_CAMEL_TO_SNAKE = {
   supportingTanks: 'supporting_tanks', fillingLine: 'filling_line',
   fillingType: 'filling_type', packagingLine: 'packaging_line',
   teamBMR: 'team_bmr', teamBPR: 'team_bpr',
+  shiftLeadBMR: 'shift_lead_bmr', shiftLeadBPR: 'shift_lead_bpr',
   qcOfficerBMR: 'qc_officer_bmr', qcOfficerBPR: 'qc_officer_bpr',
   scheduledMuZone: 'scheduled_mu_zone', scheduleRemarks: 'schedule_remarks',
   mfgDate: 'mfg_date', fillDate: 'fill_date', packDate: 'pack_date', fgDate: 'fg_date',
@@ -444,6 +455,27 @@ async function getNextRworkSuffix(baseBmrNo) {
   let maxNum = 0;
   for (const r of rows) {
     const m = (r.bmr_no || '').match(/-rw-(\d+)$/);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (n > maxNum) maxNum = n;
+    }
+  }
+  return maxNum + 1;
+}
+
+/** Next split suffix for a base BMR (e.g. BMR-2026-001 -> sp-01, sp-02). */
+async function getNextSplitSuffix(baseBmrNo) {
+  if (!baseBmrNo || typeof baseBmrNo !== 'string') return 1;
+  const base = baseBmrNo.replace(/-(?:rw|sp)-\d+$/, '').trim();
+  if (!base) return 1;
+  const pattern = `${base}-sp-%`;
+  const rows = await ProductionBatch.findAll({
+    where: { bmr_no: { [Op.like]: pattern } },
+    attributes: ['bmr_no'],
+  });
+  let maxNum = 0;
+  for (const r of rows) {
+    const m = (r.bmr_no || '').match(/-sp-(\d+)$/);
     if (m) {
       const n = parseInt(m[1], 10);
       if (n > maxNum) maxNum = n;
@@ -754,6 +786,126 @@ async function createRworkBatch(req, res) {
   } catch (err) {
     console.error('createRworkBatch error:', err);
     res.status(500).json({ error: 'Failed to create rework batch' });
+  }
+}
+
+/**
+ * POST /batches/split-for-vessel — shrink batch to vessel-sized first run; create sp-NN sibling for remainder.
+ * Body: { baseBatchId, firstRunSizeKg, reason?, vesselCapacityLiters? }
+ */
+async function splitBatchForVessel(req, res) {
+  try {
+    const baseBatchId = req.body.baseBatchId != null ? parseInt(req.body.baseBatchId, 10) : null;
+    const firstRunSizeKg = req.body.firstRunSizeKg != null ? Number(req.body.firstRunSizeKg) : null;
+    const reason = typeof req.body.reason === 'string' ? req.body.reason.trim() : '';
+    if (baseBatchId == null || Number.isNaN(baseBatchId)) {
+      return res.status(400).json({ error: 'baseBatchId is required' });
+    }
+    if (!Number.isFinite(firstRunSizeKg) || firstRunSizeKg <= 0) {
+      return res.status(400).json({ error: 'firstRunSizeKg must be a positive number' });
+    }
+
+    const base = await ProductionBatch.findByPk(baseBatchId);
+    if (!base) return res.status(404).json({ error: 'Base batch not found' });
+    const basePlain = base.get ? base.get({ plain: true }) : base;
+
+    const eligibilityErr = assertBatchEligibleForVesselSplit(basePlain);
+    if (eligibilityErr) return res.status(400).json({ error: eligibilityErr });
+    if (!basePlain.planning_batch_id) {
+      return res.status(400).json({ error: 'Base batch must be linked to planning (has no planning_batch_id)' });
+    }
+    if (hasDispensingProgress(basePlain.dispensing_rm, basePlain.dispensing_pm)) {
+      return res.status(400).json({ error: 'Cannot split after dispensing has started on this batch.' });
+    }
+
+    const oldSize = Number(basePlain.batch_size) || 0;
+    if (oldSize <= 0) return res.status(400).json({ error: 'Batch has no batch_size to split' });
+    const firstRun = Math.round(firstRunSizeKg);
+    const remainder = Math.round((oldSize - firstRun) * 1000) / 1000;
+    if (firstRun >= oldSize) {
+      return res.status(400).json({ error: 'firstRunSizeKg must be less than current batch size' });
+    }
+    if (remainder < MIN_REMAINDER_KG) {
+      return res.status(400).json({ error: `Remainder must be at least ${MIN_REMAINDER_KG} KG` });
+    }
+
+    const pb = await PlanningBatch.findByPk(basePlain.planning_batch_id);
+    if (!pb) return res.status(404).json({ error: 'Planning batch not found' });
+    const planId = pb.planning_extracted_id;
+
+    const firstScale = firstRun / oldSize;
+    const remainderScale = remainder / oldSize;
+    const oldOrderQty = Number(basePlain.order_qty) || 0;
+    const splitOrderQty = oldOrderQty > 0 ? Math.max(0, Math.round(oldOrderQty * remainderScale)) : 0;
+    const firstOrderQty = oldOrderQty > 0 ? Math.max(0, oldOrderQty - splitOrderQty) : oldOrderQty;
+    const nextTotalBatches = (Number(basePlain.total_batches) || 1) + 1;
+
+    const remarksNote = reason
+      ? `Vessel split: ${reason}`
+      : `Vessel split: ${firstRun} KG first run + ${remainder} KG split batch`;
+
+    base.batch_size = firstRun;
+    if (oldOrderQty > 0) base.order_qty = firstOrderQty;
+    base.total_batches = nextTotalBatches;
+    if (Array.isArray(basePlain.dispensing_rm)) {
+      base.dispensing_rm = scaleDispensingJsonLines(basePlain.dispensing_rm, firstScale);
+    }
+    if (Array.isArray(basePlain.dispensing_pm)) {
+      base.dispensing_pm = scaleDispensingJsonLines(basePlain.dispensing_pm, firstScale);
+    }
+    const existingRemarks = String(basePlain.remarks || '').trim();
+    base.remarks = existingRemarks ? `${existingRemarks} · ${remarksNote}` : remarksNote;
+    await recomputeBatchVolume(base);
+    await base.save();
+    await syncPlanningBatchFromProductionBatchSize(base.get({ plain: true }));
+
+    const newPb = await createSplitPlanningBatch(planId, basePlain.planning_batch_id, remainder);
+    if (!newPb) {
+      return res.status(500).json({ error: 'Failed to create split planning batch' });
+    }
+    const newPbPlain = newPb.get ? newPb.get({ plain: true }) : newPb;
+
+    const baseBmr = (basePlain.bmr_no || '').replace(/-(?:rw|sp)-\d+$/, '').trim();
+    const baseBpr = (basePlain.bpr_no || '').replace(/-(?:rw|sp)-\d+$/, '').trim();
+    const nextSp = await getNextSplitSuffix(basePlain.bmr_no);
+    const spSuffix = String(nextSp).padStart(2, '0');
+    const bmrNo = `${baseBmr}-sp-${spSuffix}`;
+    const bprNo = `${baseBpr}-sp-${spSuffix}`;
+
+    const splitRow = await ProductionBatch.create({
+      bmr_no: bmrNo,
+      bpr_no: bprNo,
+      product_name: basePlain.product_name || 'Unknown',
+      sku: basePlain.sku || '',
+      so_no: basePlain.so_no || '',
+      order_qty: splitOrderQty || basePlain.order_qty || 0,
+      batch_size: remainder,
+      batch_no: `sp-${spSuffix}`,
+      batch_index: newPbPlain.sequence ?? nextTotalBatches,
+      total_batches: nextTotalBatches,
+      planning_batch_id: newPb.id,
+      bmr_status: 'draft',
+      bpr_status: 'draft',
+      color: basePlain.color || null,
+      process_type: basePlain.process_type || null,
+      homogenizer: basePlain.homogenizer ?? false,
+      filling_type: basePlain.filling_type || null,
+      compatible_vessels: basePlain.compatible_vessels || null,
+      compatible_fill_lines: basePlain.compatible_fill_lines || null,
+      compatible_pack_lines: basePlain.compatible_pack_lines || null,
+      remarks: remarksNote,
+    });
+    await recomputeBatchVolume(splitRow);
+    await splitRow.save();
+
+    const visibility = await getBatchVisibility(req);
+    return res.status(201).json({
+      original: formatBatch(base, visibility),
+      split: formatBatch(splitRow, visibility),
+    });
+  } catch (err) {
+    console.error('splitBatchForVessel error:', err);
+    res.status(500).json({ error: err.message || 'Failed to split batch for vessel capacity' });
   }
 }
 
@@ -3408,7 +3560,7 @@ async function getBatchReservationCoverage(req, res) {
 module.exports = {
   listEquipment, getEquipmentById, createEquipment, updateEquipment, deleteEquipment,
   listTeam, getTeamMemberById, createTeamMember, updateTeamMember, deleteTeamMember,
-  listBatches, getBatchById, createBatch, createRworkBatch, updateBatch, deleteBatch, getBatchBom, getBatchMtrReserved, getBatchDispensingMuStock, syncBatchesFromPlanning,
+  listBatches, getBatchById, createBatch, createRworkBatch, splitBatchForVessel, updateBatch, deleteBatch, getBatchBom, getBatchMtrReserved, getBatchDispensingMuStock, syncBatchesFromPlanning,
   listReservedItems, reserveBatchLines, unreserveBatchLines, getBatchReservationCoverage,
   computeRequiredVolumeLiters,
   applyRmReservedToInventory,

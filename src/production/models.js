@@ -118,6 +118,8 @@ ProductionBatch.init(
 
     team_bmr: { type: DataTypes.JSON, allowNull: true },
     team_bpr: { type: DataTypes.JSON, allowNull: true },
+    shift_lead_bmr: { type: DataTypes.STRING(20), allowNull: true },
+    shift_lead_bpr: { type: DataTypes.STRING(20), allowNull: true },
     qc_officer_bmr: { type: DataTypes.STRING(20), allowNull: true },
     qc_officer_bpr: { type: DataTypes.STRING(20), allowNull: true },
 

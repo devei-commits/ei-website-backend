@@ -1717,6 +1717,75 @@ async function createRworkPlanningBatch(planningExtractedId, sourcePlanningBatch
 }
 
 /**
+ * Create one split planning_batch (vessel capacity remainder) for the given planning_extracted_id.
+ * Batch code: PE-{id}-sp-01, sp-02, … BOM scaled from source planning batch.
+ */
+async function createSplitPlanningBatch(planningExtractedId, sourcePlanningBatchId, splitSizeKg) {
+  const id = planningExtractedId;
+  const planRow = await PlanningExtracted.findByPk(id, { attributes: ['id', 'product_id', 'batch_size_kg'] });
+  if (!planRow) return null;
+  const sizeKg = Number(splitSizeKg);
+  if (!Number.isFinite(sizeKg) || sizeKg <= 0) return null;
+
+  const existing = await PlanningBatch.findAll({
+    where: { planning_extracted_id: id },
+    attributes: ['sequence', 'batch_code'],
+    order: [['sequence', 'DESC']],
+  });
+  const nextSeq = existing.length === 0 ? 1 : (existing[0].sequence || 0) + 1;
+  const spNums = existing
+    .map((b) => ((b.batch_code || '').match(/-sp-(\d+)$/) || [])[1])
+    .filter(Boolean)
+    .map((n) => parseInt(n, 10));
+  const nextSpNum = spNums.length === 0 ? 1 : Math.max(...spNums) + 1;
+  const spSuffix = String(nextSpNum).padStart(2, '0');
+  const batchCode = `PE-${id}-sp-${spSuffix}`;
+
+  let rmLines = [];
+  let pmLines = [];
+  if (sourcePlanningBatchId != null) {
+    const srcPb = await PlanningBatch.findByPk(sourcePlanningBatchId, { attributes: ['rm_lines', 'pm_lines', 'size_kg'] });
+    const srcPlain = srcPb && srcPb.get ? srcPb.get({ plain: true }) : srcPb;
+    const srcRm = Array.isArray(srcPlain?.rm_lines) ? srcPlain.rm_lines : [];
+    const srcPm = Array.isArray(srcPlain?.pm_lines) ? srcPlain.pm_lines : [];
+    const srcSize = Number(srcPlain?.size_kg) || sizeKg;
+    const scale = srcSize > 0 ? sizeKg / srcSize : 1;
+    const { scalePlanningJsonLines } = require('../production/vesselSplitMath');
+    rmLines = scalePlanningJsonLines(srcRm, scale);
+    pmLines = scalePlanningJsonLines(srcPm, scale);
+  }
+  if (rmLines.length === 0 && pmLines.length === 0) {
+    const bomCopy = await getBomCopyForPlanning(id);
+    rmLines = bomCopy.rmLines || [];
+    pmLines = bomCopy.pmLines || [];
+  }
+
+  const batch = await PlanningBatch.create({
+    planning_extracted_id: id,
+    sequence: nextSeq,
+    batch_code: batchCode,
+    size_kg: sizeKg,
+    rm_lines: rmLines,
+    pm_lines: pmLines,
+  });
+
+  const plan = await PlanningExtracted.findByPk(id, { attributes: ['id', 'sent_batch_indices'] });
+  if (plan) {
+    const sentRaw = plan.get ? plan.get('sent_batch_indices') : plan.sent_batch_indices;
+    const sent = Array.isArray(sentRaw) ? sentRaw : [];
+    const indexToAdd = nextSeq - 1;
+    if (!sent.includes(indexToAdd)) {
+      const nextSent = [...sent, indexToAdd].sort((a, b) => a - b);
+      await plan.update({ sent_batch_indices: nextSent });
+    }
+  }
+  const batchCnt = await PlanningBatch.count({ where: { planning_extracted_id: id } });
+  await PlanningExtracted.update({ batch_count: batchCnt }, { where: { id } });
+
+  return batch;
+}
+
+/**
  * POST /:id/batches/add-rework — add one rework batch to the planning table (same planning_extracted).
  * Used when a batch fails and production continues with a new batch. Batch code: PE-{id}-rw-01, rw-02, ...
  */
@@ -2920,6 +2989,7 @@ module.exports = {
   getItemsInvolvedByPlanningId,
   getBomCopyForPlanning,
   createRworkPlanningBatch,
+  createSplitPlanningBatch,
   syncWarehouseReserved,
   reserveStockForPlanningExtracted,
   releaseStockForPlanningExtracted,
