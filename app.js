@@ -16,6 +16,7 @@ const packagingRouters = require('./src/packaging/routers');
 const packMaterialsRouters = require('./src/packMaterials/routers');
 const rawMaterialsRouters = require('./src/rawMaterials/routers');
 const masterAttachmentsRouters = require('./src/masterAttachments/routers');
+const qualitySpecRulesRouters = require('./src/qualitySpecRules/routers');
 const bomRouters = require('./src/bom/routers');
 const itemsMasterRouters = require('./src/itemsMaster/routers');
 const vendorClientRouters = require('./src/vendorClient/routers');
@@ -158,6 +159,7 @@ app.use(`${apiPrefix}/admin/customization-packaging-options`, customizationPacka
 app.use(`${apiPrefix}/pack-materials`, isAuthenticated, packMaterialsRouters);
 app.use(`${apiPrefix}/raw-materials`, isAuthenticated, rawMaterialsRouters);
 app.use(`${apiPrefix}/master-attachments`, masterAttachmentsRouters);
+app.use(`${apiPrefix}/quality-spec-rules`, isAuthenticated, qualitySpecRulesRouters);
 app.use(`${apiPrefix}/bom`, isAuthenticated, bomRouters);
 app.use(`${apiPrefix}/items-master`, isAuthenticated, itemsMasterRouters);
 app.use(`${apiPrefix}/vendor-client`, isAuthenticated, vendorClientRouters);

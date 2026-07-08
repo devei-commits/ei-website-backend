@@ -40,6 +40,9 @@ const {
   pmApprovalHooks,
 } = require('../lib/masterApprovalPatchHandlers');
 const { createMasterApprovalStatusHistoryHandler } = require('../lib/masterApprovalStatusHistory');
+const { PM_QUALITY_SPEC_EDIT_KEYS, payloadHasQualitySpecEdits } = require('../qualitySpecRules/itemLock');
+const { resolveEntityQualitySpecs } = require('../qualitySpecRules/resolveForItem');
+const { resolvePmQualitySpecCategoryFromRow } = require('../qualitySpecRules/pmCategoryResolve');
 
 /** All PM stock is counted in pieces (aligned with planning, production, warehouse). */
 function canonicalPmUnit() {
@@ -222,11 +225,37 @@ function formatPackMaterial(row) {
   };
 }
 
-function formatPackMaterialFull(row) {
+/**
+ * Full row for edit (includes form_data). While the item is unlocked (quality_specs_locked
+ * false), category-level quality-spec rows are live-resolved from the rule instead of whatever
+ * (if anything) is stored on the item — once locked, the item's own saved rows win. Sub-category
+ * resolution is intentionally not attempted for PM — see pmCategoryResolve.js docblock.
+ */
+async function formatPackMaterialFull(row) {
   const base = formatPackMaterial(row);
   if (!base) return null;
   const d = row.get ? row.get({ plain: true }) : row;
-  return { ...base, form_data: d.form_data ?? null };
+  const locked = d.quality_specs_locked === true;
+  const fd = d.form_data != null && typeof d.form_data === 'object' && !Array.isArray(d.form_data) ? d.form_data : {};
+
+  let form_data = d.form_data ?? null;
+  if (!locked) {
+    const { category } = resolvePmQualitySpecCategoryFromRow({ group: d.group, material: d.material, form_data: fd });
+    const { commonRows } = await resolveEntityQualitySpecs('PM', category, '');
+    form_data = { ...fd, pmQualitySpecRows: commonRows };
+  }
+
+  return { ...base, form_data, quality_specs_locked: locked };
+}
+
+/** Marks `fields.quality_specs_locked = true` (never false) when the payload touched PM quality specs. */
+function applyPmQualitySpecLockOnWrite(fields) {
+  const fd = fields.form_data != null && typeof fields.form_data === 'object' && !Array.isArray(fields.form_data)
+    ? fields.form_data
+    : null;
+  if (payloadHasQualitySpecEdits(fd, PM_QUALITY_SPEC_EDIT_KEYS)) {
+    fields.quality_specs_locked = true;
+  }
 }
 
 /**
@@ -530,6 +559,7 @@ async function createPackMaterial(req, res) {
           ? exPlain.form_data
           : {};
       const fields = bodyToPackMaterial(b, true, exFd);
+      applyPmQualitySpecLockOnWrite(fields);
       await applyPmApprovalOnCreate(req, fields, exFd);
       const codeTrim = fields.code != null ? String(fields.code).trim() : '';
       if (!codeTrim) {
@@ -604,7 +634,7 @@ async function createPackMaterial(req, res) {
         }
         await t.commit();
         zohoBooksItemToDelete = null;
-        const out = formatPackMaterialFull(existingRow);
+        const out = await formatPackMaterialFull(existingRow);
         if (zohoEnv.booksEnabled && zohoEnv.syncItems) {
           if (zoho.synced && zoho.itemId) {
             out.zoho_sync = { synced: true, item_id: zoho.itemId };
@@ -629,6 +659,7 @@ async function createPackMaterial(req, res) {
     const t = await db.transaction();
     try {
       const fields = bodyToPackMaterial(b);
+      applyPmQualitySpecLockOnWrite(fields);
       await applyPmApprovalOnCreate(req, fields);
       let codeTrim = fields.code != null ? String(fields.code).trim() : '';
       if (!codeTrim) {
@@ -706,7 +737,7 @@ async function createPackMaterial(req, res) {
       await t.commit();
       zohoBooksItemToDelete = null;
 
-      const out = formatPackMaterialFull(row);
+      const out = await formatPackMaterialFull(row);
       if (zohoEnv.booksEnabled && zohoEnv.syncItems) {
         if (zoho.synced && zoho.itemId) {
           out.zoho_sync = { synced: true, item_id: zoho.itemId };
@@ -747,7 +778,7 @@ async function getPackMaterialById(req, res) {
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await PackMaterial.findByPk(id);
     if (!row) return res.status(404).json({ error: 'Pack material not found' });
-    res.json(formatPackMaterialFull(row));
+    res.json(await formatPackMaterialFull(row));
   } catch (err) {
     console.error('getPackMaterialById error', err);
     res.status(500).json({ error: 'Failed to get pack material' });
@@ -783,11 +814,12 @@ async function updatePackMaterial(req, res) {
     }
     mergedFields.code = nextCode;
     delete mergedFields.zoho_sku_code;
+    applyPmQualitySpecLockOnWrite(mergedFields);
     Object.keys(mergedFields).forEach((key) => {
       if (mergedFields[key] !== undefined) row.set(key, mergedFields[key]);
     });
     await row.save();
-    res.json(formatPackMaterialFull(row));
+    res.json(await formatPackMaterialFull(row));
   } catch (err) {
     console.error('updatePackMaterial error', err);
     if (err.name === 'SequelizeUniqueConstraintError') {

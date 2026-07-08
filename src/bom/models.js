@@ -63,6 +63,8 @@ BOM.init(
     lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
     /** ML1 / ML2 manufacturing licence records for PR master (gates production batch start). */
     pr_facility_licences: { type: DataTypes.JSON, allowNull: true },
+    /** Once true, this item's own saved quality specs win over the category/sub-category rule (one-way). */
+    quality_specs_locked: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   },
   { sequelize: db, modelName: 'BOM', tableName: 'boms', timestamps: true, createdAt: 'created_at', updatedAt: 'updated_at' }
 );

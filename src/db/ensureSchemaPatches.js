@@ -478,6 +478,55 @@ const PATCHES = [
     sql:
       'CREATE INDEX IF NOT EXISTS "master_approval_status_history_kind_id_idx" ON "master_approval_status_history" ("master_kind", "master_id", "created_at" DESC)',
   },
+
+  // quality_spec_rules — category/sub-category quality-spec templates for RM/PM/PR masters
+  // (src/qualitySpecRules/models.js), replacing the frontend's localStorage-based rule store.
+  {
+    name: 'quality_spec_rules.table',
+    table: 'quality_spec_rules',
+    skipTableCheck: true,
+    sql: `CREATE TABLE IF NOT EXISTS "quality_spec_rules" (
+      "id" SERIAL PRIMARY KEY,
+      "entity_type" VARCHAR(20) NOT NULL,
+      "category" VARCHAR(150) NOT NULL,
+      "sub_category" VARCHAR(150) NOT NULL DEFAULT '',
+      "rows" JSONB,
+      "created_at" TIMESTAMPTZ,
+      "updated_at" TIMESTAMPTZ
+    )`,
+  },
+  {
+    name: 'quality_spec_rules.entity_category_subcategory.unique',
+    table: 'quality_spec_rules',
+    skipTableCheck: true,
+    sql:
+      'CREATE UNIQUE INDEX IF NOT EXISTS "quality_spec_rules_entity_category_subcategory_uniq" ON "quality_spec_rules" ("entity_type", "category", "sub_category")',
+  },
+  {
+    // entity_type widened for PR section namespaces (e.g. 'PR_FINAL_CLEARANCE' = 18 chars);
+    // needed on any DB where the table was already created with the original VARCHAR(10).
+    name: 'quality_spec_rules.entity_type.widen',
+    table: 'quality_spec_rules',
+    sql: 'ALTER TABLE "quality_spec_rules" ALTER COLUMN "entity_type" TYPE VARCHAR(20)',
+  },
+
+  // quality_specs_locked — once true, an item's own saved quality specs win over the
+  // category/sub-category rule (one-way; see src/qualitySpecRules/itemLock.js).
+  {
+    name: 'raw_materials.quality_specs_locked',
+    table: 'raw_materials',
+    sql: 'ALTER TABLE "raw_materials" ADD COLUMN IF NOT EXISTS "quality_specs_locked" BOOLEAN NOT NULL DEFAULT false',
+  },
+  {
+    name: 'pack_materials.quality_specs_locked',
+    table: 'pack_materials',
+    sql: 'ALTER TABLE "pack_materials" ADD COLUMN IF NOT EXISTS "quality_specs_locked" BOOLEAN NOT NULL DEFAULT false',
+  },
+  {
+    name: 'boms.quality_specs_locked',
+    table: 'boms',
+    sql: 'ALTER TABLE "boms" ADD COLUMN IF NOT EXISTS "quality_specs_locked" BOOLEAN NOT NULL DEFAULT false',
+  },
 ];
 
 async function tableExists(tableName) {

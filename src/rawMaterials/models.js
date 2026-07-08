@@ -57,6 +57,8 @@ RawMaterial.init(
     rm_owner: { type: DataTypes.STRING(255), allowNull: true },
     universal_swap_eligibility: { type: DataTypes.STRING(10), allowNull: true },
     functional_equivalents: { type: DataTypes.TEXT, allowNull: true },
+    /** Once true, this item's own saved quality specs win over the category/sub-category rule (one-way). */
+    quality_specs_locked: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   },
   {
     sequelize: db,
