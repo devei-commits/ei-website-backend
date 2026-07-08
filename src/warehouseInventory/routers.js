@@ -21,6 +21,7 @@ const {
   postWarehouseSihExcelImport,
   postMl1SihExcelImport,
   postMl2SihExcelImport,
+  postWarehouseSihExcelChunk,
 } = require('./warehouseSihBucketExcelImport');
 const { createCacheReadMiddleware } = require('../cache/cacheReadMiddleware');
 
@@ -41,6 +42,9 @@ router.post(
   uploadSihExcelSafe,
   postWarehouseSihExcelImport
 );
+// Chunked variant: client parses the workbook and POSTs bounded row batches here (JSON body,
+// no file upload) so large files don't produce one long-running request that can time out.
+router.post('/import-sih-excel/warehouse/chunk', isAuthenticated, postWarehouseSihExcelChunk);
 router.post(
   '/import-sih-excel/ml1',
   isAuthenticated,
