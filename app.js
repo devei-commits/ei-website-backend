@@ -213,6 +213,10 @@ function shouldRunSyncAlter() {
 if (process.env.NODE_ENV !== 'test') {
     db.authenticate()
         .then(async () => {
+            // Managed production DBs skip `sync({ alter: true })` below, so this is the only
+            // thing that creates/patches tables there — must run unconditionally on every boot.
+            const { ensureSchemaPatches } = require('./src/db/ensureSchemaPatches');
+            await ensureSchemaPatches();
             if (!isManagedProductionDatabase()) {
                 if (shouldRunSyncAlter()) {
                     await db.sync({ alter: true });
