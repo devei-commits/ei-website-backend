@@ -1,26 +1,38 @@
 const QualitySpecRule = require('./models');
+const { layerQualitySpecRuleRows } = require('./resolver');
 
 /**
  * Live-resolves the category-level ("common") and sub-category-level rule rows for one item's
  * context. Kept separate (not merged) so callers can reproduce the frontend's two-table display
  * (common table always shown, sub-category table shown only when a sub-category is set) —
  * see src/qualitySpecRules/resolver.js for the merged-view variant used by the /resolve endpoint.
+ *
+ * When `subSubCategory` is given (RM/PM only — a 3rd scoping level below sub-category), its rule
+ * rows are layered on top of the sub-category rule's rows (by parameter name) before returning,
+ * so callers that only know about {commonRows, subRows} keep working unchanged.
  */
-async function resolveEntityQualitySpecs(entityType, category, subCategory) {
+async function resolveEntityQualitySpecs(entityType, category, subCategory, subSubCategory) {
   const cat = String(category || '').trim();
   if (!cat) return { commonRows: [], subRows: [] };
   const sub = String(subCategory || '').trim();
+  const subSub = String(subSubCategory || '').trim();
 
-  const [commonRule, subRule] = await Promise.all([
-    QualitySpecRule.findOne({ where: { entity_type: entityType, category: cat, sub_category: '' } }),
+  const [commonRule, subRule, subSubRule] = await Promise.all([
+    QualitySpecRule.findOne({ where: { entity_type: entityType, category: cat, sub_category: '', sub_sub_category: '' } }),
     sub
-      ? QualitySpecRule.findOne({ where: { entity_type: entityType, category: cat, sub_category: sub } })
+      ? QualitySpecRule.findOne({ where: { entity_type: entityType, category: cat, sub_category: sub, sub_sub_category: '' } })
+      : Promise.resolve(null),
+    sub && subSub
+      ? QualitySpecRule.findOne({ where: { entity_type: entityType, category: cat, sub_category: sub, sub_sub_category: subSub } })
       : Promise.resolve(null),
   ]);
 
+  const subRows = subRule && Array.isArray(subRule.rows) ? subRule.rows : [];
+  const subSubRows = subSubRule && Array.isArray(subSubRule.rows) ? subSubRule.rows : [];
+
   return {
     commonRows: commonRule && Array.isArray(commonRule.rows) ? commonRule.rows : [],
-    subRows: subRule && Array.isArray(subRule.rows) ? subRule.rows : [],
+    subRows: subSubRows.length ? layerQualitySpecRuleRows(subRows, subSubRows) : subRows,
   };
 }
 
@@ -38,9 +50,11 @@ async function resolvePrEntityQualitySpecs(entityType, category, subCategory, su
   const aliasSub = subSpecPath && subSpecPath.subCategory ? subSpecPath.subCategory : String(subCategory || '').trim();
 
   const [commonRule, subRule] = await Promise.all([
-    QualitySpecRule.findOne({ where: { entity_type: entityType, category: cat, sub_category: '' } }),
+    QualitySpecRule.findOne({ where: { entity_type: entityType, category: cat, sub_category: '', sub_sub_category: '' } }),
     aliasSub
-      ? QualitySpecRule.findOne({ where: { entity_type: entityType, category: aliasCat, sub_category: aliasSub } })
+      ? QualitySpecRule.findOne({
+          where: { entity_type: entityType, category: aliasCat, sub_category: aliasSub, sub_sub_category: '' },
+        })
       : Promise.resolve(null),
   ]);
 

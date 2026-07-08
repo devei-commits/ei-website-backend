@@ -490,17 +490,11 @@ const PATCHES = [
       "entity_type" VARCHAR(20) NOT NULL,
       "category" VARCHAR(150) NOT NULL,
       "sub_category" VARCHAR(150) NOT NULL DEFAULT '',
+      "sub_sub_category" VARCHAR(150) NOT NULL DEFAULT '',
       "rows" JSONB,
       "created_at" TIMESTAMPTZ,
       "updated_at" TIMESTAMPTZ
     )`,
-  },
-  {
-    name: 'quality_spec_rules.entity_category_subcategory.unique',
-    table: 'quality_spec_rules',
-    skipTableCheck: true,
-    sql:
-      'CREATE UNIQUE INDEX IF NOT EXISTS "quality_spec_rules_entity_category_subcategory_uniq" ON "quality_spec_rules" ("entity_type", "category", "sub_category")',
   },
   {
     // entity_type widened for PR section namespaces (e.g. 'PR_FINAL_CLEARANCE' = 18 chars);
@@ -508,6 +502,31 @@ const PATCHES = [
     name: 'quality_spec_rules.entity_type.widen',
     table: 'quality_spec_rules',
     sql: 'ALTER TABLE "quality_spec_rules" ALTER COLUMN "entity_type" TYPE VARCHAR(20)',
+  },
+  {
+    // sub_sub_category: RM/PM quality-spec rules can now be scoped a 3rd level deep (e.g.
+    // category="Surfactant", sub_category="Anionic", sub_sub_category="<detail>").
+    name: 'quality_spec_rules.sub_sub_category',
+    table: 'quality_spec_rules',
+    sql: `ALTER TABLE "quality_spec_rules" ADD COLUMN IF NOT EXISTS "sub_sub_category" VARCHAR(150) NOT NULL DEFAULT ''`,
+  },
+  {
+    name: 'quality_spec_rules.entity_category_subcategory.unique.drop',
+    table: 'quality_spec_rules',
+    sql: 'DROP INDEX IF EXISTS "quality_spec_rules_entity_category_subcategory_uniq"',
+  },
+  {
+    // Postgres identifiers cap at 63 bytes — the descriptive name silently truncates and can
+    // collide with itself across separate CREATE attempts, so this uses a short, exact name.
+    name: 'quality_spec_rules.scope.unique.drop_oversized_name_attempt',
+    table: 'quality_spec_rules',
+    sql: 'DROP INDEX IF EXISTS "quality_spec_rules_entity_category_subcategory_subsubcategory_u"',
+  },
+  {
+    name: 'quality_spec_rules.scope.unique',
+    table: 'quality_spec_rules',
+    sql:
+      'CREATE UNIQUE INDEX IF NOT EXISTS "quality_spec_rules_scope_uniq" ON "quality_spec_rules" ("entity_type", "category", "sub_category", "sub_sub_category")',
   },
 
   // quality_specs_locked — once true, an item's own saved quality specs win over the
