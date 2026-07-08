@@ -9,12 +9,13 @@
  */
 const ExcelJS = require('exceljs');
 const multer = require('multer');
+const db = require('../../db');
 const PurchaseOrder = require('./models');
 const VendorClient = require('../vendorClient/models');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const { cellToText } = require('../masterBulk/masterExcelFlexibleParse');
-const { readRowFields, readZohoContactIdMetaFromCell } = require('../vendorClient/vendorClientExcelParseUtils');
+const { readRowFields, readZohoContactIdMetaFromCell, buildZohoColumnOverlayFromXlsx } = require('../vendorClient/vendorClientExcelParseUtils');
 
 const PURCHASE_ORDER_SHEET = 'purchaseorder';
 const PR_ROWS_SHEET = 'pr rows';
@@ -107,28 +108,25 @@ const RAW_DETAIL_HEADER_KEYS = Object.keys(RAW_DETAIL_HEADER_ALIASES);
  * All other workbook columns are ignored on import.
  */
 const PURCHASE_ORDER_FLAT_ALIASES = {
+  purchaseOrderId: ['purchase order id'],
   purchaseOrderNumber: ['purchase order number'],
   purchaseOrderDate: ['purchase order date'],
   deliveryDate: ['delivery date'],
   expectedArrivalDate: ['expected arrival date'],
+  eiPoReference: ['reference#', 'reference'],
+  referenceNo: ['reference no'],
   poStatus: ['purchase order status'],
   vendorName: ['vendor name'],
+  gstTreatment: ['gst treatment'],
   gstin: ['gst identification number (gstin)'],
-  paymentTerms: ['payment terms'],
-  paymentTermsLabel: ['payment terms label'],
-  attention: ['attention'],
-  address: ['address'],
-  city: ['city'],
-  state: ['state'],
-  country: ['country'],
-  pincode: ['code'],
-  phone: ['phone'],
   itemName: ['item name'],
   sku: ['sku'],
   hsnSac: ['hsn/sac'],
   qtyOrdered: ['quantityordered'],
+  usageUnit: ['usage unit'],
   unitPrice: ['item price'],
   itemTotal: ['item total'],
+  poTotal: ['total'],
 };
 const PURCHASE_ORDER_FLAT_KEYS = Object.keys(PURCHASE_ORDER_FLAT_ALIASES);
 
@@ -180,6 +178,33 @@ function headerLabelMatchesAliases(label, aliases) {
 
 function normalizePoKey(value) {
   return String(value || '').trim().toUpperCase();
+}
+
+function deriveProcurementRequestIdentityFromExcelRef(raw) {
+  const s = String(raw ?? '').trim();
+  if (!s) return { requestCode: '', requestId: '' };
+
+  // UI request code format: `PR-REQ-###`
+  const mPrefix = s.match(/^PR-REQ-(\d+)$/i);
+  if (mPrefix) {
+    const idNum = String(parseInt(mPrefix[1], 10));
+    return { requestCode: `PR-REQ-${idNum.padStart(3, '0')}`, requestId: idNum };
+  }
+
+  const mEmbedded = s.match(/PR-REQ-(\d+)/i);
+  if (mEmbedded) {
+    const idNum = String(parseInt(mEmbedded[1], 10));
+    return { requestCode: `PR-REQ-${idNum.padStart(3, '0')}`, requestId: idNum };
+  }
+
+  const mDigitsOnly = s.match(/^(\d+)$/);
+  if (mDigitsOnly) {
+    const idNum = String(parseInt(mDigitsOnly[1], 10));
+    return { requestCode: `PR-REQ-${idNum.padStart(3, '0')}`, requestId: idNum };
+  }
+
+  // Unknown format; don't set misleading requestCode.
+  return { requestCode: '', requestId: '' };
 }
 
 /**
@@ -274,7 +299,23 @@ function detectPurchaseOrderColumnMap(worksheet, maxScanRow = 8) {
 }
 
 function readPurchaseOrderFlatRowFields(row, colMap) {
-  return readRowFields(row, colMap, PURCHASE_ORDER_FLAT_KEYS);
+  const zohoMetaKeys = new Set(['purchaseOrderId']);
+  const fields = readRowFields(
+    row,
+    colMap,
+    PURCHASE_ORDER_FLAT_KEYS.filter((k) => !zohoMetaKeys.has(k))
+  );
+
+  if (colMap.purchaseOrderId) {
+    const meta = readZohoContactIdMetaFromCell(row.getCell(colMap.purchaseOrderId));
+    fields.purchaseOrderId =
+      meta.id || String(cellToText(row.getCell(colMap.purchaseOrderId))).trim();
+    fields.purchaseOrderIdReliable = meta.reliable;
+  } else {
+    fields.purchaseOrderId = '';
+  }
+
+  return fields;
 }
 
 function resolvePurchaseOrderFlatGroupKey(fields) {
@@ -293,22 +334,31 @@ function purchaseOrderFlatFieldsToItem(fields) {
     name: itemName,
     itemCode: sku || undefined,
     code: sku || undefined,
-    type: 'RM',
     quantity: parseOptionalNumber(fields.qtyOrdered) ?? 0,
     unitPrice: parseOptionalNumber(fields.unitPrice) ?? 0,
+    uom: String(fields.usageUnit || '').trim() || undefined,
     hsnCode: String(fields.hsnSac || '').trim() || undefined,
     itemTotal: parseOptionalNumber(fields.itemTotal) ?? undefined,
   };
+}
+
+function resolveFlatPoReference(fields) {
+  return (
+    String(fields.eiPoReference || '').trim() ||
+    String(fields.referenceNo || '').trim() ||
+    null
+  );
 }
 
 function buildPoHeaderFromFlatFields(fields) {
   const orderId = String(fields.purchaseOrderNumber || '').trim();
   if (!orderId) return null;
 
-  const paymentTerms =
-    String(fields.paymentTerms || '').trim() ||
-    String(fields.paymentTermsLabel || '').trim() ||
-    '';
+  const zohoPoId = String(fields.purchaseOrderId || '').trim().replace(/\s/g, '');
+  const zohoStatus = String(fields.poStatus || '').trim();
+  const reference = resolveFlatPoReference(fields);
+  const poTotal = parseOptionalNumber(fields.poTotal);
+  const requestIdentity = deriveProcurementRequestIdentityFromExcelRef(reference);
 
   return {
     order_id: orderId,
@@ -316,29 +366,28 @@ function buildPoHeaderFromFlatFields(fields) {
     order_date: toDateOnly(fields.purchaseOrderDate),
     expected_shipment_date:
       toDateOnly(fields.deliveryDate) || toDateOnly(fields.expectedArrivalDate),
-    reference: null,
-    status: String(fields.poStatus || '').trim() || 'Draft',
-    payment_terms: paymentTerms || null,
+    reference,
+    status: 'Draft',
+    payment_terms: null,
     order_status: {
-      orderStatus: String(fields.poStatus || '').trim() || '',
+      orderStatus: 'Draft',
+      zohoStatus: zohoStatus || undefined,
     },
     form_data: {
       source: 'excel_purchase_order',
       poNumber: orderId,
       purchaseOrderNumber: orderId,
+      zohoPurchaseOrderId: /^\d{10,22}$/.test(zohoPoId) ? zohoPoId : undefined,
       purchaseOrderDate: toDateOnly(fields.purchaseOrderDate) || '',
       deliveryDate: toDateOnly(fields.deliveryDate) || '',
       expectedArrivalDate: toDateOnly(fields.expectedArrivalDate) || '',
+      eiPoReference: reference || '',
+      ...(requestIdentity.requestCode ? { requestCode: requestIdentity.requestCode } : {}),
+      ...(requestIdentity.requestId ? { requestId: requestIdentity.requestId } : {}),
       vendorGstin: String(fields.gstin || '').trim() || '',
-      paymentTerms,
-      vendorAttention: String(fields.attention || '').trim() || '',
-      vendorAddress: String(fields.address || '').trim() || '',
-      vendorCity: String(fields.city || '').trim() || '',
-      vendorState: String(fields.state || '').trim() || '',
-      vendorCountry: String(fields.country || '').trim() || '',
-      vendorPincode: String(fields.pincode || '').trim() || '',
-      vendorPhone: String(fields.phone || '').trim() || '',
-      poStatus: String(fields.poStatus || '').trim() || '',
+      gstTreatment: String(fields.gstTreatment || '').trim() || '',
+      poStatus: zohoStatus,
+      poTotal: poTotal ?? undefined,
     },
     items: [],
   };
@@ -347,7 +396,7 @@ function buildPoHeaderFromFlatFields(fields) {
 /**
  * @param {import('exceljs').Workbook} workbook
  */
-function parsePurchaseOrderFlatWorkbook(workbook) {
+function parsePurchaseOrderFlatWorkbook(workbook, buffer) {
   const worksheet = findPurchaseOrderWorksheet(workbook);
   if (!worksheet) {
     throw new Error('Worksheet "PurchaseOrder" not found');
@@ -361,6 +410,9 @@ function parsePurchaseOrderFlatWorkbook(workbook) {
   }
 
   const { headerRow, col: colMap } = layout;
+  const poIdOverlay = buffer
+    ? buildZohoColumnOverlayFromXlsx(buffer, worksheet.name, ['purchase order id'])
+    : { byRow: {}, unreliableCount: 0 };
   const lastDataRow = getWorksheetEndRow(worksheet, headerRow);
   const grouped = new Map();
   let skippedNoIdentity = 0;
@@ -368,6 +420,11 @@ function parsePurchaseOrderFlatWorkbook(workbook) {
 
   for (let r = headerRow + 1; r <= lastDataRow; r += 1) {
     const fields = readPurchaseOrderFlatRowFields(worksheet.getRow(r), colMap);
+    if (poIdOverlay.byRow?.[r]?.id) {
+      fields.purchaseOrderId = poIdOverlay.byRow[r].id;
+      fields.purchaseOrderIdReliable = poIdOverlay.byRow[r].reliable;
+    }
+
     const groupKey = resolvePurchaseOrderFlatGroupKey(fields);
     if (!groupKey) {
       skippedNoIdentity += 1;
@@ -418,6 +475,7 @@ function parsePurchaseOrderFlatWorkbook(workbook) {
       skipped_no_identity: skippedNoIdentity,
       skipped_no_product: skippedNoProduct,
       groups_total: grouped.size,
+      zoho_overlay_unreliable: poIdOverlay.unreliableCount ?? 0,
     },
   };
 }
@@ -670,23 +728,31 @@ async function buildMaterialSkuLookup() {
   const pmBySku = new Map();
   for (const row of rmRows) {
     const d = row.get ? row.get({ plain: true }) : row;
-    const key = String(d.zoho_sku_code || '').trim().toUpperCase();
-    if (!key) continue;
-    rmBySku.set(key, {
+    const ref = {
       id: Number(d.id),
       code: String(d.code || '').trim(),
       name: String(d.name || '').trim(),
-    });
+    };
+    for (const key of [
+      String(d.zoho_sku_code || '').trim().toUpperCase(),
+      String(d.code || '').trim().toUpperCase(),
+    ].filter(Boolean)) {
+      rmBySku.set(key, ref);
+    }
   }
   for (const row of pmRows) {
     const d = row.get ? row.get({ plain: true }) : row;
-    const key = String(d.zoho_sku_code || '').trim().toUpperCase();
-    if (!key) continue;
-    pmBySku.set(key, {
+    const ref = {
       id: Number(d.id),
       code: String(d.code || '').trim(),
       name: String(d.description || '').trim(),
-    });
+    };
+    for (const key of [
+      String(d.zoho_sku_code || '').trim().toUpperCase(),
+      String(d.code || '').trim().toUpperCase(),
+    ].filter(Boolean)) {
+      pmBySku.set(key, ref);
+    }
   }
   return { rmBySku, pmBySku };
 }
@@ -697,9 +763,20 @@ function enrichItemsWithMaterialLookup(items, lookup) {
 
   return list.map((item) => {
     const out = { ...(item || {}) };
-    const type = normalizeMaterialType(out.type || out.category);
     const sku = String(out.sku || '').trim().toUpperCase();
-    const ref = type === 'PM' ? lookup.pmBySku.get(sku) : lookup.rmBySku.get(sku);
+    let type = normalizeMaterialType(out.type || out.category);
+    let ref = type === 'PM' ? lookup.pmBySku.get(sku) : lookup.rmBySku.get(sku);
+    if (!ref) {
+      const pmHit = lookup.pmBySku.get(sku);
+      const rmHit = lookup.rmBySku.get(sku);
+      if (pmHit) {
+        ref = pmHit;
+        type = 'PM';
+      } else if (rmHit) {
+        ref = rmHit;
+        type = 'RM';
+      }
+    }
     out.type = type;
     out.category = type;
 
@@ -742,6 +819,12 @@ function enrichItemsWithMaterialLookup(items, lookup) {
 
 function buildPoHeaderFromFirstRow(fields) {
   const orderId = poKeyFromFields(fields);
+  // Excel column meaning: `eiPoReference` is typically the PO key (used for order_id),
+  // while `sourcePoNumber` is typically the PR/request reference we use for linking.
+  const requestIdentity = deriveProcurementRequestIdentityFromExcelRef(
+    String(fields.sourcePoNumber || fields.eiPoReference || '').trim(),
+  );
+
   return {
     order_id: orderId,
     vendor_name: String(fields.preferredVendor || '').trim() || null,
@@ -760,6 +843,8 @@ function buildPoHeaderFromFirstRow(fields) {
       poNumber: orderId,
       sourcePoNumber: String(fields.sourcePoNumber || '').trim() || '',
       eiPoReference: String(fields.eiPoReference || '').trim() || '',
+      ...(requestIdentity.requestCode ? { requestCode: requestIdentity.requestCode } : {}),
+      ...(requestIdentity.requestId ? { requestId: requestIdentity.requestId } : {}),
       poStatus: String(fields.poStatus || '').trim() || '',
       category: String(fields.category || '').trim() || '',
       priority: String(fields.priority || '').trim() || '',
@@ -1091,6 +1176,17 @@ function applyRawPoDetailsToGroupedPos(grouped, rawRows) {
   return grouped;
 }
 
+async function findByZohoPurchaseOrderId(zohoId) {
+  if (!zohoId) return null;
+  const [found] = await db.query(
+    `SELECT id FROM purchase_orders WHERE (form_data->>'zohoPurchaseOrderId') = :zid LIMIT 1`,
+    { replacements: { zid: zohoId } }
+  );
+  const id = found && found[0] && found[0].id;
+  if (!id) return null;
+  return PurchaseOrder.findByPk(id);
+}
+
 /**
  * @param {Map<string, {excel_rows:number[], payload:any}>} grouped
  * @param {{details?: boolean, createdBy?: string}} opts
@@ -1107,9 +1203,21 @@ async function executePrRowsImport(grouped, opts = {}) {
       const payload = entry.payload;
       payload.form_data = payload.form_data || {};
       payload.form_data.createdBy = createdBy;
+      const isFlatImport = payload.form_data.source === 'excel_purchase_order';
+      if (isFlatImport) {
+        payload.status = 'Draft';
+      }
       payload.items = enrichItemsWithMaterialLookup(payload.items, materialLookup);
+
+      const zohoPoId =
+        payload.form_data.zohoPurchaseOrderId != null
+          ? String(payload.form_data.zohoPurchaseOrderId)
+          : '';
+
       const vendor = await resolveVendorByZohoId(
-        payload.form_data.preferredVendorZohoId || payload.form_data.vendorZohoId,
+        payload.form_data.preferredVendorZohoId ||
+          payload.form_data.vendorZohoId ||
+          '',
         payload.vendor_name
       );
       const vendorPlain = vendor && vendor.get ? vendor.get({ plain: true }) : vendor;
@@ -1119,7 +1227,11 @@ async function executePrRowsImport(grouped, opts = {}) {
         if (vendorPlain.name) payload.vendor_name = vendorPlain.name;
       }
 
-      const existing = await PurchaseOrder.findOne({ where: { order_id: payload.order_id } });
+      let existing = zohoPoId ? await findByZohoPurchaseOrderId(zohoPoId) : null;
+      if (!existing && payload.order_id) {
+        existing = await PurchaseOrder.findOne({ where: { order_id: payload.order_id } });
+      }
+
       if (existing) {
         const prevFd = existing.get('form_data');
         const mergedFd =
@@ -1136,17 +1248,36 @@ async function executePrRowsImport(grouped, opts = {}) {
           order_date: payload.order_date ?? existing.order_date,
           expected_shipment_date: payload.expected_shipment_date ?? existing.expected_shipment_date,
           reference: payload.reference ?? existing.reference,
-          status: payload.status ?? existing.status,
+          status: isFlatImport ? 'Draft' : (payload.status ?? existing.status),
+          payment_terms: payload.payment_terms ?? existing.payment_terms,
           order_status: mergedOs,
           form_data: mergedFd,
           items: Array.isArray(payload.items) ? payload.items : [],
         });
         summary.updated += 1;
-        if (details) summary.row_log.push({ ...logBase, action: 'updated', order_id: payload.order_id });
+        if (details) {
+          summary.row_log.push({
+            ...logBase,
+            action: 'updated',
+            order_id: payload.order_id,
+            zoho_purchase_order_id: zohoPoId || undefined,
+            line_count: Array.isArray(payload.items) ? payload.items.length : 0,
+          });
+        }
       } else {
-        await PurchaseOrder.create(payload);
+        const createPayload = { ...payload };
+        if (zohoPoId) createPayload.zoho_purchase_order_id = zohoPoId;
+        await PurchaseOrder.create(createPayload);
         summary.created += 1;
-        if (details) summary.row_log.push({ ...logBase, action: 'created', order_id: payload.order_id });
+        if (details) {
+          summary.row_log.push({
+            ...logBase,
+            action: 'created',
+            order_id: payload.order_id,
+            zoho_purchase_order_id: zohoPoId || undefined,
+            line_count: Array.isArray(payload.items) ? payload.items.length : 0,
+          });
+        }
       }
     } catch (err) {
       summary.errors += 1;
@@ -1170,7 +1301,7 @@ async function postPrRowsExcelImport(req, res) {
     await workbook.xlsx.load(req.file.buffer);
 
     if (findPurchaseOrderWorksheet(workbook)) {
-      const parsed = parsePurchaseOrderFlatWorkbook(workbook);
+      const parsed = parsePurchaseOrderFlatWorkbook(workbook, req.file.buffer);
       if (!parsed.rows.length) {
         return res.status(400).json({
           error:
@@ -1318,6 +1449,7 @@ module.exports = {
   applyRawPoDetailsToGroupedPos,
   buildMaterialSkuLookup,
   enrichItemsWithMaterialLookup,
+  findByZohoPurchaseOrderId,
   executePrRowsImport,
   uploadPrRowsExcelSafe,
   postPrRowsExcelImport,

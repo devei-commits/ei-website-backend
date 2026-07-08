@@ -105,6 +105,7 @@ describe('openSoHeadersExcelImport', () => {
     expect(parsed.rows.length).toBe(1);
     expect(parsed.rows[0].payload.order_id).toBe('SO-03611');
     expect(parsed.rows[0].payload.customer_name).toBe('Test Client');
+    expect(parsed.rows[0].payload.status).toBe('Draft');
     expect(parsed.rows[0].payload.form_data.zohoCustomerId).toBe('1252231000037973999');
     expect(parsed.rows[0].payload.form_data.zohoSalesorderId).toBeUndefined();
     expect(parsed.rows[0].payload.form_data.gstin).toBe('27AAAAA0000A1Z5');
@@ -117,6 +118,81 @@ describe('openSoHeadersExcelImport', () => {
     expect(parsed.rows[0].payload.items[0].zohoItemId).toBeUndefined();
     expect(parsed.rows[0].payload.items[1].sku).toBe('FG-SERUM-10ML');
     expect(parsed.rows[0].payload.order_status.quantity).toBe(15);
+  });
+
+  test('parseSalesOrderFlatWorkbook imports SalesOrder ID, Reference#, payment label, and Draft status', () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sales Order');
+    ws.getRow(1).values = [
+      null,
+      'SalesOrder ID',
+      'Order Date',
+      'Expected Shipment Date',
+      'SalesOrder Number',
+      'Status',
+      'Custom Status',
+      'Customer ID',
+      'Customer Name',
+      'Reference#',
+      'GST Identification Number (GSTIN)',
+      'Payment Terms',
+      'Payment Terms Label',
+      'Item Name',
+      'SKU',
+      'QuantityOrdered',
+      'Item Price',
+      'HSN/SAC',
+      'Item Total',
+      'Billing Address',
+      'Billing City',
+      'Billing Code',
+      'Shipping Address',
+      'Shipping City',
+      'Shipping Code',
+    ];
+    ws.getRow(2).values = [
+      null,
+      '3628277000000926032',
+      '2026-03-23',
+      '',
+      'SO-00468',
+      'partially_invoiced',
+      '',
+      '3628277000000926032',
+      'HEALTH Q LIFESCIENCES PRIVATE LIMITED',
+      'SO-03565 & PO00002 & 1900442',
+      '06AAFCH8713F2ZN',
+      '0',
+      '50% ADVANCE 50% AGAINST DISPATCH',
+      'SKINQ SUN PROTECT ULTRA LIGHT GEL SPF 50+ 50ML',
+      'PR0006906',
+      '2907',
+      '171',
+      '33049990',
+      '1253259',
+      '2nd Floor, No.204, The Eva Mall',
+      'Bengaluru',
+      '560025',
+      '2nd Floor, No.204, The Eva Mall',
+      'Bengaluru',
+      '560025',
+    ];
+
+    const parsed = parseSalesOrderFlatWorkbook(wb);
+    expect(parsed.rows.length).toBe(1);
+    const payload = parsed.rows[0].payload;
+    expect(payload.order_id).toBe('SO-00468');
+    expect(payload.status).toBe('Draft');
+    expect(payload.order_status.orderStatus).toBe('Draft');
+    expect(payload.order_status.zohoStatus).toBe('partially_invoiced');
+    expect(payload.form_data.zohoSalesorderId).toBe('3628277000000926032');
+    expect(payload.reference).toBe('SO-03565 & PO00002 & 1900442');
+    expect(payload.form_data.eiSoReference).toBe('SO-03565&PO00002&1900442');
+    expect(payload.payment_terms).toBe('50% ADVANCE 50% AGAINST DISPATCH');
+    expect(payload.form_data.zohoStatus).toBe('partially_invoiced');
+    expect(payload.items[0].sku).toBe('PR0006906');
+    expect(payload.items[0].quantity).toBe(2907);
+    expect(payload.items[0].unitPrice).toBe(171);
   });
 
   test('parseSalesOrderFlatWorkbook ignores skipped columns present in sheet', () => {
@@ -158,9 +234,11 @@ describe('openSoHeadersExcelImport', () => {
     const parsed = parseSalesOrderFlatWorkbook(wb);
     expect(parsed.rows.length).toBe(1);
     expect(parsed.rows[0].payload.order_id).toBe('SO-99999');
-    expect(parsed.rows[0].payload.form_data.zohoSalesorderId).toBeUndefined();
+    expect(parsed.rows[0].payload.status).toBe('Draft');
+    expect(parsed.rows[0].payload.form_data.zohoSalesorderId).toBe('1252231000040833999');
     expect(parsed.rows[0].payload.form_data.currencyCode).toBe('');
-    expect(parsed.rows[0].payload.form_data.eiSoReference).toBeUndefined();
+    expect(parsed.rows[0].payload.form_data.eiSoReference).toBe('REF-SKIP');
+    expect(parsed.rows[0].payload.reference).toBe('REF-SKIP');
     expect(parsed.rows[0].payload.items[0].taxPercent).toBeUndefined();
     expect(parsed.rows[0].payload.items[0].invoicedQty).toBeUndefined();
     expect(parsed.rows[0].payload.form_data.salespersonName).toBe('');

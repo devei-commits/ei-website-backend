@@ -112,9 +112,9 @@ describe('prRowsExcelImport', () => {
     expect(parsed.format).toBe('purchase_order_flat');
     expect(parsed.rows.length).toBe(1);
     expect(parsed.rows[0].payload.order_id).toBe('PO-1001');
+    expect(parsed.rows[0].payload.status).toBe('Draft');
     expect(parsed.rows[0].payload.vendor_name).toBe('ABC Chemicals');
     expect(parsed.rows[0].payload.form_data.vendorGstin).toBe('27AAAAA0000A1Z5');
-    expect(parsed.rows[0].payload.form_data.vendorPincode).toBe('400001');
     expect(parsed.rows[0].payload.form_data.source).toBe('excel_purchase_order');
     expect(parsed.rows[0].payload.items).toHaveLength(2);
     expect(parsed.rows[0].payload.items[0].productName).toBe('Glycerin');
@@ -122,6 +122,66 @@ describe('prRowsExcelImport', () => {
     const grouped = groupPurchaseOrderFlatRows(parsed.rows);
     expect(grouped.size).toBe(1);
     expect(grouped.get('PO-1001').payload.items).toHaveLength(2);
+  });
+
+  test('parsePurchaseOrderFlatWorkbook imports Zoho export columns and Draft status', () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('PurchaseOrder');
+    ws.getRow(1).values = [
+      null,
+      'Purchase Order ID',
+      'Purchase Order Date',
+      'Delivery Date',
+      'Purchase Order Number',
+      'Reference#',
+      'Purchase Order Status',
+      'Vendor Name',
+      'GST Treatment',
+      'GST Identification Number (GSTIN)',
+      'Item Name',
+      'SKU',
+      'QuantityOrdered',
+      'Usage unit',
+      'Item Price',
+      'HSN/SAC',
+      'Item Total',
+      'Total',
+    ];
+    ws.getRow(2).values = [
+      null,
+      '3628277000001537565',
+      '2026-03-10',
+      '',
+      'EI/PO/26-27/398',
+      'EI/PO/26-03/2571',
+      'Partially Billed',
+      'KRIYA INDUSTRIES INDIA PRIVATE LIMITED',
+      'business_gst',
+      '36AAKCK4622P1Z0',
+      'MEDMANOR MOISTAR MAXIMO MOISTURIZING LOTION 150 ML MONOCARTON',
+      '5M00791',
+      '5150',
+      'NOS',
+      '6.468',
+      '',
+      '33310.2',
+      '672063.34',
+    ];
+
+    const parsed = parsePurchaseOrderFlatWorkbook(wb);
+    expect(parsed.rows.length).toBe(1);
+    const payload = parsed.rows[0].payload;
+    expect(payload.order_id).toBe('EI/PO/26-27/398');
+    expect(payload.status).toBe('Draft');
+    expect(payload.reference).toBe('EI/PO/26-03/2571');
+    expect(payload.form_data.zohoPurchaseOrderId).toBe('3628277000001537565');
+    expect(payload.form_data.poStatus).toBe('Partially Billed');
+    expect(payload.form_data.gstTreatment).toBe('business_gst');
+    expect(payload.form_data.poTotal).toBe(672063.34);
+    expect(payload.items[0].sku).toBe('5M00791');
+    expect(payload.items[0].quantity).toBe(5150);
+    expect(payload.items[0].unitPrice).toBe(6.468);
+    expect(payload.items[0].uom).toBe('NOS');
   });
 
   test('parsePurchaseOrderFlatWorkbook ignores skipped columns present in sheet', () => {
@@ -159,9 +219,11 @@ describe('prRowsExcelImport', () => {
     const parsed = parsePurchaseOrderFlatWorkbook(wb);
     expect(parsed.rows.length).toBe(1);
     expect(parsed.rows[0].payload.order_id).toBe('PO-2002');
-    expect(parsed.rows[0].payload.form_data.currency).toBeUndefined();
+    expect(parsed.rows[0].payload.status).toBe('Draft');
+    expect(parsed.rows[0].payload.reference).toBe('REF-SKIP');
+    expect(parsed.rows[0].payload.form_data.zohoPurchaseOrderId).toBe('1252231000040999000');
     expect(parsed.rows[0].payload.items[0].quantity).toBe(20);
-    expect(parsed.rows[0].payload.items[0].uom).toBeUndefined();
+    expect(parsed.rows[0].payload.items[0].uom).toBe('Nos');
     expect(parsed.rows[0].payload.items[0].taxPercent).toBeUndefined();
   });
 
@@ -270,6 +332,47 @@ describe('prRowsExcelImport', () => {
     const grouped = groupPrRowsToPoPayloads(parsed.rows);
     expect(grouped.size).toBe(1);
     expect(grouped.get('PO-001').payload.items).toHaveLength(2);
+  });
+
+  test('PR rows import writes procurement request link when source po number is PR-REQ-*', () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('PR rows');
+    ws.getRow(1).values = [
+      null,
+      'EI PO Reference',
+      'source po number',
+      'PO Status',
+      'Category',
+      'Priority',
+      'Request Date',
+      'Required Date',
+      'Item Name',
+      'Req Qty',
+      'Open Qty (Remaining)',
+      'UOM',
+      'SKU',
+    ];
+    ws.getRow(2).values = [
+      null,
+      'PO-001',
+      'PR-REQ-1',
+      'Open',
+      'RM',
+      'High',
+      '2026-05-01',
+      '2026-05-15',
+      'Glycerin',
+      '100',
+      '80',
+      'KG',
+      'RM-GLY',
+    ];
+
+    const parsed = parsePrRowsWorkbook(wb);
+    const grouped = groupPrRowsToPoPayloads(parsed.rows);
+    const po = grouped.get('PO-001').payload;
+    expect(po.form_data.requestCode).toBe('PR-REQ-001');
+    expect(po.form_data.requestId).toBe('1');
   });
 
   test('parsePrRowsWorkbook carries forward PO key when repeated rows leave it blank', () => {
@@ -642,6 +745,18 @@ describe('prRowsExcelImport', () => {
     expect(out[1].pack_material_id).toBe(22);
     expect(out[1].itemCode).toBe('PM-0042');
     expect(out[1].itemName).toBe('Cap 24mm White');
+  });
+
+  test('enrichItemsWithMaterialLookup auto-detects PM when category omitted', () => {
+    const lookup = {
+      rmBySku: new Map(),
+      pmBySku: new Map([
+        ['5M00791', { id: 33, code: 'PM-5M00791', name: 'Monocarton 150ml' }],
+      ]),
+    };
+    const out = enrichItemsWithMaterialLookup([{ sku: '5M00791', itemName: 'Monocarton' }], lookup);
+    expect(out[0].type).toBe('PM');
+    expect(out[0].pack_material_id).toBe(33);
   });
 });
 

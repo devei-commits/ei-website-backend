@@ -24,6 +24,11 @@ const {
   toDateOnly,
   mapZohoSoStatus,
 } = require('../../scripts/lib/zoho-sales-order-import');
+const {
+  applyDefaultExpectedShipmentDate,
+  persistSalesOrderWithPlanning,
+  updateSalesOrderWithPlanningRebuild,
+} = require('./controller');
 
 const SALES_ORDER_SHEET = 'sales order';
 const OPEN_SO_HEADERS_SHEET = 'open so headers';
@@ -157,6 +162,7 @@ const LINE_HEADER_KEYS = Object.keys(LINE_HEADER_ALIASES);
  * All other workbook columns are ignored on import.
  */
 const SALES_ORDER_FLAT_ALIASES = {
+  zohoSoId: ['salesorder id'],
   zohoSoNumber: ['salesorder number'],
   orderDate: ['order date'],
   expectedShipmentDate: ['expected shipment date'],
@@ -164,6 +170,7 @@ const SALES_ORDER_FLAT_ALIASES = {
   customStatus: ['custom status'],
   zohoCustomerId: ['customer id'],
   customerName: ['customer name'],
+  eiSoReference: ['reference#', 'reference'],
   gstin: ['gst identification number (gstin)'],
   paymentTerms: ['payment terms'],
   paymentTermsLabel: ['payment terms label'],
@@ -569,10 +576,11 @@ function excelFieldsToSalesOrderPayload(fields, opts = {}) {
   const qtyInvoiced = parseOptionalNumber(fields.totalQtyInvoiced);
   const qtyCancelled = parseOptionalNumber(fields.totalQtyCancelled);
   const qtyOpen = parseOptionalNumber(fields.openQtyRemaining);
-  const paymentTerms =
-    String(fields.paymentTerms || '').trim() ||
-    String(fields.paymentTermsLabel || '').trim() ||
-    '';
+  const paymentTerms = flatFormat
+    ? resolveImportedPaymentTerms(fields)
+    : String(fields.paymentTerms || '').trim() ||
+      String(fields.paymentTermsLabel || '').trim() ||
+      '';
   const placeOfSupply = flatFormat
     ? ''
     : String(fields.placeOfSupply || '').trim() ||
@@ -622,7 +630,7 @@ function excelFieldsToSalesOrderPayload(fields, opts = {}) {
     form_data.eiSoReference = eiSoReference;
   }
 
-  if (!flatFormat && zohoId) {
+  if (zohoId) {
     form_data.zohoSalesorderId = zohoId;
     if (fields.zohoSoIdReliable === false || fields.zohoSoNumberReliable === false) {
       form_data.zohoSalesorderIdUnreliable = true;
@@ -641,21 +649,27 @@ function excelFieldsToSalesOrderPayload(fields, opts = {}) {
   }
 
   const order_status = {
-    orderStatus: zohoStatus,
+    orderStatus: flatFormat ? 'Draft' : zohoStatus,
     deliveryMethod: String(fields.deliveryMethod || '').trim() || '',
     quantity: qtyOrdered ?? undefined,
     quantityInvoiced: qtyInvoiced ?? undefined,
     quantityCancelled: qtyCancelled ?? undefined,
     quantityOpen: qtyOpen ?? undefined,
   };
+  if (flatFormat && zohoStatus) {
+    order_status.zohoStatus = zohoStatus;
+  }
+
+  const referenceRaw = String(fields.eiSoReference || '').trim() || null;
 
   return {
     order_id: orderId,
     customer_name: customerName,
     order_date: toDateOnly(fields.orderDate),
     expected_shipment_date: toDateOnly(fields.expectedShipmentDate),
-    payment_terms: String(fields.paymentTerms || '').trim() || null,
-    status: mapZohoSoStatus(zohoStatus, zohoStatus),
+    reference: referenceRaw,
+    payment_terms: paymentTerms || null,
+    status: flatFormat ? 'Draft' : mapZohoSoStatus(zohoStatus, zohoStatus),
     order_status,
     form_data,
     items: [],
@@ -748,13 +762,30 @@ function excelLineFieldsToItem(fields, opts = {}) {
  * @param {import('exceljs').Row} row
  * @param {Record<string, number>} colMap
  */
+function resolveImportedPaymentTerms(fields) {
+  const label = String(fields.paymentTermsLabel || '').trim();
+  const raw = String(fields.paymentTerms || '').trim();
+  if (label) return label;
+  if (raw && raw !== '0') return raw;
+  return '';
+}
+
 function readSalesOrderFlatRowFields(row, colMap) {
-  const zohoMetaKeys = new Set(['zohoSoNumber', 'zohoCustomerId']);
+  const zohoMetaKeys = new Set(['zohoSoId', 'zohoSoNumber', 'zohoCustomerId']);
   const fields = readRowFields(
     row,
     colMap,
     SALES_ORDER_FLAT_KEYS.filter((k) => !zohoMetaKeys.has(k))
   );
+
+  if (colMap.zohoSoId) {
+    const meta = readZohoContactIdMetaFromCell(row.getCell(colMap.zohoSoId));
+    fields.zohoSoId =
+      meta.id || String(cellToText(row.getCell(colMap.zohoSoId))).trim();
+    fields.zohoSoIdReliable = meta.reliable;
+  } else {
+    fields.zohoSoId = '';
+  }
 
   if (colMap.zohoSoNumber) {
     const display = String(cellToText(row.getCell(colMap.zohoSoNumber))).trim();
@@ -786,6 +817,8 @@ function readSalesOrderFlatRowFields(row, colMap) {
 function resolveSalesOrderFlatGroupKey(fields) {
   const display = String(fields.zohoSoDisplayNumber || fields.zohoSoNumber || '').trim();
   if (display) return `no:${normalizeSoKey(display)}`;
+  const zohoId = cleanDigitsOrText(fields.zohoSoId);
+  if (/^\d{10,22}$/.test(zohoId)) return `id:${zohoId}`;
   return '';
 }
 
@@ -814,6 +847,9 @@ function parseSalesOrderFlatWorkbook(workbook, buffer) {
   const customerOverlay = buffer
     ? buildZohoColumnOverlayFromXlsx(buffer, worksheet.name, ['customer id'])
     : { byRow: {}, unreliableCount: 0 };
+  const soIdOverlay = buffer
+    ? buildZohoColumnOverlayFromXlsx(buffer, worksheet.name, ZOHO_SO_ID_ALIASES)
+    : { byRow: {}, unreliableCount: 0 };
 
   const lastDataRow = getWorksheetEndRow(worksheet, headerRow);
   const grouped = new Map();
@@ -825,6 +861,10 @@ function parseSalesOrderFlatWorkbook(workbook, buffer) {
     if (customerOverlay.byRow?.[r]?.id) {
       fields.zohoCustomerId = customerOverlay.byRow[r].id;
       fields.zohoCustomerIdReliable = customerOverlay.byRow[r].reliable;
+    }
+    if (soIdOverlay.byRow?.[r]?.id) {
+      fields.zohoSoId = soIdOverlay.byRow[r].id;
+      fields.zohoSoIdReliable = soIdOverlay.byRow[r].reliable;
     }
 
     const groupKey = resolveSalesOrderFlatGroupKey(fields);
@@ -885,7 +925,8 @@ function parseSalesOrderFlatWorkbook(workbook, buffer) {
       skipped_no_identity: skippedNoIdentity,
       skipped_no_product: skippedNoProduct,
       groups_total: grouped.size,
-      zoho_overlay_unreliable: customerOverlay.unreliableCount ?? 0,
+      zoho_overlay_unreliable:
+        (customerOverlay.unreliableCount ?? 0) + (soIdOverlay.unreliableCount ?? 0),
     },
   };
 }
@@ -1147,6 +1188,42 @@ async function allocateUniqueOrderId(preferredOrderId, zohoId, selfId) {
  * @param {ReturnType<typeof excelFieldsToSalesOrderPayload>} payload
  * @param {string} createdBy
  */
+async function resolveProductIdBySku(sku) {
+  const raw = String(sku || '').trim();
+  if (!raw) return null;
+  const { Product } = require('../products/models');
+  const row =
+    (await Product.findOne({ where: { zoho_sku_code: raw } })) ||
+    (await Product.findOne({ where: { product_code: raw } })) ||
+    (await Product.findOne({ where: { zoho_sku_code: { [Op.iLike]: raw } } })) ||
+    (await Product.findOne({ where: { product_code: { [Op.iLike]: raw } } }));
+  if (!row) return null;
+  const plain = row.get ? row.get({ plain: true }) : row;
+  const id = Number(plain.product_id);
+  return Number.isFinite(id) && id > 0 ? id : null;
+}
+
+/**
+ * Attach local product_id to imported line items when SKU matches product master.
+ * @param {Array<Record<string, unknown>>} items
+ */
+async function enrichPayloadItemsWithProductIds(items) {
+  const list = Array.isArray(items) ? items : [];
+  const out = [];
+  for (const line of list) {
+    const item = { ...line };
+    if (!item.product_id && !item.productId) {
+      const productId = await resolveProductIdBySku(item.sku);
+      if (productId) {
+        item.product_id = productId;
+        item.productId = productId;
+      }
+    }
+    out.push(item);
+  }
+  return out;
+}
+
 async function enrichPayloadWithClient(payload, createdBy) {
   const fd = payload.form_data || {};
   const zohoCustomerId = fd.zohoCustomerId != null ? String(fd.zohoCustomerId) : '';
@@ -1220,7 +1297,8 @@ function mapSoItemsToFulfillmentItems(itemsInput) {
   });
 }
 
-async function upsertFulfillmentFromSalesOrderPayload(salesOrderRow, payload) {
+async function upsertFulfillmentFromSalesOrderPayload(salesOrderRow, payload, opts = {}) {
+  const replaceItems = opts.replaceItems === true;
   if (!salesOrderRow || !payload?.order_id) return;
   const patch = buildFulfillmentOrderPatchFromSalesPayload(payload, salesOrderRow.id);
   const soNo = String(patch.so_no || '').trim();
@@ -1241,8 +1319,7 @@ async function upsertFulfillmentFromSalesOrderPayload(salesOrderRow, payload) {
     where: { fulfillment_order_id: ff.id },
   });
 
-  // Preserve active fulfillment workflows: seed items only when missing.
-  if (existingItemCount > 0) return;
+  if (existingItemCount > 0 && !replaceItems) return;
 
   const salesOrderPlain = salesOrderRow.get ? salesOrderRow.get({ plain: true }) : salesOrderRow;
   const payloadItems = Array.isArray(payload?.items) ? payload.items : [];
@@ -1252,6 +1329,10 @@ async function upsertFulfillmentFromSalesOrderPayload(salesOrderRow, payload) {
   const ffItems = mapSoItemsToFulfillmentItems(sourceItems)
     .filter((it) => it.ordered_qty > 0);
   if (ffItems.length === 0) return;
+
+  if (existingItemCount > 0 && replaceItems) {
+    await FulfillmentOrderItem.destroy({ where: { fulfillment_order_id: ff.id } });
+  }
 
   await FulfillmentOrderItem.bulkCreate(
     ffItems.map((it) => ({ ...it, fulfillment_order_id: ff.id }))
@@ -1282,6 +1363,12 @@ async function executeOpenSoHeadersImportRows(importRows, opts = {}) {
     try {
       let payload = { ...entry.payload };
       await enrichPayloadWithClient(payload, createdBy);
+      payload.items = await enrichPayloadItemsWithProductIds(payload.items);
+
+      const isFlatImport = payload.form_data?.source === 'excel_sales_order';
+      if (isFlatImport) {
+        payload.status = 'Draft';
+      }
 
       const zohoId =
         payload.form_data && payload.form_data.zohoSalesorderId
@@ -1345,19 +1432,40 @@ async function executeOpenSoHeadersImportRows(importRows, opts = {}) {
             : Array.isArray(existing.items)
               ? existing.items
               : [];
-        await existing.update({
-          customer_name: payload.customer_name ?? existing.customer_name,
-          order_date: payload.order_date ?? existing.order_date,
-          expected_shipment_date:
-            payload.expected_shipment_date ?? existing.expected_shipment_date,
-          payment_terms: payload.payment_terms ?? existing.payment_terms,
-          status: payload.status ?? existing.status,
-          order_status: mergedOs,
-          form_data: mergedFd,
-          items: mergedItems,
-        });
-        payload.items = mergedItems;
-        await upsertFulfillmentFromSalesOrderPayload(existing, payload);
+
+        if (isFlatImport) {
+          const updatePayload = {
+            customer_name: payload.customer_name ?? existing.customer_name,
+            order_date: payload.order_date ?? existing.order_date,
+            expected_shipment_date:
+              payload.expected_shipment_date ?? existing.expected_shipment_date,
+            reference: payload.reference ?? existing.reference,
+            payment_terms: payload.payment_terms ?? existing.payment_terms,
+            status: 'Draft',
+            order_status: mergedOs,
+            form_data: mergedFd,
+            items: mergedItems,
+            created_by: existing.created_by || createdBy,
+          };
+          await updateSalesOrderWithPlanningRebuild(existing, updatePayload);
+          payload.items = mergedItems;
+          await upsertFulfillmentFromSalesOrderPayload(existing, payload, { replaceItems: true });
+        } else {
+          await existing.update({
+            customer_name: payload.customer_name ?? existing.customer_name,
+            order_date: payload.order_date ?? existing.order_date,
+            expected_shipment_date:
+              payload.expected_shipment_date ?? existing.expected_shipment_date,
+            reference: payload.reference ?? existing.reference,
+            payment_terms: payload.payment_terms ?? existing.payment_terms,
+            status: payload.status ?? existing.status,
+            order_status: mergedOs,
+            form_data: mergedFd,
+            items: mergedItems,
+          });
+          payload.items = mergedItems;
+          await upsertFulfillmentFromSalesOrderPayload(existing, payload);
+        }
 
         summary.updated += 1;
         if (details) {
@@ -1366,6 +1474,7 @@ async function executeOpenSoHeadersImportRows(importRows, opts = {}) {
             action: 'updated',
             order_id: existing.order_id,
             zoho_salesorder_id: zohoId || undefined,
+            line_count: mergedItems.length,
           });
         }
         continue;
@@ -1383,8 +1492,13 @@ async function executeOpenSoHeadersImportRows(importRows, opts = {}) {
         continue;
       }
 
-      const row = await SalesOrder.create(payload);
-      await upsertFulfillmentFromSalesOrderPayload(row, payload);
+      await applyDefaultExpectedShipmentDate(payload);
+      const row = isFlatImport
+        ? await persistSalesOrderWithPlanning(payload)
+        : await SalesOrder.create(payload);
+      await upsertFulfillmentFromSalesOrderPayload(row, payload, {
+        replaceItems: isFlatImport,
+      });
       summary.created += 1;
       if (details) {
         summary.row_log.push({
@@ -1392,6 +1506,7 @@ async function executeOpenSoHeadersImportRows(importRows, opts = {}) {
           action: 'created',
           order_id: row.order_id,
           zoho_salesorder_id: zohoId || undefined,
+          line_count: Array.isArray(payload.items) ? payload.items.length : 0,
         });
       }
     } catch (err) {
@@ -1567,6 +1682,8 @@ module.exports = {
   extractOpenSoWorkbookFromBuffer,
   groupItemsBySoKey,
   groupItemsByEiSoReference,
+  enrichPayloadItemsWithProductIds,
+  resolveProductIdBySku,
   executeOpenSoHeadersImportRows,
   uploadOpenSoHeadersExcelSafe,
   postOpenSoHeadersExcelImport,
