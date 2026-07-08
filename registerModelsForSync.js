@@ -48,3 +48,4 @@ require('./src/facilityAreas/models');
 require('./src/departments/models');
 require('./src/roles/models');
 require('./src/logisticsSchedules/models');
+require('./src/treasury/models');

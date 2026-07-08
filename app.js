@@ -58,6 +58,7 @@ const { ensureCustomizationPackagingPresets } = require('./src/customizationPack
 require('./src/quotations/models');
 const { seedQuotationDefaults } = require('./src/quotations/seedQuotationDefaults');
 const quotationRouters = require('./src/quotations/routers');
+const { ensureTreasuryDefaults } = require('./src/treasury/ensureTreasuryDefaults');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -219,6 +220,7 @@ if (process.env.NODE_ENV !== 'test') {
                 await ensureCustomizationPackagingPresets();
                 await seedQuotationDefaults();
             }
+            await ensureTreasuryDefaults();
             app.listen(port, '0.0.0.0', () => {
                 console.log(`Server is running on port ${port}`);
             });

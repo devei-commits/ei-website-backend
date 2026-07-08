@@ -801,40 +801,6 @@ async function updateOrder(req, res) {
     ]);
     const hasMutableChangeRequest = requestedKeys.some((k) => mutableKeys.has(k));
 
-    // Editing lock: once BO/batch confirmation begins, SO editing is blocked.
-    if (hasMutableChangeRequest) {
-      const allSplits = await FulfillmentBatchSplit.findAll({
-        where: { fulfillment_order_id: id },
-        attributes: ['production_batch_id', 'ff_status'],
-      });
-      const linkedProductionBatchIds = allSplits
-        .map((s) => (s.get ? s.get('production_batch_id') : s.production_batch_id))
-        .filter(Boolean);
-      const ffStatuses = allSplits.map((s) => String(s.get ? s.get('ff_status') : s.ff_status || '').toLowerCase());
-      const hasFulfillmentProgressed = ffStatuses.some((st) =>
-        ['picking', 'invoiced', 'shipped', 'delivered', 'closed'].includes(st)
-      );
-      const productionRows = await ProductionBatch.findAll({
-        where: { so_no: rowPlain.so_no },
-        attributes: ['id', 'bmr_status', 'bpr_status'],
-      });
-      const hasBoConfirmedOrBatchActive = productionRows.some((pb) => {
-        const d = pb.get ? pb.get({ plain: true }) : pb;
-        const bmr = String(d.bmr_status || '').toLowerCase();
-        const bpr = String(d.bpr_status || '').toLowerCase();
-        return (
-          bmr === 'batch_confirmed' ||
-          ['rm_reserved', 'scheduled', 'rm_connected', 'dispensing', 'in_production', 'bulk_qc', 'cleared'].includes(bmr) ||
-          ['pm_reserved', 'scheduled', 'pm_connected', 'pm_dispensing', 'filling', 'fill_qc', 'packaging', 'pack_qc', 'fg_ready'].includes(bpr)
-        );
-      });
-
-      if (hasFulfillmentProgressed || linkedProductionBatchIds.length > 0 || hasBoConfirmedOrBatchActive) {
-        return res.status(409).json({
-          error: 'Sale order editing is locked because BO/batch confirmation has started for this order.',
-        });
-      }
-    }
 
     if (req.body.payment_terms !== undefined || req.body.paymentTerms !== undefined) {
       const ptToCheck = req.body.paymentTerms !== undefined ? req.body.paymentTerms : req.body.payment_terms;
