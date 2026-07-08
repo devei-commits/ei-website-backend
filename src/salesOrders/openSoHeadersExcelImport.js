@@ -190,6 +190,8 @@ const SALES_ORDER_FLAT_ALIASES = {
   shippingPhone: ['shipping phone'],
   productName: ['item name'],
   sku: ['sku'],
+  itemDesc: ['item desc', 'item description'],
+  account: ['account'],
   qtyOrdered: ['quantityordered'],
   unitPrice: ['item price'],
   hsnSac: ['hsn/sac'],
@@ -856,6 +858,22 @@ function parseSalesOrderFlatWorkbook(workbook, buffer) {
   let skippedNoIdentity = 0;
   let skippedNoProduct = 0;
 
+  // Full label→column map (every source column, not just the aliased subset) for raw capture.
+  const rawLabelsByCol = {};
+  worksheet.getRow(headerRow).eachCell((cell, colNumber) => {
+    const label = String(cellToText(cell) || '').trim();
+    if (label) rawLabelsByCol[colNumber] = label;
+  });
+  const readRawRow = (row) => {
+    const out = {};
+    for (const [colNumber, label] of Object.entries(rawLabelsByCol)) {
+      const v = cellToText(row.getCell(Number(colNumber)));
+      const s = v == null ? '' : String(v).trim();
+      if (s !== '') out[label] = s;
+    }
+    return out;
+  };
+
   for (let r = headerRow + 1; r <= lastDataRow; r += 1) {
     const fields = readSalesOrderFlatRowFields(worksheet.getRow(r), colMap);
     if (customerOverlay.byRow?.[r]?.id) {
@@ -875,8 +893,15 @@ function parseSalesOrderFlatWorkbook(workbook, buffer) {
 
     const productName = String(fields.productName || '').trim();
     if (!productName && !String(fields.sku || '').trim()) {
-      skippedNoProduct += 1;
-      continue;
+      // Service / non-inventory SO line: keep as a service line so item-less orders still import.
+      const hasSignal = String(fields.itemDesc || '').trim() || String(fields.account || '').trim()
+        || parseOptionalNumber(fields.itemTotal) != null || parseOptionalNumber(fields.unitPrice) != null;
+      if (!hasSignal) {
+        skippedNoProduct += 1;
+        continue;
+      }
+      fields.productName = String(fields.itemDesc || '').trim() || String(fields.account || '').trim() || 'Service / Non-inventory';
+      fields.isServiceLine = true;
     }
 
     const entry = grouped.get(groupKey) || {
@@ -888,6 +913,7 @@ function parseSalesOrderFlatWorkbook(workbook, buffer) {
       excel_row: r,
       fields,
       item: excelLineFieldsToItem(fields, { flatFormat: true }),
+      raw: readRawRow(worksheet.getRow(r)),
     });
     grouped.set(groupKey, entry);
   }
@@ -902,6 +928,9 @@ function parseSalesOrderFlatWorkbook(workbook, buffer) {
 
     const items = group.lineRows.map((lineRow) => lineRow.item);
     payload.items = items;
+    // Preserve every source column verbatim so nothing is lost / hidden.
+    const rawLines = group.lineRows.map((lr) => lr.raw).filter((x) => x && Object.keys(x).length);
+    payload.raw_import = { header: rawLines[0] || {}, lines: rawLines };
 
     payload.order_status.quantity = sumItemQty(items, (it) => it.quantity);
     payload.order_status.quantityOpen = sumItemQty(items, (it) => it.quantity);
@@ -1276,6 +1305,7 @@ function buildFulfillmentOrderPatchFromSalesPayload(payload, salesOrderId) {
     ship_address: String(payload.form_data?.shippingAddress || '').trim() || null,
     payment_terms: String(payload.payment_terms || payload.form_data?.paymentTerms || '').trim() || null,
     notes: 'Synced from Open SO Headers Excel import',
+    raw_import: payload.raw_import || null,
   };
 }
 
