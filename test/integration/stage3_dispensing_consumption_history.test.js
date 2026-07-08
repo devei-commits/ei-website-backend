@@ -38,8 +38,6 @@ describe('Stage 3: dispensing consumption -> MU stock + history link (integratio
 
     useStaticJwtSecretsForTests();
 
-    await db.sync({ force: true });
-
     const user = await User.create({
       fname: 'Stage3Dispense',
       lname: 'User',

@@ -1,5 +1,5 @@
 const { Op } = require('sequelize');
-const { ProductionEquipment, ProductionTeamMember, ProductionBatch } = require('./models');
+const { ProductionEquipment, ProductionBatch } = require('./models');
 const { Order } = require('../orders/models');
 const WarehouseInventory = require('../warehouseInventory/models');
 const { FulfillmentBatchSplit, ReservedBatchItem } = require('../fulfillment/models');
@@ -47,6 +47,7 @@ function toNum(x) {
 }
 
 const { softDeleteInstance, activeRowWhere } = require('../lib/softDelete');
+const { listProductionTeamMembers } = require('./productionTeamAssignees');
 const {
   materialQtyGte,
   materialQtyGt,
@@ -151,74 +152,13 @@ async function deleteEquipment(req, res) {
    TEAM MEMBERS
    ════════════════════════════════════════════════════════════ */
 
-function formatTeamMember(row) {
-  const d = row.get ? row.get({ plain: true }) : row;
-  return { id: d.member_id, userId: d.user_id || null, name: d.name, role: d.role, dept: d.department, avail: d.available, _pk: d.id };
-}
-
 async function listTeam(req, res) {
   try {
-    const rows = await ProductionTeamMember.findAll({
-      where: activeRowWhere(),
-      order: [['member_id', 'ASC']],
-    });
-    res.json(rows.map(formatTeamMember));
+    const team = await listProductionTeamMembers();
+    res.json(team);
   } catch (err) {
     console.error('listTeam error:', err);
     res.status(500).json({ error: 'Failed to fetch team' });
-  }
-}
-
-async function getTeamMemberById(req, res) {
-  try {
-    const row = await ProductionTeamMember.findByPk(req.params.id);
-    if (!row) return res.status(404).json({ error: 'Team member not found' });
-    res.json(formatTeamMember(row));
-  } catch (err) {
-    console.error('getTeamMemberById error:', err);
-    res.status(500).json({ error: 'Failed to fetch team member' });
-  }
-}
-
-async function createTeamMember(req, res) {
-  try {
-    if (req.body.user_id) {
-      const existing = await ProductionTeamMember.findOne({ where: { user_id: req.body.user_id } });
-      if (existing) return res.status(409).json({ error: 'This user is already on the production team' });
-    }
-    const row = await ProductionTeamMember.create(req.body);
-    res.status(201).json(formatTeamMember(row));
-  } catch (err) {
-    console.error('createTeamMember error:', err);
-    res.status(500).json({ error: 'Failed to create team member' });
-  }
-}
-
-async function updateTeamMember(req, res) {
-  try {
-    const row = await ProductionTeamMember.findByPk(req.params.id);
-    if (!row) return res.status(404).json({ error: 'Team member not found' });
-    const allowed = ['member_id', 'user_id', 'name', 'role', 'department', 'available'];
-    for (const k of allowed) {
-      if (req.body[k] !== undefined) row.set(k, req.body[k]);
-    }
-    await row.save();
-    res.json(formatTeamMember(row));
-  } catch (err) {
-    console.error('updateTeamMember error:', err);
-    res.status(500).json({ error: 'Failed to update team member' });
-  }
-}
-
-async function deleteTeamMember(req, res) {
-  try {
-    const row = await ProductionTeamMember.findOne({ where: activeRowWhere({ id: req.params.id }) });
-    if (!row) return res.status(404).json({ error: 'Team member not found' });
-    await softDeleteInstance(row);
-    res.json({ message: 'Team member deleted' });
-  } catch (err) {
-    console.error('deleteTeamMember error:', err);
-    res.status(500).json({ error: 'Failed to delete team member' });
   }
 }
 
@@ -3559,7 +3499,7 @@ async function getBatchReservationCoverage(req, res) {
 
 module.exports = {
   listEquipment, getEquipmentById, createEquipment, updateEquipment, deleteEquipment,
-  listTeam, getTeamMemberById, createTeamMember, updateTeamMember, deleteTeamMember,
+  listTeam,
   listBatches, getBatchById, createBatch, createRworkBatch, splitBatchForVessel, updateBatch, deleteBatch, getBatchBom, getBatchMtrReserved, getBatchDispensingMuStock, syncBatchesFromPlanning,
   listReservedItems, reserveBatchLines, unreserveBatchLines, getBatchReservationCoverage,
   computeRequiredVolumeLiters,

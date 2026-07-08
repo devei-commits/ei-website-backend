@@ -76,8 +76,6 @@ describe('Performance pagination + Redis cache-aside', () => {
       }
     }
 
-    await db.sync({ force: true });
-
     // Admin user is required for order-management guarded endpoints.
     const user = await User.create({
       fname: 'Test',

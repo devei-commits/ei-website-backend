@@ -50,12 +50,6 @@ Enum "enum_production_equipment_category" {
   "packaging"
 }
 
-Enum "enum_production_team_members_department" {
-  "Manufacturing"
-  "Filling"
-  "Packaging"
-  "Quality"
-}
 
 Enum "enum_staff_profiles_department" {
   "sales"
@@ -972,17 +966,6 @@ Table "production_equipment" {
   "updated_at" timestamptz
 }
 
-Table "production_team_members" {
-  "id" int4 [pk, not null, increment]
-  "member_id" varchar(20) [unique, not null]
-  "user_id" int4
-  "name" varchar(200) [not null]
-  "role" varchar(100) [not null]
-  "department" enum_production_team_members_department [not null]
-  "available" bool [not null, default: true]
-  "created_at" timestamptz
-  "updated_at" timestamptz
-}
 
 Table "products" {
   "product_id" int4 [pk, not null, increment]
@@ -1390,8 +1373,6 @@ Ref "product_customizations_product_id_fkey":"products"."product_id" < "product_
 Ref "product_customizations_user_id_fkey":"users"."userid" < "product_customizations"."user_id" [update: cascade]
 
 Ref "production_batches_planning_batch_id_fkey":"planning_batches"."id" < "production_batches"."planning_batch_id" [delete: set null]
-
-Ref "production_team_members_user_id_fkey":"users"."userid" < "production_team_members"."user_id" [delete: set null]
 
 Ref "reserved_batch_items_fulfillment_order_item_id_fkey":"fulfillment_order_items"."id" < "reserved_batch_items"."fulfillment_order_item_id" [delete: cascade]
 

@@ -53,8 +53,6 @@ describe('Stage 1: website order -> planning placeholders + toggles (integration
 
     useStaticJwtSecretsForTests();
 
-    await db.sync({ force: true });
-
     // Auth user (admin so `requireModule('order-management')` passes for planning endpoints)
     user = await User.create({
       fname: 'Stage1',

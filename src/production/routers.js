@@ -4,7 +4,7 @@ const { isAuthenticated, requireModule, requireAnyGranularAccess, hasGranularAcc
 const { createCacheReadMiddleware } = require('../cache/cacheReadMiddleware');
 const {
   listEquipment, getEquipmentById, createEquipment, updateEquipment, deleteEquipment,
-  listTeam, getTeamMemberById, createTeamMember, updateTeamMember, deleteTeamMember,
+  listTeam,
   listBatches, getBatchById, createBatch, createRworkBatch, splitBatchForVessel, updateBatch, deleteBatch, getBatchBom, getBatchMtrReserved, getBatchDispensingMuStock, syncBatchesFromPlanning,
   listReservedItems, reserveBatchLines, unreserveBatchLines, getBatchReservationCoverage,
 } = require('./controller');
@@ -66,10 +66,6 @@ router.delete('/equipment/:id', productionWriteGuard, deleteEquipment);
 
 // Team
 router.get('/team', productionReadGuard, cacheProduction, listTeam);
-router.get('/team/:id', productionReadGuard, cacheProduction, getTeamMemberById);
-router.post('/team', productionWriteGuard, createTeamMember);
-router.patch('/team/:id', productionWriteGuard, updateTeamMember);
-router.delete('/team/:id', productionWriteGuard, deleteTeamMember);
 
 // Batches (BMR / BPR) — specific paths before :id so they are not matched as id
 router.get('/reserved-items', productionReadGuard, listReservedItems);

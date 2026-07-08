@@ -20,7 +20,6 @@ describe('warehouse reserved sync', () => {
   beforeAll(async () => {
     dbAvailable = await isDbAvailable(db);
     if (!dbAvailable) return;
-    await db.sync({ force: true });
     const rm = await RawMaterial.create({ code: 'RM-TEST-001', name: 'Test RM', status: 'Active' });
     const pm = await PackMaterial.create({ code: 'PM-TEST-001', description: 'Test PM', status: 'Active' });
     rmId = rm.id;

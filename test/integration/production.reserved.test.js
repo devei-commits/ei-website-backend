@@ -27,7 +27,6 @@ describe('production reserved', () => {
   beforeAll(async () => {
     dbAvailable = await isDbAvailable(db);
     if (!dbAvailable) return;
-    await db.sync({ force: true });
     const product = await Product.create({
       zoho_sku_code: 'SKU-PROD-001',
       product_name: 'Test Product',

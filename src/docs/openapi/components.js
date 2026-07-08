@@ -119,37 +119,15 @@ const components = {
     },
     TeamMember: {
       type: 'object',
+      description: 'Role-based production team member (derived from users with eligible roles).',
       properties: {
-        id: { type: 'string', example: 'TM-01' },
+        id: { type: 'string', example: 'U12', description: 'Stable id: U{userid}' },
         userId: { type: 'integer', nullable: true },
         name: { type: 'string' },
         role: { type: 'string' },
         dept: { type: 'string', enum: ['Manufacturing', 'Filling', 'Packaging', 'Quality'] },
         avail: { type: 'boolean' },
-        _pk: { type: 'integer' },
-      },
-    },
-    TeamMemberCreate: {
-      type: 'object',
-      required: ['member_id', 'name', 'role', 'department'],
-      properties: {
-        member_id: { type: 'string' },
-        user_id: { type: 'integer', nullable: true },
-        name: { type: 'string' },
-        role: { type: 'string' },
-        department: { type: 'string', enum: ['Manufacturing', 'Filling', 'Packaging', 'Quality'] },
-        available: { type: 'boolean', default: true },
-      },
-    },
-    TeamMemberUpdate: {
-      type: 'object',
-      properties: {
-        member_id: { type: 'string' },
-        user_id: { type: 'integer', nullable: true },
-        name: { type: 'string' },
-        role: { type: 'string' },
-        department: { type: 'string', enum: ['Manufacturing', 'Filling', 'Packaging', 'Quality'] },
-        available: { type: 'boolean' },
+        _pk: { type: 'integer', nullable: true },
       },
     },
     ProductionBatch: {

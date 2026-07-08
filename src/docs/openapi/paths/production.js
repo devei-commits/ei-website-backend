@@ -145,7 +145,7 @@ function productionPaths(apiPrefix) {
       get: {
         tags: [PRODUCTION_TAG],
         summary: 'List production team members',
-        description: 'Admin: `fetchTeam()`.',
+        description: 'Role-based list: active users with Super Admin, Admin, or Production roles. Admin: `fetchTeam()`.',
         security: PRODUCTION_SECURITY,
         responses: {
           200: {
@@ -157,81 +157,6 @@ function productionPaths(apiPrefix) {
             },
           },
           500: { $ref: '#/components/responses/ServerError' },
-        },
-      },
-      post: {
-        tags: [PRODUCTION_TAG],
-        summary: 'Add team member',
-        security: PRODUCTION_SECURITY,
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': { schema: { $ref: '#/components/schemas/TeamMemberCreate' } },
-          },
-        },
-        responses: {
-          201: {
-            content: {
-              'application/json': { schema: { $ref: '#/components/schemas/TeamMember' } },
-            },
-          },
-          409: {
-            description: 'User already on team',
-            content: {
-              'application/json': { schema: { $ref: '#/components/schemas/ErrorBody' } },
-            },
-          },
-          500: { $ref: '#/components/responses/ServerError' },
-        },
-      },
-    },
-    [`${base}/team/{id}`]: {
-      get: {
-        tags: [PRODUCTION_TAG],
-        summary: 'Get team member',
-        security: PRODUCTION_SECURITY,
-        parameters: [idParam()],
-        responses: {
-          200: {
-            content: {
-              'application/json': { schema: { $ref: '#/components/schemas/TeamMember' } },
-            },
-          },
-          404: { $ref: '#/components/responses/NotFound' },
-        },
-      },
-      patch: {
-        tags: [PRODUCTION_TAG],
-        summary: 'Update team member',
-        security: PRODUCTION_SECURITY,
-        parameters: [idParam()],
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': { schema: { $ref: '#/components/schemas/TeamMemberUpdate' } },
-          },
-        },
-        responses: {
-          200: {
-            content: {
-              'application/json': { schema: { $ref: '#/components/schemas/TeamMember' } },
-            },
-          },
-          404: { $ref: '#/components/responses/NotFound' },
-        },
-      },
-      delete: {
-        tags: [PRODUCTION_TAG],
-        summary: 'Remove team member',
-        security: PRODUCTION_SECURITY,
-        parameters: [idParam()],
-        responses: {
-          200: {
-            content: {
-              'application/json': { schema: { $ref: '#/components/schemas/SuccessMessage' } },
-            },
-          },
-          404: { $ref: '#/components/responses/NotFound' },
         },
       },
     },

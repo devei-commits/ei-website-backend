@@ -15,7 +15,6 @@ const OPERATIONAL_TABLES = [
   'goods_received_notes',
   'production_batches',
   'production_equipment',
-  'production_team_members',
   'material_request_notes',
   'fulfillment_orders',
   'fulfillment_order_items',

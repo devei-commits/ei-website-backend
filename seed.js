@@ -45,7 +45,7 @@ const GoodsReceivedNote = require('./src/grn/models');
 const MaterialRequestNote = require('./src/mrn/models');
 const { ItemsList, ItemListVendorRate, ItemListTier } = require('./src/itemsList/models');
 const legacyAppointmentsSeedData = require('./src/appointments/legacySeedData');
-const { ProductionEquipment, ProductionTeamMember, ProductionBatch } = require('./src/production/models');
+const { ProductionEquipment, ProductionBatch } = require('./src/production/models');
 const { FulfillmentOrder, FulfillmentOrderItem, FulfillmentBatchSplit, Transporter, FulfillmentInvoice, ReservedBatchItem } = require('./src/fulfillment/models');
 const { ClientQuery, ClientDevelopment, ClientOrder, ClientAppointment } = require('./src/clientHub/models');
 const FacilityArea = require('./src/facilityAreas/models');
@@ -1801,9 +1801,6 @@ async function seed() {
       { equipment_id: 'SK-01', name: 'Shrink Wrap Station', category: 'packaging', speed: 1500, type: 'shrink', supports: ['shrink'], status: 'idle', created_at: now, updated_at: now },
     ]);
 
-    // ── Production Team Members ──
-    console.log('Seeding Production Team Members (empty — add via Team Management UI)...');
-    await ProductionTeamMember.destroy({ where: {} });
 
     // ── Production Batches: not seeded (test with real data). ──
     await ProductionBatch.destroy({ where: {} });

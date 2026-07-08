@@ -20,7 +20,6 @@ describe('Payment Flow', () => {
   beforeAll(async () => {
     dbAvailable = await isDbAvailable(db);
     if (!dbAvailable) return;
-    await db.sync({ force: true });
 
     user = await User.create({
       fname: 'test',

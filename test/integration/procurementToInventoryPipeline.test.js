@@ -32,7 +32,6 @@ describe('procurement pipeline (PR → PO → GRN → inventory)', () => {
   test('PO quantities appear pre-GRN; GRN complete updates warehouse_inventory', async () => {
     dbAvailable = await isDbAvailable(db);
     if (!dbAvailable) return;
-    await db.sync({ force: true });
 
     // Masters
     const rm = await RawMaterial.create({ code: 'RM-PR-INV-001', name: 'PR/Inv RM', status: 'Active' });
@@ -181,7 +180,6 @@ describe('procurement pipeline (PR → PO → GRN → inventory)', () => {
   test('In Transit GRN contributes to warehouse inventory inTransit; GRN Complete removes it', async () => {
     dbAvailable = await isDbAvailable(db);
     if (!dbAvailable) return;
-    await db.sync({ force: true });
 
     // Masters
     const rm = await RawMaterial.create({ code: 'RM-PR-INV-002', name: 'PR/Inv RM 2', status: 'Active' });

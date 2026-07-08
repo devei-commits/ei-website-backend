@@ -384,6 +384,14 @@ const PATCHES = [
     table: 'production_batches',
     sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "schedule_remarks" TEXT',
   },
+  {
+    name: 'production_team_members.drop_table',
+    sql: 'DROP TABLE IF EXISTS "production_team_members" CASCADE',
+  },
+  {
+    name: 'enum_production_team_members_department.drop_type',
+    sql: 'DROP TYPE IF EXISTS "enum_production_team_members_department" CASCADE',
+  },
   ...getSoftDeleteSchemaPatches(),
   {
     name: 'raw_materials.approval_assigned_user_id',

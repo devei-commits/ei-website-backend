@@ -17,7 +17,6 @@ describe('GRN to inventory', () => {
   beforeAll(async () => {
     dbAvailable = await isDbAvailable(db);
     if (!dbAvailable) return;
-    await db.sync({ force: true });
     const rm = await RawMaterial.create({ code: 'RM-GRN-001', name: 'Test RM', status: 'Active' });
     rmId = rm.id;
     const wh = await WarehouseInventory.create({

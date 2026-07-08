@@ -55,8 +55,6 @@ describe('Stage 3: sync-from-planning + MTR MRN completion (labels + history)', 
 
     useStaticJwtSecretsForTests();
 
-    await db.sync({ force: true });
-
     const user = await User.create({
       fname: 'Stage3',
       lname: 'User',

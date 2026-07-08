@@ -34,39 +34,6 @@ ProductionEquipment.init(
   }
 );
 
-/* ── Production Team Members ── */
-
-class ProductionTeamMember extends Model {}
-
-ProductionTeamMember.init(
-  {
-    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
-    member_id: { type: DataTypes.STRING(20), allowNull: false, unique: true },
-    user_id: {
-      type: DataTypes.INTEGER,
-      allowNull: true,
-      references: { model: 'users', key: 'userid' },
-      onDelete: 'SET NULL',
-    },
-    name: { type: DataTypes.STRING(200), allowNull: false },
-    role: { type: DataTypes.STRING(100), allowNull: false },
-    department: { type: DataTypes.ENUM('Manufacturing', 'Filling', 'Packaging', 'Quality'), allowNull: false },
-    available: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
-    created_at: { type: DataTypes.DATE, allowNull: true },
-    updated_at: { type: DataTypes.DATE, allowNull: true },
-    deleted_at: { type: DataTypes.DATE, allowNull: true },
-    lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
-  },
-  {
-    sequelize: db,
-    modelName: 'ProductionTeamMember',
-    tableName: 'production_team_members',
-    timestamps: true,
-    createdAt: 'created_at',
-    updatedAt: 'updated_at',
-  }
-);
-
 /* ── Production Batches (BMR / BPR) ── */
 
 class ProductionBatch extends Model {}
@@ -185,4 +152,4 @@ ProductionBatch.init(
   }
 );
 
-module.exports = { ProductionEquipment, ProductionTeamMember, ProductionBatch };
+module.exports = { ProductionEquipment, ProductionBatch };

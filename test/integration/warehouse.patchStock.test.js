@@ -22,7 +22,6 @@ describe('warehouse PATCH stock_in_hand', () => {
 
     useStaticJwtSecretsForTests();
 
-    await db.sync({ force: true });
     const rm = await RawMaterial.create({ code: 'RM-PATCH-001', name: 'Test RM', status: 'Active' });
     const inv = await WarehouseInventory.create({
       item_type: 'RM',

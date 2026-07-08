@@ -72,7 +72,6 @@ describe('SO→Planning→Inventory→Production→Fulfillment pipeline (integra
   beforeAll(async () => {
     dbAvailable = await isDbAvailable(db);
     if (!dbAvailable) return;
-    await db.sync({ force: true });
 
     // Master data
     rm = await RawMaterial.create({ code: 'EI-RM-ACT-PIPE-001', name: 'Pipe RM', status: 'Active' });

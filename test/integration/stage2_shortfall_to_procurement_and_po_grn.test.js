@@ -60,8 +60,6 @@ describe('Stage 2: shortfall -> PR; PO -> GRN -> inventory (integration)', () =>
 
     useStaticJwtSecretsForTests();
 
-    await db.sync({ force: true });
-
     // Auth user (admin: order-management + sales-purchase)
     user = await User.create({
       fname: 'Stage2',

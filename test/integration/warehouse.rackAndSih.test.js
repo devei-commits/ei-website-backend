@@ -18,7 +18,6 @@ describe('warehouse rack and SIH', () => {
   beforeAll(async () => {
     dbAvailable = await isDbAvailable(db);
     if (!dbAvailable) return;
-    await db.sync({ force: true });
     const rm = await RawMaterial.create({ code: 'RM-RACK-001', name: 'Test RM', status: 'Active' });
     const loc = await WarehouseLocation.create({ code: 'LOC-1', name: 'Location 1', location_type: 'warehouse' });
     const rack = await WarehouseRack.create({ location_id: loc.id, code: 'R1', name: 'Rack 1', levels: 4, slots_total: 16 });
