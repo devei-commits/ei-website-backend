@@ -10,6 +10,8 @@
     "dev": "nodemon -L app.js",
     "seed": "node seed.js",
     "seed:admins": "node scripts/seed-admin-users.js",
+    "treasury:mock": "node scripts/treasury-mock-data.js --seed",
+    "treasury:mock:reset": "node scripts/treasury-mock-data.js --reset",
     "clean-data": "node cleanData.js --yes",
     "reset-order-lifecycle": "node scripts/reset-order-lifecycle.js",
     "reset-order-lifecycle:yes": "node scripts/reset-order-lifecycle.js --yes",
