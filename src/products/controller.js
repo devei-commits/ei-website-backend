@@ -47,6 +47,13 @@ const {
   flattenPrFacilityLicencesForStorage,
 } = require('./prFacilityLicenceStorage');
 const { linkMaterialMastersToProductCode } = require('./linkMaterialMastersToProduct');
+const { PR_QUALITY_SPEC_EDIT_KEYS, payloadHasQualitySpecEdits } = require('../qualitySpecRules/itemLock');
+const {
+  resolvePrQualitySpecCategory,
+  resolvePrQualitySpecSubCategory,
+  resolvePrSubSpecPath,
+} = require('../qualitySpecRules/prCategoryResolve');
+const { resolvePrEntityQualitySpecs } = require('../qualitySpecRules/resolveForItem');
 const { normalizePmSubCategorySlug, pmLevelForSubCategorySlug } = require('../lib/pmSubCategoryRules');
 const { nextNumericSuffixAfterMax } = require('../lib/nextNumericMasterCode');
 const {
@@ -721,6 +728,9 @@ const createPRRegistration = async (req, res) => {
         b.pr_quality_final_sub_spec_rows_by_path ?? b.prQualityFinalSubSpecRowsByPath,
         b.pr_quality_dispatch_sub_spec_rows_by_path ?? b.prQualityDispatchSubSpecRowsByPath
       );
+      const prQsLockPatch = payloadHasQualitySpecEdits(b, PR_QUALITY_SPEC_EDIT_KEYS)
+        ? { quality_specs_locked: true }
+        : {};
       const bomRow = {
         bom_code: product_code,
         bom_sku: bomSku,
@@ -756,6 +766,7 @@ const createPRRegistration = async (req, res) => {
         spec_bulk: b.specific_gravity ?? b.specificGravity ?? null,
         stability_summary: productRow.stability_summary,
         ...prQsPatch,
+        ...prQsLockPatch,
         pr_facility_licences: flattenPrFacilityLicencesForStorage(
           b.pr_facility_licences ?? b.prFacilityLicences
         ),
@@ -1261,12 +1272,36 @@ const getProductDetail = async (req, res) => {
 
     const parsedNotes = bom ? parseBomNotes(bom.notes) : parseBomNotes(null);
     const bomPlain = bom ? (bom.get ? bom.get({ plain: true }) : bom) : null;
-    const pr_quality_spec_rows_by_section = hydratePrQualitySpecRowsBySectionFromBom(bomPlain);
-    const pr_quality_bulk_sub_spec_rows_by_path = hydratePrQualityBulkSubSpecRowsByPathFromBom(bomPlain);
-    const pr_quality_final_sub_spec_rows_by_path = hydratePrQualityFinalSubSpecRowsByPathFromBom(bomPlain);
-    const pr_quality_dispatch_sub_spec_rows_by_path =
+    let pr_quality_spec_rows_by_section = hydratePrQualitySpecRowsBySectionFromBom(bomPlain);
+    let pr_quality_bulk_sub_spec_rows_by_path = hydratePrQualityBulkSubSpecRowsByPathFromBom(bomPlain);
+    let pr_quality_final_sub_spec_rows_by_path = hydratePrQualityFinalSubSpecRowsByPathFromBom(bomPlain);
+    let pr_quality_dispatch_sub_spec_rows_by_path =
       hydratePrQualityDispatchSubSpecRowsByPathFromBom(bomPlain);
     const pr_facility_licences = hydratePrFacilityLicencesFromBom(bomPlain);
+
+    // While unlocked, quality specs are live-resolved from the category/sub-category rule
+    // instead of whatever (if anything) is stored on the BOM — once locked, the BOM's own
+    // saved rows (already hydrated above) win.
+    const prLocked = bomPlain ? bomPlain.quality_specs_locked === true : false;
+    const prCategory = resolvePrQualitySpecCategory(plain.category, plain.product_code);
+    if (!prLocked && prCategory) {
+      const prSubCategory = resolvePrQualitySpecSubCategory(prCategory, parsedNotes.pr_sub_category || '');
+      const subSpecPath = resolvePrSubSpecPath(prCategory, prSubCategory);
+      const [bulk, final, dispatch] = await Promise.all([
+        resolvePrEntityQualitySpecs('PR_BULK_CLEARANCE', prCategory, prSubCategory, subSpecPath),
+        resolvePrEntityQualitySpecs('PR_FINAL_CLEARANCE', prCategory, prSubCategory, subSpecPath),
+        resolvePrEntityQualitySpecs('PR_DISPATCH_SPECS', prCategory, prSubCategory, subSpecPath),
+      ]);
+      pr_quality_spec_rows_by_section = {
+        bulkClearance: bulk.commonRows,
+        finalClearance: final.commonRows,
+        dispatchSpecs: dispatch.commonRows,
+      };
+      const pathKey = prSubCategory ? `${prCategory}::${prSubCategory}` : null;
+      pr_quality_bulk_sub_spec_rows_by_path = pathKey ? { [pathKey]: bulk.subRows } : {};
+      pr_quality_final_sub_spec_rows_by_path = pathKey ? { [pathKey]: final.subRows } : {};
+      pr_quality_dispatch_sub_spec_rows_by_path = pathKey ? { [pathKey]: dispatch.subRows } : {};
+    }
     res.json({
       ...plain,
       pr_quality_spec_rows_by_section,
@@ -1274,6 +1309,7 @@ const getProductDetail = async (req, res) => {
       pr_quality_final_sub_spec_rows_by_path,
       pr_quality_dispatch_sub_spec_rows_by_path,
       pr_facility_licences,
+      quality_specs_locked: bomPlain ? (bomPlain.quality_specs_locked ?? false) : false,
       internal_sku_code: plain.product_code ?? null,
       zoho_sku_code: plain.zoho_sku_code ?? null,
       bom_composite_item: bom ? bom.bom_composite_item : null,
@@ -1459,6 +1495,9 @@ const updateProduct = async (req, res) => {
             bomPayload.pr_quality_dispatch_sub_spec_rows_by_path ??
               bomPayload.prQualityDispatchSubSpecRowsByPath
           ),
+          ...(payloadHasQualitySpecEdits(bomPayload, PR_QUALITY_SPEC_EDIT_KEYS)
+            ? { quality_specs_locked: true }
+            : {}),
           pr_facility_licences: flattenPrFacilityLicencesForStorage(
             bomPayload.pr_facility_licences ?? bomPayload.prFacilityLicences
           ),
@@ -1656,6 +1695,9 @@ const updateProduct = async (req, res) => {
                 bomPayload.prQualityDispatchSubSpecRowsByPath
             )
           );
+        }
+        if (payloadHasQualitySpecEdits(bomPayload, PR_QUALITY_SPEC_EDIT_KEYS)) {
+          bomUpdate.quality_specs_locked = true;
         }
         const facilityLicencesRaw =
           bomPayload.pr_facility_licences ??

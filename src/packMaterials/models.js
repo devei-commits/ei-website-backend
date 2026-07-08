@@ -50,6 +50,8 @@ PackMaterial.init(
     updated_at: { type: DataTypes.DATE, allowNull: true },
     deleted_at: { type: DataTypes.DATE, allowNull: true },
     lifecycle_status: { type: DataTypes.STRING(255), allowNull: true, defaultValue: 'active' },
+    /** Once true, this item's own saved quality specs win over the category/sub-category rule (one-way). */
+    quality_specs_locked: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   },
   {
     sequelize: db,

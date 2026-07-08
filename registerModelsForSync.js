@@ -24,6 +24,7 @@ require('./src/customizationPackaging/models');
 require('./src/packMaterials/models');
 require('./src/rawMaterials/models');
 require('./src/bom/models');
+require('./src/qualitySpecRules/models');
 require('./src/itemsMaster/models');
 require('./src/vendorClient/models');
 require('./src/salesOrders/models');

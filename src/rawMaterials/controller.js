@@ -42,6 +42,9 @@ const {
   rmApprovalHooks,
 } = require('../lib/masterApprovalPatchHandlers');
 const { createMasterApprovalStatusHistoryHandler } = require('../lib/masterApprovalStatusHistory');
+const { RM_QUALITY_SPEC_EDIT_KEYS, payloadHasQualitySpecEdits } = require('../qualitySpecRules/itemLock');
+const { resolveEntityQualitySpecs } = require('../qualitySpecRules/resolveForItem');
+const { resolveRmQualitySpecCategoryFromRow } = require('../qualitySpecRules/rmCategoryResolve');
 /** List-view only (no form_data). */
 function formatRawMaterial(row) {
   if (!row) return null;
@@ -76,12 +79,45 @@ function formatRawMaterial(row) {
   };
 }
 
-/** Full row for edit (includes form_data). */
-function formatRawMaterialFull(row) {
+/**
+ * Full row for edit (includes form_data). While the item is unlocked (quality_specs_locked
+ * false), quality-spec rows are live-resolved from the category/sub-category rule instead of
+ * whatever (if anything) is stored on the item — once locked, the item's own saved rows win.
+ */
+async function formatRawMaterialFull(row) {
   const base = formatRawMaterial(row);
   if (!base) return null;
   const d = row.get ? row.get({ plain: true }) : row;
-  return { ...base, form_data: d.form_data ?? null };
+  const locked = d.quality_specs_locked === true;
+  const fd = d.form_data != null && typeof d.form_data === 'object' && !Array.isArray(d.form_data) ? d.form_data : {};
+
+  let form_data = d.form_data ?? null;
+  if (!locked) {
+    const { category, subCategory } = resolveRmQualitySpecCategoryFromRow({
+      category: d.category,
+      group: d.group,
+      form_data: fd,
+    });
+    const { commonRows, subRows } = await resolveEntityQualitySpecs('RM', category, subCategory);
+    const pathKey = category && subCategory ? `${category}::${subCategory}` : null;
+    form_data = {
+      ...fd,
+      rmQualitySpecRows: commonRows,
+      rmQualitySubSpecRowsByPath: pathKey ? { [pathKey]: subRows } : {},
+    };
+  }
+
+  return { ...base, form_data, quality_specs_locked: locked };
+}
+
+/** Marks `fields.quality_specs_locked = true` (never false) when the payload touched RM quality specs. */
+function applyRmQualitySpecLockOnWrite(fields) {
+  const fd = fields.form_data != null && typeof fields.form_data === 'object' && !Array.isArray(fields.form_data)
+    ? fields.form_data
+    : null;
+  if (payloadHasQualitySpecEdits(fd, RM_QUALITY_SPEC_EDIT_KEYS)) {
+    fields.quality_specs_locked = true;
+  }
 }
 
 /**
@@ -261,7 +297,7 @@ async function getRawMaterialById(req, res) {
     const id = req.params.id;
     const row = await RawMaterial.findByPk(id);
     if (!row) return res.status(404).json({ error: 'Raw material not found' });
-    res.json(formatRawMaterialFull(row));
+    res.json(await formatRawMaterialFull(row));
   } catch (err) {
     console.error('getRawMaterialById error', err);
     res.status(500).json({ error: 'Failed to get raw material' });
@@ -531,6 +567,7 @@ async function createRawMaterial(req, res) {
         return res.status(404).json({ error: 'Draft raw material not found', code: 'RM_NOT_FOUND' });
       }
       const fields = payloadToListFields(b);
+      applyRmQualitySpecLockOnWrite(fields);
       await applyRmApprovalOnCreate(req, fields);
       const codeTrim = fields.code != null ? String(fields.code).trim() : '';
       if (!codeTrim) {
@@ -599,7 +636,7 @@ async function createRawMaterial(req, res) {
         }
         await t.commit();
         zohoBooksItemToDelete = null;
-        const out = formatRawMaterialFull(existingRow);
+        const out = await formatRawMaterialFull(existingRow);
         if (zohoEnv.booksEnabled && zohoEnv.syncItems) {
           if (zoho.synced && zoho.itemId) {
             out.zoho_sync = { synced: true, item_id: zoho.itemId };
@@ -624,6 +661,7 @@ async function createRawMaterial(req, res) {
     const t = await db.transaction();
     try {
       const fields = payloadToListFields(b);
+      applyRmQualitySpecLockOnWrite(fields);
       await applyRmApprovalOnCreate(req, fields);
       let codeTrim = fields.code != null ? String(fields.code).trim() : '';
       if (!codeTrim) {
@@ -705,7 +743,7 @@ async function createRawMaterial(req, res) {
       await t.commit();
       zohoBooksItemToDelete = null;
 
-      const out = formatRawMaterialFull(row);
+      const out = await formatRawMaterialFull(row);
       if (zohoEnv.booksEnabled && zohoEnv.syncItems) {
         if (zoho.synced && zoho.itemId) {
           out.zoho_sync = { synced: true, item_id: zoho.itemId };
@@ -760,8 +798,9 @@ async function updateRawMaterial(req, res) {
     }
     mergedFields.code = nextCode;
     delete mergedFields.zoho_sku_code;
+    applyRmQualitySpecLockOnWrite(mergedFields);
     await row.update(mergedFields);
-    res.json(formatRawMaterialFull(row));
+    res.json(await formatRawMaterialFull(row));
   } catch (err) {
     console.error('updateRawMaterial error', err);
     if (err.name === 'SequelizeUniqueConstraintError') {

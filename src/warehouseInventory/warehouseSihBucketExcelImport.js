@@ -1,8 +1,10 @@
 /**
  * Bulk SIH updates from internal warehouse workbooks (sku, item_name, SIH).
- * - Main warehouse: worksheet "Sheet3" → wh_stock
- * - ML1: worksheet "STOCK IN HAND", column PHYSICAL QTY → ml1_stock
- * - ML2: worksheet "Sheet3" → ml2_stock
+ * - Main warehouse: worksheet "CONSOLIDATED SIH" (columns ITEM CODE, ITEM NAME, SIH) → wh_stock
+ * - ML1: worksheet "Inventory Summary", column quantity_available (sku, item_name also used) → ml1_stock
+ *   (legacy: worksheet "STOCK IN HAND", column PHYSICAL QTY — still supported as a fallback)
+ * - ML2: worksheet "Inventory Summary", column quantity_available (sku, item_name also used) → ml2_stock
+ *   (legacy: worksheet "Sheet3" — still supported as a fallback)
  */
 const ExcelJS = require('exceljs');
 const multer = require('multer');
@@ -34,19 +36,19 @@ const ALLOWED_MIME = new Set([
 const BUCKET_CONFIG = {
   warehouse: {
     label: 'Main warehouse',
-    sheetRule: 'sheet3',
+    sheetRule: 'consolidated_sih_sheet',
     stockField: 'wh_stock',
     auditSource: 'warehouse_sih_excel_wh',
   },
   ml1: {
     label: 'ML1',
-    sheetRule: 'stock_in_hand_sheet',
+    sheetRule: 'inventory_summary_sheet',
     stockField: 'ml1_stock',
     auditSource: 'warehouse_sih_excel_ml1',
   },
   ml2: {
     label: 'ML2',
-    sheetRule: 'sheet3',
+    sheetRule: 'inventory_summary_sheet',
     stockField: 'ml2_stock',
     auditSource: 'warehouse_sih_excel_ml2',
   },
@@ -67,7 +69,9 @@ const HEADER_ALIASES = {
     'available',
     'available qty',
   ],
-  /** ML1 workbook: stock column on STOCK IN HAND sheet */
+  /** ML1 / ML2 workbook: stock column on the "Inventory Summary" sheet */
+  quantityAvailable: ['quantity_available', 'quantity available', 'qty available', 'qty_available', 'available_quantity'],
+  /** ML1 legacy workbook: stock column on STOCK IN HAND sheet */
   physicalQty: ['physical qty', 'physical_qty', 'physical quantity', 'physical qty.'],
 };
 
@@ -104,52 +108,79 @@ function parseQuantity(raw) {
 function findWorksheetForBucket(workbook, bucketKey) {
   if (!workbook?.worksheets?.length) return null;
   const rule = BUCKET_CONFIG[bucketKey]?.sheetRule;
-  if (rule === 'stock_in_hand_sheet') {
+  if (rule === 'consolidated_sih_sheet') {
     for (const ws of workbook.worksheets) {
       const n = String(ws.name || '').trim();
       const lower = n.toLowerCase();
-      if (lower === 'stock in hand' || lower === 'stock_in_hand') return ws;
+      if (lower === 'consolidated sih' || lower === 'consolidated_sih') return ws;
     }
     for (const ws of workbook.worksheets) {
       const n = String(ws.name || '')
         .trim()
         .toLowerCase();
-      if (n.includes('stock in hand') || n.includes('stock_in_hand')) return ws;
+      if (n.includes('consolidated sih') || n.includes('consolidated_sih')) return ws;
     }
     return workbook.worksheets[0];
   }
-  if (rule === 'sheet3') {
+  if (rule === 'inventory_summary_sheet') {
+    for (const ws of workbook.worksheets) {
+      const n = String(ws.name || '').trim();
+      const lower = n.toLowerCase();
+      if (lower === 'inventory summary' || lower === 'inventory_summary') return ws;
+    }
     for (const ws of workbook.worksheets) {
       const n = String(ws.name || '')
         .trim()
         .toLowerCase();
-      if (n === 'sheet3' || n === 'sheet 3') return ws;
+      if (n.includes('inventory summary') || n.includes('inventory_summary')) return ws;
     }
-    return workbook.worksheets.find((ws) => {
-      const n = String(ws.name || '')
-        .trim()
-        .toLowerCase();
-      return n === 'sheet3';
-    }) || workbook.worksheets[0];
+    // Legacy workbook formats — still supported as a fallback.
+    if (bucketKey === 'ml1') {
+      for (const ws of workbook.worksheets) {
+        const n = String(ws.name || '').trim();
+        const lower = n.toLowerCase();
+        if (lower === 'stock in hand' || lower === 'stock_in_hand') return ws;
+      }
+      for (const ws of workbook.worksheets) {
+        const n = String(ws.name || '')
+          .trim()
+          .toLowerCase();
+        if (n.includes('stock in hand') || n.includes('stock_in_hand')) return ws;
+      }
+    }
+    if (bucketKey === 'ml2') {
+      for (const ws of workbook.worksheets) {
+        const n = String(ws.name || '')
+          .trim()
+          .toLowerCase();
+        if (n === 'sheet3' || n === 'sheet 3') return ws;
+      }
+    }
+    return workbook.worksheets[0];
   }
   return workbook.worksheets[0];
 }
 
 function resolveQtyColumnIndex(headerTexts, bucketKey) {
-  const preferPhysical = bucketKey === 'ml1';
+  const usesInventorySummary = bucketKey === 'ml1' || bucketKey === 'ml2';
+  const isMl1 = bucketKey === 'ml1';
+  let quantityAvailableCol = null;
   let physicalCol = null;
   let sihCol = null;
   for (let c = 0; c < headerTexts.length; c += 1) {
     const text = headerTexts[c];
     if (!text) continue;
-    const h = normHeader(text);
-    if (preferPhysical && (h === 'physical_qty' || matchHeaderAlias(text, HEADER_ALIASES.physicalQty))) {
+    if (usesInventorySummary && !quantityAvailableCol && matchHeaderAlias(text, HEADER_ALIASES.quantityAvailable)) {
+      quantityAvailableCol = c + 1;
+      continue;
+    }
+    if (isMl1 && !physicalCol && matchHeaderAlias(text, HEADER_ALIASES.physicalQty)) {
       physicalCol = c + 1;
-      break;
+      continue;
     }
     if (!sihCol && matchHeaderAlias(text, HEADER_ALIASES.sih)) sihCol = c + 1;
   }
-  if (preferPhysical) return physicalCol ?? sihCol;
+  if (usesInventorySummary) return quantityAvailableCol ?? physicalCol ?? sihCol;
   return sihCol;
 }
 
@@ -169,7 +200,12 @@ function detectSihHeaderColumns(worksheet, bucketKey) {
     const qtyCol = resolveQtyColumnIndex(headerTexts, bucketKey);
     if (qtyCol != null) cols.sih = qtyCol;
     if (cols.sih != null && (cols.sku != null || cols.itemName != null)) {
-      return { headerRowNum, dataStartRow: headerRowNum + 1, cols, qtyColumn: bucketKey === 'ml1' ? 'physical_qty' : 'sih' };
+      return {
+        headerRowNum,
+        dataStartRow: headerRowNum + 1,
+        cols,
+        qtyColumn: bucketKey === 'ml1' || bucketKey === 'ml2' ? 'quantity_available' : 'sih',
+      };
     }
   }
   return null;
@@ -193,8 +229,8 @@ async function parseSihBucketWorkbook(buffer, bucketKey) {
   const layout = detectSihHeaderColumns(worksheet, bucketKey);
   if (!layout) {
     const qtyHint =
-      bucketKey === 'ml1'
-        ? 'PHYSICAL QTY (on STOCK IN HAND sheet)'
+      bucketKey === 'ml1' || bucketKey === 'ml2'
+        ? 'quantity_available (on Inventory Summary sheet)'
         : 'SIH / stock in hand';
     throw new Error(
       `Could not find headers on "${worksheet.name}". Expected columns: sku (or item_name) and ${qtyHint}.`
@@ -309,7 +345,7 @@ async function findAllMastersByItemName(itemName) {
   if (!t) return [];
   const [rm, pm, pr] = await Promise.all([
     RawMaterial.findOne({ where: { name: { [Op.iLike]: t } } }),
-    PackMaterial.findOne({ where: { name: { [Op.iLike]: t } } }),
+    PackMaterial.findOne({ where: { description: { [Op.iLike]: t } } }),
     Product.findOne({ where: { product_name: { [Op.iLike]: t } } }),
   ]);
   const out = [];
@@ -579,6 +615,75 @@ function makePostHandler(bucketKey) {
   };
 }
 
+const MAX_CHUNK_ROWS = CHUNK_SIZE;
+
+/**
+ * Stateless per-chunk handler — the client parses the workbook itself and POSTs bounded batches
+ * of rows here (same shape as src/masterBulk/itemReferenceBulkChunk.js's postItemReferenceBulkChunk),
+ * so no single request ever does a full-file parse + full-file DB write. No server-side job/session
+ * state: chunk_index/chunk_total are only echoed back as percent_complete.
+ */
+function makeChunkPostHandler(bucketKey) {
+  return async function postSihBucketExcelChunk(req, res) {
+    try {
+      const cfg = BUCKET_CONFIG[bucketKey];
+      const b = req.body || {};
+      const rowsIn = Array.isArray(b.rows) ? b.rows : [];
+      const chunkIndex = Number(b.chunk_index);
+      const chunkTotal = Number(b.chunk_total);
+      const details = Boolean(b.details);
+
+      if (!Number.isFinite(chunkIndex) || chunkIndex < 0) {
+        return res.status(400).json({ error: 'chunk_index must be a non-negative number' });
+      }
+      if (!Number.isFinite(chunkTotal) || chunkTotal < 1) {
+        return res.status(400).json({ error: 'chunk_total must be >= 1' });
+      }
+      if (rowsIn.length === 0) {
+        return res.status(400).json({ error: 'rows array is required' });
+      }
+      if (rowsIn.length > MAX_CHUNK_ROWS) {
+        return res.status(400).json({ error: `At most ${MAX_CHUNK_ROWS} rows per chunk` });
+      }
+
+      const rows = rowsIn.map((r, idx) => ({
+        excel_row: Number.isFinite(Number(r?.excel_row)) ? Number(r.excel_row) : idx,
+        sku: String(r?.sku ?? '').trim(),
+        item_name: String(r?.item_name ?? '').trim(),
+        sih: r?.sih == null || r.sih === '' ? null : parseQuantity(r.sih),
+      }));
+
+      const summary = await executeSihBucketRows(rows, bucketKey, { details });
+      await invalidateWarehouseCaches();
+
+      const percentComplete = Math.min(100, Math.round(((chunkIndex + 1) / chunkTotal) * 100));
+
+      return res.json({
+        ok: true,
+        bucket: bucketKey,
+        bucket_label: cfg.label,
+        chunk_index: chunkIndex,
+        chunk_total: chunkTotal,
+        percent_complete: percentComplete,
+        rows_in_chunk: rows.length,
+        summary: {
+          rm_updated: summary.rm_updated,
+          pm_updated: summary.pm_updated,
+          pr_updated: summary.pr_updated,
+          created: summary.created,
+          skipped: summary.skipped,
+          errors: summary.errors,
+          rack_allocated: summary.rack_allocated,
+        },
+        ...(details ? { row_log: summary.row_log } : {}),
+      });
+    } catch (err) {
+      console.error(`[sih-excel-${bucketKey}-chunk] import error`, err);
+      return res.status(500).json({ error: err.message || `${BUCKET_CONFIG[bucketKey].label} SIH chunk import failed` });
+    }
+  };
+}
+
 const uploadSihExcelMiddleware = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_UPLOAD_BYTES },
@@ -606,6 +711,7 @@ module.exports = {
   postWarehouseSihExcelImport: makePostHandler('warehouse'),
   postMl1SihExcelImport: makePostHandler('ml1'),
   postMl2SihExcelImport: makePostHandler('ml2'),
+  postWarehouseSihExcelChunk: makeChunkPostHandler('warehouse'),
   parseSihBucketWorkbook,
   detectSihHeaderColumns,
   findWorksheetForBucket,

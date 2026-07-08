@@ -179,7 +179,7 @@ async function handleMasterApprovalPatch(req, res, kind, row, hooks) {
   }
 
   await row.reload();
-  res.json(hooks.formatResponse(row));
+  res.json(await hooks.formatResponse(row));
   return true;
 }
 
