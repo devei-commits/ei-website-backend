@@ -478,6 +478,39 @@ const PATCHES = [
     sql:
       'CREATE INDEX IF NOT EXISTS "master_approval_status_history_kind_id_idx" ON "master_approval_status_history" ("master_kind", "master_id", "created_at" DESC)',
   },
+  // fulfillment_orders — columns added after the table's initial creation; production DBs that
+  // never ran sync({alter:true}) never got them, causing `column ... does not exist` crashes
+  // (e.g. manual_status_override, hit 2026-07-08 on GET /api/v1/fulfillment).
+  {
+    name: 'fulfillment_orders.manual_status_override',
+    table: 'fulfillment_orders',
+    sql: 'ALTER TABLE "fulfillment_orders" ADD COLUMN IF NOT EXISTS "manual_status_override" BOOLEAN NOT NULL DEFAULT false',
+  },
+  {
+    name: 'fulfillment_orders.commercial_status',
+    table: 'fulfillment_orders',
+    sql: `ALTER TABLE "fulfillment_orders" ADD COLUMN IF NOT EXISTS "commercial_status" VARCHAR(30) DEFAULT 'received'`,
+  },
+  {
+    name: 'fulfillment_orders.on_hold_previous_status',
+    table: 'fulfillment_orders',
+    sql: 'ALTER TABLE "fulfillment_orders" ADD COLUMN IF NOT EXISTS "on_hold_previous_status" VARCHAR(30)',
+  },
+  {
+    name: 'fulfillment_orders.raw_import',
+    table: 'fulfillment_orders',
+    sql: 'ALTER TABLE "fulfillment_orders" ADD COLUMN IF NOT EXISTS "raw_import" JSONB',
+  },
+  {
+    name: 'fulfillment_orders.vendor_client_id',
+    table: 'fulfillment_orders',
+    sql: 'ALTER TABLE "fulfillment_orders" ADD COLUMN IF NOT EXISTS "vendor_client_id" INTEGER',
+  },
+  {
+    name: 'fulfillment_orders.zoho_invoice_id',
+    table: 'fulfillment_orders',
+    sql: 'ALTER TABLE "fulfillment_orders" ADD COLUMN IF NOT EXISTS "zoho_invoice_id" VARCHAR(64)',
+  },
 
   // treasury_* — working-capital command center (src/treasury/models.js). Schema was meant to be
   // materialized by `db.sync({ alter: true })`, but managed production DBs skip that call, so
