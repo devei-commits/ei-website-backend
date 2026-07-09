@@ -4,6 +4,7 @@ const { isAuthenticated, requireModule } = require('../middleware/security');
 const { createCacheReadMiddleware } = require('../cache/cacheReadMiddleware');
 const {
   listOrders, getOrderById, createOrder, updateOrder, deleteOrder,
+  cancelOrder, manualFulfillOrder,
   pickSplits, invoiceSplits, shipSplits, deliverSplits,
   listBatchSplits,
   getNextSoNo, getCustomers, getProducts, getClientProductPrice,
@@ -56,6 +57,8 @@ router.post('/', guard, createOrder);
 router.patch('/:id', guard, updateOrder);
 router.delete('/:id', guard, deleteOrder);
 
+router.patch('/:id/cancel', guard, cancelOrder);
+router.patch('/:id/manual-fulfill', guard, manualFulfillOrder);
 router.patch('/:id/pick', guard, pickSplits);
 router.patch('/:id/invoice', guard, invoiceSplits);
 router.patch('/:id/ship', guard, shipSplits);

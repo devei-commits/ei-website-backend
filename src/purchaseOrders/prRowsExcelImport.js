@@ -121,6 +121,8 @@ const PURCHASE_ORDER_FLAT_ALIASES = {
   gstin: ['gst identification number (gstin)'],
   itemName: ['item name'],
   sku: ['sku'],
+  itemDesc: ['item desc', 'item description'],
+  account: ['account'],
   hsnSac: ['hsn/sac'],
   qtyOrdered: ['quantityordered'],
   usageUnit: ['usage unit'],
@@ -339,6 +341,8 @@ function purchaseOrderFlatFieldsToItem(fields) {
     uom: String(fields.usageUnit || '').trim() || undefined,
     hsnCode: String(fields.hsnSac || '').trim() || undefined,
     itemTotal: parseOptionalNumber(fields.itemTotal) ?? undefined,
+    itemDesc: String(fields.itemDesc || '').trim() || undefined,
+    isServiceLine: fields.isServiceLine === true || undefined,
   };
 }
 
@@ -418,6 +422,22 @@ function parsePurchaseOrderFlatWorkbook(workbook, buffer) {
   let skippedNoIdentity = 0;
   let skippedNoProduct = 0;
 
+  // Full label→column map (every source column) for verbatim raw capture.
+  const rawLabelsByCol = {};
+  worksheet.getRow(headerRow).eachCell((cell, colNumber) => {
+    const label = String(cellToText(cell) || '').trim();
+    if (label) rawLabelsByCol[colNumber] = label;
+  });
+  const readRawRow = (row) => {
+    const out = {};
+    for (const [colNumber, label] of Object.entries(rawLabelsByCol)) {
+      const v = cellToText(row.getCell(Number(colNumber)));
+      const s = v == null ? '' : String(v).trim();
+      if (s !== '') out[label] = s;
+    }
+    return out;
+  };
+
   for (let r = headerRow + 1; r <= lastDataRow; r += 1) {
     const fields = readPurchaseOrderFlatRowFields(worksheet.getRow(r), colMap);
     if (poIdOverlay.byRow?.[r]?.id) {
@@ -433,8 +453,17 @@ function parsePurchaseOrderFlatWorkbook(workbook, buffer) {
 
     const productName = String(fields.itemName || '').trim();
     if (!productName && !String(fields.sku || '').trim()) {
-      skippedNoProduct += 1;
-      continue;
+      // Service / non-inventory PO line (lab testing, effluent treatment, etc.): Zoho leaves
+      // Item Name blank but carries a description/account/amount. Keep it as a service line so
+      // the order still imports, instead of silently dropping item-less orders.
+      const hasSignal = String(fields.itemDesc || '').trim() || String(fields.account || '').trim()
+        || parseOptionalNumber(fields.itemTotal) != null || parseOptionalNumber(fields.unitPrice) != null;
+      if (!hasSignal) {
+        skippedNoProduct += 1;
+        continue;
+      }
+      fields.itemName = String(fields.itemDesc || '').trim() || String(fields.account || '').trim() || 'Service / Non-inventory';
+      fields.isServiceLine = true;
     }
 
     const entry = grouped.get(groupKey) || {
@@ -446,6 +475,7 @@ function parsePurchaseOrderFlatWorkbook(workbook, buffer) {
       excel_row: r,
       fields,
       item: purchaseOrderFlatFieldsToItem(fields),
+      raw: readRawRow(worksheet.getRow(r)),
     });
     grouped.set(groupKey, entry);
   }
@@ -455,6 +485,9 @@ function parsePurchaseOrderFlatWorkbook(workbook, buffer) {
     const payload = buildPoHeaderFromFlatFields(group.headerFields);
     if (!payload) continue;
     payload.items = group.lineRows.map((lineRow) => lineRow.item);
+    // Preserve every source column verbatim under form_data.raw_import.
+    const rawLines = group.lineRows.map((lr) => lr.raw).filter((x) => x && Object.keys(x).length);
+    payload.form_data = { ...(payload.form_data || {}), raw_import: { header: rawLines[0] || {}, lines: rawLines } };
     rows.push({
       excel_row: group.firstExcelRow,
       sheet_name: worksheet.name,

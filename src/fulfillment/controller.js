@@ -116,7 +116,8 @@ function formatOrder(row, batchMap = {}) {
   const d = row.get ? row.get({ plain: true }) : row;
   const items = (d.items || []).map((item) => formatItem(item, batchMap));
   const allSplits = items.flatMap((i) => i.batchSplits || []);
-  const soStatus = recalculateSOStatusFromSplits(allSplits);
+  // Manual cancel / manual-fulfill freeze the status — never recompute over it.
+  const soStatus = d.manual_status_override ? d.so_status : recalculateSOStatusFromSplits(allSplits);
   return {
     id: d.id,
     soNo: d.so_no,
@@ -139,6 +140,7 @@ function formatOrder(row, batchMap = {}) {
     dispatchDate: d.dispatch_date || undefined,
     courier: d.courier || undefined,
     zohoInvoiceId: d.zoho_invoice_id || undefined,
+    rawImport: d.raw_import || null,
     items,
   };
 }
@@ -791,6 +793,9 @@ async function updateOrder(req, res) {
       'order_date', 'due_date', 'priority', 'so_status', 'so_value',
       'ship_address', 'payment_terms', 'notes',
       'invoice_no', 'invoice_date', 'awb_no', 'dispatch_date', 'courier',
+      // Force-edit (edit regardless of status/approvals) may also set the commercial lifecycle
+      // and clear a manual cancel/fulfill freeze.
+      'commercial_status', 'manual_status_override',
     ];
     const hasItemsPayload = Array.isArray(req.body.items);
     const requestedKeys = Object.keys(req.body || {});
@@ -913,6 +918,56 @@ async function deleteOrder(req, res) {
   } catch (err) {
     console.error('deleteOrder error:', err);
     res.status(500).json({ error: 'Failed to delete fulfillment order' });
+  }
+}
+
+/**
+ * PATCH /:id/cancel — cancel a sales order regardless of status/approvals.
+ * Freezes status (manual_status_override) so split recompute can't revive it.
+ */
+async function cancelOrder(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const row = await FulfillmentOrder.findOne({ where: activeRowWhere({ id }) });
+    if (!row) return res.status(404).json({ error: 'Fulfillment order not found' });
+    const reason = String(req.body?.reason || '').trim();
+    const prevNotes = row.get('notes') || '';
+    await row.update({
+      so_status: 'cancelled',
+      commercial_status: 'cancelled',
+      manual_status_override: true,
+      notes: reason ? `${prevNotes}${prevNotes ? '\n' : ''}[Cancelled] ${reason}`.trim() : prevNotes,
+    });
+    res.json(formatOrder(await FulfillmentOrder.findByPk(id, { include: INCLUDE_FULL })));
+  } catch (err) {
+    console.error('cancelOrder error:', err);
+    res.status(500).json({ error: 'Failed to cancel sales order' });
+  }
+}
+
+/**
+ * PATCH /:id/manual-fulfill — mark a sales order fulfilled without the pick/invoice/ship/deliver
+ * workflow. Sets so_status + commercial_status to closed and freezes recompute.
+ */
+async function manualFulfillOrder(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const row = await FulfillmentOrder.findOne({ where: activeRowWhere({ id }) });
+    if (!row) return res.status(404).json({ error: 'Fulfillment order not found' });
+    const reason = String(req.body?.reason || '').trim();
+    const prevNotes = row.get('notes') || '';
+    await row.update({
+      so_status: 'closed',
+      commercial_status: 'closed',
+      manual_status_override: true,
+      notes: reason ? `${prevNotes}${prevNotes ? '\n' : ''}[Manually fulfilled] ${reason}`.trim() : prevNotes,
+    });
+    res.json(formatOrder(await FulfillmentOrder.findByPk(id, { include: INCLUDE_FULL })));
+  } catch (err) {
+    console.error('manualFulfillOrder error:', err);
+    res.status(500).json({ error: 'Failed to manually fulfill sales order' });
   }
 }
 
@@ -2170,6 +2225,8 @@ module.exports = {
   createOrder,
   updateOrder,
   deleteOrder,
+  cancelOrder,
+  manualFulfillOrder,
   pickSplits,
   invoiceSplits,
   shipSplits,

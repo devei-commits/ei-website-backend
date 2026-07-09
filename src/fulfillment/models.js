@@ -25,9 +25,11 @@ FulfillmentOrder.init(
       allowNull: false,
       defaultValue: 'planned',
       validate: {
-        isIn: [['planned', 'in_production', 'partial', 'fg_ready', 'picking', 'invoiced', 'shipped', 'delivered', 'closed']],
+        isIn: [['planned', 'in_production', 'partial', 'fg_ready', 'picking', 'invoiced', 'shipped', 'delivered', 'closed', 'cancelled']],
       },
     },
+    /** True when so_status/commercial_status were set manually (cancel / manual-fulfill) and must NOT be recomputed from splits. */
+    manual_status_override: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     so_value: { type: DataTypes.DECIMAL(14, 2), allowNull: true, defaultValue: 0 },
     ship_address: { type: DataTypes.TEXT, allowNull: true },
     /** Staged JSON (Items List shape) or legacy short text; VARCHAR widened for compact JSON. */
@@ -51,11 +53,13 @@ FulfillmentOrder.init(
       allowNull: true,
       defaultValue: 'received',
       validate: {
-        isIn: [['draft', 'received', 'advance_pending', 'under_review', 'approved', 'partial_closed', 'closed', 'on_hold']],
+        isIn: [['draft', 'received', 'advance_pending', 'under_review', 'approved', 'partial_closed', 'closed', 'on_hold', 'cancelled']],
       },
     },
     /** Stores the commercial_status value to restore when leaving on_hold. */
     on_hold_previous_status: { type: DataTypes.STRING(30), allowNull: true },
+    /** Full raw Excel import row(s) — every source column preserved verbatim: { header:{}, lines:[{}] }. */
+    raw_import: { type: DataTypes.JSON, allowNull: true },
     /** FK to vendor_clients.id — stored for efficient dashboard grouping by client. */
     vendor_client_id: { type: DataTypes.INTEGER, allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
