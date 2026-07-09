@@ -21,6 +21,8 @@ QualitySpecRule.init(
     category: { type: DataTypes.STRING(150), allowNull: false },
     /** '' = category-level rule (applies to every sub-category unless a more specific rule exists). */
     sub_category: { type: DataTypes.STRING(150), allowNull: false, defaultValue: '' },
+    /** '' = no further refinement below sub_category. Requires sub_category to be set too. */
+    sub_sub_category: { type: DataTypes.STRING(150), allowNull: false, defaultValue: '' },
     /** Array of QualitySpecTableRow-shaped objects (parameter, specLimit, method, mandatory, ...). */
     rows: { type: DataTypes.JSON, allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
@@ -36,8 +38,8 @@ QualitySpecRule.init(
     indexes: [
       {
         unique: true,
-        fields: ['entity_type', 'category', 'sub_category'],
-        name: 'quality_spec_rules_entity_category_subcategory_uniq',
+        fields: ['entity_type', 'category', 'sub_category', 'sub_sub_category'],
+        name: 'quality_spec_rules_scope_uniq',
       },
     ],
   }

@@ -241,7 +241,14 @@ function resolveRmEditCategories(record) {
   return { subCategory, optionalRmSubCategory, optionalRmSubSubCategory };
 }
 
-/** Port of resolveRmQualitySpecContext's functionalCategory/functionalSub derivation. */
+/**
+ * Port of resolveRmQualitySpecContext's functionalCategory/functionalSub derivation, plus a 3rd
+ * scope level (functionalSubSub) for the "sub-sub-category" quality-spec rule scope: the raw
+ * taxonomy leaf value (unifiedSub) BEFORE it gets collapsed into functionalSub. For most branches
+ * this equals functionalSub (just differently cased), but some branches map several raw values
+ * onto one functionalSub (e.g. surfactants' uva/uvb/broad-spectrum all → "UV Filter"), so
+ * functionalSubSub can carry real extra granularity beyond functionalSub.
+ */
 function resolveRmQualitySpecFunctionalContext(ctx) {
   const unifiedCategory =
     normalizeRmDetailSubCategoryKey(ctx.optionalRmSubCategory) ||
@@ -254,14 +261,15 @@ function resolveRmQualitySpecFunctionalContext(ctx) {
   return {
     functionalCategory: rmUnifiedToLegacyQualityCategory(unifiedCategory),
     functionalSub: rmUnifiedToLegacyQualitySub(unifiedCategory, unifiedSub),
+    functionalSubSub: unifiedSub,
   };
 }
 
-/** End-to-end: a saved RM row's { category, group, form_data } → the quality-spec rule's { category, subCategory }. */
+/** End-to-end: a saved RM row's { category, group, form_data } → the quality-spec rule's { category, subCategory, subSubCategory }. */
 function resolveRmQualitySpecCategoryFromRow(row) {
   const cats = resolveRmEditCategories(row);
-  const { functionalCategory, functionalSub } = resolveRmQualitySpecFunctionalContext(cats);
-  return { category: functionalCategory, subCategory: functionalSub };
+  const { functionalCategory, functionalSub, functionalSubSub } = resolveRmQualitySpecFunctionalContext(cats);
+  return { category: functionalCategory, subCategory: functionalSub, subSubCategory: functionalSubSub };
 }
 
 module.exports = {

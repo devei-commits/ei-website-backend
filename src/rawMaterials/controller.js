@@ -93,12 +93,12 @@ async function formatRawMaterialFull(row) {
 
   let form_data = d.form_data ?? null;
   if (!locked) {
-    const { category, subCategory } = resolveRmQualitySpecCategoryFromRow({
+    const { category, subCategory, subSubCategory } = resolveRmQualitySpecCategoryFromRow({
       category: d.category,
       group: d.group,
       form_data: fd,
     });
-    const { commonRows, subRows } = await resolveEntityQualitySpecs('RM', category, subCategory);
+    const { commonRows, subRows } = await resolveEntityQualitySpecs('RM', category, subCategory, subSubCategory);
     const pathKey = category && subCategory ? `${category}::${subCategory}` : null;
     form_data = {
       ...fd,

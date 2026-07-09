@@ -229,6 +229,71 @@ const PATCHES = [
     table: 'reserved_batch_items',
     sql: 'ALTER TABLE "reserved_batch_items" ALTER COLUMN "quantity_reserved" TYPE DECIMAL(28, 16)',
   },
+  // warehouse_inventory / warehouse_inventory_location_history — core inventory tables
+  // (src/warehouseInventory/models.js, locationHistoryModel.js). CREATE TABLE fallback so a
+  // managed production DB that skips sync({alter:true}) still gets these if missing entirely;
+  // the ALTER COLUMN patches below then widen decimal precision on whichever copy exists.
+  {
+    name: 'warehouse_inventory.table',
+    table: 'warehouse_inventory',
+    skipTableCheck: true,
+    sql: `CREATE TABLE IF NOT EXISTS "warehouse_inventory" (
+      "id" SERIAL PRIMARY KEY,
+      "item_type" VARCHAR(10) NOT NULL,
+      "raw_material_id" INTEGER UNIQUE,
+      "pack_material_id" INTEGER UNIQUE,
+      "product_id" INTEGER UNIQUE,
+      "zone" TEXT,
+      "rack" TEXT,
+      "wh_stock" DECIMAL(28,16) DEFAULT 0,
+      "wh_unit" VARCHAR(20) DEFAULT 'KG',
+      "ml1_stock" DECIMAL(28,16) DEFAULT 0,
+      "ml2_stock" DECIMAL(28,16) DEFAULT 0,
+      "stock_in_hand" DECIMAL(28,16) DEFAULT 0,
+      "reserved" DECIMAL(28,16) DEFAULT 0,
+      "in_transit" DECIMAL(28,16) DEFAULT 0,
+      "reorder_pt" DECIMAL(14,2) DEFAULT 0,
+      "avg_mo" DECIMAL(14,2) DEFAULT 0,
+      "qc_status" VARCHAR(50) DEFAULT 'In Stock',
+      "batch_number" VARCHAR(50),
+      "expiry_date" DATE,
+      "created_at" TIMESTAMPTZ,
+      "updated_at" TIMESTAMPTZ,
+      "deleted_at" TIMESTAMPTZ,
+      "lifecycle_status" VARCHAR(255) DEFAULT 'active'
+    )`,
+  },
+  {
+    name: 'warehouse_inventory_location_history.table',
+    table: 'warehouse_inventory_location_history',
+    skipTableCheck: true,
+    sql: `CREATE TABLE IF NOT EXISTS "warehouse_inventory_location_history" (
+      "id" SERIAL PRIMARY KEY,
+      "warehouse_inventory_id" INTEGER NOT NULL,
+      "item_type" VARCHAR(10) NOT NULL,
+      "raw_material_id" INTEGER,
+      "pack_material_id" INTEGER,
+      "product_id" INTEGER,
+      "from_zone" VARCHAR(100),
+      "from_rack" VARCHAR(100),
+      "to_zone" VARCHAR(100),
+      "to_rack" VARCHAR(100),
+      "qty_delta" DECIMAL(28,16),
+      "action_type" VARCHAR(30),
+      "source_grn_id" INTEGER,
+      "source_mrn_id" INTEGER,
+      "moved_at" TIMESTAMPTZ NOT NULL,
+      "reserved_delta" DECIMAL(28,16),
+      "reserved_after" DECIMAL(28,16),
+      "production_batch_id" INTEGER,
+      "batch_no" VARCHAR(50),
+      "dispensing_bundle_id" VARCHAR(80),
+      "changes_json" JSONB,
+      "note" TEXT,
+      "deleted_at" TIMESTAMPTZ,
+      "lifecycle_status" VARCHAR(255) DEFAULT 'active'
+    )`,
+  },
   {
     name: 'warehouse_inventory.wh_stock_decimal_16',
     table: 'warehouse_inventory',
@@ -880,17 +945,11 @@ const PATCHES = [
       "entity_type" VARCHAR(20) NOT NULL,
       "category" VARCHAR(150) NOT NULL,
       "sub_category" VARCHAR(150) NOT NULL DEFAULT '',
+      "sub_sub_category" VARCHAR(150) NOT NULL DEFAULT '',
       "rows" JSONB,
       "created_at" TIMESTAMPTZ,
       "updated_at" TIMESTAMPTZ
     )`,
-  },
-  {
-    name: 'quality_spec_rules.entity_category_subcategory.unique',
-    table: 'quality_spec_rules',
-    skipTableCheck: true,
-    sql:
-      'CREATE UNIQUE INDEX IF NOT EXISTS "quality_spec_rules_entity_category_subcategory_uniq" ON "quality_spec_rules" ("entity_type", "category", "sub_category")',
   },
   {
     // entity_type widened for PR section namespaces (e.g. 'PR_FINAL_CLEARANCE' = 18 chars);
@@ -898,6 +957,31 @@ const PATCHES = [
     name: 'quality_spec_rules.entity_type.widen',
     table: 'quality_spec_rules',
     sql: 'ALTER TABLE "quality_spec_rules" ALTER COLUMN "entity_type" TYPE VARCHAR(20)',
+  },
+  {
+    // sub_sub_category: RM/PM quality-spec rules can now be scoped a 3rd level deep (e.g.
+    // category="Surfactant", sub_category="Anionic", sub_sub_category="<detail>").
+    name: 'quality_spec_rules.sub_sub_category',
+    table: 'quality_spec_rules',
+    sql: `ALTER TABLE "quality_spec_rules" ADD COLUMN IF NOT EXISTS "sub_sub_category" VARCHAR(150) NOT NULL DEFAULT ''`,
+  },
+  {
+    name: 'quality_spec_rules.entity_category_subcategory.unique.drop',
+    table: 'quality_spec_rules',
+    sql: 'DROP INDEX IF EXISTS "quality_spec_rules_entity_category_subcategory_uniq"',
+  },
+  {
+    // Postgres identifiers cap at 63 bytes — the descriptive name silently truncates and can
+    // collide with itself across separate CREATE attempts, so this uses a short, exact name.
+    name: 'quality_spec_rules.scope.unique.drop_oversized_name_attempt',
+    table: 'quality_spec_rules',
+    sql: 'DROP INDEX IF EXISTS "quality_spec_rules_entity_category_subcategory_subsubcategory_u"',
+  },
+  {
+    name: 'quality_spec_rules.scope.unique',
+    table: 'quality_spec_rules',
+    sql:
+      'CREATE UNIQUE INDEX IF NOT EXISTS "quality_spec_rules_scope_uniq" ON "quality_spec_rules" ("entity_type", "category", "sub_category", "sub_sub_category")',
   },
 
   // quality_specs_locked — once true, an item's own saved quality specs win over the

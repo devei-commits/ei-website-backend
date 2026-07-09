@@ -22,6 +22,7 @@ function formatQualitySpecRule(row) {
     entityType: d.entity_type,
     category: d.category,
     subCategory: d.sub_category || '',
+    subSubCategory: d.sub_sub_category || '',
     rows: Array.isArray(d.rows) ? d.rows : [],
     createdAt: d.created_at,
     updatedAt: d.updated_at,
@@ -29,8 +30,10 @@ function formatQualitySpecRule(row) {
 }
 
 /**
- * GET /api/v1/quality-spec-rules?entityType=RM[&category=Surfactant]
- * Lists rule rows for a rule-management screen.
+ * GET /api/v1/quality-spec-rules?entityType=RM[&category=Surfactant][&subCategory=Anionic][&subSubCategory=UVA]
+ * Lists rule rows for a rule-management screen. Passing subCategory/subSubCategory narrows to
+ * that exact scope (used by the item-form "Add Custom Quality Spec" modal to find/merge into the
+ * existing rule at a scope before upserting it).
  */
 async function listQualitySpecRules(req, res) {
   try {
@@ -41,9 +44,15 @@ async function listQualitySpecRules(req, res) {
     const where = { entity_type: entityType };
     const category = normalizeCategory(req.query.category);
     if (category) where.category = category;
+    if (req.query.subCategory != null || req.query.sub_category != null) {
+      where.sub_category = normalizeSubCategory(req.query.subCategory ?? req.query.sub_category);
+    }
+    if (req.query.subSubCategory != null || req.query.sub_sub_category != null) {
+      where.sub_sub_category = normalizeSubCategory(req.query.subSubCategory ?? req.query.sub_sub_category);
+    }
     const rows = await QualitySpecRule.findAll({
       where,
-      order: [['category', 'ASC'], ['sub_category', 'ASC']],
+      order: [['category', 'ASC'], ['sub_category', 'ASC'], ['sub_sub_category', 'ASC']],
     });
     res.json(rows.map(formatQualitySpecRule));
   } catch (err) {
@@ -53,8 +62,9 @@ async function listQualitySpecRules(req, res) {
 }
 
 /**
- * GET /api/v1/quality-spec-rules/resolve?entityType=RM&category=Surfactant&subCategory=Anionic
- * Returns the merged rule rows an unlocked item in this category/sub-category should show.
+ * GET /api/v1/quality-spec-rules/resolve?entityType=RM&category=Surfactant&subCategory=Anionic[&subSubCategory=UVA]
+ * Returns the merged rule rows an unlocked item in this category/sub-category/sub-sub-category
+ * should show.
  */
 async function resolveQualitySpecRules(req, res) {
   try {
@@ -67,26 +77,37 @@ async function resolveQualitySpecRules(req, res) {
       return res.status(400).json({ error: 'category is required' });
     }
     const subCategory = normalizeSubCategory(req.query.subCategory ?? req.query.sub_category);
+    const subSubCategory = normalizeSubCategory(req.query.subSubCategory ?? req.query.sub_sub_category);
 
-    const commonRule = await QualitySpecRule.findOne({
-      where: { entity_type: entityType, category, sub_category: '' },
-    });
-    const subRule = subCategory
-      ? await QualitySpecRule.findOne({
-          where: { entity_type: entityType, category, sub_category: subCategory },
-        })
-      : null;
+    const [commonRule, subRule, subSubRule] = await Promise.all([
+      QualitySpecRule.findOne({
+        where: { entity_type: entityType, category, sub_category: '', sub_sub_category: '' },
+      }),
+      subCategory
+        ? QualitySpecRule.findOne({
+            where: { entity_type: entityType, category, sub_category: subCategory, sub_sub_category: '' },
+          })
+        : null,
+      subCategory && subSubCategory
+        ? QualitySpecRule.findOne({
+            where: { entity_type: entityType, category, sub_category: subCategory, sub_sub_category: subSubCategory },
+          })
+        : null,
+    ]);
 
     const commonRows = commonRule ? formatQualitySpecRule(commonRule).rows : [];
     const subRows = subRule ? formatQualitySpecRule(subRule).rows : [];
+    const subSubRows = subSubRule ? formatQualitySpecRule(subSubRule).rows : [];
 
     res.json({
       entityType,
       category,
       subCategory,
+      subSubCategory,
       commonRows,
       subRows,
-      rows: mergeQualitySpecRuleRows(commonRows, subRows),
+      subSubRows,
+      rows: mergeQualitySpecRuleRows(commonRows, subRows, subSubRows),
     });
   } catch (err) {
     console.error('resolveQualitySpecRules error', err);
@@ -95,8 +116,8 @@ async function resolveQualitySpecRules(req, res) {
 }
 
 /**
- * PUT /api/v1/quality-spec-rules — upsert a rule by (entityType, category, subCategory).
- * Body: { entityType, category, subCategory?, rows: [...] }
+ * PUT /api/v1/quality-spec-rules — upsert a rule by (entityType, category, subCategory, subSubCategory).
+ * Body: { entityType, category, subCategory?, subSubCategory?, rows: [...] }
  */
 async function upsertQualitySpecRule(req, res) {
   try {
@@ -110,10 +131,14 @@ async function upsertQualitySpecRule(req, res) {
       return res.status(400).json({ error: 'category is required' });
     }
     const subCategory = normalizeSubCategory(b.subCategory ?? b.sub_category);
+    const subSubCategory = normalizeSubCategory(b.subSubCategory ?? b.sub_sub_category);
+    if (subSubCategory && !subCategory) {
+      return res.status(400).json({ error: 'subCategory is required when subSubCategory is set' });
+    }
     const rows = Array.isArray(b.rows) ? b.rows : [];
 
     const [row] = await QualitySpecRule.findOrCreate({
-      where: { entity_type: entityType, category, sub_category: subCategory },
+      where: { entity_type: entityType, category, sub_category: subCategory, sub_sub_category: subSubCategory },
       defaults: { rows },
     });
     await row.update({ rows });
