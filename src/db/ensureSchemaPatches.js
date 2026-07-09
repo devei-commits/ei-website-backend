@@ -508,6 +508,25 @@ const PATCHES = [
     table: 'products',
     sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "approval_team_pending" JSONB',
   },
+  // PR master dual-track approval — independent RM + PM approval state (send → approve).
+  // PR goes Active only when both tracks are Approved; any BOM edit resets both. See
+  // src/lib/prTrackApproval.js. Backfill: existing Active rows get both tracks pre-Approved.
+  {
+    name: 'products.pr_track_approvals',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "pr_track_approvals" JSONB',
+  },
+  {
+    name: 'products.pr_track_approvals.backfill_active',
+    table: 'products',
+    sql: `UPDATE "products"
+      SET "pr_track_approvals" = jsonb_build_object(
+        'rm', jsonb_build_object('status', 'Approved', 'sent_at', NULL, 'sent_by', NULL, 'approved_at', NULL, 'approved_by', NULL, 'note', NULL),
+        'pm', jsonb_build_object('status', 'Approved', 'sent_at', NULL, 'sent_by', NULL, 'approved_at', NULL, 'approved_by', NULL, 'note', NULL)
+      )
+      WHERE "pr_track_approvals" IS NULL
+        AND lower(COALESCE("status", "lifecycle_status", '')) = 'active'`,
+  },
   {
     name: 'products.form_data',
     table: 'products',

@@ -36,6 +36,24 @@ const {
   applyAutoAssignOnTouch,
 } = require('../lib/masterApprovalAutoAssign');
 const {
+  readTrackApprovals,
+  formatTrackApprovalsForApi,
+  detectChangedSections,
+  canActOnTrack,
+  applyTrackAction,
+  readTrackOwner,
+  emptyTrackState,
+  callerIdFromReq,
+  TRACK_STAGE_KEY,
+  TRACK_LABEL,
+} = require('../lib/prTrackApproval');
+const {
+  readMasterApprovalStageAssignees,
+  formatStageAssigneesForApi,
+  buildStageSlotForUserId,
+} = require('../lib/masterApprovalAssignee');
+const { isPrivilegedRole } = require('../middleware/security');
+const {
   hydratePrQualitySpecRowsBySectionFromBom,
   hydratePrQualityBulkSubSpecRowsByPathFromBom,
   hydratePrQualityFinalSubSpecRowsByPathFromBom,
@@ -875,6 +893,8 @@ function formatProductForList(p) {
   const d = p.get ? p.get({ plain: true }) : p;
   return {
     ...d,
+    pr_track_approvals: formatTrackApprovalsForApi(readTrackApprovals(d)),
+    approval_stage_assignees: formatStageAssigneesForApi(readMasterApprovalStageAssignees(d)),
     internal_sku_code: d.product_code ?? null,
     zoho_sku_code: d.zoho_sku_code ?? null,
     rm_ingredients_count: p.rm_ingredients_count ?? null,
@@ -1310,6 +1330,8 @@ const getProductDetail = async (req, res) => {
       pr_quality_dispatch_sub_spec_rows_by_path,
       pr_facility_licences,
       quality_specs_locked: bomPlain ? (bomPlain.quality_specs_locked ?? false) : false,
+      pr_track_approvals: formatTrackApprovalsForApi(readTrackApprovals(plain)),
+      approval_stage_assignees: formatStageAssigneesForApi(readMasterApprovalStageAssignees(plain)),
       internal_sku_code: plain.product_code ?? null,
       zoho_sku_code: plain.zoho_sku_code ?? null,
       bom_composite_item: bom ? bom.bom_composite_item : null,
@@ -1343,6 +1365,61 @@ const getProductDetail = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+/**
+ * The PR edit form always resends the full rm_lines/pm_lines/process_steps on every save, so a
+ * pure value-diff against the stored BOM is unreliable — GET-side enrichment (live category
+ * resolution, joined display fields) doesn't always round-trip byte-identical to what's actually
+ * stored, which can flag a section as "changed" when the user never opened that tab. When the
+ * frontend sends an explicit sections_touched flag (computed by diffing its own before/after
+ * state in one consistent shape), trust that instead of re-deriving it from the payload.
+ * @param {unknown} raw
+ * @returns {{ rm: boolean, pm: boolean } | null}
+ */
+function readExplicitSectionsTouched(raw) {
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const o = /** @type {Record<string, unknown>} */ (raw);
+  if (typeof o.rm !== 'boolean' || typeof o.pm !== 'boolean') return null;
+  return { rm: o.rm, pm: o.pm };
+}
+
+/**
+ * A PR RM/PM section was edited. Auto-assign the editor to any OPEN owner slot for the changed
+ * section(s), then reset BOTH approval tracks to Draft (the whole PR must be re-approved).
+ * Assumes the caller has already passed the section-lock check.
+ * @param {import('express').Request} req
+ * @param {import('sequelize').Model} product
+ * @param {{ rm: boolean, pm: boolean }} changed
+ */
+async function applyPrSectionChangeEffects(req, product, changed) {
+  const stages = readMasterApprovalStageAssignees(product);
+  const callerId = callerIdFromReq(req);
+
+  // Editor takes ownership of an open slot for the section they changed — including admins, so
+  // the RM/Pack assign cell always reflects who actually touched the section. Once claimed, only
+  // that owner (or an admin) may edit it further (see the section-lock check in updateProduct).
+  if (callerId) {
+    for (const tk of ['rm', 'pm']) {
+      if (!changed[tk]) continue;
+      const slotKey = TRACK_STAGE_KEY[tk];
+      if (!stages[slotKey] || !stages[slotKey].userId) {
+        const slot = await buildStageSlotForUserId(callerId);
+        if (slot) stages[slotKey] = slot;
+      }
+    }
+  }
+
+  const resetTracks = { rm: emptyTrackState(), pm: emptyTrackState() };
+  await product.update({
+    approval_stage_assignees: formatStageAssigneesForApi(stages),
+    approval_assigned_user_id: stages.approver?.userId ?? null,
+    approval_assigned_display_name: stages.approver?.displayName ?? null,
+    pr_track_approvals: formatTrackApprovalsForApi(resetTracks),
+    status: 'Draft',
+    lifecycle_status: 'Draft',
+    updated_at: new Date(),
+  });
+}
 
 const updateProduct = async (req, res) => {
   try {
@@ -1434,10 +1511,38 @@ const updateProduct = async (req, res) => {
     // Optional: update linked BOM (formula, pack, process, specs); create BOM if missing
     const bomPayload = req.body.bom;
     const isDraftSave = isPrDraftWrite(req.body, product);
+    // PR dual-track: which owned section(s) this edit touches (drives lock + re-approval reset).
+    let prSectionChange = { rm: false, pm: false };
     if (bomPayload && typeof bomPayload === 'object') {
       let bom = await BOM.findOne({ where: { product_id: productId } });
       const rmFromPayload = Array.isArray(bomPayload.rm_lines);
       const pmFromPayload = Array.isArray(bomPayload.pm_lines);
+
+      // Determine which sections actually changed vs the stored BOM (compare BEFORE mutating it),
+      // then enforce section ownership: a locked section may only be edited by its owner or an admin.
+      // Prefer the frontend's own before/after diff when it sent one — see readExplicitSectionsTouched.
+      const explicitTouched = readExplicitSectionsTouched(
+        bomPayload.sections_touched ?? bomPayload.sectionsTouched
+      );
+      prSectionChange = explicitTouched
+        ? explicitTouched
+        : bom
+          ? detectChangedSections(bomPayload, bom)
+          : { rm: !!rmFromPayload, pm: !!pmFromPayload };
+      if (req.user && !isPrivilegedRole(req.user)) {
+        const callerId = callerIdFromReq(req);
+        for (const tk of ['rm', 'pm']) {
+          if (!prSectionChange[tk]) continue;
+          const owner = readTrackOwner(product, tk);
+          if (owner && owner.userId !== callerId) {
+            return res.status(403).json({
+              error: `The ${TRACK_LABEL[tk]} section is locked to ${owner.displayName}. Only they (or an admin) can change ${TRACK_LABEL[tk]} details.`,
+              message: `The ${TRACK_LABEL[tk]} section is locked to ${owner.displayName}.`,
+              code: 'PR_SECTION_LOCKED',
+            });
+          }
+        }
+      }
 
       if (!bom) {
         const nextRm = rmFromPayload ? bomPayload.rm_lines : [];
@@ -1712,6 +1817,12 @@ const updateProduct = async (req, res) => {
       }
     }
 
+    // An RM/PM section changed → editor takes any open owner slot and BOTH approval tracks reset
+    // to Draft (PR drops out of Active and must be re-approved by both teams).
+    if (prSectionChange.rm || prSectionChange.pm) {
+      await applyPrSectionChangeEffects(req, product, prSectionChange);
+    }
+
     const body = { ...req.body };
     delete body.bom;
     if (body.brand_client !== undefined) {
@@ -1890,6 +2001,21 @@ const deleteCategory = async (req, res) => {
 /**
  * PATCH /api/v1/products/:id/approval-status — team workflow update for PR masters.
  */
+/** Response payload for a PR after any approval-workflow change (dual-track shape). */
+function formatPrApprovalResponse(product) {
+  const d = product.get({ plain: true });
+  const tracks = readTrackApprovals(product);
+  return {
+    product_id: d.product_id,
+    product_code: d.product_code,
+    product_name: d.product_name,
+    status: d.status,
+    lifecycle_status: d.lifecycle_status,
+    pr_track_approvals: formatTrackApprovalsForApi(tracks),
+    approval_stage_assignees: formatStageAssigneesForApi(readMasterApprovalStageAssignees(product)),
+  };
+}
+
 const patchProductApprovalStatus = async (req, res) => {
   try {
     const productId = parseInt(req.params.id, 10);
@@ -1901,6 +2027,49 @@ const patchProductApprovalStatus = async (req, res) => {
       return res.status(404).json({ error: 'Product not found' });
     }
 
+    const body = req.body || {};
+    const track = body.track != null ? String(body.track).trim().toLowerCase() : null;
+
+    // Dual-track workflow: { track: 'rm'|'pm', action: 'send'|'approve'|'revert', note? }
+    if (track) {
+      if (track !== 'rm' && track !== 'pm') {
+        return res.status(400).json({ error: 'track must be "rm" or "pm"', code: 'PR_TRACK_INVALID' });
+      }
+      const action = body.action != null ? String(body.action).trim().toLowerCase() : null;
+      if (!['send', 'approve', 'revert'].includes(action)) {
+        return res
+          .status(400)
+          .json({ error: 'action must be send, approve or revert', code: 'PR_TRACK_ACTION_INVALID' });
+      }
+      if (!(await canActOnTrack(req, product, track))) {
+        const label = TRACK_LABEL[track];
+        return res.status(403).json({
+          error: `Only the assigned ${label} owner (or an admin) may ${action} the ${label} approval.`,
+          message: `Only the assigned ${label} owner (or an admin) may ${action} the ${label} approval.`,
+          code: 'MASTER_APPROVAL_FORBIDDEN',
+        });
+      }
+      const note = body.note != null ? String(body.note).trim() || null : null;
+      const result = await applyTrackAction({
+        req,
+        row: product,
+        track,
+        action,
+        note,
+        hooks: {
+          readMasterId: (r) => r.get('product_id'),
+          readMasterCode: (r) => r.get('product_code') ?? null,
+        },
+      });
+      if (result.error) {
+        return res.status(400).json({ error: result.error, code: result.code });
+      }
+      await product.reload();
+      redisCache.delByPattern('products:').catch(() => {});
+      return res.json(formatPrApprovalResponse(product));
+    }
+
+    // Assignee-only updates (assign RM/PM owner etc.) still flow through the shared handler.
     const ok = await handleMasterApprovalPatch(req, res, 'PR', product, prApprovalHooks());
     if (ok) {
       redisCache.delByPattern('products:').catch(() => {});
@@ -1908,6 +2077,63 @@ const patchProductApprovalStatus = async (req, res) => {
   } catch (err) {
     console.error('patchProductApprovalStatus error', err);
     return res.status(500).json({ error: err.message || 'Failed to update approval status' });
+  }
+};
+
+/**
+ * PATCH /api/v1/products/:id/approval-track-claim — claim ownership of an open RM/PM section.
+ * Catalogue-gated (same as editing the product), so any editor who starts touching an RM/PM
+ * field immediately becomes that track's owner. No-op if already the owner; 409 if owned by
+ * someone else. Does NOT reset approval tracks (no field change persisted yet).
+ */
+const claimProductApprovalTrack = async (req, res) => {
+  try {
+    const productId = parseInt(req.params.id, 10);
+    if (Number.isNaN(productId)) {
+      return res.status(400).json({ error: 'Invalid product id' });
+    }
+    const track = req.body && req.body.track != null ? String(req.body.track).trim().toLowerCase() : null;
+    if (track !== 'rm' && track !== 'pm') {
+      return res.status(400).json({ error: 'track must be "rm" or "pm"', code: 'PR_TRACK_INVALID' });
+    }
+    const product = await Product.findOne({ where: productActiveWhere({ product_id: productId }) });
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    const callerId = callerIdFromReq(req);
+    if (!callerId) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const owner = readTrackOwner(product, track);
+    if (owner && owner.userId !== callerId) {
+      return res.status(409).json({
+        error: `The ${TRACK_LABEL[track]} section is already owned by ${owner.displayName}.`,
+        message: `The ${TRACK_LABEL[track]} section is already owned by ${owner.displayName}.`,
+        code: 'PR_SECTION_LOCKED',
+        ...formatPrApprovalResponse(product),
+      });
+    }
+    if (!owner) {
+      const stages = readMasterApprovalStageAssignees(product);
+      const slot = await buildStageSlotForUserId(callerId);
+      if (!slot) {
+        return res.status(400).json({ error: 'Could not resolve current user' });
+      }
+      stages[TRACK_STAGE_KEY[track]] = slot;
+      await product.update({
+        approval_stage_assignees: formatStageAssigneesForApi(stages),
+        approval_assigned_user_id: stages.approver?.userId ?? null,
+        approval_assigned_display_name: stages.approver?.displayName ?? null,
+        updated_at: new Date(),
+      });
+      redisCache.delByPattern('products:').catch(() => {});
+    }
+    return res.json(formatPrApprovalResponse(product));
+  } catch (err) {
+    console.error('claimProductApprovalTrack error', err);
+    return res.status(500).json({ error: err.message || 'Failed to claim approval track' });
   }
 };
 
@@ -1923,7 +2149,9 @@ module.exports = {
     getProductById,
     getProductDetail,
     updateProduct,
+    applyPrSectionChangeEffects,
     patchProductApprovalStatus,
+    claimProductApprovalTrack,
     getProductApprovalStatusHistory,
     deleteProduct,
     getCategory,

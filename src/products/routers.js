@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { requireModule } = require('../middleware/security');
 const { requireMasterApprovalUpdate } = require('../lib/masterApprovalAuth');
-const { getAllProducts, saveProduct, syncPrProductZoho, createPRRegistration, getProductById, getProductDetail, updateProduct, patchProductApprovalStatus, getProductApprovalStatusHistory, deleteProduct, getCategory, saveCategory, getCategoryById, updateCategory, deleteCategory } = require('./controller');
+const { getAllProducts, saveProduct, syncPrProductZoho, createPRRegistration, getProductById, getProductDetail, updateProduct, patchProductApprovalStatus, claimProductApprovalTrack, getProductApprovalStatusHistory, deleteProduct, getCategory, saveCategory, getCategoryById, updateCategory, deleteCategory } = require('./controller');
 const { getZohoCompositeSkuBomSuggestion } = require('./zohoCompositeSkuBomSuggestion');
 const {
   uploadSkuBomExcelMiddleware,
@@ -79,6 +79,9 @@ router.post('/:id([0-9]+)/sku-bom/clear', requireCatalogueModule, clearSkuBomFor
 router.post('/:id([0-9]+)/bom/full-reset', requireCatalogueModule, clearPrBomFullForExcelReimport);
 router.get('/:id([0-9]+)/approval-status/history', requireCatalogueModule, getProductApprovalStatusHistory);
 router.patch('/:id([0-9]+)/approval-status', requireCatalogueModule, requireMasterApprovalUpdate('PR'), patchProductApprovalStatus);
+// Claim an open RM/PM section on first touch — catalogue-gated (same as editing the product),
+// so any editor takes ownership immediately, not only approval-permission holders.
+router.patch('/:id([0-9]+)/approval-track-claim', requireCatalogueModule, claimProductApprovalTrack);
 router.put('/:id', requireCatalogueModule, updateProduct);
 router.delete('/:id([0-9]+)', requireCatalogueModule, deleteProduct);
 router.post('/categories', requireCatalogueModule, saveCategory);

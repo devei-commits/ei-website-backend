@@ -148,6 +148,13 @@ Product.init(
     approval_assigned_display_name: { type: DataTypes.STRING(255), allowNull: true },
     approval_stage_assignees: { type: DataTypes.JSON, allowNull: true },
     approval_team_pending: { type: DataTypes.JSON, allowNull: true },
+    /**
+     * PR dual-track approval. Shape: { rm: TrackState, pm: TrackState } where TrackState =
+     * { status: 'Draft'|'Sent for Approval'|'Approved', sent_at, sent_by, approved_at, approved_by, note }.
+     * PR reaches Active only when both tracks are Approved; any RM/PM section edit resets both.
+     * See src/lib/prTrackApproval.js.
+     */
+    pr_track_approvals: { type: DataTypes.JSON, allowNull: true },
     form_data: { type: DataTypes.JSON, allowNull: true },
   },
   {
