@@ -34,6 +34,8 @@ PlanningExtracted.init(
     bom_specific_gravity: { type: DataTypes.DECIMAL(5, 3), allowNull: true },
     custom_batches: { type: DataTypes.JSON, allowNull: true },
     sent_batch_indices: { type: DataTypes.JSON, allowNull: true },
+    /** 0-based indices (into custom_batches) of buffer / over-production batches made above the SO qty. */
+    buffer_batch_indices: { type: DataTypes.JSON, allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
     deleted_at: { type: DataTypes.DATE, allowNull: true },

@@ -319,23 +319,28 @@ function bodyToPayload(body, type) {
       user_id = Number.isNaN(n) ? undefined : n;
     }
   }
+  // Every field below stays `undefined` (never `null`) when the caller didn't send it — updateVendorClient's
+  // `if (payload.field !== undefined)` guards rely on that to leave untouched fields alone. A trailing
+  // `?? null` here used to make every partial update wipe whatever it omitted (e.g. an edit that only
+  // changes `name` would null out entity_code, category, notes, ...). create-only defaults (status,
+  // entity_code) are applied explicitly at the createVendorClient call site instead, not here.
   return {
-    entity_code: body.entityCode ?? data.entityCode ?? null,
+    entity_code: body.entityCode ?? data.entityCode,
     type: type || body.type || 'vendor',
-    zoho_id: body.zohoId ?? body.zoho_id ?? data.zohoId ?? data.zoho_id ?? null,
-    name: body.name ?? data.tradeName ?? data.legalName ?? null,
-    email: body.email ?? data.primaryEmail ?? null,
-    phone: body.phone ?? data.primaryPhone ?? null,
-    location: body.location ?? data.state ?? null,
-    country: body.country ?? data.country ?? null,
-    city: body.city ?? null,
-    category: body.category ?? data.setupCategory ?? null,
-    status: body.status ?? 'pending',
-    payment_terms: body.paymentTerms ?? data.paymentTerms ?? null,
-    notes: body.notes ?? data.notes ?? null,
-    rating: body.rating != null ? body.rating : null,
-    moq: body.moq ?? null,
-    lead_time: body.leadTime ?? null,
+    zoho_id: body.zohoId ?? body.zoho_id ?? data.zohoId ?? data.zoho_id,
+    name: body.name ?? data.tradeName ?? data.legalName,
+    email: body.email ?? data.primaryEmail,
+    phone: body.phone ?? data.primaryPhone,
+    location: body.location ?? data.state,
+    country: body.country ?? data.country,
+    city: body.city,
+    category: body.category ?? data.setupCategory,
+    status: body.status,
+    payment_terms: body.paymentTerms ?? data.paymentTerms,
+    notes: body.notes ?? data.notes,
+    rating: body.rating != null ? body.rating : undefined,
+    moq: body.moq,
+    lead_time: body.leadTime,
     data,
     user_id,
   };
@@ -395,7 +400,7 @@ async function createVendorClient(req, res) {
           country: payload.country,
           city: payload.city,
           category: payload.category,
-          status: payload.status,
+          status: payload.status ?? 'pending',
           payment_terms: payload.payment_terms,
           notes: payload.notes,
           rating: payload.rating,

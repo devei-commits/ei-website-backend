@@ -1479,6 +1479,12 @@ const PATCHES = [
     table: 'boms',
     sql: 'ALTER TABLE "boms" ADD COLUMN IF NOT EXISTS "quality_specs_locked" BOOLEAN NOT NULL DEFAULT false',
   },
+  // planning_extracted — buffer / over-production batch indices (batches made above the SO qty)
+  {
+    name: 'planning_extracted.buffer_batch_indices',
+    table: 'planning_extracted',
+    sql: 'ALTER TABLE "planning_extracted" ADD COLUMN IF NOT EXISTS "buffer_batch_indices" JSON',
+  },
 ];
 
 async function tableExists(tableName) {

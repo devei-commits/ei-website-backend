@@ -457,6 +457,7 @@ function formatRow(row) {
     bomSpecificGravity: d.bom_specific_gravity != null ? Number(d.bom_specific_gravity) : null,
     customBatches: Array.isArray(d.custom_batches) ? d.custom_batches : null,
     sentBatchIndices: Array.isArray(d.sent_batch_indices) ? d.sent_batch_indices : [],
+    bufferBatchIndices: Array.isArray(d.buffer_batch_indices) ? d.buffer_batch_indices : [],
     createdAt: d.created_at != null ? serializeInstantIndia(d.created_at) : null,
     updatedAt: d.updated_at != null ? serializeInstantIndia(d.updated_at) : null,
     planningSla,
@@ -1014,6 +1015,7 @@ async function updatePlanningExtracted(req, res) {
       bomSpecificGravity: 'bom_specific_gravity',
       customBatches: 'custom_batches',
       sentBatchIndices: 'sent_batch_indices',
+      bufferBatchIndices: 'buffer_batch_indices',
     };
     const allowed = [
       'order_qty_display', 'total_kg_display', 'order_date', 'due_date',
@@ -1021,7 +1023,7 @@ async function updatePlanningExtracted(req, res) {
       'raw_materials', 'packaging_materials', 'color',
       'batch_count', 'batch_size_kg', 'planned_start_date', 'production_line', 'bom_confirmed_at',
       'bom_specific_gravity',
-      'custom_batches', 'sent_batch_indices',
+      'custom_batches', 'sent_batch_indices', 'buffer_batch_indices',
     ];
     const applyBomConfirmedAt = (incoming) => {
       if (incoming === undefined) return;
