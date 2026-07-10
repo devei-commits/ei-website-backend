@@ -143,6 +143,26 @@ const PATCHES = [
     `,
   },
 
+  // Safety net: a DB that has neither the old column (sku/product_sku) nor the new one
+  // (zoho_sku_code) — e.g. created before any of the above renames ever ran — would fall
+  // through both rename DO blocks as no-ops and be left with zoho_sku_code missing entirely.
+  // Runs after the renames above so a real rename always wins over this fallback.
+  {
+    name: 'raw_materials.zoho_sku_code.add_if_missing',
+    table: 'raw_materials',
+    sql: 'ALTER TABLE "raw_materials" ADD COLUMN IF NOT EXISTS "zoho_sku_code" VARCHAR(100)',
+  },
+  {
+    name: 'pack_materials.zoho_sku_code.add_if_missing',
+    table: 'pack_materials',
+    sql: 'ALTER TABLE "pack_materials" ADD COLUMN IF NOT EXISTS "zoho_sku_code" VARCHAR(100)',
+  },
+  {
+    name: 'products.zoho_sku_code.add_if_missing',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "zoho_sku_code" VARCHAR(100)',
+  },
+
   // Rename the partial-unique indexes added earlier (they still point at the renamed column,
   // but the index name itself should reflect the new column for human legibility).
   {
@@ -183,6 +203,11 @@ const PATCHES = [
   // but if an older DB was created with NOT NULL we drop it here so inserts without a
   // Zoho id (e.g. when zoho sync is disabled or the upstream call fails) succeed.
   {
+    name: 'raw_materials.zoho_id.add_if_missing',
+    table: 'raw_materials',
+    sql: 'ALTER TABLE "raw_materials" ADD COLUMN IF NOT EXISTS "zoho_id" VARCHAR(100)',
+  },
+  {
     name: 'raw_materials.zoho_id.drop_not_null',
     table: 'raw_materials',
     sql: 'ALTER TABLE "raw_materials" ALTER COLUMN "zoho_id" DROP NOT NULL',
@@ -207,10 +232,77 @@ const PATCHES = [
     table: 'raw_materials',
     sql: 'ALTER TABLE "raw_materials" ADD COLUMN IF NOT EXISTS "functional_equivalents" TEXT',
   },
+  // raw_materials — remaining columns added over time but never patched (audit, Jul 2026).
+  {
+    name: 'raw_materials.hsn_code',
+    table: 'raw_materials',
+    sql: 'ALTER TABLE "raw_materials" ADD COLUMN IF NOT EXISTS "hsn_code" VARCHAR(50)',
+  },
+  {
+    name: 'raw_materials.tax_pref',
+    table: 'raw_materials',
+    sql: 'ALTER TABLE "raw_materials" ADD COLUMN IF NOT EXISTS "tax_pref" VARCHAR(50)',
+  },
+  {
+    name: 'raw_materials.sales_purchase_account',
+    table: 'raw_materials',
+    sql: 'ALTER TABLE "raw_materials" ADD COLUMN IF NOT EXISTS "sales_purchase_account" VARCHAR(255)',
+  },
+  {
+    name: 'raw_materials.form_data',
+    table: 'raw_materials',
+    sql: 'ALTER TABLE "raw_materials" ADD COLUMN IF NOT EXISTS "form_data" JSON',
+  },
+  {
+    name: 'raw_materials.specific_gravity',
+    table: 'raw_materials',
+    sql: 'ALTER TABLE "raw_materials" ADD COLUMN IF NOT EXISTS "specific_gravity" DECIMAL(5,3)',
+  },
+  {
+    name: 'raw_materials.lead_time_days',
+    table: 'raw_materials',
+    sql: 'ALTER TABLE "raw_materials" ADD COLUMN IF NOT EXISTS "lead_time_days" INTEGER',
+  },
+  {
+    name: 'pack_materials.zoho_id.add_if_missing',
+    table: 'pack_materials',
+    sql: 'ALTER TABLE "pack_materials" ADD COLUMN IF NOT EXISTS "zoho_id" VARCHAR(100)',
+  },
   {
     name: 'pack_materials.zoho_id.drop_not_null',
     table: 'pack_materials',
     sql: 'ALTER TABLE "pack_materials" ALTER COLUMN "zoho_id" DROP NOT NULL',
+  },
+  // pack_materials — remaining columns added over time but never patched (audit, Jul 2026).
+  {
+    name: 'pack_materials.hsn_code',
+    table: 'pack_materials',
+    sql: 'ALTER TABLE "pack_materials" ADD COLUMN IF NOT EXISTS "hsn_code" VARCHAR(50)',
+  },
+  {
+    name: 'pack_materials.unit',
+    table: 'pack_materials',
+    sql: 'ALTER TABLE "pack_materials" ADD COLUMN IF NOT EXISTS "unit" VARCHAR(20)',
+  },
+  {
+    name: 'pack_materials.tax_pref',
+    table: 'pack_materials',
+    sql: 'ALTER TABLE "pack_materials" ADD COLUMN IF NOT EXISTS "tax_pref" VARCHAR(50)',
+  },
+  {
+    name: 'pack_materials.sales_purchase_account',
+    table: 'pack_materials',
+    sql: 'ALTER TABLE "pack_materials" ADD COLUMN IF NOT EXISTS "sales_purchase_account" VARCHAR(255)',
+  },
+  {
+    name: 'pack_materials.form_data',
+    table: 'pack_materials',
+    sql: 'ALTER TABLE "pack_materials" ADD COLUMN IF NOT EXISTS "form_data" JSON',
+  },
+  {
+    name: 'products.zoho_item_id.add_if_missing',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "zoho_item_id" VARCHAR(64)',
   },
   {
     name: 'products.zoho_item_id.drop_not_null',
@@ -221,6 +313,112 @@ const PATCHES = [
     name: 'products.pr_record_type',
     table: 'products',
     sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "pr_record_type" VARCHAR(20)',
+  },
+  // products — remaining PR-master fields added over time but never patched (audit, Jul 2026).
+  {
+    name: 'products.commercial_name',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "commercial_name" VARCHAR(255)',
+  },
+  {
+    name: 'products.lead_time_days',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "lead_time_days" INTEGER',
+  },
+  {
+    name: 'products.form',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "form" VARCHAR(100)',
+  },
+  {
+    name: 'products.fill_size',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "fill_size" VARCHAR(50)',
+  },
+  {
+    name: 'products.batch_size_kg',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "batch_size_kg" INTEGER',
+  },
+  {
+    name: 'products.shelf_life_months',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "shelf_life_months" INTEGER',
+  },
+  {
+    name: 'products.version',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "version" VARCHAR(50)',
+  },
+  {
+    name: 'products.license_cml',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "license_cml" VARCHAR(100)',
+  },
+  {
+    name: 'products.theoretical_yield_pct',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "theoretical_yield_pct" DECIMAL(5,2)',
+  },
+  {
+    name: 'products.pao_months',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "pao_months" INTEGER',
+  },
+  {
+    name: 'products.manufacturing_location',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "manufacturing_location" VARCHAR(255)',
+  },
+  {
+    name: 'products.equipment_vessel',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "equipment_vessel" VARCHAR(255)',
+  },
+  {
+    name: 'products.storage_conditions',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "storage_conditions" TEXT',
+  },
+  {
+    name: 'products.approved_claims',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "approved_claims" TEXT',
+  },
+  {
+    name: 'products.ph_range',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "ph_range" VARCHAR(50)',
+  },
+  {
+    name: 'products.viscosity_range',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "viscosity_range" VARCHAR(100)',
+  },
+  {
+    name: 'products.spf_pa_rating',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "spf_pa_rating" VARCHAR(50)',
+  },
+  {
+    name: 'products.appearance',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "appearance" VARCHAR(255)',
+  },
+  {
+    name: 'products.odour',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "odour" VARCHAR(255)',
+  },
+  {
+    name: 'products.fill_weight_spec',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "fill_weight_spec" VARCHAR(100)',
+  },
+  {
+    name: 'products.stability_summary',
+    table: 'products',
+    sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "stability_summary" TEXT',
   },
 
   // RM/PM qty precision through SO lifecycle (planning → reserve → inventory)
@@ -449,6 +647,242 @@ const PATCHES = [
     table: 'production_batches',
     sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "schedule_remarks" TEXT',
   },
+  // production_batches — BMR/BPR team + shift lead + QC officer assignment (present in the
+  // model since the batch team-assignment feature, but never patched here for managed DBs).
+  {
+    name: 'production_batches.team_bmr',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "team_bmr" JSON',
+  },
+  {
+    name: 'production_batches.team_bpr',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "team_bpr" JSON',
+  },
+  {
+    name: 'production_batches.shift_lead_bmr',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "shift_lead_bmr" VARCHAR(20)',
+  },
+  {
+    name: 'production_batches.shift_lead_bpr',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "shift_lead_bpr" VARCHAR(20)',
+  },
+  {
+    name: 'production_batches.qc_officer_bmr',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "qc_officer_bmr" VARCHAR(20)',
+  },
+  {
+    name: 'production_batches.qc_officer_bpr',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "qc_officer_bpr" VARCHAR(20)',
+  },
+  // production_batches — the rest of the model's columns, safety-netted rather than assumed
+  // present. The team_bmr/shift_lead_bmr group above came from this table's original creation
+  // commit and was STILL missing here, so "part of the first migration" isn't a reliable signal
+  // for this particular table — audit, Jul 2026.
+  {
+    name: 'production_batches.planning_batch_id',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "planning_batch_id" INTEGER',
+  },
+  {
+    name: 'production_batches.color',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "color" VARCHAR(30)',
+  },
+  {
+    name: 'production_batches.process_type',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "process_type" VARCHAR(10)',
+  },
+  {
+    name: 'production_batches.homogenizer',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "homogenizer" BOOLEAN DEFAULT false',
+  },
+  {
+    name: 'production_batches.main_vessel',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "main_vessel" VARCHAR(20)',
+  },
+  {
+    name: 'production_batches.supporting_tanks',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "supporting_tanks" JSON',
+  },
+  {
+    name: 'production_batches.filling_line',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "filling_line" VARCHAR(20)',
+  },
+  {
+    name: 'production_batches.filling_type',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "filling_type" VARCHAR(20)',
+  },
+  {
+    name: 'production_batches.packaging_line',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "packaging_line" VARCHAR(20)',
+  },
+  {
+    name: 'production_batches.monocarton',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "monocarton" BOOLEAN DEFAULT false',
+  },
+  {
+    name: 'production_batches.shrink',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "shrink" BOOLEAN DEFAULT false',
+  },
+  {
+    name: 'production_batches.mfg_date',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "mfg_date" DATE',
+  },
+  {
+    name: 'production_batches.fill_date',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "fill_date" DATE',
+  },
+  {
+    name: 'production_batches.pack_date',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "pack_date" DATE',
+  },
+  {
+    name: 'production_batches.fg_date',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "fg_date" DATE',
+  },
+  {
+    name: 'production_batches.rm_connect_date',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "rm_connect_date" DATE',
+  },
+  {
+    name: 'production_batches.pm_connect_date',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "pm_connect_date" DATE',
+  },
+  {
+    name: 'production_batches.rm_reserved',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "rm_reserved" BOOLEAN DEFAULT false',
+  },
+  {
+    name: 'production_batches.pm_reserved',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "pm_reserved" BOOLEAN DEFAULT false',
+  },
+  {
+    name: 'production_batches.rm_connected',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "rm_connected" BOOLEAN DEFAULT false',
+  },
+  {
+    name: 'production_batches.pm_connected',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "pm_connected" BOOLEAN DEFAULT false',
+  },
+  {
+    name: 'production_batches.dispensing_rm',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "dispensing_rm" JSON',
+  },
+  {
+    name: 'production_batches.dispensing_pm',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "dispensing_pm" JSON',
+  },
+  {
+    name: 'production_batches.mu_dispensing_bundle_id',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "mu_dispensing_bundle_id" VARCHAR(80)',
+  },
+  {
+    name: 'production_batches.mu_dispensing_bundles',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "mu_dispensing_bundles" JSON',
+  },
+  {
+    name: 'production_batches.bulk_yield',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "bulk_yield" DECIMAL(12,3)',
+  },
+  {
+    name: 'production_batches.fill_yield',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "fill_yield" DECIMAL(12,3)',
+  },
+  {
+    name: 'production_batches.fg_yield',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "fg_yield" DECIMAL(12,3)',
+  },
+  {
+    name: 'production_batches.bulk_batch_accepted',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "bulk_batch_accepted" BOOLEAN',
+  },
+  {
+    name: 'production_batches.fill_batch_accepted',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "fill_batch_accepted" BOOLEAN',
+  },
+  {
+    name: 'production_batches.fg_batch_accepted',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "fg_batch_accepted" BOOLEAN',
+  },
+  {
+    name: 'production_batches.qc_specs',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "qc_specs" JSON',
+  },
+  {
+    name: 'production_batches.remarks',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "remarks" TEXT',
+  },
+  {
+    name: 'production_batches.due_date',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "due_date" DATE',
+  },
+  {
+    name: 'production_batches.compatible_vessels',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "compatible_vessels" JSON',
+  },
+  {
+    name: 'production_batches.compatible_fill_lines',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "compatible_fill_lines" JSON',
+  },
+  {
+    name: 'production_batches.compatible_pack_lines',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "compatible_pack_lines" JSON',
+  },
+  {
+    name: 'production_batches.required_volume_liters',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "required_volume_liters" DECIMAL(10,2)',
+  },
+  {
+    name: 'production_batches.batch_index',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "batch_index" INTEGER',
+  },
+  {
+    name: 'production_batches.total_batches',
+    table: 'production_batches',
+    sql: 'ALTER TABLE "production_batches" ADD COLUMN IF NOT EXISTS "total_batches" INTEGER',
+  },
   {
     name: 'production_team_members.drop_table',
     sql: 'DROP TABLE IF EXISTS "production_team_members" CASCADE',
@@ -532,10 +966,35 @@ const PATCHES = [
     table: 'products',
     sql: 'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "form_data" JSONB',
   },
+  // products.lifecycle_status had no column default (unlike raw_materials/pack_materials, both
+  // 'active'), so any create path that omitted it (e.g. the Zoho item import) left the row with
+  // lifecycle_status = NULL — invisible to every scoped query, since the default read scope is
+  // `lifecycle_status != 'deleted'`, and NULL != 'deleted' is unknown in SQL, not true.
+  {
+    name: 'products.lifecycle_status.default',
+    table: 'products',
+    sql: `ALTER TABLE "products" ALTER COLUMN "lifecycle_status" SET DEFAULT 'Draft'`,
+  },
+  {
+    name: 'products.lifecycle_status.backfill_null',
+    table: 'products',
+    sql: `UPDATE "products" SET "lifecycle_status" = 'Draft' WHERE "lifecycle_status" IS NULL OR "lifecycle_status" = ''`,
+  },
   {
     name: 'users.last_login_at',
     table: 'users',
     sql: 'ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "last_login_at" TIMESTAMPTZ',
+  },
+  // users — remaining columns added over time but never patched (audit, Jul 2026).
+  {
+    name: 'users.portal_signup_role',
+    table: 'users',
+    sql: 'ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "portal_signup_role" VARCHAR(64)',
+  },
+  {
+    name: 'users.zoho_contact_id',
+    table: 'users',
+    sql: 'ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "zoho_contact_id" VARCHAR(64)',
   },
   {
     name: 'master_approval_status_history.table',

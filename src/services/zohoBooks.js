@@ -580,6 +580,7 @@ async function listItemsPage(options = {}) {
   });
   if (options.filterBy) qs.set('filter_by', String(options.filterBy));
   if (options.sortColumn) qs.set('sort_column', String(options.sortColumn));
+  if (options.searchText) qs.set('search_text', String(options.searchText));
 
   const url = `${getBooksBaseUrl()}/items?${qs.toString()}`;
 

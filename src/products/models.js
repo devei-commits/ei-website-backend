@@ -112,6 +112,7 @@ Product.init(
     lifecycle_status: {
       type: DataTypes.STRING,
       allowNull: true,
+      defaultValue: 'Draft',
     },
 
     // PR Master / Product Registration fields (products-master UI)
