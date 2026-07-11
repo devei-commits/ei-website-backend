@@ -171,9 +171,17 @@ const SALES_ORDER_FLAT_ALIASES = {
   zohoCustomerId: ['customer id'],
   customerName: ['customer name'],
   eiSoReference: ['reference#', 'reference'],
+  placeOfSupply: ['place of supply'],
+  placeOfSupplyWithStateCode: ['place of supply(with state code)'],
+  gstTreatment: ['gst treatment'],
   gstin: ['gst identification number (gstin)'],
+  currency: ['currency code'],
+  exchangeRate: ['exchange rate'],
   paymentTerms: ['payment terms'],
   paymentTermsLabel: ['payment terms label'],
+  notes: ['notes'],
+  deliveryMethod: ['delivery method'],
+  salesperson: ['sales person'],
   billingAddress: ['billing address'],
   billingStreet2: ['billing street2'],
   billingCity: ['billing city'],
@@ -192,10 +200,24 @@ const SALES_ORDER_FLAT_ALIASES = {
   sku: ['sku'],
   itemDesc: ['item desc', 'item description'],
   account: ['account'],
+  zohoProductId: ['product id'],
   qtyOrdered: ['quantityordered'],
+  qtyInvoiced: ['quantityinvoiced'],
+  qtyCancelled: ['quantitycancelled'],
+  uom: ['usage unit'],
   unitPrice: ['item price'],
   hsnSac: ['hsn/sac'],
   itemTotal: ['item total'],
+  taxPercent: ['item tax %'],
+  taxAmount: ['item tax amount'],
+  cgstRatePercent: ['cgst rate %'],
+  sgstRatePercent: ['sgst rate %'],
+  igstRatePercent: ['igst rate %'],
+  cessRatePercent: ['cess rate %'],
+  cgstAmount: ['cgst'],
+  sgstAmount: ['sgst'],
+  igstAmount: ['igst'],
+  cessAmount: ['cess'],
 };
 const SALES_ORDER_FLAT_KEYS = Object.keys(SALES_ORDER_FLAT_ALIASES);
 
@@ -583,11 +605,10 @@ function excelFieldsToSalesOrderPayload(fields, opts = {}) {
     : String(fields.paymentTerms || '').trim() ||
       String(fields.paymentTermsLabel || '').trim() ||
       '';
-  const placeOfSupply = flatFormat
-    ? ''
-    : String(fields.placeOfSupply || '').trim() ||
-      String(fields.placeOfSupplyWithStateCode || '').trim() ||
-      '';
+  const placeOfSupply =
+    String(fields.placeOfSupply || '').trim() ||
+    String(fields.placeOfSupplyWithStateCode || '').trim() ||
+    '';
 
   const form_data = {
     source: opts.source || 'excel_open_so_headers',
@@ -596,10 +617,10 @@ function excelFieldsToSalesOrderPayload(fields, opts = {}) {
     orderDate: toDateOnly(fields.orderDate) || '',
     expectedShipmentDate: toDateOnly(fields.expectedShipmentDate) || '',
     paymentTerms,
-    deliveryMethod: flatFormat ? '' : String(fields.deliveryMethod || '').trim() || '',
-    salespersonName: flatFormat ? '' : String(fields.salesperson || '').trim() || '',
+    deliveryMethod: String(fields.deliveryMethod || '').trim() || '',
+    salespersonName: String(fields.salesperson || '').trim() || '',
     placeOfSupply,
-    gstTreatment: flatFormat ? '' : normalizeGstTreatment(fields.gstTreatment),
+    gstTreatment: normalizeGstTreatment(fields.gstTreatment),
     gstin: String(fields.gstin || '').trim() || '',
     billingAddress: billing.address || '',
     billingCity: billing.city || '',
@@ -613,18 +634,16 @@ function excelFieldsToSalesOrderPayload(fields, opts = {}) {
     shippingCountry: shipping.country || '',
     shippingPincode: shipping.pincode || '',
     shippingPhone: shipping.phone || '',
-    currencyCode: flatFormat ? '' : String(fields.currency || '').trim() || '',
-    exchangeRate: flatFormat ? undefined : parseOptionalNumber(fields.exchangeRate) ?? undefined,
+    currencyCode: String(fields.currency || '').trim() || '',
+    exchangeRate: parseOptionalNumber(fields.exchangeRate) ?? undefined,
     advancePercent: flatFormat ? undefined : parseOptionalNumber(fields.advancePercent) ?? undefined,
     preShipmentPercent: flatFormat ? undefined : parseOptionalNumber(fields.preShipmentPercent) ?? undefined,
     postShipmentPercent: flatFormat ? undefined : parseOptionalNumber(fields.postShipmentPercent) ?? undefined,
     creditDays: flatFormat ? undefined : parseOptionalNumber(fields.creditDays) ?? undefined,
     zohoStatus,
   };
-  if (!flatFormat) {
-    const notes = String(fields.notes || '').trim();
-    if (notes) form_data.notes = notes;
-  }
+  const notes = String(fields.notes || '').trim();
+  if (notes) form_data.notes = notes;
   const customStatus = String(fields.customStatus || '').trim();
   if (customStatus) form_data.customStatus = customStatus;
   const eiSoReference = normalizeEiSoReference(fields.eiSoReference);
@@ -651,7 +670,7 @@ function excelFieldsToSalesOrderPayload(fields, opts = {}) {
   }
 
   const order_status = {
-    orderStatus: flatFormat ? 'Draft' : zohoStatus,
+    orderStatus: zohoStatus || (flatFormat ? 'Draft' : ''),
     deliveryMethod: String(fields.deliveryMethod || '').trim() || '',
     quantity: qtyOrdered ?? undefined,
     quantityInvoiced: qtyInvoiced ?? undefined,
@@ -671,7 +690,7 @@ function excelFieldsToSalesOrderPayload(fields, opts = {}) {
     expected_shipment_date: toDateOnly(fields.expectedShipmentDate),
     reference: referenceRaw,
     payment_terms: paymentTerms || null,
-    status: flatFormat ? 'Draft' : mapZohoSoStatus(zohoStatus, zohoStatus),
+    status: mapZohoSoStatus(zohoStatus, zohoStatus),
     order_status,
     form_data,
     items: [],
@@ -730,7 +749,7 @@ function excelLineFieldsToItem(fields, opts = {}) {
     openQty: qty || undefined,
     itemTotal: parseOptionalNumber(fields.itemTotal) ?? undefined,
   };
-  if (!flatFormat) {
+  {
     const invoiced = parseOptionalNumber(fields.qtyInvoiced) ?? 0;
     const cancelled = parseOptionalNumber(fields.qtyCancelled) ?? 0;
     const taxPercent = parseOptionalNumber(fields.taxPercent);
@@ -1396,9 +1415,6 @@ async function executeOpenSoHeadersImportRows(importRows, opts = {}) {
       payload.items = await enrichPayloadItemsWithProductIds(payload.items);
 
       const isFlatImport = payload.form_data?.source === 'excel_sales_order';
-      if (isFlatImport) {
-        payload.status = 'Draft';
-      }
 
       const zohoId =
         payload.form_data && payload.form_data.zohoSalesorderId
@@ -1471,7 +1487,7 @@ async function executeOpenSoHeadersImportRows(importRows, opts = {}) {
               payload.expected_shipment_date ?? existing.expected_shipment_date,
             reference: payload.reference ?? existing.reference,
             payment_terms: payload.payment_terms ?? existing.payment_terms,
-            status: 'Draft',
+            status: payload.status ?? existing.status,
             order_status: mergedOs,
             form_data: mergedFd,
             items: mergedItems,

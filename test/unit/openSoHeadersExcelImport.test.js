@@ -105,7 +105,8 @@ describe('openSoHeadersExcelImport', () => {
     expect(parsed.rows.length).toBe(1);
     expect(parsed.rows[0].payload.order_id).toBe('SO-03611');
     expect(parsed.rows[0].payload.customer_name).toBe('Test Client');
-    expect(parsed.rows[0].payload.status).toBe('Draft');
+    // zohoStatus 'open' is a real Zoho status (not draft/void/cancelled) → Approved.
+    expect(parsed.rows[0].payload.status).toBe('Approved');
     expect(parsed.rows[0].payload.form_data.zohoCustomerId).toBe('1252231000037973999');
     expect(parsed.rows[0].payload.form_data.zohoSalesorderId).toBeUndefined();
     expect(parsed.rows[0].payload.form_data.gstin).toBe('27AAAAA0000A1Z5');
@@ -182,8 +183,9 @@ describe('openSoHeadersExcelImport', () => {
     expect(parsed.rows.length).toBe(1);
     const payload = parsed.rows[0].payload;
     expect(payload.order_id).toBe('SO-00468');
-    expect(payload.status).toBe('Draft');
-    expect(payload.order_status.orderStatus).toBe('Draft');
+    // zohoStatus 'partially_invoiced' is a real Zoho status (not draft/void/cancelled) → Approved.
+    expect(payload.status).toBe('Approved');
+    expect(payload.order_status.orderStatus).toBe('partially_invoiced');
     expect(payload.order_status.zohoStatus).toBe('partially_invoiced');
     expect(payload.form_data.zohoSalesorderId).toBe('3628277000000926032');
     expect(payload.reference).toBe('SO-03565 & PO00002 & 1900442');
@@ -195,7 +197,7 @@ describe('openSoHeadersExcelImport', () => {
     expect(payload.items[0].unitPrice).toBe(171);
   });
 
-  test('parseSalesOrderFlatWorkbook ignores skipped columns present in sheet', () => {
+  test('parseSalesOrderFlatWorkbook captures currency, product id, invoiced qty, tax %, salesperson, and notes', () => {
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Sales Order');
     ws.getRow(1).values = [
@@ -219,7 +221,7 @@ describe('openSoHeadersExcelImport', () => {
       '1252231000040833999',
       'SO-99999',
       '1252231000037973999',
-      'Ignored Client',
+      'Client',
       'REF-SKIP',
       'USD',
       '1252231000040001000',
@@ -228,21 +230,66 @@ describe('openSoHeadersExcelImport', () => {
       '1',
       '18',
       'Priya',
-      'Should ignore',
+      'Handle with care',
     ];
 
     const parsed = parseSalesOrderFlatWorkbook(wb);
     expect(parsed.rows.length).toBe(1);
-    expect(parsed.rows[0].payload.order_id).toBe('SO-99999');
-    expect(parsed.rows[0].payload.status).toBe('Draft');
-    expect(parsed.rows[0].payload.form_data.zohoSalesorderId).toBe('1252231000040833999');
-    expect(parsed.rows[0].payload.form_data.currencyCode).toBe('');
-    expect(parsed.rows[0].payload.form_data.eiSoReference).toBe('REF-SKIP');
-    expect(parsed.rows[0].payload.reference).toBe('REF-SKIP');
-    expect(parsed.rows[0].payload.items[0].taxPercent).toBeUndefined();
-    expect(parsed.rows[0].payload.items[0].invoicedQty).toBeUndefined();
-    expect(parsed.rows[0].payload.form_data.salespersonName).toBe('');
-    expect(parsed.rows[0].payload.form_data.notes).toBeUndefined();
+    const payload = parsed.rows[0].payload;
+    expect(payload.order_id).toBe('SO-99999');
+    expect(payload.form_data.zohoSalesorderId).toBe('1252231000040833999');
+    expect(payload.form_data.currencyCode).toBe('USD');
+    expect(payload.form_data.eiSoReference).toBe('REF-SKIP');
+    expect(payload.reference).toBe('REF-SKIP');
+    expect(payload.items[0].taxPercent).toBe(18);
+    expect(payload.items[0].invoicedQty).toBe(1);
+    expect(payload.items[0].zohoItemId).toBe('1252231000040001000');
+    expect(payload.form_data.salespersonName).toBe('Priya');
+    expect(payload.form_data.notes).toBe('Handle with care');
+  });
+
+  test('parseSalesOrderFlatWorkbook ignores columns with no field mapping (TDS, UPC, Item Type)', () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sales Order');
+    ws.getRow(1).values = [
+      null,
+      'SalesOrder ID',
+      'SalesOrder Number',
+      'Customer Name',
+      'Reference#',
+      'Item Name',
+      'QuantityOrdered',
+      'UPC',
+      'Item Type',
+      'TDS Name',
+      'TDS Percentage',
+      'TDS Amount',
+    ];
+    ws.getRow(2).values = [
+      null,
+      '1252231000040833999',
+      'SO-99998',
+      'Client',
+      'REF-IGNORE',
+      'Toner',
+      '3',
+      '012345678905',
+      'goods',
+      'TDS - Others',
+      '10',
+      '30',
+    ];
+
+    const parsed = parseSalesOrderFlatWorkbook(wb);
+    expect(parsed.rows.length).toBe(1);
+    const payload = parsed.rows[0].payload;
+    expect(payload.order_id).toBe('SO-99998');
+    // None of these columns have a form_data / item field — they're preserved only in raw_import.
+    expect(payload.form_data.upc).toBeUndefined();
+    expect(payload.form_data.itemType).toBeUndefined();
+    expect(payload.form_data.tdsName).toBeUndefined();
+    expect(payload.items[0].upc).toBeUndefined();
+    expect(payload.items[0].itemType).toBeUndefined();
   });
 
   test('normalizeSheetName matches Open SO Headers', () => {

@@ -213,20 +213,24 @@ function shouldRunSyncAlter() {
 }
 
 if (process.env.NODE_ENV !== 'test') {
+    // SKIP_DB_BOOTSTRAP=true → connect and serve ONLY; run no sync({alter}) and no seeders.
+    // Use this when pointing a local/dev app at a database you must not mutate (e.g. production
+    // over a tunnel). Default (unset/false) keeps normal dev boot behaviour (sync + seed).
+    const skipDbBootstrap = String(process.env.SKIP_DB_BOOTSTRAP || '').toLowerCase() === 'true';
     db.authenticate()
         .then(async () => {
-            // Managed production DBs skip `sync({ alter: true })` below, so this is the only
-            // thing that creates/patches tables there — must run unconditionally on every boot.
-            const { ensureSchemaPatches } = require('./src/db/ensureSchemaPatches');
-            await ensureSchemaPatches();
-            if (!isManagedProductionDatabase()) {
+            if (skipDbBootstrap) {
+                console.log('[startup] SKIP_DB_BOOTSTRAP=true — skipping sync and seeders (read/serve only).');
+            } else if (!isManagedProductionDatabase()) {
                 if (shouldRunSyncAlter()) {
                     await db.sync({ alter: true });
                 }
                 await ensureCustomizationPackagingPresets();
                 await seedQuotationDefaults();
+                await ensureTreasuryDefaults();
+            } else {
+                await ensureTreasuryDefaults();
             }
-            await ensureTreasuryDefaults();
             app.listen(port, '0.0.0.0', () => {
                 console.log(`Server is running on port ${port}`);
             });

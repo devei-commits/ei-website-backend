@@ -38,7 +38,7 @@ RawMaterial.init(
     zoho_id: { type: DataTypes.STRING(100), allowNull: true },
     /**
      * Zoho-mirrored SKU code. After a successful Zoho item sync this matches `item.sku` in Zoho Books.
-     * Enforced UNIQUE (partial, where NOT NULL) at the DB level — see ensureSchemaPatches.
+     * Enforced UNIQUE (partial, where NOT NULL) at the DB level.
      * Nullable while a row is in pre-sync draft state.
      * Renamed from `sku` (May 2026) for cross-table clarity (RM/PM/PR all use `zoho_sku_code`).
      */
