@@ -112,6 +112,73 @@ function effectiveFfStatus(split, batchMap) {
   return stored === 'fg_ready' ? 'fg_pending' : (stored || 'fg_pending');
 }
 
+/**
+ * Normalise a raw ship_address string stored in the DB.
+ * Mirrors the frontend cleanAddress() utility so that corrupted legacy records
+ * (name duplicated, billing+shipping concatenated, float pincodes) display
+ * correctly in every view without a DB migration.
+ */
+function cleanShipAddressForDisplay(raw, customerName) {
+  if (!raw) return '';
+  const nameKey = customerName ? String(customerName).trim().toLowerCase() : '';
+
+  // Fix float pincodes (e.g. 560094.0 → 560094)
+  let working = String(raw).replace(/\b(\d{4,6})\.0\b/g, '$1');
+
+  // Remove double-name at start of flat string ("Name Name," or "NameName,")
+  if (nameKey) {
+    const esc = nameKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    working = working.replace(new RegExp(`^(${esc})\\s*(${esc}(?=[,\\s]|$))`, 'i'), '$2');
+  }
+
+  // Collapse consecutive commas, split on newlines
+  const collapsed = working.replace(/,{2,}/g, ',');
+  const lines = collapsed.split(/[\n\r]+/).map((l) => l.replace(/^[,\s]+|[,\s]+$/g, '').trim()).filter(Boolean);
+
+  // Adjacent identical-line dedup
+  const deduped = [];
+  for (const line of lines) {
+    if (deduped[deduped.length - 1]?.toLowerCase() === line.toLowerCase()) continue;
+    deduped.push(line);
+  }
+
+  // General heuristic: standalone name-only line followed by "name, rest…"
+  if (deduped.length >= 2) {
+    const l0 = deduped[0].toLowerCase();
+    const l1 = deduped[1].toLowerCase();
+    if (l0.length <= 60 && !/\d/.test(l0) && l1.startsWith(l0 + ',')) {
+      deduped.shift();
+      deduped[0] = deduped[0].slice(l0.length).replace(/^[,\s]+/, '').trim();
+      if (!deduped[0]) deduped.shift();
+    }
+  }
+
+  // Strip nameKey as exact first line
+  if (nameKey && deduped.length > 0 && deduped[0].toLowerCase() === nameKey) deduped.shift();
+
+  // Strip nameKey as prefix of first line ("Name, Ground floor…")
+  if (nameKey && deduped.length > 0 && deduped[0].toLowerCase().startsWith(nameKey + ',')) {
+    deduped[0] = deduped[0].slice(customerName.trim().length).replace(/^[,\s]+/, '').trim();
+    if (!deduped[0]) deduped.shift();
+  }
+
+  // Word-set subset dedup + equal-wordset dedup (catches duplicate city/state blocks)
+  const wordSets = deduped.map((l) => new Set(l.toLowerCase().split(/[\s,]+/).filter((w) => w.length > 1)));
+  const seenKeys = new Set();
+  const result = deduped.filter((_, i) => {
+    if (wordSets[i].size === 0) return false;
+    const key = [...wordSets[i]].sort().join('|');
+    if (seenKeys.has(key)) return false;
+    seenKeys.add(key);
+    return !wordSets.some((other, j) => {
+      if (j === i || other.size <= wordSets[i].size) return false;
+      return [...wordSets[i]].every((w) => other.has(w));
+    });
+  });
+
+  return result.join('\n').trim();
+}
+
 function formatOrder(row, batchMap = {}) {
   const d = row.get ? row.get({ plain: true }) : row;
   const items = (d.items || []).map((item) => formatItem(item, batchMap));
@@ -131,7 +198,7 @@ function formatOrder(row, batchMap = {}) {
     soStatus,
     commercialStatus: d.commercial_status || 'received',
     soValue: d.so_value != null ? Number(d.so_value) : 0,
-    shipAddress: d.ship_address || '',
+    shipAddress: cleanShipAddressForDisplay(d.ship_address, d.customer_name),
     paymentTerms: d.payment_terms || '',
     notes: d.notes || '',
     invoiceNo: d.invoice_no || undefined,
@@ -155,6 +222,7 @@ function formatItem(d, batchMap = {}) {
     orderedQty: d.ordered_qty,
     rate: d.rate != null ? Number(d.rate) : 0,
     unitPrice: d.unit_price != null ? Number(d.unit_price) : 0,
+    mrp: d.mrp_price != null ? Number(d.mrp_price) : null,
     batchSplits: (d.batchSplits || []).map((s) => formatSplit(s, batchMap)),
   };
 }
@@ -651,6 +719,7 @@ async function createOrder(req, res) {
           ordered_qty: item.orderedQty || 0,
           rate: item.unitPrice || 0,
           unit_price: item.unitPrice || 0,
+          mrp_price: (item.mrp != null && Number(item.mrp) > 0) ? Number(item.mrp) : null,
         });
 
         const splits = item.batchSplits || [{ plannedQty: item.orderedQty }];
@@ -859,6 +928,7 @@ async function updateOrder(req, res) {
           ordered_qty: item.orderedQty,
           rate: item.unitPrice,
           unit_price: item.unitPrice,
+          mrp_price: (item.mrp != null && Number(item.mrp) > 0) ? Number(item.mrp) : null,
         });
 
         await FulfillmentBatchSplit.create({
@@ -1291,7 +1361,7 @@ async function listBatchSplits(req, res) {
         {
           model: FulfillmentOrderItem,
           as: 'orderItem',
-          attributes: ['id', 'sku', 'product_name', 'pack', 'ordered_qty', 'unit_price'],
+          attributes: ['id', 'sku', 'product_name', 'pack', 'ordered_qty', 'unit_price', 'mrp_price'],
         },
         {
           model: FulfillmentOrder,
@@ -1319,6 +1389,7 @@ async function listBatchSplits(req, res) {
           pack: d.orderItem?.pack || '',
           orderedQty: d.orderItem?.ordered_qty || 0,
           unitPrice: d.orderItem?.unit_price != null ? Number(d.orderItem.unit_price) : 0,
+          mrp: d.orderItem?.mrp_price != null ? Number(d.orderItem.mrp_price) : null,
         },
         order: {
           id: d.fulfillmentOrder?.id,

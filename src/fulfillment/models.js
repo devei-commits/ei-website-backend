@@ -99,6 +99,7 @@ FulfillmentOrderItem.init(
     ordered_qty: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
     rate: { type: DataTypes.DECIMAL(12, 2), allowNull: true, defaultValue: 0 },
     unit_price: { type: DataTypes.DECIMAL(12, 2), allowNull: true, defaultValue: 0 },
+    mrp_price: { type: DataTypes.DECIMAL(12, 2), allowNull: true, defaultValue: null },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
     deleted_at: { type: DataTypes.DATE, allowNull: true },

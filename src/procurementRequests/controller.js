@@ -187,6 +187,7 @@ function formatPR(row, enrichedItems) {
     planningCustomerName: so.customer_name ?? null,
     planningProductName: prod.product_name ?? null,
     planningProductCode: prod.product_code ?? null,
+    planningProductMrp: prod.mrp_price != null ? Number(prod.mrp_price) : null,
   };
 }
 
@@ -197,7 +198,7 @@ const prIncludePlanning = {
   required: false,
   include: [
     { model: SalesOrder, as: 'salesOrder', attributes: ['order_id', 'customer_name'] },
-    { model: Product, as: 'product', attributes: ['product_name', 'product_code'] },
+    { model: Product, as: 'product', attributes: ['product_name', 'product_code', 'mrp_price'] },
   ],
 };
 

@@ -52,20 +52,31 @@ async function loadAddressCityStateCountryByUserIds(userIds) {
 
 /**
  * Single printable block for SO modal / fulfillment (matches legacy string fields).
+ * Deduplicates lines so a name repeated in address_line1 (common from Zoho) doesn't appear twice.
  */
 function formatAddressRowPlain(row) {
   if (!row) return '';
   const d = row.get ? row.get({ plain: true }) : row;
   const name = [d.first_name, d.last_name].filter(Boolean).join(' ').trim();
-  const lines = [
+  const cityLine = [d.city_text, d.state_text, d.pincode].filter(Boolean).join(', ') || null;
+  const rawLines = [
     name || null,
     d.address_line1,
     d.address_line2,
     d.landmark,
-    [d.city_text, d.state_text, d.pincode].filter(Boolean).join(', ') || null,
+    cityLine,
     d.country_text,
   ].filter(Boolean);
-  return lines.join('\n').trim();
+  const seen = new Set();
+  return rawLines
+    .filter((line) => {
+      const key = String(line).trim().toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .join('\n')
+    .trim();
 }
 
 /**
