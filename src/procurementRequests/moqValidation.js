@@ -131,6 +131,13 @@ async function validateProcurementItemsMoq(items) {
       continue;
     }
 
+    // Lines synced back from a draft PO edit (qty reduced below MOQ as a partial release)
+    // are already committed on the PO side — skip MOQ enforcement for them.
+    if (line.partial_release_remainder === true) {
+      // eslint-disable-next-line no-continue
+      continue;
+    }
+
     const explicitMoqRaw = line.moq_min != null ? line.moq_min : line.moqMin;
     const explicitMoq = explicitMoqRaw != null ? Number(explicitMoqRaw) : null;
 

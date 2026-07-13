@@ -430,6 +430,125 @@ async function getItemPriceList(req, res) {
   }
 }
 
+/**
+ * GET /api/v1/procurement/pending-stock-audits
+ * Returns PRs that have an open stock audit (status Pending/Requested/In Progress).
+ * Used by Warehouse module to see what physical counts are needed.
+ */
+async function listPendingStockAudits(req, res) {
+  try {
+    const { Op } = require('sequelize');
+    const rows = await ProcurementRequest.findAll({
+      where: {
+        stock_check_status: { [Op.in]: ['Pending', 'Requested', 'In Progress'] },
+        ...activeRowWhere(),
+      },
+      include: [prIncludePlanning],
+      order: [['stock_check_due_date', 'ASC NULLS LAST']],
+    });
+    const result = await Promise.all(
+      rows.map(async (row) => {
+        const d = row.get ? row.get({ plain: true }) : row;
+        const items = Array.isArray(d.items) ? d.items : [];
+        const { rmMap, pmMap } = await loadMasterMapsForItems(items);
+        const enriched = enrichItemsWithMasters(items, rmMap, pmMap);
+        return formatPR(row, enriched);
+      }),
+    );
+    res.json({ requests: result });
+  } catch (err) {
+    console.error('listPendingStockAudits error', err);
+    res.status(500).json({ error: 'Failed to list pending stock audits' });
+  }
+}
+
+/**
+ * POST /api/v1/procurement/:id/stock-check-result
+ * Warehouse submits physical count results for a stock audit.
+ * Body: { lines: [{itemCode, itemName, physicalQty, location?, zone?, batchNo?, remarks?}], completedBy, outcome? }
+ * Merges physical quantities into stock_check_notes JSON and sets status to Completed.
+ */
+async function submitStockCheckResult(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const row = await ProcurementRequest.findByPk(id);
+    if (!row) return res.status(404).json({ error: 'Procurement request not found' });
+
+    const { lines, completedBy, outcome } = req.body;
+    if (!Array.isArray(lines) || lines.length === 0) {
+      return res.status(400).json({ error: 'lines array with at least one entry is required' });
+    }
+
+    const existing = parseStockCheckNotesPayload(row.stock_check_notes) ?? {};
+    const existingLines = Array.isArray(existing.lines) ? existing.lines : [];
+    const now = new Date().toISOString();
+    const auditor = String(completedBy ?? '').trim() || null;
+
+    // Merge incoming physical quantities into existing line entries.
+    const mergedLines = existingLines.map((el) => {
+      const incoming = lines.find(
+        (l) =>
+          String(l.itemCode ?? '').trim().toLowerCase() ===
+          String(el.itemCode ?? '').trim().toLowerCase(),
+      );
+      if (!incoming) return el;
+      return {
+        ...el,
+        physicalQty: Number(incoming.physicalQty),
+        ...(incoming.location != null ? { location: incoming.location } : {}),
+        ...(incoming.zone != null ? { zone: incoming.zone } : {}),
+        ...(incoming.batchNo != null ? { batchNo: incoming.batchNo } : {}),
+        ...(incoming.remarks != null ? { remarks: incoming.remarks } : {}),
+        auditedAt: now,
+        auditedBy: auditor,
+      };
+    });
+
+    // Append lines that had no existing entry (e.g. extra locations).
+    for (const l of lines) {
+      const matched = mergedLines.find(
+        (ml) =>
+          String(ml.itemCode ?? '').trim().toLowerCase() ===
+          String(l.itemCode ?? '').trim().toLowerCase(),
+      );
+      if (!matched) {
+        mergedLines.push({
+          itemCode: l.itemCode,
+          itemName: l.itemName,
+          physicalQty: Number(l.physicalQty),
+          location: l.location ?? existing.warehouseCodes?.[0] ?? 'MAIN',
+          zone: l.zone ?? l.location ?? 'MAIN',
+          ...(l.batchNo != null ? { batchNo: l.batchNo } : {}),
+          remarks: l.remarks ?? '',
+          auditedAt: now,
+          auditedBy: auditor,
+        });
+      }
+    }
+
+    const mergedNotes = JSON.stringify({
+      ...existing,
+      lines: mergedLines,
+      outcome: outcome ?? 'all_ok',
+      completedAt: now,
+      completedBy: auditor,
+    });
+
+    await row.update({
+      stock_check_status: 'Completed',
+      stock_check_assigned_to: auditor ?? row.stock_check_assigned_to,
+      stock_check_notes: mergedNotes,
+    });
+
+    const formatted = await fetchPrFormattedById(id);
+    res.json(formatted);
+  } catch (err) {
+    console.error('submitStockCheckResult error', err);
+    res.status(500).json({ error: 'Failed to submit stock check result' });
+  }
+}
+
 module.exports = {
   listProcurementRequests,
   getProcurementRequestById,
@@ -437,4 +556,6 @@ module.exports = {
   updateProcurementRequest,
   deleteProcurementRequest,
   getItemPriceList,
+  listPendingStockAudits,
+  submitStockCheckResult,
 };
