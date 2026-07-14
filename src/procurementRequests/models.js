@@ -15,10 +15,13 @@ ProcurementRequest.init(
   {
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     planning_extracted_id: {
+      // Nullable: manual / non-Planning PRs (Direct PR, blanket call-off, consignment) have no planning row.
       type: DataTypes.INTEGER,
-      allowNull: false,
+      allowNull: true,
       references: { model: 'planning_extracted', key: 'id' },
     },
+    /** PR origin (Flowchart SEED): planning | manual | blanket_calloff | consignment. */
+    source: { type: DataTypes.STRING(20), allowNull: true, defaultValue: 'planning' },
     planning_batch_id: {
       type: DataTypes.INTEGER,
       allowNull: true,

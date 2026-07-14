@@ -169,6 +169,7 @@ function formatPR(row, enrichedItems) {
   return {
     id: String(d.id),
     planningExtractedId: d.planning_extracted_id,
+    source: d.source ?? (d.planning_extracted_id != null ? 'planning' : 'manual'),
     planningBatchId: d.planning_batch_id ?? null,
     priority: d.priority,
     requiredByDate: d.required_by_date,
@@ -268,22 +269,40 @@ async function getProcurementRequestById(req, res) {
   }
 }
 
+const PR_SOURCES = ['planning', 'manual', 'blanket_calloff', 'consignment'];
+
 async function createProcurementRequest(req, res) {
   try {
     const body = req.body || {};
     const planningExtractedId = body.planningExtractedId ?? body.planning_extracted_id;
-    if (planningExtractedId == null) {
-      return res.status(400).json({ error: 'planningExtractedId is required' });
+    const preferredVendor = body.preferredVendor ?? body.preferred_vendor ?? null;
+    const requestedSource = String(body.source ?? '').trim().toLowerCase();
+
+    // Planning-sourced PR: validate the planning row exists (unchanged behaviour).
+    let planningId = null;
+    if (planningExtractedId != null) {
+      const id = parseInt(planningExtractedId, 10);
+      if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid planningExtractedId' });
+      const planRow = await PlanningExtracted.findByPk(id);
+      if (!planRow) return res.status(404).json({ error: 'Planning extracted record not found' });
+      planningId = id;
+    } else {
+      // Manual / non-Planning PR (Direct PR · blanket call-off · consignment): needs at least one line.
+      const items = Array.isArray(body.items) ? body.items : [];
+      if (items.length === 0) {
+        return res.status(400).json({ error: 'A manual PR needs at least one line item (or provide planningExtractedId).' });
+      }
     }
-    const id = parseInt(planningExtractedId, 10);
-    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid planningExtractedId' });
-    const planRow = await PlanningExtracted.findByPk(id);
-    if (!planRow) return res.status(404).json({ error: 'Planning extracted record not found' });
+
+    const source = planningId != null
+      ? 'planning'
+      : (PR_SOURCES.includes(requestedSource) && requestedSource !== 'planning' ? requestedSource : 'manual');
+
     const planningBatchId = body.planningBatchId ?? body.planning_batch_id;
     const batchId = planningBatchId != null ? parseInt(planningBatchId, 10) : null;
-    const preferredVendor = body.preferredVendor ?? body.preferred_vendor ?? null;
     const row = await ProcurementRequest.create({
-      planning_extracted_id: id,
+      planning_extracted_id: planningId,
+      source,
       planning_batch_id: batchId != null && !Number.isNaN(batchId) ? batchId : null,
       priority: body.priority ?? null,
       required_by_date: body.requiredByDate ?? body.required_by_date ?? null,

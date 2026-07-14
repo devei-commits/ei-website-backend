@@ -121,6 +121,10 @@ async function applyReceiptToSource(outwardPlain, req, transaction) {
           payment_transaction_no: outwardPlain.utr_reference || row.payment_transaction_no,
           payment_transaction_date: gate.today(),
           payment_mode: outwardPlain.mode || row.payment_mode,
+          // Stamp the PO lifecycle's final-payment fields so the 3-way-match panel
+          // reflects PAID once Treasury executes (Flowchart Sub-flow I).
+          final_paid_at: row.final_paid_at || gate.today(),
+          final_paid_amount: row.final_paid_amount != null ? row.final_paid_amount : num(outwardPlain.net_amount),
         },
         { transaction }
       );

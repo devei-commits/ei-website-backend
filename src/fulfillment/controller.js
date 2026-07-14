@@ -899,6 +899,9 @@ async function updateOrder(req, res) {
           pack: normalizePackSizeForOrder(item.pack) || null,
           orderedQty: Number(item.orderedQty || 0),
           unitPrice: Number(item.unitPrice || 0),
+          // MRP is stored separately on the SO line (from the product master, then editable).
+          // It was being dropped here, so edits reset to null on save.
+          mrp: item.mrp != null && item.mrp !== '' ? Number(item.mrp) : null,
         }))
         .filter((item) => item.orderedQty > 0 && item.unitPrice > 0);
 

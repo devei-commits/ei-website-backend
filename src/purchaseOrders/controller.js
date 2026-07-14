@@ -3,6 +3,7 @@ const PurchaseOrder = require('./models');
 const ProcurementRequest = require('../procurementRequests/models');
 const { syncZohoPurchaseOrderForPo, syncZohoBillForPo } = require('../services/zohoPurchaseOrderSync');
 const zohoEnv = require('../services/zohoEnv');
+const { normalizePoType } = require('./poApprovalMatrix');
 
 /**
  * When a draft PO is released (status → Released), keep procurement_requests.status in sync
@@ -50,6 +51,22 @@ const PO_SYNC_ATTRIBUTES = [
   'zoho_bill_id',
 ];
 
+// Full read set incl. PO-type + approval-workflow columns (Sub-flow E).
+// Reads fall back to PO_SYNC_ATTRIBUTES then PO_SAFE_ATTRIBUTES on older schemas.
+const PO_APPROVAL_COLUMNS = [
+  'po_type',
+  'approval_status',
+  'approval_required_role',
+  'approval_amount',
+  'submitted_for_review_at',
+  'approved_at',
+  'exception_status',
+  'exception_reason',
+  'exception_at',
+  'amendment_count',
+];
+const PO_READ_ATTRIBUTES = [...PO_SYNC_ATTRIBUTES, ...PO_APPROVAL_COLUMNS];
+
 function isMissingColumnError(err, columnName) {
   const code = err?.original?.code ?? err?.parent?.code;
   if (code === '42703') return true; // postgres undefined_column
@@ -67,6 +84,16 @@ async function safeUpdateZohoColumn(row, columnName, value) {
       // DB schema doesn't yet include zoho_* columns; PO creation should still succeed.
       return;
     }
+    throw err;
+  }
+}
+
+/** Best-effort column write that no-ops if the column isn't in the DB yet (pre-migration prod). */
+async function safeSetColumn(row, columnName, value) {
+  try {
+    await row.update({ [columnName]: value });
+  } catch (err) {
+    if (isMissingColumnError(err, columnName)) return;
     throw err;
   }
 }
@@ -102,6 +129,16 @@ function formatRow(row) {
     items: Array.isArray(d.items) ? d.items : [],
     formData: d.form_data && typeof d.form_data === 'object' ? d.form_data : {},
     orderStatus: d.order_status && typeof d.order_status === 'object' ? d.order_status : { orderStatus: '', invoiced: '', payment: '', packed: '', shipped: '', deliveryMethod: '' },
+    poType: d.po_type ?? (d.form_data && typeof d.form_data === 'object' ? d.form_data.poType : null) ?? 'regular',
+    approvalStatus: d.approval_status ?? null,
+    approvalRequiredRole: d.approval_required_role ?? null,
+    approvalAmount: d.approval_amount != null ? Number(d.approval_amount) : null,
+    submittedForReviewAt: d.submitted_for_review_at ?? null,
+    approvedAt: d.approved_at ?? null,
+    exceptionStatus: d.exception_status ?? null,
+    exceptionReason: d.exception_reason ?? null,
+    exceptionAt: d.exception_at ?? null,
+    amendmentCount: d.amendment_count != null ? Number(d.amendment_count) : 0,
     zohoPurchaseOrderId: d.zoho_purchase_order_id ?? null,
     zohoBillId: d.zoho_bill_id ?? null,
     createdAt: d.created_at,
@@ -160,24 +197,19 @@ async function syncZohoAndFormatRow(row, body) {
 
 async function listPurchaseOrders(req, res) {
   try {
+    const orderBy = [['order_date', 'DESC'], ['id', 'DESC']];
     let rows = null;
     try {
-      // Prefer including Zoho columns when present (helps UI verification).
-      rows = await PurchaseOrder.findAll({
-        where: activeRowWhere(),
-        attributes: PO_SYNC_ATTRIBUTES,
-        order: [['order_date', 'DESC'], ['id', 'DESC']],
-      });
+      // Prefer full set incl. Zoho + approval-workflow columns when present.
+      rows = await PurchaseOrder.findAll({ where: activeRowWhere(), attributes: PO_READ_ATTRIBUTES, order: orderBy });
     } catch (err) {
-      // Older DB schemas may not have zoho_* columns yet.
-      if (isMissingColumnError(err, 'zoho_purchase_order_id') || isMissingColumnError(err, 'zoho_bill_id')) {
-        rows = await PurchaseOrder.findAll({
-          where: activeRowWhere(),
-          attributes: PO_SAFE_ATTRIBUTES,
-          order: [['order_date', 'DESC'], ['id', 'DESC']],
-        });
-      } else {
-        throw err;
+      // Older DB schemas may not have approval / zoho columns yet — step down.
+      if (!isMissingColumnError(err)) throw err;
+      try {
+        rows = await PurchaseOrder.findAll({ where: activeRowWhere(), attributes: PO_SYNC_ATTRIBUTES, order: orderBy });
+      } catch (err2) {
+        if (!isMissingColumnError(err2)) throw err2;
+        rows = await PurchaseOrder.findAll({ where: activeRowWhere(), attributes: PO_SAFE_ATTRIBUTES, order: orderBy });
       }
     }
     res.json(rows.map(formatRow));
@@ -193,12 +225,14 @@ async function getPurchaseOrderById(req, res) {
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     let row = null;
     try {
-      row = await PurchaseOrder.findByPk(id, { attributes: PO_SYNC_ATTRIBUTES });
+      row = await PurchaseOrder.findByPk(id, { attributes: PO_READ_ATTRIBUTES });
     } catch (err) {
-      if (isMissingColumnError(err, 'zoho_purchase_order_id') || isMissingColumnError(err, 'zoho_bill_id')) {
+      if (!isMissingColumnError(err)) throw err;
+      try {
+        row = await PurchaseOrder.findByPk(id, { attributes: PO_SYNC_ATTRIBUTES });
+      } catch (err2) {
+        if (!isMissingColumnError(err2)) throw err2;
         row = await PurchaseOrder.findByPk(id, { attributes: PO_SAFE_ATTRIBUTES });
-      } else {
-        throw err;
       }
     }
     if (!row) return res.status(404).json({ error: 'Purchase order not found' });
@@ -237,6 +271,13 @@ function bodyToPayload(body) {
     form_data: formData,
     items,
   };
+}
+
+/** Resolve the PO type from any of the accepted body/formData shapes. */
+function resolvePoTypeFromBody(body) {
+  const b = body || {};
+  const fd = b.formData && typeof b.formData === 'object' ? b.formData : {};
+  return normalizePoType(b.po_type ?? b.poType ?? fd.poType ?? fd.po_type ?? 'regular');
 }
 
 /** Build payload with only fields that are present in body (partial update). */
@@ -294,6 +335,9 @@ async function createPurchaseOrder(req, res) {
     // Limit what Postgres returns so INSERT ... RETURNING doesn't reference missing columns.
     const row = await PurchaseOrder.create(payload, { returning: PO_SAFE_ATTRIBUTES });
     const body = req.body || {};
+    // PO type lives authoritatively in form_data.poType; mirror to the denormalized
+    // column best-effort (skipped silently on schemas that predate the column).
+    await safeSetColumn(row, 'po_type', resolvePoTypeFromBody(body));
     const zohoPo = await syncZohoPurchaseOrderForPo(row, body);
     if (zohoPo.synced && zohoPo.purchaseorderId) {
       await safeUpdateZohoColumn(row, 'zoho_purchase_order_id', zohoPo.purchaseorderId);
