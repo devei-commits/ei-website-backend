@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { requireModule } = require('../middleware/security');
 const { requireMasterApprovalUpdate } = require('../lib/masterApprovalAuth');
-const { getAllProducts, saveProduct, syncPrProductZoho, createPRRegistration, getProductById, getProductDetail, updateProduct, patchProductApprovalStatus, claimProductApprovalTrack, getProductApprovalStatusHistory, deleteProduct, getCategory, saveCategory, getCategoryById, updateCategory, deleteCategory } = require('./controller');
+const { getAllProducts, saveProduct, syncPrProductZoho, importPrFromZohoBySku, createPRRegistration, getProductById, getProductDetail, updateProduct, patchProductApprovalStatus, claimProductApprovalTrack, getProductApprovalStatusHistory, deleteProduct, getCategory, saveCategory, getCategoryById, updateCategory, deleteCategory } = require('./controller');
 const { getZohoCompositeSkuBomSuggestion } = require('./zohoCompositeSkuBomSuggestion');
 const {
   uploadSkuBomExcelMiddleware,
@@ -44,6 +44,7 @@ router.get('/:id', cacheProductsOne, getProductById);
 
 // Write: require catalogue/packaging/active-ingredients module
 router.post('/pr-zoho-sync', requireCatalogueModule, syncPrProductZoho);
+router.post('/zoho-import-by-sku', requireCatalogueModule, importPrFromZohoBySku);
 router.post('/pr-registration', requireCatalogueModule, createPRRegistration);
 router.post('/', requireCatalogueModule, saveProduct);
 /** Multi-composite "Formula BOM - RM per KG-LTR" sheet: SKU RM lines + limits only (before /:id). */

@@ -7,6 +7,7 @@ const {
   getNextCode,
   getPackMaterialById,
   syncPmZoho,
+  importPmFromZohoBySku,
   createPackMaterial,
   updatePackMaterial,
   patchPackMaterialApprovalStatus,
@@ -52,6 +53,7 @@ router.get('/next-code', requirePackMaterials, getNextCode);
 router.get('/reset-all', resetAllPmMethodNotAllowed);
 router.post('/reset-all', requirePackMaterials, resetAllPackMaterials);
 router.post('/zoho-sync', requirePackMaterials, syncPmZoho);
+router.post('/zoho-import-by-sku', requirePackMaterials, importPmFromZohoBySku);
 router.post('/item-reference-bulk-chunk', requireItemReferenceBulk, postItemReferenceBulkChunk);
 router.post('/import-excel', requirePackMaterials, uploadPmMasterExcelSafe, postPmMasterExcelUpload);
 router.post('/', requirePackMaterials, createPackMaterial);

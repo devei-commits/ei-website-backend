@@ -642,6 +642,27 @@ async function listAllItems(options = {}) {
 }
 
 /**
+ * Find Zoho Books items whose `sku` exactly matches (case-insensitive) the given SKU.
+ * Uses the `search_text` filter to narrow the page, then filters to exact sku matches
+ * (search_text also matches on name/description, so we must post-filter).
+ * @param {string} sku
+ * @returns {Promise<Record<string, unknown>[]>} exact sku matches (usually 0 or 1)
+ */
+async function findItemsBySku(sku) {
+  const needle = String(sku == null ? '' : sku).trim();
+  if (!needle) {
+    const err = new Error('findItemsBySku: sku is required');
+    err.code = 'MISSING_SKU';
+    throw err;
+  }
+  const { items } = await listItemsPage({ searchText: needle, filterBy: 'Status.All', perPage: 200 });
+  const lower = needle.toLowerCase();
+  return (Array.isArray(items) ? items : []).filter(
+    (it) => String(it && it.sku != null ? it.sku : '').trim().toLowerCase() === lower
+  );
+}
+
+/**
  * Generic list GET for Zoho Books v3 collections that return `page_context` + a top-level array.
  * @param {string} resource Path segment, e.g. `contacts`, `invoices`, `salesorders`
  * @param {string} arrayKey Response array key, e.g. `contacts`, `invoices`
@@ -1122,6 +1143,7 @@ module.exports = {
   createBillInBooks,
   listItemsPage,
   listAllItems,
+  findItemsBySku,
   listBooksCollectionPage,
   listAllBooksCollection,
   listContactsPage,

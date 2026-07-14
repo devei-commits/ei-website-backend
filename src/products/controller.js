@@ -10,7 +10,8 @@ const VendorClient = require('../vendorClient/models');
 const redisCache = require('../cache/redis');
 const { syncZohoItemForNewProduct } = require('./zohoItemSync');
 const zohoEnv = require('../services/zohoEnv');
-const { deleteItem } = require('../services/zohoBooks');
+const { deleteItem, findItemsBySku } = require('../services/zohoBooks');
+const { toProductFields } = require('../services/zohoImportItemFields');
 const { zohoSyncIsMandatoryFailure } = require('../services/zohoSyncHelpers');
 const { compensateZohoItemIfAny } = require('../lib/zohoDbTransaction');
 const {
@@ -328,6 +329,96 @@ const saveProduct = async (req, res) => {
     }
   } catch (err) {
     return res.status(500).json({ error: err.message });
+  }
+};
+
+/**
+ * POST /api/v1/products/zoho-import-by-sku — Import a product that already exists in Zoho Books
+ * but is MISSING from our system. Body: { sku }. Fetches the Zoho item by exact SKU and creates
+ * the PR row locally (mirrors zoho_item_id + zoho_sku_code). Never pushes back to Zoho.
+ */
+const importPrFromZohoBySku = async (req, res) => {
+  try {
+    const b = req.body || {};
+    const sku = String(b.sku ?? b.zoho_sku_code ?? b.product_code ?? '').trim();
+    if (!sku) {
+      return res.status(400).json({ error: 'sku is required' });
+    }
+
+    let matches;
+    try {
+      matches = await findItemsBySku(sku);
+    } catch (e) {
+      console.error('importPrFromZohoBySku: Zoho lookup failed', e);
+      return res.status(502).json({ error: e.message || 'Failed to query Zoho', code: 'ZOHO_LOOKUP_FAILED' });
+    }
+    if (!matches.length) {
+      return res.status(404).json({ error: `No Zoho item found with SKU "${sku}"`, code: 'ZOHO_ITEM_NOT_FOUND' });
+    }
+    if (matches.length > 1) {
+      return res
+        .status(409)
+        .json({ error: `Multiple Zoho items share SKU "${sku}"; resolve in Zoho first`, code: 'ZOHO_ITEM_AMBIGUOUS' });
+    }
+
+    const zf = toProductFields(matches[0]);
+    const product_code = String(zf.product_code || zf.zoho_sku_code || '').trim();
+    const product_name = String(zf.product_name || product_code || '').trim();
+    if (!product_code) {
+      return res.status(422).json({ error: 'Zoho item has no SKU to use as product_code', code: 'ZOHO_ITEM_NO_SKU' });
+    }
+
+    const existsCode = await Product.findOne({ where: { product_code } });
+    if (existsCode) {
+      return res.status(409).json({
+        error: `A product with code "${product_code}" already exists`,
+        code: 'MASTER_ALREADY_EXISTS',
+        product_id: existsCode.product_id,
+      });
+    }
+    if (zf.zoho_sku_code) {
+      const skuTaken = await Product.findOne({ where: { zoho_sku_code: zf.zoho_sku_code } });
+      if (skuTaken) {
+        return res.status(409).json({
+          error: `A product with SKU "${zf.zoho_sku_code}" already exists`,
+          code: 'MASTER_ALREADY_EXISTS',
+          product_id: skuTaken.product_id,
+        });
+      }
+    }
+    const nameTaken = await Product.findOne({ where: { product_name } });
+    if (nameTaken) {
+      return res.status(409).json({
+        error: `Product name "${product_name}" is already in use`,
+        code: 'PRODUCT_NAME_EXISTS',
+        product_id: nameTaken.product_id,
+      });
+    }
+
+    const approvalStatus = await resolveWritableMasterApprovalStatus(req, 'PR', undefined, { forCreate: true });
+    const now = new Date();
+    const productRow = {
+      ...zf,
+      product_name,
+      product_code,
+      status: approvalStatus,
+      lifecycle_status: approvalStatus,
+      created_at: now,
+      updated_at: now,
+    };
+    await applyAutoAssignPrCreatorOnCreate(req, productRow);
+    const product = await Product.create(productRow);
+
+    return res.status(201).json({
+      product_id: product.product_id,
+      imported: true,
+      source: 'zoho',
+      zoho_item_id: product.zoho_item_id || null,
+      product: product.get({ plain: true }),
+    });
+  } catch (err) {
+    console.error('importPrFromZohoBySku error', err);
+    return res.status(500).json({ error: err.message || 'Failed to import product from Zoho' });
   }
 };
 
@@ -2144,6 +2235,7 @@ const getProductApprovalStatusHistory = createMasterApprovalStatusHistoryHandler
 module.exports = {
     saveProduct,
     syncPrProductZoho,
+    importPrFromZohoBySku,
     createPRRegistration,
     getAllProducts,
     getProductById,

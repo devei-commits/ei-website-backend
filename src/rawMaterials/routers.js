@@ -6,6 +6,7 @@ const {
   listRawMaterials,
   getRawMaterialById,
   syncRmZoho,
+  importRmFromZohoBySku,
   createRawMaterial,
   updateRawMaterial,
   patchRawMaterialApprovalStatus,
@@ -53,6 +54,7 @@ router.post('/reset-all', requireRawMaterials, resetAllRawMaterials);
 router.post('/item-reference-bulk-chunk', requireItemReferenceBulk, postItemReferenceBulkChunk);
 router.post('/import-excel', requireRawMaterials, uploadRmMasterExcelSafe, postRmMasterExcelUpload);
 router.post('/zoho-sync', requireRawMaterials, syncRmZoho);
+router.post('/zoho-import-by-sku', requireRawMaterials, importRmFromZohoBySku);
 router.post('/', requireRawMaterials, createRawMaterial);
 router.get('/:id/reserved-stock', requireRawMaterials, getReservedStock);
 router.get('/:id', requireRawMaterials, cacheRawMaterialsOne, getRawMaterialById);

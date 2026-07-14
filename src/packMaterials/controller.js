@@ -3,7 +3,8 @@ const { softDeleteInstance, softDeleteWhere, activeRowWhere } = require('../lib/
 const PackMaterial = require('./models');
 const { syncZohoItemForNewPackMaterial } = require('../services/zohoMasterItemSync');
 const zohoEnv = require('../services/zohoEnv');
-const { deleteItem } = require('../services/zohoBooks');
+const { deleteItem, findItemsBySku } = require('../services/zohoBooks');
+const { toPackMaterialFields } = require('../services/zohoImportItemFields');
 const { zohoSyncIsMandatoryFailure } = require('../services/zohoSyncHelpers');
 const { compensateZohoItemIfAny } = require('../lib/zohoDbTransaction');
 const { Op } = require('sequelize');
@@ -539,6 +540,80 @@ async function syncPmZoho(req, res) {
 }
 
 /**
+ * POST /api/v1/pack-materials/zoho-import-by-sku — Import a pack material that already exists in
+ * Zoho Books but is MISSING from our system. Body: { sku }. Fetches the Zoho item by exact SKU
+ * and creates the PM row locally (mirrors zoho_id + zoho_sku_code). Never pushes back to Zoho.
+ */
+async function importPmFromZohoBySku(req, res) {
+  try {
+    const b = req.body || {};
+    const sku = String(b.sku ?? b.zoho_sku_code ?? b.code ?? '').trim();
+    if (!sku) {
+      return res.status(400).json({ error: 'sku is required' });
+    }
+
+    let matches;
+    try {
+      matches = await findItemsBySku(sku);
+    } catch (e) {
+      console.error('importPmFromZohoBySku: Zoho lookup failed', e);
+      return res.status(502).json({ error: e.message || 'Failed to query Zoho', code: 'ZOHO_LOOKUP_FAILED' });
+    }
+    if (!matches.length) {
+      return res.status(404).json({ error: `No Zoho item found with SKU "${sku}"`, code: 'ZOHO_ITEM_NOT_FOUND' });
+    }
+    if (matches.length > 1) {
+      return res
+        .status(409)
+        .json({ error: `Multiple Zoho items share SKU "${sku}"; resolve in Zoho first`, code: 'ZOHO_ITEM_AMBIGUOUS' });
+    }
+
+    const fields = toPackMaterialFields(matches[0]);
+    // pack_materials unit is canonical (PCS); honor the model convention rather than Zoho's unit.
+    fields.unit = canonicalPmUnit();
+    const dup = await findConflictingMasterRow(PackMaterial, fields.code, fields.zoho_sku_code, null);
+    if (dup) {
+      return res.status(409).json({
+        error: 'A pack material with this code or SKU already exists',
+        code: 'MASTER_ALREADY_EXISTS',
+        pack_material_id: dup.id,
+      });
+    }
+
+    await applyPmApprovalOnCreate(req, fields);
+    const row = await PackMaterial.create(fields);
+    await WarehouseInventory.findOrCreate({
+      where: { item_type: 'PM', pack_material_id: row.id },
+      defaults: {
+        item_type: 'PM',
+        pack_material_id: row.id,
+        wh_stock: 0,
+        wh_unit: PM_CANONICAL_UNIT,
+        ml1_stock: 0,
+        ml2_stock: 0,
+        stock_in_hand: 0,
+        reserved: 0,
+        in_transit: 0,
+        reorder_pt: 0,
+        avg_mo: 0,
+        qc_status: 'Out of Stock',
+      },
+    });
+
+    return res.status(201).json({
+      pack_material_id: row.id,
+      imported: true,
+      source: 'zoho',
+      zoho_id: row.zoho_id || null,
+      pack_material: formatPackMaterial(row),
+    });
+  } catch (err) {
+    console.error('importPmFromZohoBySku error', err);
+    return res.status(500).json({ error: err.message || 'Failed to import pack material from Zoho' });
+  }
+}
+
+/**
  * POST /api/v1/pack-materials — create pack material. Body: code/itemCode, description/name, type, level, etc.
  * Optional `pack_material_id` when the draft was created via POST /pack-materials/zoho-sync.
  */
@@ -958,6 +1033,7 @@ module.exports = {
   getNextCode,
   getPackMaterialById,
   syncPmZoho,
+  importPmFromZohoBySku,
   createPackMaterial,
   updatePackMaterial,
   patchPackMaterialApprovalStatus,

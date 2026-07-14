@@ -3,7 +3,8 @@ const { softDeleteInstance, softDeleteWhere, activeRowWhere } = require('../lib/
 const RawMaterial = require('./models');
 const { syncZohoItemForNewRawMaterial } = require('../services/zohoMasterItemSync');
 const zohoEnv = require('../services/zohoEnv');
-const { deleteItem } = require('../services/zohoBooks');
+const { deleteItem, findItemsBySku } = require('../services/zohoBooks');
+const { toRawMaterialFields } = require('../services/zohoImportItemFields');
 const { zohoSyncIsMandatoryFailure } = require('../services/zohoSyncHelpers');
 const { compensateZohoItemIfAny } = require('../lib/zohoDbTransaction');
 const { Op } = require('sequelize');
@@ -552,6 +553,78 @@ async function syncRmZoho(req, res) {
 }
 
 /**
+ * POST /api/v1/raw-materials/zoho-import-by-sku — Import a raw material that already exists in
+ * Zoho Books but is MISSING from our system. Body: { sku }. Fetches the Zoho item by exact SKU
+ * and creates the RM row locally (mirrors zoho_id + zoho_sku_code). Never pushes back to Zoho.
+ */
+async function importRmFromZohoBySku(req, res) {
+  try {
+    const b = req.body || {};
+    const sku = String(b.sku ?? b.zoho_sku_code ?? b.code ?? '').trim();
+    if (!sku) {
+      return res.status(400).json({ error: 'sku is required' });
+    }
+
+    let matches;
+    try {
+      matches = await findItemsBySku(sku);
+    } catch (e) {
+      console.error('importRmFromZohoBySku: Zoho lookup failed', e);
+      return res.status(502).json({ error: e.message || 'Failed to query Zoho', code: 'ZOHO_LOOKUP_FAILED' });
+    }
+    if (!matches.length) {
+      return res.status(404).json({ error: `No Zoho item found with SKU "${sku}"`, code: 'ZOHO_ITEM_NOT_FOUND' });
+    }
+    if (matches.length > 1) {
+      return res
+        .status(409)
+        .json({ error: `Multiple Zoho items share SKU "${sku}"; resolve in Zoho first`, code: 'ZOHO_ITEM_AMBIGUOUS' });
+    }
+
+    const fields = toRawMaterialFields(matches[0]);
+    const dup = await findConflictingMasterRow(RawMaterial, fields.code, fields.zoho_sku_code, null);
+    if (dup) {
+      return res.status(409).json({
+        error: 'A raw material with this code or SKU already exists',
+        code: 'MASTER_ALREADY_EXISTS',
+        raw_material_id: dup.id,
+      });
+    }
+
+    await applyRmApprovalOnCreate(req, fields);
+    const row = await RawMaterial.create(fields);
+    await WarehouseInventory.findOrCreate({
+      where: { item_type: 'RM', raw_material_id: row.id },
+      defaults: {
+        item_type: 'RM',
+        raw_material_id: row.id,
+        wh_stock: 0,
+        wh_unit: row.uom || 'KG',
+        ml1_stock: 0,
+        ml2_stock: 0,
+        stock_in_hand: 0,
+        reserved: 0,
+        in_transit: 0,
+        reorder_pt: 0,
+        avg_mo: 0,
+        qc_status: 'Out of Stock',
+      },
+    });
+
+    return res.status(201).json({
+      raw_material_id: row.id,
+      imported: true,
+      source: 'zoho',
+      zoho_id: row.zoho_id || null,
+      raw_material: formatRawMaterial(row),
+    });
+  } catch (err) {
+    console.error('importRmFromZohoBySku error', err);
+    return res.status(500).json({ error: err.message || 'Failed to import raw material from Zoho' });
+  }
+}
+
+/**
  * POST /api/v1/raw-materials — create. Body: full form payload (formData shape) or { form_data: {...} }.
  * Optional `raw_material_id` when the draft was created via POST /raw-materials/zoho-sync.
  */
@@ -937,6 +1010,7 @@ module.exports = {
   listRawMaterials,
   getRawMaterialById,
   syncRmZoho,
+  importRmFromZohoBySku,
   createRawMaterial,
   updateRawMaterial,
   patchRawMaterialApprovalStatus,
