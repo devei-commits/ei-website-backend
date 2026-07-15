@@ -643,23 +643,44 @@ async function listAllItems(options = {}) {
 
 /**
  * Find Zoho Books items whose `sku` exactly matches (case-insensitive) the given SKU.
- * Uses the `search_text` filter to narrow the page, then filters to exact sku matches
- * (search_text also matches on name/description, so we must post-filter).
+ * `search_text` narrows results but also matches on name/description, so a common SKU
+ * substring can return many rows across several pages. We paginate (early-exiting as soon
+ * as an exact-sku match is found) rather than only scanning the first page, so an exact
+ * match on a later page is not falsely reported as "not found".
  * @param {string} sku
+ * @param {{ maxPages?: number, perPage?: number }} [options]
  * @returns {Promise<Record<string, unknown>[]>} exact sku matches (usually 0 or 1)
  */
-async function findItemsBySku(sku) {
+async function findItemsBySku(sku, options = {}) {
   const needle = String(sku == null ? '' : sku).trim();
   if (!needle) {
     const err = new Error('findItemsBySku: sku is required');
     err.code = 'MISSING_SKU';
     throw err;
   }
-  const { items } = await listItemsPage({ searchText: needle, filterBy: 'Status.All', perPage: 200 });
   const lower = needle.toLowerCase();
-  return (Array.isArray(items) ? items : []).filter(
-    (it) => String(it && it.sku != null ? it.sku : '').trim().toLowerCase() === lower
-  );
+  const isExact = (it) => String(it && it.sku != null ? it.sku : '').trim().toLowerCase() === lower;
+  const perPage = options.perPage != null ? Math.min(200, Number(options.perPage)) : 200;
+  const maxPages = options.maxPages != null ? Math.max(1, Number(options.maxPages)) : 50;
+
+  const matches = [];
+  let page = 1;
+  let hasMore = true;
+  while (hasMore && page <= maxPages) {
+    const { items, pageContext } = await listItemsPage({
+      searchText: needle,
+      filterBy: 'Status.All',
+      perPage,
+      page,
+    });
+    for (const it of Array.isArray(items) ? items : []) {
+      if (isExact(it)) matches.push(it);
+    }
+    if (matches.length) break; // exact SKU is unique in Zoho — stop as soon as we have it
+    hasMore = !!(pageContext && pageContext.has_more_page === true);
+    page += 1;
+  }
+  return matches;
 }
 
 /**
