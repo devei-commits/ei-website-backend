@@ -55,6 +55,7 @@ dotenv.config();
 require('./src/leadTime/leadTimeStatModel'); // §10 lead-time stats cache — table auto-syncs
 const { ensureLeadTimeStatsTable } = require('./src/leadTime/ensureLeadTimeStatsTable');
 const { ensurePurchaseOrderWorkflowColumns } = require('./src/purchaseOrders/ensurePurchaseOrderWorkflowColumns');
+const { ensureProcurementRequestColumns } = require('./src/procurementRequests/ensureProcurementRequestColumns');
 require('./src/customizationPackaging/models');
 const customizationPackagingAdminRouter = require('./src/customizationPackaging/routers');
 const { listPublicCustomizationPackaging } = require('./src/customizationPackaging/controller');
@@ -247,12 +248,15 @@ if (process.env.NODE_ENV !== 'test') {
                 await ensureTreasuryDefaults();
                 await ensureLeadTimeStatsTable();
                 await ensurePurchaseOrderWorkflowColumns();
+                await ensureProcurementRequestColumns();
             } else {
                 await ensureTreasuryDefaults();
-                // Managed prod skips db.sync — ensure the §10 lead-time cache table + PO approval/
-                // exception/RTV columns (Sub-flow E, §5) exist here too, else those paths 409.
+                // Managed prod skips db.sync — ensure the §10 lead-time cache table, PO approval/
+                // exception/RTV + po_tracking columns (Sub-flow E/F/I), and the newer procurement_request
+                // columns exist here too, else those read/action paths 409 or 500 on 42703.
                 await ensureLeadTimeStatsTable();
                 await ensurePurchaseOrderWorkflowColumns();
+                await ensureProcurementRequestColumns();
             }
             app.listen(port, '0.0.0.0', () => {
                 console.log(`Server is running on port ${port}`);

@@ -4,7 +4,8 @@ const db = require('../../db');
 
 /**
  * Idempotently ensure the PO approval-workflow / exception / RTV columns (Flowchart Sub-flow E
- * + §5 PO types) exist on `purchase_orders`, plus the `po_approval_log` audit table.
+ * + §5 PO types) exist on `purchase_orders`, the `po_approval_log` audit table, and the vendor-ack /
+ * invoice-match / closure columns on `po_tracking` (Sub-flow F & I).
  *
  * Dev auto-adds these via db.sync({ alter: true }), but managed production SKIPS sync — so without
  * this the columns are missing there and the approval, hold/cancel/amend, and short-close/RTV paths
@@ -67,6 +68,31 @@ async function ensurePurchaseOrderWorkflowColumns() {
     `);
     await db.query(`
       CREATE INDEX IF NOT EXISTS po_approval_log_po_id_idx ON po_approval_log (purchase_order_id);
+    `);
+
+    // po_tracking — vendor-ack loop (Sub-flow F), vendor-reject path, invoice + 3-way match
+    // (Sub-flow I), final payment, and closure columns. Missing on managed prod → getExceptionState
+    // / tracking reads fail with 42703 ("sent_channel does not exist"). Types mirror poTracking/models.js.
+    await db.query(`
+      ALTER TABLE po_tracking
+        ADD COLUMN IF NOT EXISTS sent_channel         VARCHAR(50),
+        ADD COLUMN IF NOT EXISTS ack_sla_due_at       DATE,
+        ADD COLUMN IF NOT EXISTS vendor_rejected_at   DATE,
+        ADD COLUMN IF NOT EXISTS vendor_rejected_note VARCHAR(500),
+        ADD COLUMN IF NOT EXISTS under_grn_at         DATE,
+        ADD COLUMN IF NOT EXISTS under_grn_note       VARCHAR(500),
+        ADD COLUMN IF NOT EXISTS grn_complete_at      DATE,
+        ADD COLUMN IF NOT EXISTS grn_complete_note    VARCHAR(500),
+        ADD COLUMN IF NOT EXISTS invoice_no           VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS invoice_date         DATE,
+        ADD COLUMN IF NOT EXISTS invoice_amount       NUMERIC(14,2),
+        ADD COLUMN IF NOT EXISTS match_status         VARCHAR(30),
+        ADD COLUMN IF NOT EXISTS matched_at           TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS match_note           VARCHAR(1000),
+        ADD COLUMN IF NOT EXISTS final_paid_at        DATE,
+        ADD COLUMN IF NOT EXISTS final_paid_amount    NUMERIC(14,2),
+        ADD COLUMN IF NOT EXISTS closed_at            TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS closed_note          VARCHAR(500);
     `);
     return { ensured: true };
   } catch (err) {
