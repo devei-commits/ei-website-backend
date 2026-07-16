@@ -40,7 +40,14 @@ const {
   addDaysToIndiaDateOnly,
   daysLeftFromDueDateIndia,
 } = require('../lib/indiaTime');
+const { softDeleteWhere } = require('../lib/softDelete');
 const { ProductionBatch } = require('../production/models');
+
+/** SO statuses that must NOT surface in Planning → PIS Extracted (case-insensitive). */
+const PLANNING_EXCLUDED_SO_STATUSES = new Set(['draft', 'cancelled', 'canceled', 'void']);
+function isPlanningExcludedSoStatus(status) {
+  return PLANNING_EXCLUDED_SO_STATUSES.has(String(status || '').trim().toLowerCase());
+}
 const {
   isPlanningBatchEditableByProduction,
   planningBatchEditLockReason,
@@ -804,12 +811,18 @@ async function validateWarehouseStockForReservation(planRow) {
  */
 async function syncPlanningExtractedFromSalesOrders() {
   const soRows = await SalesOrder.findAll({
-    attributes: ['id', 'order_id', 'order_date', 'expected_shipment_date', 'items', 'created_by'],
+    attributes: ['id', 'order_id', 'order_date', 'expected_shipment_date', 'items', 'created_by', 'status'],
     order: [['id', 'ASC']],
   });
   let created = 0;
   for (const soRow of soRows) {
     const so = soRow.get ? soRow.get({ plain: true }) : soRow;
+    // Draft / Cancelled SOs must not appear in Planning. Skip creation and soft-delete any planning
+    // rows created while the SO was live (this runs on every list read, so it self-heals on status change).
+    if (isPlanningExcludedSoStatus(so.status)) {
+      await softDeleteWhere(PlanningExtracted, { sales_order_id: so.id });
+      continue;
+    }
     const items = Array.isArray(so.items) ? so.items : [];
     if (items.length === 0) continue;
 
@@ -957,8 +970,11 @@ async function listPlanningExtracted(req, res) {
         return res.status(400).json({ error: 'Invalid pagination params (limit must be > 0, offset must be >= 0)' });
       }
 
-      const total = await PlanningExtracted.count();
+      // Hide soft-deleted planning rows (e.g. those removed when their SO went Draft/Cancelled).
+      const notDeleted = { deleted_at: { [Op.is]: null } };
+      const total = await PlanningExtracted.count({ where: notDeleted });
       const rows = await PlanningExtracted.findAll({
+        where: notDeleted,
         include: [
           { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'order_date', 'expected_shipment_date', 'status', 'form_data'], required: false },
           { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'], required: false },
@@ -971,6 +987,7 @@ async function listPlanningExtracted(req, res) {
     }
 
     const rows = await PlanningExtracted.findAll({
+      where: { deleted_at: { [Op.is]: null } },
       include: [
         { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'order_date', 'expected_shipment_date', 'status', 'form_data'], required: false },
         { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'], required: false },

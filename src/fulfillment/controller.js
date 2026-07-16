@@ -179,7 +179,7 @@ function cleanShipAddressForDisplay(raw, customerName) {
   return result.join('\n').trim();
 }
 
-function formatOrder(row, batchMap = {}) {
+function formatOrder(row, batchMap = {}, extra = {}) {
   const d = row.get ? row.get({ plain: true }) : row;
   const items = (d.items || []).map((item) => formatItem(item, batchMap));
   const allSplits = items.flatMap((i) => i.batchSplits || []);
@@ -197,6 +197,8 @@ function formatOrder(row, batchMap = {}) {
     priority: d.priority,
     soStatus,
     commercialStatus: d.commercial_status || 'received',
+    // Authoritative sales_orders.status (drives Planning → PIS Extracted); Edit SO → Update SO Status.
+    orderStatus: extra.orderStatus != null ? extra.orderStatus : null,
     soValue: d.so_value != null ? Number(d.so_value) : 0,
     shipAddress: cleanShipAddressForDisplay(d.ship_address, d.customer_name),
     paymentTerms: d.payment_terms || '',
@@ -473,7 +475,17 @@ async function listOrders(req, res) {
       return (d.items || []).flatMap((i) => (i.batchSplits || []).map((s) => s.production_batch_id).filter(Boolean));
     });
     const batchMap = await getBatchStatusMap(batchIds);
-    res.json(rows.map((row) => formatOrder(row, batchMap)));
+    // Bulk-load authoritative sales_orders.status so the Edit-SO status control shows the real value.
+    const soIds = [...new Set(rows.map((r) => (r.get ? r.get('sales_order_id') : r.sales_order_id)).filter(Boolean))];
+    const orderStatusMap = new Map();
+    if (soIds.length) {
+      const soRows = await SalesOrder.findAll({ where: { id: { [Op.in]: soIds } }, attributes: ['id', 'status'] });
+      soRows.forEach((s) => { const sd = s.get({ plain: true }); orderStatusMap.set(sd.id, sd.status || null); });
+    }
+    res.json(rows.map((row) => {
+      const sid = row.get ? row.get('sales_order_id') : row.sales_order_id;
+      return formatOrder(row, batchMap, { orderStatus: orderStatusMap.get(sid) || null });
+    }));
   } catch (err) {
     console.error('listOrders error:', err);
     res.status(500).json({ error: 'Failed to fetch fulfillment orders' });
@@ -491,7 +503,12 @@ async function getOrderById(req, res) {
     const d = row.get ? row.get({ plain: true }) : row;
     const batchIds = (d.items || []).flatMap((i) => (i.batchSplits || []).map((s) => s.production_batch_id).filter(Boolean));
     const batchMap = await getBatchStatusMap(batchIds);
-    res.json(formatOrder(row, batchMap));
+    let orderStatus = null;
+    if (d.sales_order_id) {
+      const so = await SalesOrder.findByPk(d.sales_order_id, { attributes: ['status'] });
+      orderStatus = so ? (so.get('status') || null) : null;
+    }
+    res.json(formatOrder(row, batchMap, { orderStatus }));
   } catch (err) {
     console.error('getOrderById error:', err);
     res.status(500).json({ error: 'Failed to fetch fulfillment order' });
@@ -889,6 +906,27 @@ async function updateOrder(req, res) {
       if (req.body[camel] !== undefined) row.set(snake, req.body[camel]);
     }
 
+    // "Update SO Status" (Edit SO modal). The authoritative order status lives on sales_orders.status
+    // (Draft/Approved/Confirmed/Cancelled/Closed) — it drives Planning → PIS Extracted visibility
+    // (draft/cancelled are hidden). We mirror it onto the fulfillment commercial_status so the SO
+    // Dashboard pill reflects the change immediately; the actual sales_orders write happens post-save.
+    const SO_STATUS_TO_COMMERCIAL = {
+      draft: 'draft', approved: 'approved', confirmed: 'received',
+      closed: 'closed', cancelled: 'cancelled', canceled: 'cancelled',
+    };
+    const rawSoOrderStatus =
+      req.body.salesOrderStatus ?? req.body.sales_order_status ?? req.body.orderStatus;
+    let nextSalesOrderStatus = null;
+    if (rawSoOrderStatus !== undefined && rawSoOrderStatus !== null && String(rawSoOrderStatus).trim() !== '') {
+      const key = String(rawSoOrderStatus).trim().toLowerCase();
+      if (!SO_STATUS_TO_COMMERCIAL[key]) {
+        return res.status(400).json({ error: `Invalid SO status: ${rawSoOrderStatus}` });
+      }
+      // Canonical stored form on sales_orders.status is Capitalized (and canceled → Cancelled).
+      nextSalesOrderStatus = key === 'canceled' ? 'Cancelled' : key.charAt(0).toUpperCase() + key.slice(1);
+      row.set('commercial_status', SO_STATUS_TO_COMMERCIAL[key]);
+    }
+
     if (hasItemsPayload) {
       const nextItems = req.body.items
         .filter((item) => item && String(item.productName || '').trim())
@@ -970,8 +1008,23 @@ async function updateOrder(req, res) {
     }
 
     await row.save();
+
+    // Persist the authoritative order status to sales_orders.status so Planning → PIS Extracted
+    // picks it up on its next self-healing sync (draft/cancelled SOs get hidden).
+    if (nextSalesOrderStatus && rowPlain.sales_order_id) {
+      await SalesOrder.update(
+        { status: nextSalesOrderStatus },
+        { where: { id: rowPlain.sales_order_id } }
+      );
+    }
+
     const updated = await FulfillmentOrder.findByPk(id, { include: INCLUDE_FULL });
-    res.json(formatOrder(updated));
+    let orderStatus = nextSalesOrderStatus;
+    if (orderStatus == null && rowPlain.sales_order_id) {
+      const so = await SalesOrder.findByPk(rowPlain.sales_order_id, { attributes: ['status'] });
+      orderStatus = so ? (so.get('status') || null) : null;
+    }
+    res.json(formatOrder(updated, {}, { orderStatus }));
   } catch (err) {
     console.error('updateOrder error:', err);
     res.status(500).json({ error: 'Failed to update fulfillment order' });
