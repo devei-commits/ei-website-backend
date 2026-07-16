@@ -53,6 +53,7 @@ const cors = require('cors');
 dotenv.config();
 
 require('./src/leadTime/leadTimeStatModel'); // §10 lead-time stats cache — table auto-syncs
+const { ensureLeadTimeStatsTable } = require('./src/leadTime/ensureLeadTimeStatsTable');
 require('./src/customizationPackaging/models');
 const customizationPackagingAdminRouter = require('./src/customizationPackaging/routers');
 const { listPublicCustomizationPackaging } = require('./src/customizationPackaging/controller');
@@ -243,8 +244,11 @@ if (process.env.NODE_ENV !== 'test') {
                 await ensureCustomizationPackagingPresets();
                 await seedQuotationDefaults();
                 await ensureTreasuryDefaults();
+                await ensureLeadTimeStatsTable();
             } else {
                 await ensureTreasuryDefaults();
+                // Managed prod skips db.sync — ensure the §10 lead-time cache table exists here too.
+                await ensureLeadTimeStatsTable();
             }
             app.listen(port, '0.0.0.0', () => {
                 console.log(`Server is running on port ${port}`);
