@@ -54,6 +54,7 @@ dotenv.config();
 
 require('./src/leadTime/leadTimeStatModel'); // §10 lead-time stats cache — table auto-syncs
 const { ensureLeadTimeStatsTable } = require('./src/leadTime/ensureLeadTimeStatsTable');
+const { ensurePurchaseOrderWorkflowColumns } = require('./src/purchaseOrders/ensurePurchaseOrderWorkflowColumns');
 require('./src/customizationPackaging/models');
 const customizationPackagingAdminRouter = require('./src/customizationPackaging/routers');
 const { listPublicCustomizationPackaging } = require('./src/customizationPackaging/controller');
@@ -245,10 +246,13 @@ if (process.env.NODE_ENV !== 'test') {
                 await seedQuotationDefaults();
                 await ensureTreasuryDefaults();
                 await ensureLeadTimeStatsTable();
+                await ensurePurchaseOrderWorkflowColumns();
             } else {
                 await ensureTreasuryDefaults();
-                // Managed prod skips db.sync — ensure the §10 lead-time cache table exists here too.
+                // Managed prod skips db.sync — ensure the §10 lead-time cache table + PO approval/
+                // exception/RTV columns (Sub-flow E, §5) exist here too, else those paths 409.
                 await ensureLeadTimeStatsTable();
+                await ensurePurchaseOrderWorkflowColumns();
             }
             app.listen(port, '0.0.0.0', () => {
                 console.log(`Server is running on port ${port}`);
