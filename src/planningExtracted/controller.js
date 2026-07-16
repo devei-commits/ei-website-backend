@@ -11,6 +11,11 @@ const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const BOM = require('../bom/models');
 const { ReservedBatchItem } = require('../fulfillment/models');
+const WarehouseInventoryLocationHistory = require('../warehouseInventory/locationHistoryModel');
+const {
+  avgMonthlyConsumptionByItem,
+  AVG_MONTH_WINDOW_MONTHS,
+} = require('../lib/planningAvgMonthlyConsumption');
 const PurchaseOrder = require('../purchaseOrders/models');
 const ProcurementRequest = require('../procurementRequests/models');
 const { isPlanningQuotationOnlyProcurementRequest } = require('../lib/planningQuotationRequest');
@@ -2222,6 +2227,63 @@ async function getItemsInvolved(req, res) {
     ]);
     const rmMetaById = buildRmMetaMap(rmsList);
 
+    // Scoped reservations (spec §6.3 "Reserved" supply term): stock reserved specifically for
+    // planning batches. Warehouse.reserved is a GLOBAL per-item sum (includes other PIs' and
+    // production reservations), so `sih` is deliberately free stock (stock_in_hand − reserved) to
+    // avoid crediting stock earmarked elsewhere. That correctly excludes other demands, but also
+    // drops the stock reserved for THESE batches — which must be re-credited toward THEIR own
+    // requirement. So we sum reserved_batch_items scoped by planning_extracted_id. RM is stored in
+    // KG, PM in PCS (same canonical unit as totalRequired) — no conversion needed here.
+    const scopedReservedByRm = new Map();
+    const scopedReservedByPm = new Map();
+    {
+      const orMat = [];
+      if (allRmIds.length) orMat.push({ raw_material_id: { [Op.in]: allRmIds } });
+      if (allPmIds.length) orMat.push({ pack_material_id: { [Op.in]: allPmIds } });
+      if (orMat.length) {
+        const scopedResvRows = await ReservedBatchItem.findAll({
+          where: { planning_extracted_id: { [Op.ne]: null }, [Op.or]: orMat },
+          attributes: ['raw_material_id', 'pack_material_id', 'quantity_reserved'],
+        });
+        for (const r of scopedResvRows) {
+          const qty = Number(r.quantity_reserved) || 0;
+          if (!(qty > 0)) continue;
+          if (r.raw_material_id != null) {
+            const k = Number(r.raw_material_id);
+            scopedReservedByRm.set(k, (scopedReservedByRm.get(k) || 0) + qty);
+          } else if (r.pack_material_id != null) {
+            const k = Number(r.pack_material_id);
+            scopedReservedByPm.set(k, (scopedReservedByPm.get(k) || 0) + qty);
+          }
+        }
+      }
+    }
+
+    // Avg Month Requirement (spec §6.1): trailing 6-month ACTUAL consumption from the warehouse
+    // ledger (warehouse_inventory_location_history, outbound = qty_delta < 0), NOT the stubbed
+    // warehouse_inventory.avg_mo column (which seeds to 0). Native unit — same as the avg_mo column.
+    let avgConsumption = { rm: new Map(), pm: new Map() };
+    try {
+      const windowStart = new Date(Date.now() - AVG_MONTH_WINDOW_MONTHS * 30 * 24 * 60 * 60 * 1000);
+      const ledgerOr = [];
+      if (allRmIds.length) ledgerOr.push({ item_type: 'RM', raw_material_id: { [Op.in]: allRmIds } });
+      if (allPmIds.length) ledgerOr.push({ item_type: 'PM', pack_material_id: { [Op.in]: allPmIds } });
+      if (ledgerOr.length) {
+        const ledgerRows = await WarehouseInventoryLocationHistory.findAll({
+          where: { qty_delta: { [Op.lt]: 0 }, moved_at: { [Op.gte]: windowStart }, [Op.or]: ledgerOr },
+          attributes: ['item_type', 'raw_material_id', 'pack_material_id', 'qty_delta'],
+        });
+        avgConsumption = avgMonthlyConsumptionByItem(ledgerRows, AVG_MONTH_WINDOW_MONTHS);
+      }
+    } catch (e) {
+      // Ledger table may not exist in some envs — fall back to whatever avg_mo the column holds.
+      const msg = e && e.message ? String(e.message) : '';
+      const code = e && e.original && e.original.code ? String(e.original.code) : '';
+      if (!(code === '42P01' || /warehouse_inventory_location_history/i.test(msg))) {
+        console.warn('[items-involved] avg-month consumption ledger query failed:', msg);
+      }
+    }
+
     const { buildPrPlanningExtractedIdByRequestId, computeItemsInvolvedStageFlow } = require('../lib/itemsInvolvedStageFlow');
     const prPeByRequestId = buildPrPlanningExtractedIdByRequestId(allPrs);
 
@@ -2293,6 +2355,11 @@ async function getItemsInvolved(req, res) {
         statusByPm.set(w.pack_material_id, status);
       }
     }
+    // Override the stubbed avg_mo column with real trailing-6-month consumption where the ledger has
+    // history for the item (spec §6.1). Items with no ledger movement keep the column value.
+    for (const [rid, v] of avgConsumption.rm) avgMoByRm.set(rid, v);
+    for (const [pid, v] of avgConsumption.pm) avgMoByPm.set(pid, v);
+
     const rmInfo = new Map(rmsList.map((r) => [r.id, { code: r.code, name: r.name }]));
     const pmInfo = new Map(pmsList.map((p) => [p.id, { code: p.code, name: p.description || p.code }]));
 
@@ -2377,6 +2444,7 @@ async function getItemsInvolved(req, res) {
         batchNumber: batchNumberByRm.get(id) ?? null,
         expiryDate: expiryByRm.get(id) ?? null,
         reserved,
+        scopedReserved: scopedReservedByRm.get(id) ?? 0,
         plannedQty: flow.plannedQty,
         poQty: flow.poQty,
         inTransitQty: flow.inTransitQty,
@@ -2440,6 +2508,7 @@ async function getItemsInvolved(req, res) {
         batchNumber: batchNumberByPm.get(id) ?? null,
         expiryDate: expiryByPm.get(id) ?? null,
         reserved,
+        scopedReserved: scopedReservedByPm.get(id) ?? 0,
         plannedQty: flow.plannedQty,
         poQty: flow.poQty,
         inTransitQty: flow.inTransitQty,
@@ -2850,6 +2919,28 @@ async function getItemsInvolvedByPlanningId(req, res) {
     const rmInfo = new Map(rmsList.map((r) => [r.id, { code: r.code, name: r.name }]));
     const pmInfo = new Map(pmsList.map((p) => [p.id, { code: p.code, name: p.description || p.code }]));
 
+    // Scoped reservations for THIS PI (spec §6.3 supply term) — see getItemsInvolved for rationale.
+    // RM stored in KG, PM in PCS — same canonical unit as totalRequired; kg→primary handled by finalize.
+    const scopedReservedByRm = new Map();
+    const scopedReservedByPm = new Map();
+    {
+      const scopedResvRows = await ReservedBatchItem.findAll({
+        where: { planning_extracted_id: id },
+        attributes: ['raw_material_id', 'pack_material_id', 'quantity_reserved'],
+      });
+      for (const r of scopedResvRows) {
+        const qty = Number(r.quantity_reserved) || 0;
+        if (!(qty > 0)) continue;
+        if (r.raw_material_id != null) {
+          const k = Number(r.raw_material_id);
+          scopedReservedByRm.set(k, (scopedReservedByRm.get(k) || 0) + qty);
+        } else if (r.pack_material_id != null) {
+          const k = Number(r.pack_material_id);
+          scopedReservedByPm.set(k, (scopedReservedByPm.get(k) || 0) + qty);
+        }
+      }
+    }
+
     const out = [];
     let idx = 0;
     for (const rid of rmIds) {
@@ -2895,6 +2986,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
         warehouseInventoryId: whIdByRm.get(rid) ?? null,
         batchNumber: batchByRm.get(rid) ?? null,
         expiryDate: expiryByRm.get(rid) ?? null,
+        scopedReserved: scopedReservedByRm.get(rid) ?? 0,
         plannedQty,
         poQty: netOpenPoQtyKg(`rm-${rid}`),
         inTransit: inTransitKg,
@@ -2945,6 +3037,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
         warehouseInventoryId: whIdByPm.get(pid) ?? null,
         batchNumber: batchByPm.get(pid) ?? null,
         expiryDate: expiryByPm.get(pid) ?? null,
+        scopedReserved: scopedReservedByPm.get(pid) ?? 0,
         plannedQty,
         poQty: netOpenPoQtyNative(`pm-${pid}`),
         inTransit,
