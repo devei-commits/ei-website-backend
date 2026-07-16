@@ -14,6 +14,7 @@ const db = require('../../db');
  * (`${item_type}:${itemId}:${vendor}`) so LeadTimeStat.upsert has a conflict target.
  */
 async function ensureLeadTimeStatsTable() {
+  console.log("db patching.......")
   try {
     await db.query(`
       CREATE TABLE IF NOT EXISTS lead_time_stats (
