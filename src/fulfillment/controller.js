@@ -36,6 +36,13 @@ const INCLUDE_FULL = [
     model: FulfillmentOrderItem,
     as: 'items',
     required: false,
+    // Preserve the order the user entered SO line items in (do NOT alphabetize).
+    // Item rows are inserted in entry order on both create and update (update deletes then
+    // re-creates in array order), so their auto-increment `id` reflects entry order.
+    // `separate: true` runs the items as their own ordered query so this order is reliable
+    // even alongside the nested batchSplits include.
+    separate: true,
+    order: [['id', 'ASC']],
     include: [{ model: FulfillmentBatchSplit, as: 'batchSplits', required: false }],
   },
 ];

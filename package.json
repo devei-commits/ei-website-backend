@@ -8,6 +8,8 @@
     "test:math": "cross-env NODE_ENV=test jest -- test/unit test/integration",
     "start": "node app.js",
     "dev": "nodemon -L app.js",
+    "sale-puchse-order-approve": "node scripts/set-so-approved-po-issued.js",
+    "sale-puchse-order-approve:yes": "node scripts/set-so-approved-po-issued.js --commit",
     "seed": "node seed.js",
     "seed:admins": "node scripts/seed-admin-users.js",
     "seed:doctors": "node scripts/seed-doctor-users.js",
