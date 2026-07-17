@@ -37,6 +37,22 @@ function purchaseOrderMatchesPlanningExtractedIds(po, peIdSet, prPeByRequestId) 
   return peId != null && peIdSet.has(peId);
 }
 
+/**
+ * A PO counts toward the "PO Qty" bucket only once it is COMMITTED — i.e. it has
+ * passed approval (`approval_status='approved'`) or been released to the vendor
+ * (`status`='released'/'po released'). Draft / under-review / changes-requested /
+ * rejected POs are NOT committed: their qty stays in "Planned" until approval.
+ * This is what keeps Planned populated across the PR → draft-PO window and only
+ * moves qty to PO Qty when the PO is actually approved.
+ */
+function isCommittedPurchaseOrder(poPlain) {
+  const appr = String(poPlain.approval_status ?? '').trim().toLowerCase();
+  if (appr === 'approved') return true;
+  if (appr === 'rejected') return false;
+  const status = String(poPlain.status ?? '').trim().toLowerCase();
+  return status === 'released' || status === 'po released';
+}
+
 function sumScopedPurchaseOrderQtyForKey(
   itemKey,
   planningExtractedIds,
@@ -52,8 +68,11 @@ function sumScopedPurchaseOrderQtyForKey(
   if (peSet.size === 0) return 0;
   let sum = 0;
   for (const po of allPos) {
+    const poPlain = po.get ? po.get({ plain: true }) : po;
+    // Only committed (approved/released) POs move qty out of "Planned" into "PO Qty".
+    if (!isCommittedPurchaseOrder(poPlain)) continue;
     if (!purchaseOrderMatchesPlanningExtractedIds(po, peSet, prPeByRequestId)) continue;
-    const items = Array.isArray(po.items) ? po.items : [];
+    const items = Array.isArray(poPlain.items) ? poPlain.items : [];
     for (const line of items) {
       let key = null;
       if (line.raw_material_id != null) key = `rm-${line.raw_material_id}`;
@@ -116,6 +135,7 @@ module.exports = {
   planningExtractedIdFromPlanningPoReference,
   buildPrPlanningExtractedIdByRequestId,
   purchaseOrderMatchesPlanningExtractedIds,
+  isCommittedPurchaseOrder,
   sumScopedPurchaseOrderQtyForKey,
   computeItemsInvolvedStageFlow,
 };

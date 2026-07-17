@@ -20,6 +20,7 @@ const {
 const { ProductionBatch } = require('../production/models');
 const { Product } = require('../products/models');
 const VendorClient = require('../vendorClient/models');
+const SalesOrder = require('../salesOrders/models');
 const { buildActiveClientWhere } = require('../vendorClient/clientMasterQuery');
 const { activeRowWhere } = require('../lib/softDelete');
 
@@ -278,11 +279,20 @@ async function listSalesOrdersDashboard(req, res) {
       if (date_to) where.order_date[Op.lte] = date_to;
     }
 
-    const commercialStatuses = status
-      ? (Array.isArray(status) ? status : [status])
-      : null;
-    if (commercialStatuses && commercialStatuses.length) {
-      where.commercial_status = { [Op.in]: commercialStatuses };
+    // Filter by the authoritative order status (sales_orders.status) — this is what the dashboard
+    // Status column + Edit SO "Update SO Status" use. Resolve matching sales_order_ids first, then
+    // restrict the fulfillment orders (keeps server-side pagination correct).
+    const orderStatuses = status ? (Array.isArray(status) ? status : [status]) : null;
+    if (orderStatuses && orderStatuses.length) {
+      const wanted = orderStatuses.map((s) => String(s).trim().toLowerCase()).filter(Boolean);
+      const soRows = wanted.length
+        ? await SalesOrder.findAll({
+            where: db.where(db.fn('lower', db.col('status')), { [Op.in]: wanted }),
+            attributes: ['id'],
+          })
+        : [];
+      const soIds = soRows.map((r) => Number(r.get('id'))).filter((n) => Number.isFinite(n));
+      where.sales_order_id = soIds.length ? { [Op.in]: soIds } : { [Op.in]: [-1] };
     }
 
     if (client_id) {
@@ -310,7 +320,7 @@ async function listSalesOrdersDashboard(req, res) {
       offset,
       attributes: [
         'id', 'so_no', 'order_date', 'due_date', 'priority',
-        'so_status', 'commercial_status', 'so_value',
+        'so_status', 'commercial_status', 'so_value', 'sales_order_id',
         'customer_name', 'customer_city', 'vendor_client_id',
         'invoice_no', 'dispatch_date',
       ],
@@ -321,6 +331,22 @@ async function listSalesOrdersDashboard(req, res) {
     }
 
     const orderIds = orderRows.map((r) => r.id);
+
+    // --- Authoritative order status lives on sales_orders.status (Draft/Approved/Confirmed/
+    // Cancelled/Closed). Surface it as `orderStatus` so the Edit-SO "Update SO Status" control
+    // shows the real value and it stays reconciled with Planning → PIS Extracted visibility. ---
+    const salesOrderIds = [...new Set(orderRows.map((r) => r.sales_order_id).filter(Boolean))];
+    const orderStatusById = new Map();
+    if (salesOrderIds.length) {
+      const soRows = await SalesOrder.findAll({
+        where: { id: { [Op.in]: salesOrderIds } },
+        attributes: ['id', 'status'],
+      });
+      soRows.forEach((r) => {
+        const d = r.get({ plain: true });
+        orderStatusById.set(d.id, d.status || null);
+      });
+    }
 
     // --- Fetch items + splits in bulk (2 queries) ---
     const [items, splits] = await Promise.all([
@@ -451,6 +477,7 @@ async function listSalesOrdersDashboard(req, res) {
         priority: o.priority,
         soStatus: o.so_status,
         commercialStatus: o.commercial_status || 'received',
+        orderStatus: orderStatusById.get(o.sales_order_id) || null,
         soValue: o.so_value != null ? Number(o.so_value) : 0,
         unitPrice,
         customer: {

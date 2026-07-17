@@ -804,6 +804,7 @@ async function create(req, res) {
     } catch (e) {
       console.warn('[grn] syncWarehouseInTransitAll after create failed:', e && e.message ? e.message : e);
     }
+    maybeRefreshLeadTimeStatsOnGrnComplete(row);
     const { rmMap, pmMap, productMap } = await getMastersForLineItems([row]);
     const d = row.get ? row.get({ plain: true }) : row;
     const enriched = enrichLineItems(d.line_items || [], rmMap, pmMap, productMap, d.type);
@@ -811,6 +812,22 @@ async function create(req, res) {
   } catch (err) {
     console.error('[grn] create error:', err);
     res.status(500).json({ error: err.message || 'Failed to create GRN' });
+  }
+}
+
+/**
+ * Fire-and-forget refresh of the actual-from-history lead-time cache (spec §10.4) when a GRN is
+ * completed — a completed GRN adds a new (PO issued → GRN completed) sample. Non-blocking and
+ * best-effort so it never delays or fails the GRN response.
+ */
+function maybeRefreshLeadTimeStatsOnGrnComplete(grnRow) {
+  try {
+    const st = String((grnRow && grnRow.get ? grnRow.get('status') : grnRow && grnRow.status) || '').trim();
+    if (st !== 'GRN Complete') return;
+    const { recomputeAllLeadTimeStats } = require('../leadTime/recompute');
+    Promise.resolve(recomputeAllLeadTimeStats()).catch(() => {});
+  } catch {
+    /* best-effort */
   }
 }
 
@@ -1417,6 +1434,7 @@ async function update(req, res) {
     } catch (e) {
       console.warn('[grn] syncWarehouseInTransitAll after update failed:', e && e.message ? e.message : e);
     }
+    maybeRefreshLeadTimeStatsOnGrnComplete(refreshed);
     const { rmMap, pmMap, productMap } = await getMastersForLineItems([refreshed]);
     const d = refreshed.get ? refreshed.get({ plain: true }) : refreshed;
     const enriched = enrichLineItems(d.line_items || [], rmMap, pmMap, productMap, d.type);

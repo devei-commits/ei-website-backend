@@ -52,6 +52,10 @@ const dotenv = require('dotenv');
 const cors = require('cors');
 dotenv.config();
 
+require('./src/leadTime/leadTimeStatModel'); // §10 lead-time stats cache — table auto-syncs
+const { ensureLeadTimeStatsTable } = require('./src/leadTime/ensureLeadTimeStatsTable');
+const { ensurePurchaseOrderWorkflowColumns } = require('./src/purchaseOrders/ensurePurchaseOrderWorkflowColumns');
+const { ensureProcurementRequestColumns } = require('./src/procurementRequests/ensureProcurementRequestColumns');
 require('./src/customizationPackaging/models');
 const customizationPackagingAdminRouter = require('./src/customizationPackaging/routers');
 const { listPublicCustomizationPackaging } = require('./src/customizationPackaging/controller');
@@ -217,6 +221,20 @@ if (process.env.NODE_ENV !== 'test') {
     // Use this when pointing a local/dev app at a database you must not mutate (e.g. production
     // over a tunnel). Default (unset/false) keeps normal dev boot behaviour (sync + seed).
     const skipDbBootstrap = String(process.env.SKIP_DB_BOOTSTRAP || '').toLowerCase() === 'true';
+    // eslint-disable-next-line no-inner-declarations
+    function scheduleLeadTimeStatsRecompute() {
+        const { recomputeAllLeadTimeStats } = require('./src/leadTime/recompute');
+        const run = () =>
+            Promise.resolve(recomputeAllLeadTimeStats())
+                .then((r) => {
+                    if (r && r.upserts) console.log(`[lead-time] recomputed ${r.upserts} item/vendor lead stats`);
+                })
+                .catch((e) => console.warn('[lead-time] recompute failed:', e && e.message ? e.message : e));
+        run(); // boot backfill
+        const DAY_MS = 24 * 60 * 60 * 1000;
+        const timer = setInterval(run, DAY_MS);
+        if (timer.unref) timer.unref();
+    }
     db.authenticate()
         .then(async () => {
             if (skipDbBootstrap) {
@@ -228,12 +246,26 @@ if (process.env.NODE_ENV !== 'test') {
                 await ensureCustomizationPackagingPresets();
                 await seedQuotationDefaults();
                 await ensureTreasuryDefaults();
+                await ensureLeadTimeStatsTable();
+                await ensurePurchaseOrderWorkflowColumns();
+                await ensureProcurementRequestColumns();
             } else {
                 await ensureTreasuryDefaults();
+                // Managed prod skips db.sync — ensure the §10 lead-time cache table, PO approval/
+                // exception/RTV + po_tracking columns (Sub-flow E/F/I), and the newer procurement_request
+                // columns exist here too, else those read/action paths 409 or 500 on 42703.
+                await ensureLeadTimeStatsTable();
+                await ensurePurchaseOrderWorkflowColumns();
+                await ensureProcurementRequestColumns();
             }
             app.listen(port, '0.0.0.0', () => {
                 console.log(`Server is running on port ${port}`);
             });
+            if (!skipDbBootstrap) {
+                // §10.4: keep the actual-from-history lead-time cache fresh — backfill on boot, then
+                // nightly (also recomputed event-driven on each GRN completion).
+                scheduleLeadTimeStatsRecompute();
+            }
         })
         .catch((err) => {
             console.error('Failed to connect to the database', err);

@@ -126,6 +126,17 @@ function stampLifecycleDeleted(record, model) {
 }
 
 function registerSequelizeTimestampHooks(sequelize) {
+  // notNull event-on-create fields (e.g. moved_at) must be stamped BEFORE validation runs —
+  // Sequelize validates notNull ahead of the beforeCreate hook, so relying on beforeCreate alone
+  // makes those fields fail validation on .create(). Stamp them here (new records only, unset only).
+  sequelize.addHook('beforeValidate', (instance) => {
+    if (!instance || !instance.isNewRecord) return;
+    const model = instance.constructor;
+    const { eventOnCreate } = collectModelTimestampKeys(model);
+    const now = backendNow();
+    for (const key of eventOnCreate) assignTimestampField(instance, model, key, now, true);
+  });
+
   sequelize.addHook('beforeCreate', (instance, options) => {
     stampForCreate(instance, instance?.constructor);
   });

@@ -6,12 +6,35 @@
 const { Op } = require('sequelize');
 const { ItemsList, ItemListVendorRate, ItemListTier } = require('../itemsList/models');
 const VendorClient = require('../vendorClient/models');
+const LeadTimeStat = require('../leadTime/leadTimeStatModel');
 
 function normVendorName(s) {
   return String(s ?? '')
     .trim()
     .toLowerCase()
     .replace(/\s+/g, ' ');
+}
+
+/**
+ * Actual-from-history lead (spec §10): pick the cached avg ACTUAL lead for the preferred vendor.
+ * Only rows with real history (source history / history-12m) and a numeric avg qualify; on a
+ * preferred-vendor miss we return null so the price-list (quoted) fallback for THAT vendor applies.
+ */
+function resolveActualLeadFromStats(stats, preferredVendor) {
+  if (!stats || !stats.length) return null;
+  const usable = stats.filter(
+    (s) => s.avgActualDays != null && (s.source === 'history' || s.source === 'history-12m')
+  );
+  if (!usable.length) return null;
+  const pref = normVendorName(preferredVendor);
+  if (pref) {
+    const match = usable.find((s) => {
+      const vn = normVendorName(s.vendor);
+      return vn && (vn === pref || vn.includes(pref) || pref.includes(vn));
+    });
+    return match ? Math.round(Number(match.avgActualDays)) : null;
+  }
+  return Math.round(Number(usable[0].avgActualDays));
 }
 
 /** Match Planning / Procurement UI: "Lead: 14d" (case-insensitive). */
@@ -81,8 +104,44 @@ async function buildLeadResolutionCache(allItems) {
     ratesByListId: new Map(),
     vendorNameById: new Map(),
     listTypeById: new Map(),
+    leadStatsByItemKey: new Map(),
   };
   if (keys.size === 0) return empty;
+
+  // Actual-from-history lead stats (spec §10) for these items, keyed `RM:id` / `PM:id`.
+  const leadStatsByItemKey = new Map();
+  {
+    const rmIds = [];
+    const pmIds = [];
+    for (const k of keys) {
+      const [t, idStr] = k.split(':');
+      const n = parseInt(idStr, 10);
+      if (!Number.isFinite(n)) continue;
+      if (t === 'RM') rmIds.push(n);
+      else if (t === 'PM') pmIds.push(n);
+    }
+    const statOr = [];
+    if (rmIds.length) statOr.push({ raw_material_id: { [Op.in]: rmIds } });
+    if (pmIds.length) statOr.push({ pack_material_id: { [Op.in]: pmIds } });
+    if (statOr.length) {
+      try {
+        const statRows = await LeadTimeStat.findAll({ where: { [Op.or]: statOr } });
+        for (const sr of statRows) {
+          const s = sr.get ? sr.get({ plain: true }) : sr;
+          const ik = s.item_type === 'RM' ? `RM:${s.raw_material_id}` : `PM:${s.pack_material_id}`;
+          if (!leadStatsByItemKey.has(ik)) leadStatsByItemKey.set(ik, []);
+          leadStatsByItemKey.get(ik).push({
+            vendor: s.vendor_name,
+            avgActualDays: s.avg_actual_days != null ? Number(s.avg_actual_days) : null,
+            source: s.source,
+            trendUp: Boolean(s.trend_up),
+          });
+        }
+      } catch {
+        // lead_time_stats table may not exist yet (pre-sync) — price-list fallback remains.
+      }
+    }
+  }
 
   const or = [];
   for (const k of keys) {
@@ -109,7 +168,7 @@ async function buildLeadResolutionCache(allItems) {
   }
   const listIds = [...new Set([...listIdByKey.values()])];
   if (!listIds.length) {
-    return { listIdByKey, ratesByListId: new Map(), vendorNameById: new Map(), listTypeById };
+    return { listIdByKey, ratesByListId: new Map(), vendorNameById: new Map(), listTypeById, leadStatsByItemKey };
   }
 
   const rates = await ItemListVendorRate.findAll({
@@ -150,7 +209,7 @@ async function buildLeadResolutionCache(allItems) {
     if (!ratesByListId.has(lid)) ratesByListId.set(lid, []);
     ratesByListId.get(lid).push(rr);
   }
-  return { listIdByKey, ratesByListId, vendorNameById, listTypeById };
+  return { listIdByKey, ratesByListId, vendorNameById, listTypeById, leadStatsByItemKey };
 }
 
 function enrichProcurementItemsWithResolvedLead(items, preferredVendor, cache) {
@@ -158,14 +217,24 @@ function enrichProcurementItemsWithResolvedLead(items, preferredVendor, cache) {
   return items.map((i) => {
     const row = { ...i };
     let lead = null;
+    // 1. Explicit manual lead on the line wins (deliberate override).
     if (row.lead_time_days != null && row.lead_time_days !== '') {
       const d = parseInt(String(row.lead_time_days).replace(/\D/g, ''), 10);
       if (Number.isFinite(d) && d >= 0) lead = d;
     }
+    // 2. Avg ACTUAL lead from purchase history (spec §10) — must beat the quoted price-list value.
+    if (lead === null) {
+      const k = keyForItem(row);
+      const stats = k && cache.leadStatsByItemKey ? cache.leadStatsByItemKey.get(k) : null;
+      const actual = resolveActualLeadFromStats(stats, preferredVendor);
+      if (actual !== null) lead = actual;
+    }
+    // 3. Lead segment previously written into line_notes.
     if (lead === null) {
       const fromNotes = parseLeadFromLineNotes(row.line_notes);
       if (fromNotes !== null) lead = fromNotes;
     }
+    // 4. Price-list (quoted) fallback — §10 secondary reference only.
     if (lead === null) {
       const k = keyForItem(row);
       if (k && cache.listIdByKey.has(k)) {

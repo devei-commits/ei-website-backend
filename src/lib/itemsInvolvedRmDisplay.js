@@ -24,6 +24,9 @@ const PLANNING_KG_FIELDS = [
   'batchAllocatedQty',
   'totalOnPO',
   'totalReceived',
+  // Reserved specifically for these PIs' batches (spec §6.3 supply term). Stored in KG on
+  // reserved_batch_items, so it is kg→primary converted like the other RM qty fields.
+  'scopedReserved',
 ];
 
 /** Warehouse_inventory columns already stored in standard UoM — never kg→L converted. */

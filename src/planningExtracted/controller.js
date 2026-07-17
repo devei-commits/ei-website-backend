@@ -11,6 +11,11 @@ const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const BOM = require('../bom/models');
 const { ReservedBatchItem } = require('../fulfillment/models');
+const WarehouseInventoryLocationHistory = require('../warehouseInventory/locationHistoryModel');
+const {
+  avgMonthlyConsumptionByItem,
+  AVG_MONTH_WINDOW_MONTHS,
+} = require('../lib/planningAvgMonthlyConsumption');
 const PurchaseOrder = require('../purchaseOrders/models');
 const ProcurementRequest = require('../procurementRequests/models');
 const { isPlanningQuotationOnlyProcurementRequest } = require('../lib/planningQuotationRequest');
@@ -35,7 +40,14 @@ const {
   addDaysToIndiaDateOnly,
   daysLeftFromDueDateIndia,
 } = require('../lib/indiaTime');
+const { softDeleteWhere } = require('../lib/softDelete');
 const { ProductionBatch } = require('../production/models');
+
+/** SO statuses that must NOT surface in Planning → PIS Extracted (case-insensitive). */
+const PLANNING_EXCLUDED_SO_STATUSES = new Set(['draft', 'cancelled', 'canceled', 'void']);
+function isPlanningExcludedSoStatus(status) {
+  return PLANNING_EXCLUDED_SO_STATUSES.has(String(status || '').trim().toLowerCase());
+}
 const {
   isPlanningBatchEditableByProduction,
   planningBatchEditLockReason,
@@ -799,12 +811,18 @@ async function validateWarehouseStockForReservation(planRow) {
  */
 async function syncPlanningExtractedFromSalesOrders() {
   const soRows = await SalesOrder.findAll({
-    attributes: ['id', 'order_id', 'order_date', 'expected_shipment_date', 'items', 'created_by'],
+    attributes: ['id', 'order_id', 'order_date', 'expected_shipment_date', 'items', 'created_by', 'status'],
     order: [['id', 'ASC']],
   });
   let created = 0;
   for (const soRow of soRows) {
     const so = soRow.get ? soRow.get({ plain: true }) : soRow;
+    // Draft / Cancelled SOs must not appear in Planning. Skip creation and soft-delete any planning
+    // rows created while the SO was live (this runs on every list read, so it self-heals on status change).
+    if (isPlanningExcludedSoStatus(so.status)) {
+      await softDeleteWhere(PlanningExtracted, { sales_order_id: so.id });
+      continue;
+    }
     const items = Array.isArray(so.items) ? so.items : [];
     if (items.length === 0) continue;
 
@@ -889,6 +907,13 @@ async function syncPlanningExtractedFromSalesOrders() {
 
       let targetPlanRow = existing;
       if (existing) {
+        const existingPlain = existing.get ? existing.get({ plain: true }) : existing;
+        // Restore a row that was soft-deleted while the SO was Draft/Cancelled: now that the SO is a
+        // non-excluded status (e.g. Approved), it must reappear in PIS Extracted. The list reads
+        // `deleted_at IS NULL`, so an updated-but-still-deleted row would stay hidden.
+        const restore = existingPlain.deleted_at != null || existingPlain.lifecycle_status === 'deleted'
+          ? { deleted_at: null, lifecycle_status: 'active' }
+          : {};
         await existing.update({
           order_qty_display: `${orderQty} units`,
           total_kg_display: `${safeTotalKg} KG`,
@@ -900,6 +925,7 @@ async function syncPlanningExtractedFromSalesOrders() {
           raw_materials: snapshotRm,
           packaging_materials: snapshotPm,
           approved_by: so.created_by || null,
+          ...restore,
         });
       } else {
         targetPlanRow = await PlanningExtracted.create({
@@ -952,8 +978,11 @@ async function listPlanningExtracted(req, res) {
         return res.status(400).json({ error: 'Invalid pagination params (limit must be > 0, offset must be >= 0)' });
       }
 
-      const total = await PlanningExtracted.count();
+      // Hide soft-deleted planning rows (e.g. those removed when their SO went Draft/Cancelled).
+      const notDeleted = { deleted_at: { [Op.is]: null } };
+      const total = await PlanningExtracted.count({ where: notDeleted });
       const rows = await PlanningExtracted.findAll({
+        where: notDeleted,
         include: [
           { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'order_date', 'expected_shipment_date', 'status', 'form_data'], required: false },
           { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'], required: false },
@@ -966,6 +995,7 @@ async function listPlanningExtracted(req, res) {
     }
 
     const rows = await PlanningExtracted.findAll({
+      where: { deleted_at: { [Op.is]: null } },
       include: [
         { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'order_date', 'expected_shipment_date', 'status', 'form_data'], required: false },
         { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'], required: false },
@@ -1467,6 +1497,15 @@ async function createOrUpdateBatches(req, res) {
       await PlanningBatch.destroy({
         where: { planning_extracted_id: id, sequence: { [Op.gt]: batches.length } },
       });
+      // Prune stale sent/buffer indices for the removed batches so they can't mis-match a
+      // surviving batch. Valid 0-based indices are 0..batches.length-1 after truncation.
+      const pruneIndices = (raw) => {
+        const arr = Array.isArray(raw) ? raw : [];
+        return arr.map((v) => Number(v)).filter((n) => Number.isFinite(n) && n >= 0 && n < batches.length);
+      };
+      const prunedSent = pruneIndices(planRow.get ? planRow.get('sent_batch_indices') : planRow.sent_batch_indices);
+      const prunedBuffer = pruneIndices(planRow.get ? planRow.get('buffer_batch_indices') : planRow.buffer_batch_indices);
+      await planRow.update({ sent_batch_indices: prunedSent, buffer_batch_indices: prunedBuffer });
     }
     const updated = await PlanningBatch.findAll({ where: { planning_extracted_id: id }, order: [['sequence', 'ASC']] });
     await planRow.update({ batch_count: updated.length });
@@ -2214,13 +2253,72 @@ async function getItemsInvolved(req, res) {
           })
         : Promise.resolve([]),
       allPmIds.length ? PackMaterial.findAll({ where: { id: allPmIds }, attributes: ['id', 'code', 'description'] }) : Promise.resolve([]),
-      PurchaseOrder.findAll({ attributes: ['id', 'items', 'reference', 'form_data'] }),
+      // status + approval_status drive the committed-PO gate for the "PO Qty" bucket
+      // (only approved/released POs count; draft/under-review stay in "Planned").
+      PurchaseOrder.findAll({ attributes: ['id', 'items', 'reference', 'form_data', 'status', 'approval_status'] }),
       ProcurementRequest.findAll({ attributes: ['id', 'planning_extracted_id', 'status', 'items'] }),
       getGrnInTransitQtyByKey(),
       getPoPipelineInTransitQtyByKey(),
       getCompletedGrnReceivedKgByKey(),
     ]);
     const rmMetaById = buildRmMetaMap(rmsList);
+
+    // Scoped reservations (spec §6.3 "Reserved" supply term): stock reserved specifically for
+    // planning batches. Warehouse.reserved is a GLOBAL per-item sum (includes other PIs' and
+    // production reservations), so `sih` is deliberately free stock (stock_in_hand − reserved) to
+    // avoid crediting stock earmarked elsewhere. That correctly excludes other demands, but also
+    // drops the stock reserved for THESE batches — which must be re-credited toward THEIR own
+    // requirement. So we sum reserved_batch_items scoped by planning_extracted_id. RM is stored in
+    // KG, PM in PCS (same canonical unit as totalRequired) — no conversion needed here.
+    const scopedReservedByRm = new Map();
+    const scopedReservedByPm = new Map();
+    {
+      const orMat = [];
+      if (allRmIds.length) orMat.push({ raw_material_id: { [Op.in]: allRmIds } });
+      if (allPmIds.length) orMat.push({ pack_material_id: { [Op.in]: allPmIds } });
+      if (orMat.length) {
+        const scopedResvRows = await ReservedBatchItem.findAll({
+          where: { planning_extracted_id: { [Op.ne]: null }, [Op.or]: orMat },
+          attributes: ['raw_material_id', 'pack_material_id', 'quantity_reserved'],
+        });
+        for (const r of scopedResvRows) {
+          const qty = Number(r.quantity_reserved) || 0;
+          if (!(qty > 0)) continue;
+          if (r.raw_material_id != null) {
+            const k = Number(r.raw_material_id);
+            scopedReservedByRm.set(k, (scopedReservedByRm.get(k) || 0) + qty);
+          } else if (r.pack_material_id != null) {
+            const k = Number(r.pack_material_id);
+            scopedReservedByPm.set(k, (scopedReservedByPm.get(k) || 0) + qty);
+          }
+        }
+      }
+    }
+
+    // Avg Month Requirement (spec §6.1): trailing 6-month ACTUAL consumption from the warehouse
+    // ledger (warehouse_inventory_location_history, outbound = qty_delta < 0), NOT the stubbed
+    // warehouse_inventory.avg_mo column (which seeds to 0). Native unit — same as the avg_mo column.
+    let avgConsumption = { rm: new Map(), pm: new Map() };
+    try {
+      const windowStart = new Date(Date.now() - AVG_MONTH_WINDOW_MONTHS * 30 * 24 * 60 * 60 * 1000);
+      const ledgerOr = [];
+      if (allRmIds.length) ledgerOr.push({ item_type: 'RM', raw_material_id: { [Op.in]: allRmIds } });
+      if (allPmIds.length) ledgerOr.push({ item_type: 'PM', pack_material_id: { [Op.in]: allPmIds } });
+      if (ledgerOr.length) {
+        const ledgerRows = await WarehouseInventoryLocationHistory.findAll({
+          where: { qty_delta: { [Op.lt]: 0 }, moved_at: { [Op.gte]: windowStart }, [Op.or]: ledgerOr },
+          attributes: ['item_type', 'raw_material_id', 'pack_material_id', 'qty_delta'],
+        });
+        avgConsumption = avgMonthlyConsumptionByItem(ledgerRows, AVG_MONTH_WINDOW_MONTHS);
+      }
+    } catch (e) {
+      // Ledger table may not exist in some envs — fall back to whatever avg_mo the column holds.
+      const msg = e && e.message ? String(e.message) : '';
+      const code = e && e.original && e.original.code ? String(e.original.code) : '';
+      if (!(code === '42P01' || /warehouse_inventory_location_history/i.test(msg))) {
+        console.warn('[items-involved] avg-month consumption ledger query failed:', msg);
+      }
+    }
 
     const { buildPrPlanningExtractedIdByRequestId, computeItemsInvolvedStageFlow } = require('../lib/itemsInvolvedStageFlow');
     const prPeByRequestId = buildPrPlanningExtractedIdByRequestId(allPrs);
@@ -2293,6 +2391,11 @@ async function getItemsInvolved(req, res) {
         statusByPm.set(w.pack_material_id, status);
       }
     }
+    // Override the stubbed avg_mo column with real trailing-6-month consumption where the ledger has
+    // history for the item (spec §6.1). Items with no ledger movement keep the column value.
+    for (const [rid, v] of avgConsumption.rm) avgMoByRm.set(rid, v);
+    for (const [pid, v] of avgConsumption.pm) avgMoByPm.set(pid, v);
+
     const rmInfo = new Map(rmsList.map((r) => [r.id, { code: r.code, name: r.name }]));
     const pmInfo = new Map(pmsList.map((p) => [p.id, { code: p.code, name: p.description || p.code }]));
 
@@ -2377,6 +2480,7 @@ async function getItemsInvolved(req, res) {
         batchNumber: batchNumberByRm.get(id) ?? null,
         expiryDate: expiryByRm.get(id) ?? null,
         reserved,
+        scopedReserved: scopedReservedByRm.get(id) ?? 0,
         plannedQty: flow.plannedQty,
         poQty: flow.poQty,
         inTransitQty: flow.inTransitQty,
@@ -2440,6 +2544,7 @@ async function getItemsInvolved(req, res) {
         batchNumber: batchNumberByPm.get(id) ?? null,
         expiryDate: expiryByPm.get(id) ?? null,
         reserved,
+        scopedReserved: scopedReservedByPm.get(id) ?? 0,
         plannedQty: flow.plannedQty,
         poQty: flow.poQty,
         inTransitQty: flow.inTransitQty,
@@ -2850,6 +2955,28 @@ async function getItemsInvolvedByPlanningId(req, res) {
     const rmInfo = new Map(rmsList.map((r) => [r.id, { code: r.code, name: r.name }]));
     const pmInfo = new Map(pmsList.map((p) => [p.id, { code: p.code, name: p.description || p.code }]));
 
+    // Scoped reservations for THIS PI (spec §6.3 supply term) — see getItemsInvolved for rationale.
+    // RM stored in KG, PM in PCS — same canonical unit as totalRequired; kg→primary handled by finalize.
+    const scopedReservedByRm = new Map();
+    const scopedReservedByPm = new Map();
+    {
+      const scopedResvRows = await ReservedBatchItem.findAll({
+        where: { planning_extracted_id: id },
+        attributes: ['raw_material_id', 'pack_material_id', 'quantity_reserved'],
+      });
+      for (const r of scopedResvRows) {
+        const qty = Number(r.quantity_reserved) || 0;
+        if (!(qty > 0)) continue;
+        if (r.raw_material_id != null) {
+          const k = Number(r.raw_material_id);
+          scopedReservedByRm.set(k, (scopedReservedByRm.get(k) || 0) + qty);
+        } else if (r.pack_material_id != null) {
+          const k = Number(r.pack_material_id);
+          scopedReservedByPm.set(k, (scopedReservedByPm.get(k) || 0) + qty);
+        }
+      }
+    }
+
     const out = [];
     let idx = 0;
     for (const rid of rmIds) {
@@ -2895,6 +3022,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
         warehouseInventoryId: whIdByRm.get(rid) ?? null,
         batchNumber: batchByRm.get(rid) ?? null,
         expiryDate: expiryByRm.get(rid) ?? null,
+        scopedReserved: scopedReservedByRm.get(rid) ?? 0,
         plannedQty,
         poQty: netOpenPoQtyKg(`rm-${rid}`),
         inTransit: inTransitKg,
@@ -2945,8 +3073,9 @@ async function getItemsInvolvedByPlanningId(req, res) {
         warehouseInventoryId: whIdByPm.get(pid) ?? null,
         batchNumber: batchByPm.get(pid) ?? null,
         expiryDate: expiryByPm.get(pid) ?? null,
+        scopedReserved: scopedReservedByPm.get(pid) ?? 0,
         plannedQty,
-        poQty: netOpenPoQtyNative(`pm-${pid}`),
+        poQty: netOpenPoQtyKg(`pm-${pid}`),
         inTransit,
         batchCount: countPlanningBatchesTouchingPm(planBatchesSent, pid, pmByCodeMap, pmByNameMap, plain),
       });
