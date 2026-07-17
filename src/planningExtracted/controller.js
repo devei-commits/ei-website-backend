@@ -1489,6 +1489,15 @@ async function createOrUpdateBatches(req, res) {
       await PlanningBatch.destroy({
         where: { planning_extracted_id: id, sequence: { [Op.gt]: batches.length } },
       });
+      // Prune stale sent/buffer indices for the removed batches so they can't mis-match a
+      // surviving batch. Valid 0-based indices are 0..batches.length-1 after truncation.
+      const pruneIndices = (raw) => {
+        const arr = Array.isArray(raw) ? raw : [];
+        return arr.map((v) => Number(v)).filter((n) => Number.isFinite(n) && n >= 0 && n < batches.length);
+      };
+      const prunedSent = pruneIndices(planRow.get ? planRow.get('sent_batch_indices') : planRow.sent_batch_indices);
+      const prunedBuffer = pruneIndices(planRow.get ? planRow.get('buffer_batch_indices') : planRow.buffer_batch_indices);
+      await planRow.update({ sent_batch_indices: prunedSent, buffer_batch_indices: prunedBuffer });
     }
     const updated = await PlanningBatch.findAll({ where: { planning_extracted_id: id }, order: [['sequence', 'ASC']] });
     await planRow.update({ batch_count: updated.length });
@@ -2236,7 +2245,9 @@ async function getItemsInvolved(req, res) {
           })
         : Promise.resolve([]),
       allPmIds.length ? PackMaterial.findAll({ where: { id: allPmIds }, attributes: ['id', 'code', 'description'] }) : Promise.resolve([]),
-      PurchaseOrder.findAll({ attributes: ['id', 'items', 'reference', 'form_data'] }),
+      // status + approval_status drive the committed-PO gate for the "PO Qty" bucket
+      // (only approved/released POs count; draft/under-review stay in "Planned").
+      PurchaseOrder.findAll({ attributes: ['id', 'items', 'reference', 'form_data', 'status', 'approval_status'] }),
       ProcurementRequest.findAll({ attributes: ['id', 'planning_extracted_id', 'status', 'items'] }),
       getGrnInTransitQtyByKey(),
       getPoPipelineInTransitQtyByKey(),
@@ -3056,7 +3067,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
         expiryDate: expiryByPm.get(pid) ?? null,
         scopedReserved: scopedReservedByPm.get(pid) ?? 0,
         plannedQty,
-        poQty: netOpenPoQtyNative(`pm-${pid}`),
+        poQty: netOpenPoQtyKg(`pm-${pid}`),
         inTransit,
         batchCount: countPlanningBatchesTouchingPm(planBatchesSent, pid, pmByCodeMap, pmByNameMap, plain),
       });

@@ -8,8 +8,71 @@
 const db = require('../../db');
 const GoodsReceivedNote = require('./models');
 const ShipmentBatch = require('./shipmentBatch.model');
+const PurchaseOrder = require('../purchaseOrders/models');
+const RawMaterial = require('../rawMaterials/models');
+const PackMaterial = require('../packMaterials/models');
 
 const STAGE_ORDER = ['in_transit', 'landed', 'verified', 'quarantined', 'qc_tested', 'grn_completed'];
+
+function normCode(c) { return String(c ?? '').trim().toLowerCase(); }
+
+/** Load the linked PO's line items (source of authoritative RM/PM FKs) once per shipment. */
+async function loadPoItems(poId, transaction) {
+  if (poId == null || poId === '') return [];
+  try {
+    const po = await PurchaseOrder.findByPk(poId, { attributes: ['items'], transaction });
+    const items = po && po.get ? po.get('items') : null;
+    return Array.isArray(items) ? items : [];
+  } catch (err) {
+    return [];
+  }
+}
+
+/** Copy the RM/PM FK + unit from the matching PO line (by code, then name). */
+function findPoLineMaterial(poItems, item) {
+  const items = Array.isArray(poItems) ? poItems : [];
+  const code = normCode(item && item.code);
+  const name = String((item && item.name) || '').trim().toLowerCase();
+  let m = null;
+  if (code) m = items.find((l) => normCode(l.code) === code);
+  if (!m && name) m = items.find((l) => String(l.name || '').trim().toLowerCase() === name);
+  if (!m) return null;
+  const rm = m.raw_material_id != null ? Number(m.raw_material_id) : null;
+  const pm = m.pack_material_id != null ? Number(m.pack_material_id) : null;
+  if (rm == null && pm == null) return null;
+  return { raw_material_id: rm, pack_material_id: pm, unit: m.unit ?? m.uom ?? m.UOM ?? null };
+}
+
+/** Fallback: resolve the FK from the RM/PM master by code when the PO line carries none. */
+async function findMasterMaterial(item, transaction) {
+  const code = String((item && item.code) || '').trim();
+  if (!code) return null;
+  const type = String((item && item.type) || '').trim().toUpperCase();
+  try {
+    if (type !== 'PM') {
+      const rm = await RawMaterial.findOne({ where: { code }, attributes: ['id', 'uom'], transaction });
+      if (rm) return { raw_material_id: Number(rm.get('id')), pack_material_id: null, unit: rm.get('uom') || null };
+    }
+    if (type !== 'RM') {
+      const pm = await PackMaterial.findOne({ where: { code }, attributes: ['id', 'unit'], transaction });
+      if (pm) return { raw_material_id: null, pack_material_id: Number(pm.get('id')), unit: pm.get('unit') || null };
+    }
+  } catch (err) { /* degrade — line stays unlinked */ }
+  return null;
+}
+
+/**
+ * Resolve the RM/PM FK for a shipment line so the in-transit GRN is counted by Planning's
+ * Items Involved stage-flow (getGrnInTransitQtyByKey keys strictly by raw_material_id/pack_material_id).
+ * Without this, a freshly-shipped GRN contributes 0 to In-Transit until a later enrichment runs.
+ */
+async function resolveShipmentLineMaterial(poItems, item, transaction) {
+  return (
+    findPoLineMaterial(poItems, item) ||
+    (await findMasterMaterial(item, transaction)) ||
+    { raw_material_id: null, pack_material_id: null, unit: null }
+  );
+}
 
 function stageToStatus(stage) {
   if (stage === 'grn_completed') return 'GRN Complete';
@@ -39,8 +102,20 @@ function formatGrnLite(g) {
   };
 }
 
-async function createGrnRow({ sb, poId, poNo, vendor, item, shippedQty, expectedArrival, transaction }) {
+async function createGrnRow({ sb, poId, poNo, vendor, item, shippedQty, expectedArrival, poItems, transaction }) {
   const qty = shippedQty != null ? Number(shippedQty) : null;
+  // Stamp the RM/PM FK at creation so this in-transit GRN is counted by Planning immediately.
+  const mat = await resolveShipmentLineMaterial(poItems, item, transaction);
+  const lineItem = {
+    item: item ? (item.name || '') : '',
+    itemCode: item ? (item.code || '') : '',
+    poQty: qty || 0,
+    rcvdQty: 0,
+    invoiceQty: 0,
+  };
+  if (mat.raw_material_id != null) lineItem.raw_material_id = mat.raw_material_id;
+  if (mat.pack_material_id != null) lineItem.pack_material_id = mat.pack_material_id;
+  if (mat.unit) lineItem.unit = mat.unit;
   const grn = await GoodsReceivedNote.create({
     grn_no: 'GRN-PENDING',
     purchase_order_id: poId || null,
@@ -53,13 +128,7 @@ async function createGrnRow({ sb, poId, poNo, vendor, item, shippedQty, expected
     status: 'In Transit',
     shipped_qty: qty,
     expected_date: expectedArrival || null,
-    line_items: [{
-      item: item ? (item.name || '') : '',
-      itemCode: item ? (item.code || '') : '',
-      poQty: qty || 0,
-      rcvdQty: 0,
-      invoiceQty: 0,
-    }],
+    line_items: [lineItem],
     workflow_steps: [{ stage: 'in_transit', at: new Date().toISOString() }],
   }, { transaction });
   grn.grn_no = `GRN-${yearNow()}-${pad4(grn.id)}`;
@@ -96,10 +165,11 @@ async function initiateTransit(req, res) {
     const b = req.body || {};
     const item = b.item || {};
     const qty = b.shippedQty != null ? Number(b.shippedQty) : null;
+    const poItems = await loadPoItems(b.poId, t);
     const sb = await createShipmentBatch({ body: b, totalQty: qty, lineCount: 1, transaction: t });
     const grn = await createGrnRow({
       sb, poId: b.poId, poNo: b.poNo, vendor: b.vendor, item, shippedQty: qty,
-      expectedArrival: (b.vehicle || {}).expectedArrival, transaction: t,
+      expectedArrival: (b.vehicle || {}).expectedArrival, poItems, transaction: t,
     });
     await t.commit();
     res.status(201).json({ shipmentBatch: formatSb(sb), grns: [formatGrnLite(grn)] });
@@ -118,13 +188,14 @@ async function consolidatedShipment(req, res) {
     const lines = Array.isArray(b.lines) ? b.lines : [];
     if (!lines.length) { await t.rollback(); return res.status(400).json({ error: 'No lines selected for this shipment' }); }
     const totalQty = lines.reduce((s, l) => s + (Number(l.shippedQty) || 0), 0);
+    const poItems = await loadPoItems(b.poId, t);
     const sb = await createShipmentBatch({ body: b, totalQty, lineCount: lines.length, transaction: t });
     const grns = [];
     for (const l of lines) {
       grns.push(await createGrnRow({
         sb, poId: b.poId, poNo: b.poNo, vendor: b.vendor,
         item: { code: l.code, name: l.name, type: l.type }, shippedQty: l.shippedQty,
-        expectedArrival: (b.vehicle || {}).expectedArrival, transaction: t,
+        expectedArrival: (b.vehicle || {}).expectedArrival, poItems, transaction: t,
       }));
     }
     await t.commit();
