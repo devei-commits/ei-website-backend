@@ -279,11 +279,20 @@ async function listSalesOrdersDashboard(req, res) {
       if (date_to) where.order_date[Op.lte] = date_to;
     }
 
-    const commercialStatuses = status
-      ? (Array.isArray(status) ? status : [status])
-      : null;
-    if (commercialStatuses && commercialStatuses.length) {
-      where.commercial_status = { [Op.in]: commercialStatuses };
+    // Filter by the authoritative order status (sales_orders.status) — this is what the dashboard
+    // Status column + Edit SO "Update SO Status" use. Resolve matching sales_order_ids first, then
+    // restrict the fulfillment orders (keeps server-side pagination correct).
+    const orderStatuses = status ? (Array.isArray(status) ? status : [status]) : null;
+    if (orderStatuses && orderStatuses.length) {
+      const wanted = orderStatuses.map((s) => String(s).trim().toLowerCase()).filter(Boolean);
+      const soRows = wanted.length
+        ? await SalesOrder.findAll({
+            where: db.where(db.fn('lower', db.col('status')), { [Op.in]: wanted }),
+            attributes: ['id'],
+          })
+        : [];
+      const soIds = soRows.map((r) => Number(r.get('id'))).filter((n) => Number.isFinite(n));
+      where.sales_order_id = soIds.length ? { [Op.in]: soIds } : { [Op.in]: [-1] };
     }
 
     if (client_id) {

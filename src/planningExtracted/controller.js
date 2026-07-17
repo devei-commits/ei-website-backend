@@ -907,6 +907,13 @@ async function syncPlanningExtractedFromSalesOrders() {
 
       let targetPlanRow = existing;
       if (existing) {
+        const existingPlain = existing.get ? existing.get({ plain: true }) : existing;
+        // Restore a row that was soft-deleted while the SO was Draft/Cancelled: now that the SO is a
+        // non-excluded status (e.g. Approved), it must reappear in PIS Extracted. The list reads
+        // `deleted_at IS NULL`, so an updated-but-still-deleted row would stay hidden.
+        const restore = existingPlain.deleted_at != null || existingPlain.lifecycle_status === 'deleted'
+          ? { deleted_at: null, lifecycle_status: 'active' }
+          : {};
         await existing.update({
           order_qty_display: `${orderQty} units`,
           total_kg_display: `${safeTotalKg} KG`,
@@ -918,6 +925,7 @@ async function syncPlanningExtractedFromSalesOrders() {
           raw_materials: snapshotRm,
           packaging_materials: snapshotPm,
           approved_by: so.created_by || null,
+          ...restore,
         });
       } else {
         targetPlanRow = await PlanningExtracted.create({
