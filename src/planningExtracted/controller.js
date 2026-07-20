@@ -2234,7 +2234,10 @@ async function getItemsInvolved(req, res) {
     if (allRmIds.length) whWhere.push({ item_type: 'RM', raw_material_id: { [Op.in]: allRmIds } });
     if (allPmIds.length) whWhere.push({ item_type: 'PM', pack_material_id: { [Op.in]: allPmIds } });
     const {
-      getGrnInTransitQtyByKey,
+      getGrnInTransitOnlyQtyByKey,
+      getGrnUnderGrnQtyByKey,
+      getGrnInTransitBreakdownByKey,
+      getGrnUnderGrnBreakdownByKey,
       getPoPipelineInTransitQtyByKey,
       getCompletedGrnReceivedKgByKey,
     } = require('../warehouseInventory/inTransitSync');
@@ -2243,8 +2246,14 @@ async function getItemsInvolved(req, res) {
       finalizeItemsInvolvedRmRow,
       warehouseNativeQtyToKg,
     } = require('../lib/itemsInvolvedRmDisplay');
+    const {
+      buildGlobalPoMaps,
+      buildUnlinkedPrMap,
+      computeGlobalItemsInvolvedFlow,
+      buildPoBreakdownByKey,
+    } = require('../lib/itemsInvolvedStageFlow');
 
-    const [whRows, rmsList, pmsList, allPos, allPrs, grnInTransitKg, poInTransitKg, grnReceivedKg] = await Promise.all([
+    const [whRows, rmsList, pmsList, allPos, allPrs, grnInTransitOnlyKg, grnUnderGrnKg, poInTransitKg, grnReceivedKg] = await Promise.all([
       whWhere.length ? WarehouseInventory.findAll({ where: { [Op.or]: whWhere } }) : Promise.resolve([]),
       allRmIds.length
         ? RawMaterial.findAll({
@@ -2253,15 +2262,35 @@ async function getItemsInvolved(req, res) {
           })
         : Promise.resolve([]),
       allPmIds.length ? PackMaterial.findAll({ where: { id: allPmIds }, attributes: ['id', 'code', 'description'] }) : Promise.resolve([]),
-      // status + approval_status drive the committed-PO gate for the "PO Qty" bucket
-      // (only approved/released POs count; draft/under-review stay in "Planned").
-      PurchaseOrder.findAll({ attributes: ['id', 'items', 'reference', 'form_data', 'status', 'approval_status'] }),
+      // The supply pipeline is now GLOBAL per material (not planning-scoped): all POs/PRs/GRNs for the
+      // RM/PM count, regardless of planning link. order_id + expected_shipment_date feed the PO-Qty popup.
+      PurchaseOrder.findAll({ attributes: ['id', 'order_id', 'items', 'reference', 'form_data', 'status', 'approval_status', 'exception_status', 'expected_shipment_date'] }),
       ProcurementRequest.findAll({ attributes: ['id', 'planning_extracted_id', 'status', 'items'] }),
-      getGrnInTransitQtyByKey(),
+      getGrnInTransitOnlyQtyByKey(),
+      getGrnUnderGrnQtyByKey(),
       getPoPipelineInTransitQtyByKey(),
       getCompletedGrnReceivedKgByKey(),
     ]);
     const rmMetaById = buildRmMetaMap(rmsList);
+    // GRN lists behind the In-Transit / Under-GRN cells (click-through popups).
+    const [inTransitBreakdownByKey, underGrnBreakdownByKey] = await Promise.all([
+      getGrnInTransitBreakdownByKey(),
+      getGrnUnderGrnBreakdownByKey(),
+    ]);
+    // Global (material-wide) supply-pipeline maps: Planned = unlinked PR + Draft PO; PO Qty = committed
+    // (Approved/Issued) − In-Transit − Under-GRN − Received. In-Transit = GRN en-route + shipped POs w/o GRN.
+    const { committedByKey, draftByKey } = buildGlobalPoMaps(allPos, rmMetaById);
+    const unlinkedPrByKey = buildUnlinkedPrMap(allPrs, allPos, rmMetaById);
+    const inTransitByKey = new Map();
+    for (const src of [grnInTransitOnlyKg, poInTransitKg]) {
+      for (const [k, v] of src) { const n = Number(v) || 0; if (n > 0) inTransitByKey.set(k, (inTransitByKey.get(k) || 0) + n); }
+    }
+    const globalFlowMaps = {
+      committedByKey, draftByKey, unlinkedPrByKey,
+      inTransitByKey, underGrnByKey: grnUnderGrnKg, receivedByKey: grnReceivedKg,
+    };
+    // Per-material PO list for the "click PO Qty" popup (PO#, qty, status, expected date).
+    const poBreakdownByKey = buildPoBreakdownByKey(allPos);
 
     // Scoped reservations (spec §6.3 "Reserved" supply term): stock reserved specifically for
     // planning batches. Warehouse.reserved is a GLOBAL per-item sum (includes other PIs' and
@@ -2321,17 +2350,6 @@ async function getItemsInvolved(req, res) {
     }
 
     const { buildPrPlanningExtractedIdByRequestId, computeItemsInvolvedStageFlow } = require('../lib/itemsInvolvedStageFlow');
-    const prPeByRequestId = buildPrPlanningExtractedIdByRequestId(allPrs);
-
-    // Combined in-transit (open GRNs + PO pipeline) by key, kg-canonical for RM stage-flow.
-    const inTransitByKey = new Map();
-    for (const source of [grnInTransitKg, poInTransitKg]) {
-      for (const [k, v] of source) {
-        const n = Number(v) || 0;
-        if (n <= 0) continue;
-        inTransitByKey.set(k, (inTransitByKey.get(k) || 0) + n);
-      }
-    }
     const toNum = (v) => (v != null && v !== '' ? Number(v) : 0);
     const sihByRm = new Map();
     const sihByPm = new Map();
@@ -2399,39 +2417,8 @@ async function getItemsInvolved(req, res) {
     const rmInfo = new Map(rmsList.map((r) => [r.id, { code: r.code, name: r.name }]));
     const pmInfo = new Map(pmsList.map((p) => [p.id, { code: p.code, name: p.description || p.code }]));
 
-    // Stage-flow math (kg-canonical); API display via finalizeItemsInvolvedRmRow (planning→primary, WH→native):
-    //   totalReleased  = Release to Planning only (PR + Planning PE-* draft PO), NOT planning_batches / BOM confirm
-    //   plannedQty     = totalReleased - totalOnPO (not yet on any PO)
-    //   totalOnPO      -> poQty stage balance (minus in-transit + received)
-    //   totalInTransit -> inTransitQty (still shipped, not yet received)
-    //   totalReceived  -> folded into WH stock
-    // Qty "flows" forward; any stage edit auto-rebalances on next read because every displayed
-    // number is derived from current source-of-truth tables.
-    const flowEpsilon = 1e-6;
-    const isDev = process.env.NODE_ENV !== 'production';
-    const computeStageFlow = (key, totalReleased, stockInHand, planningExtractedIds) => {
-      const flow = computeItemsInvolvedStageFlow(
-        key,
-        totalReleased,
-        stockInHand,
-        planningExtractedIds,
-        allPos,
-        prPeByRequestId,
-        inTransitByKey,
-        grnReceivedKg,
-        rmMetaById
-      );
-      if (isDev) {
-        const stageSum = flow.plannedQty + flow.poQty + flow.inTransitQty;
-        if (stageSum > Number(totalReleased) + flowEpsilon && Number(totalReleased) > 0) {
-          console.warn(
-            `[items-involved] stage-flow drift for ${key}: planned+po+inTransit=${stageSum.toFixed(3)} > totalReleased=${Number(totalReleased).toFixed(3)} (totalOnPO=${flow.totalOnPO}, totalInTransit=${flow.totalInTransit}, totalReceived=${flow.totalReceived})`
-          );
-        }
-      }
-      return flow;
-    };
-
+    // Global supply pipeline (see globalFlowMaps above): Planned = unlinked PR + Draft PO;
+    // PO Qty = committed (Approved/Issued) − In-Transit − Under-GRN − Received. All material-wide.
     const out = [];
     for (const [id, agg] of rmAgg) {
       // "sih" in the items-involved API should represent *available/free* stock
@@ -2447,8 +2434,8 @@ async function getItemsInvolved(req, res) {
       const inTransitKg = warehouseNativeQtyToKg(inTransitNative, whUnit, rmMeta);
       const stockInHandKg = warehouseNativeQtyToKg(stockInHand, whUnit, rmMeta);
       const batchAllocatedQty = Number(agg.plannedQty) || 0;
-      const totalReleased = totalReleaseToPlanningQtyForAgg('RM', id, agg, allPrs, allPos, rmMetaById);
-      const flow = computeStageFlow(`rm-${id}`, totalReleased, stockInHandKg, agg.planningExtractedIds);
+      const flow = computeGlobalItemsInvolvedFlow(`rm-${id}`, globalFlowMaps);
+      const totalReleased = flow.plannedQty + flow.totalOnPO;
       const info = rmInfo.get(id) || {};
       const coverageDenom =
         agg.totalRequired > 0
@@ -2484,7 +2471,8 @@ async function getItemsInvolved(req, res) {
         plannedQty: flow.plannedQty,
         poQty: flow.poQty,
         inTransitQty: flow.inTransitQty,
-        whQty: flow.whQty,
+        underGrn: flow.underGrn,
+        whQty: stockInHandKg,
         totalReleased,
         batchAllocatedQty,
         totalOnPO: flow.totalOnPO,
@@ -2493,6 +2481,9 @@ async function getItemsInvolved(req, res) {
         reorderPt: reorderPtByRm.get(id) ?? 0,
         avgMo: avgMoByRm.get(id) ?? 0,
         status: rowStatus,
+        poBreakdown: poBreakdownByKey.get(`rm-${id}`) || [],
+        inTransitBreakdown: inTransitBreakdownByKey.get(`rm-${id}`) || [],
+        underGrnBreakdown: underGrnBreakdownByKey.get(`rm-${id}`) || [],
       };
       out.push(
         finalizeItemsInvolvedRmRow(rmRowKg, rmMeta, {
@@ -2512,8 +2503,8 @@ async function getItemsInvolved(req, res) {
       const inTransit = inTransitByPm.get(id) ?? 0;
       const surplusShortage = sih + inTransit - agg.totalRequired;
       const batchAllocatedQty = Number(agg.plannedQty) || 0;
-      const totalReleased = totalReleaseToPlanningQtyForAgg('PM', id, agg, allPrs, allPos);
-      const flow = computeStageFlow(`pm-${id}`, totalReleased, stockInHand, agg.planningExtractedIds);
+      const flow = computeGlobalItemsInvolvedFlow(`pm-${id}`, globalFlowMaps);
+      const totalReleased = flow.plannedQty + flow.totalOnPO;
       const info = pmInfo.get(id) || {};
       const coverageDenomPm = agg.totalRequired > 0
         ? Math.min(100, Math.round(((sih + inTransit) / agg.totalRequired) * 100))
@@ -2548,7 +2539,8 @@ async function getItemsInvolved(req, res) {
         plannedQty: flow.plannedQty,
         poQty: flow.poQty,
         inTransitQty: flow.inTransitQty,
-        whQty: flow.whQty,
+        underGrn: flow.underGrn,
+        whQty: stockInHand,
         totalReleased,
         batchAllocatedQty,
         totalOnPO: flow.totalOnPO,
@@ -2557,6 +2549,9 @@ async function getItemsInvolved(req, res) {
         reorderPt: reorderPtByPm.get(id) ?? 0,
         avgMo: avgMoByPm.get(id) ?? 0,
         status: rowStatusPm,
+        poBreakdown: poBreakdownByKey.get(`pm-${id}`) || [],
+        inTransitBreakdown: inTransitBreakdownByKey.get(`pm-${id}`) || [],
+        underGrnBreakdown: underGrnBreakdownByKey.get(`pm-${id}`) || [],
       });
     }
 

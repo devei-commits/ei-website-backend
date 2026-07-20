@@ -19,6 +19,7 @@ const PLANNING_KG_FIELDS = [
   'plannedQty',
   'poQty',
   'inTransitQty',
+  'underGrn',
   'whQty',
   'totalReleased',
   'batchAllocatedQty',

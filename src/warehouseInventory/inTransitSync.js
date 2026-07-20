@@ -129,6 +129,117 @@ async function getGrnInTransitQtyByKey() {
   return map;
 }
 
+/**
+ * Sum GRN line qty (kg per rm-/pm-, PM native) for an arbitrary GRN status set — used by Items
+ * Involved to split the pipeline into distinct In-Transit vs Under-GRN buckets. Mirrors
+ * getGrnInTransitQtyByKey but parameterised by status; existing behaviour is left untouched.
+ */
+async function sumGrnLineQtyByKeyForStatuses(statuses) {
+  const map = new Map();
+  try {
+    const grns = await GoodsReceivedNote.findAll({
+      where: { status: { [Op.in]: statuses } },
+      attributes: ['line_items'],
+    });
+    const rmIds = new Set();
+    const pmIds = new Set();
+    for (const g of grns) {
+      const d = g.get ? g.get({ plain: true }) : g;
+      const lines = Array.isArray(d.line_items) ? d.line_items : [];
+      for (const line of lines) {
+        if (line.raw_material_id != null) rmIds.add(Number(line.raw_material_id));
+        if (line.pack_material_id != null) pmIds.add(Number(line.pack_material_id));
+      }
+    }
+    const { rmMeta, pmMeta } = await loadRmPmMeta(rmIds, pmIds);
+    for (const g of grns) {
+      const d = g.get ? g.get({ plain: true }) : g;
+      const lines = Array.isArray(d.line_items) ? d.line_items : [];
+      for (const line of lines) {
+        const qty = toNum(line.poQty ?? line.quantity ?? line.qty);
+        if (qty <= 0) continue;
+        let key = null;
+        if (line.raw_material_id != null) key = `rm-${line.raw_material_id}`;
+        else if (line.pack_material_id != null) key = `pm-${line.pack_material_id}`;
+        if (!key) continue;
+        const unit = String(line.unit ?? line.UOM ?? '').trim();
+        const itemType = key.startsWith('rm-') ? 'RM' : 'PM';
+        const id = itemType === 'RM' ? Number(line.raw_material_id) : Number(line.pack_material_id);
+        const meta = itemType === 'RM' ? rmMeta.get(id) : pmMeta.get(id);
+        const kg = quantityToKg(qty, unit, {
+          itemType,
+          masterUom: itemType === 'RM' ? meta?.uom : meta?.unit,
+          sizeSpec: itemType === 'PM' ? meta?.size_spec : null,
+          specificGravity: itemType === 'RM' ? meta?.specific_gravity : undefined,
+        });
+        map.set(key, (map.get(key) || 0) + kg);
+      }
+    }
+  } catch (err) {
+    console.warn('[inTransitSync] sumGrnLineQtyByKeyForStatuses:', err.message);
+  }
+  return map;
+}
+
+// In-transit = shipped, en route (not yet at the warehouse). Under-GRN = arrived, under review at WH.
+const GRN_INTRANSIT_ONLY_STATUSES = ['In Transit', 'Pending', 'Delayed'];
+const GRN_UNDER_GRN_STATUSES = ['Under GRN', 'On Hold'];
+
+/** Items Involved: GRN qty still en route (excludes Under-GRN). */
+async function getGrnInTransitOnlyQtyByKey() {
+  return sumGrnLineQtyByKeyForStatuses(GRN_INTRANSIT_ONLY_STATUSES);
+}
+/** Items Involved: GRN qty arrived and under review at the warehouse (post-transit, pre-complete). */
+async function getGrnUnderGrnQtyByKey() {
+  return sumGrnLineQtyByKeyForStatuses(GRN_UNDER_GRN_STATUSES);
+}
+
+/**
+ * Per-material list of the GRNs behind an In-Transit / Under-GRN number, for the click-through popup.
+ * Map<rm-{id}|pm-{id}, [{ ref (GRN#), qty, unit, status, expectedDate }]>. Qty = raw GRN line qty.
+ */
+async function buildGrnBreakdownByKeyForStatuses(statuses) {
+  const byKey = new Map();
+  try {
+    const grns = await GoodsReceivedNote.findAll({
+      where: { status: { [Op.in]: statuses } },
+      attributes: ['grn_no', 'status', 'expected_date', 'line_items'],
+    });
+    for (const g of grns) {
+      const d = g.get ? g.get({ plain: true }) : g;
+      const ref = d.grn_no || '';
+      const status = d.status || '';
+      const expectedDate = d.expected_date || null;
+      const lines = Array.isArray(d.line_items) ? d.line_items : [];
+      const perKey = new Map();
+      for (const line of lines) {
+        let key = null;
+        if (line.raw_material_id != null) key = `rm-${line.raw_material_id}`;
+        else if (line.pack_material_id != null) key = `pm-${line.pack_material_id}`;
+        if (!key) continue;
+        const q = toNum(line.poQty ?? line.quantity ?? line.qty);
+        if (!(q > 0)) continue;
+        const unit = String(line.unit ?? line.UOM ?? '').trim() || (key.startsWith('rm-') ? 'KG' : 'PCS');
+        const prev = perKey.get(key);
+        if (prev) prev.qty += q; else perKey.set(key, { qty: q, unit });
+      }
+      for (const [key, { qty, unit }] of perKey) {
+        if (!byKey.has(key)) byKey.set(key, []);
+        byKey.get(key).push({ ref, qty, unit, status, expectedDate });
+      }
+    }
+  } catch (err) {
+    console.warn('[inTransitSync] buildGrnBreakdownByKeyForStatuses:', err.message);
+  }
+  return byKey;
+}
+async function getGrnInTransitBreakdownByKey() {
+  return buildGrnBreakdownByKeyForStatuses(GRN_INTRANSIT_ONLY_STATUSES);
+}
+async function getGrnUnderGrnBreakdownByKey() {
+  return buildGrnBreakdownByKeyForStatuses(GRN_UNDER_GRN_STATUSES);
+}
+
 async function getPurchaseOrderIdsWithInboundGrn() {
   const ids = new Set();
   try {
@@ -702,4 +813,9 @@ module.exports = {
   loadRmPmMeta,
   toNum,
   GRN_IN_TRANSIT_STATUSES,
+  getGrnInTransitOnlyQtyByKey,
+  getGrnUnderGrnQtyByKey,
+  getGrnInTransitBreakdownByKey,
+  getGrnUnderGrnBreakdownByKey,
+  GRN_UNDER_GRN_STATUSES,
 };
