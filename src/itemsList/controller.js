@@ -8,6 +8,13 @@ const PackMaterial = require('../packMaterials/models');
 const VendorClient = require('../vendorClient/models');
 const { Product } = require('../products/models');
 const { parseMoqQuantity } = require('../lib/moqQuantity');
+const {
+  normalizeMasterApprovalStatus,
+  getNextMasterApprovalStatus,
+  getPreviousMasterApprovalStatus,
+} = require('../lib/masterApprovalStatus');
+
+const APPROVAL_STATUSES = ['Draft', 'Under Review', 'Under Approval', 'Active'];
 
 function toNum(x) {
   if (x == null) return null;
@@ -164,7 +171,7 @@ async function pageItemsStats(req, res) {
  */
 async function pageItemsList(req, res) {
   try {
-    const { type, limit, offset, search, partyId, paginated } = parsePageQuery(req);
+    const { type, limit, offset, search, status, partyId, paginated } = parsePageQuery(req);
     if (type !== 'RM' && type !== 'PM' && type !== 'PR') {
       return res.status(400).json({ error: 'Query type must be RM, PM, or PR' });
     }
@@ -172,6 +179,7 @@ async function pageItemsList(req, res) {
       limit: paginated ? limit : null,
       offset,
       search,
+      status,
       partyId,
     });
     if (paginated) return res.json(result);
@@ -687,8 +695,45 @@ async function deleteTier(req, res) {
   }
 }
 
+/**
+ * Move a price list (items_list row) through the approval workflow:
+ * Draft → Under Review → Under Approval → Active (and back).
+ * Body: { action: 'advance' | 'reject' } or { status: '<target>' }.
+ */
+async function patchItemsListApprovalStatus(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const row = await ItemsList.findByPk(id);
+    if (!row || row.deleted_at) return res.status(404).json({ error: 'Price list not found' });
+
+    const current = normalizeMasterApprovalStatus(row.status);
+    const action = String(req.body?.action || '').toLowerCase();
+    let target;
+    if (action === 'advance') target = getNextMasterApprovalStatus(current);
+    else if (action === 'reject' || action === 'back') target = getPreviousMasterApprovalStatus(current);
+    else if (req.body?.status != null) target = normalizeMasterApprovalStatus(req.body.status);
+    else target = null;
+
+    if (!target || !APPROVAL_STATUSES.includes(target)) {
+      return res.status(400).json({ error: `No valid transition from ${current}` });
+    }
+    if (target === current) {
+      return res.status(400).json({ error: `Already ${current}` });
+    }
+
+    row.status = target;
+    await row.save();
+    return res.json({ id: row.id, status: row.status, updatedAt: row.updated_at });
+  } catch (e) {
+    console.error('[itemsList] patchItemsListApprovalStatus failed:', e && e.message ? e.message : e);
+    return res.status(500).json({ error: 'Failed to update approval status' });
+  }
+}
+
 module.exports = {
   resolveClientProductPriceHandler,
+  patchItemsListApprovalStatus,
   pageItemsList,
   pageItemsStats,
   listItemsList,

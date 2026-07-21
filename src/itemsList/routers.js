@@ -17,6 +17,7 @@ const {
   updateTier,
   deleteTier,
   resolveClientProductPriceHandler,
+  patchItemsListApprovalStatus,
 } = require('./controller');
 
 const guard = [isAuthenticated, requireModule('items-master')];
@@ -52,6 +53,7 @@ router.delete('/:id/rates/:rateId', guard, deleteRate);
 router.post('/:id/rates/:rateId/tiers', guard, createTier);
 router.put('/:id/rates/:rateId/tiers/:tierId', guard, updateTier);
 router.delete('/:id/rates/:rateId/tiers/:tierId', guard, deleteTier);
+router.patch('/:id/approval-status', guard, patchItemsListApprovalStatus);
 router.get('/:id', guard, getItemsListById);
 router.post('/', guard, createItemsList);
 router.put('/:id', guard, updateItemsList);

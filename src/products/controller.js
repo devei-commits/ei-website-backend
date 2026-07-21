@@ -840,6 +840,9 @@ const createPRRegistration = async (req, res) => {
       const prQsLockPatch = payloadHasQualitySpecEdits(b, PR_QUALITY_SPEC_EDIT_KEYS)
         ? { quality_specs_locked: true }
         : {};
+      const prQsLockPatch = payloadHasQualitySpecEdits(b, PR_QUALITY_SPEC_EDIT_KEYS)
+        ? { quality_specs_locked: true }
+        : {};
       const bomRow = {
         bom_code: product_code,
         bom_sku: bomSku,
@@ -875,6 +878,7 @@ const createPRRegistration = async (req, res) => {
         spec_bulk: b.specific_gravity ?? b.specificGravity ?? null,
         stability_summary: productRow.stability_summary,
         ...prQsPatch,
+        ...prQsLockPatch,
         ...prQsLockPatch,
         pr_facility_licences: flattenPrFacilityLicencesForStorage(
           b.pr_facility_licences ?? b.prFacilityLicences
@@ -1694,6 +1698,9 @@ const updateProduct = async (req, res) => {
           ...(payloadHasQualitySpecEdits(bomPayload, PR_QUALITY_SPEC_EDIT_KEYS)
             ? { quality_specs_locked: true }
             : {}),
+          ...(payloadHasQualitySpecEdits(bomPayload, PR_QUALITY_SPEC_EDIT_KEYS)
+            ? { quality_specs_locked: true }
+            : {}),
           pr_facility_licences: flattenPrFacilityLicencesForStorage(
             bomPayload.pr_facility_licences ?? bomPayload.prFacilityLicences
           ),
@@ -1891,6 +1898,9 @@ const updateProduct = async (req, res) => {
                 bomPayload.prQualityDispatchSubSpecRowsByPath
             )
           );
+        }
+        if (payloadHasQualitySpecEdits(bomPayload, PR_QUALITY_SPEC_EDIT_KEYS)) {
+          bomUpdate.quality_specs_locked = true;
         }
         if (payloadHasQualitySpecEdits(bomPayload, PR_QUALITY_SPEC_EDIT_KEYS)) {
           bomUpdate.quality_specs_locked = true;

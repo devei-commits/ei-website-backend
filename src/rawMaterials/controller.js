@@ -641,6 +641,7 @@ async function createRawMaterial(req, res) {
       }
       const fields = payloadToListFields(b);
       applyRmQualitySpecLockOnWrite(fields);
+      applyRmQualitySpecLockOnWrite(fields);
       await applyRmApprovalOnCreate(req, fields);
       const codeTrim = fields.code != null ? String(fields.code).trim() : '';
       if (!codeTrim) {
@@ -734,6 +735,7 @@ async function createRawMaterial(req, res) {
     const t = await db.transaction();
     try {
       const fields = payloadToListFields(b);
+      applyRmQualitySpecLockOnWrite(fields);
       applyRmQualitySpecLockOnWrite(fields);
       await applyRmApprovalOnCreate(req, fields);
       let codeTrim = fields.code != null ? String(fields.code).trim() : '';
@@ -871,6 +873,7 @@ async function updateRawMaterial(req, res) {
     }
     mergedFields.code = nextCode;
     delete mergedFields.zoho_sku_code;
+    applyRmQualitySpecLockOnWrite(mergedFields);
     applyRmQualitySpecLockOnWrite(mergedFields);
     await row.update(mergedFields);
     res.json(await formatRawMaterialFull(row));

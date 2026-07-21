@@ -849,6 +849,61 @@ async function listAllSalesorders(options = {}) {
 }
 
 /**
+ * Find sales orders by their human-facing number (e.g. "SO-03611").
+ *
+ * Zoho's generic collection helper whitelists query params, so this issues its own
+ * request with `salesorder_number`. That param is a server-side exact filter; we still
+ * re-check exact equality client-side because Zoho treats some list filters as prefix
+ * matches. Mirrors findItemsBySku's "resolve a business key to record(s)" shape.
+ *
+ * @param {string} salesorderNumber
+ * @returns {Promise<Record<string, unknown>[]>} exact matches (usually 0 or 1)
+ */
+async function findSalesordersByNumber(salesorderNumber) {
+  const needle = String(salesorderNumber == null ? '' : salesorderNumber).trim();
+  if (!needle) {
+    const err = new Error('findSalesordersByNumber: salesorder number is required');
+    err.code = 'MISSING_SO_NUMBER';
+    throw err;
+  }
+  const orgId = getOrgId();
+  const token = await getAccessToken();
+  const qs = new URLSearchParams({
+    organization_id: orgId,
+    salesorder_number: needle,
+    per_page: '200',
+  });
+  const url = `${getBooksBaseUrl()}/salesorders?${qs.toString()}`;
+  const op = 'findSalesordersByNumber';
+
+  logZohoRequest(op, 'GET', url, null);
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Zoho-oauthtoken ${token}` },
+  });
+
+  const raw = await readBooksJsonResponse(res);
+  logZohoResponse(op, res.status, raw);
+
+  const code = raw && typeof raw.code === 'number' ? raw.code : undefined;
+  const codeOk = code === undefined || code === 0;
+  if (!res.ok || !codeOk) {
+    logZohoError(op, 'GET', url, res.status, raw);
+    const msg = raw.message || raw.error || res.statusText || 'find_salesorders_by_number_failed';
+    const err = new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    err.zohoRaw = raw;
+    err.statusCode = res.status;
+    throw err;
+  }
+
+  const lower = needle.toLowerCase();
+  const rows = Array.isArray(raw.salesorders) ? raw.salesorders : [];
+  return rows.filter(
+    (r) => String(r && r.salesorder_number != null ? r.salesorder_number : '').trim().toLowerCase() === lower
+  );
+}
+
+/**
  * GET /salesorders/{id} — includes `line_items` when the list endpoint does not.
  * @param {string} salesorderId
  * @returns {Promise<Record<string, unknown> | null>}
@@ -1177,6 +1232,7 @@ module.exports = {
   listSalesordersPage,
   listAllSalesorders,
   getSalesorderById,
+  findSalesordersByNumber,
   listBillsPage,
   listAllBills,
   listPurchaseordersPage,
