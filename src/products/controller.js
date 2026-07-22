@@ -840,9 +840,6 @@ const createPRRegistration = async (req, res) => {
       const prQsLockPatch = payloadHasQualitySpecEdits(b, PR_QUALITY_SPEC_EDIT_KEYS)
         ? { quality_specs_locked: true }
         : {};
-      const prQsLockPatch = payloadHasQualitySpecEdits(b, PR_QUALITY_SPEC_EDIT_KEYS)
-        ? { quality_specs_locked: true }
-        : {};
       const bomRow = {
         bom_code: product_code,
         bom_sku: bomSku,
@@ -878,7 +875,6 @@ const createPRRegistration = async (req, res) => {
         spec_bulk: b.specific_gravity ?? b.specificGravity ?? null,
         stability_summary: productRow.stability_summary,
         ...prQsPatch,
-        ...prQsLockPatch,
         ...prQsLockPatch,
         pr_facility_licences: flattenPrFacilityLicencesForStorage(
           b.pr_facility_licences ?? b.prFacilityLicences
