@@ -48,6 +48,15 @@ const PLANNING_EXCLUDED_SO_STATUSES = new Set(['draft', 'cancelled', 'canceled',
 function isPlanningExcludedSoStatus(status) {
   return PLANNING_EXCLUDED_SO_STATUSES.has(String(status || '').trim().toLowerCase());
 }
+/**
+ * Terminally-cancelled SO statuses. A cancelled SO must not carry planning batches at all — every
+ * planning_batches row for its planning rows is permanently deleted (see syncPlanningExtractedFromSalesOrders).
+ * Draft is excluded from Planning too, but is a reversible pre-approval state, so its batches are left intact.
+ */
+const SO_CANCELLED_STATUSES = new Set(['cancelled', 'canceled', 'void']);
+function isSoCancelledStatus(status) {
+  return SO_CANCELLED_STATUSES.has(String(status || '').trim().toLowerCase());
+}
 const {
   isPlanningBatchEditableByProduction,
   planningBatchEditLockReason,
@@ -821,6 +830,27 @@ async function syncPlanningExtractedFromSalesOrders() {
     // rows created while the SO was live (this runs on every list read, so it self-heals on status change).
     if (isPlanningExcludedSoStatus(so.status)) {
       await softDeleteWhere(PlanningExtracted, { sales_order_id: so.id });
+      // A terminally-cancelled SO must carry no batches: permanently delete every planning_batches row
+      // for its planning rows (approved behaviour: delete all regardless of production-sent state). This
+      // also drops the SO's requirement out of Items Involved (getItemsInvolved excludes soft-deleted PIs).
+      // Draft SOs are excluded from Planning but reversible, so their batches are left untouched.
+      if (isSoCancelledStatus(so.status)) {
+        const planRows = await PlanningExtracted.findAll({
+          where: { sales_order_id: so.id },
+          attributes: ['id'],
+        });
+        const planIds = planRows.map((p) => (p.get ? p.get('id') : p.id));
+        if (planIds.length > 0) {
+          const removed = await PlanningBatch.destroy({
+            where: { planning_extracted_id: { [Op.in]: planIds } },
+          });
+          if (removed > 0) {
+            console.warn(
+              `[planningExtracted] SO ${so.order_id || so.id} cancelled — deleted ${removed} planning batch(es).`
+            );
+          }
+        }
+      }
       continue;
     }
     const items = Array.isArray(so.items) ? so.items : [];
@@ -2029,8 +2059,10 @@ async function getItemsInvolved(req, res) {
     const rmAgg = new Map(); // key: raw_material_id -> { totalRequired (gross), unallocatedToBatches, plannedQty, ... }
     const pmAgg = new Map(); // key: pack_material_id -> { totalRequired (gross), unallocatedToBatches, plannedQty, ... }
 
+    // Exclude soft-deleted planning rows (e.g. those hidden when their SO went Draft/Cancelled) so a
+    // cancelled SO's requirement drops out of totalRequired instead of lingering in Items Involved.
     const confirmed = await PlanningExtracted.findAll({
-      where: { bom_confirmed_at: { [Op.ne]: null } },
+      where: { bom_confirmed_at: { [Op.ne]: null }, deleted_at: { [Op.is]: null } },
       include: [{ model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'] }],
       order: [['id', 'ASC']],
     });
@@ -2040,6 +2072,7 @@ async function getItemsInvolved(req, res) {
         model: PlanningExtracted,
         as: 'planningExtracted',
         required: true,
+        where: { deleted_at: { [Op.is]: null } },
         attributes: ['id', 'order_qty_display', 'total_kg_display', 'product_id', 'packaging_materials', 'raw_materials'],
         include: [{ model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'] }],
       }],

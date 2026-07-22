@@ -34,6 +34,9 @@ function formatAsk(row) {
     unit: d.unit ?? null,
     vendorHint: d.vendor_hint ?? null,
     moqHint: d.moq_hint != null ? Number(d.moq_hint) : null,
+    source: d.source ?? 'planning',
+    moqBands: Array.isArray(d.moq_bands) ? d.moq_bands : [],
+    expectedRequiredDate: d.expected_required_date ?? null,
     status: d.status,
     notes: d.notes ?? null,
     requestedBy: d.requested_by ?? null,
@@ -85,17 +88,19 @@ async function listPlanningQuotationAsks(req, res) {
 async function createPlanningQuotationAsk(req, res) {
   try {
     const body = req.body || {};
-    const planningExtractedId = parseInt(
-      body.planningExtractedId ?? body.planning_extracted_id,
-      10
-    );
-    if (Number.isNaN(planningExtractedId) || planningExtractedId <= 0) {
-      return res.status(400).json({ error: 'planningExtractedId is required' });
-    }
-
-    const planRow = await PlanningExtracted.findByPk(planningExtractedId);
-    if (!planRow) {
-      return res.status(404).json({ error: 'Planning extracted record not found' });
+    // planningExtractedId is optional — a quotation may be requested from Procurement (source='procurement').
+    const peIdRaw = body.planningExtractedId ?? body.planning_extracted_id;
+    const planningExtractedId =
+      peIdRaw != null && String(peIdRaw).trim() !== '' ? parseInt(peIdRaw, 10) : null;
+    const source = String(body.source ?? (planningExtractedId ? 'planning' : 'procurement')).trim().toLowerCase() || 'planning';
+    if (planningExtractedId != null) {
+      if (Number.isNaN(planningExtractedId) || planningExtractedId <= 0) {
+        return res.status(400).json({ error: 'planningExtractedId must be a positive id when provided' });
+      }
+      const planRow = await PlanningExtracted.findByPk(planningExtractedId);
+      if (!planRow) {
+        return res.status(404).json({ error: 'Planning extracted record not found' });
+      }
     }
 
     const qtyRaw = body.quantityRequested ?? body.quantity_requested;
@@ -131,6 +136,14 @@ async function createPlanningQuotationAsk(req, res) {
     const itemCode = String(body.itemCode ?? body.item_code ?? '').trim() || null;
     const itemName = String(body.itemName ?? body.item_name ?? '').trim() || null;
     const unit = String(body.unit ?? '').trim() || null;
+    // RFQ MOQs to be quoted (no price): number[] of order quantities. Tolerates legacy {min} objects.
+    const bandsIn = body.moqBands ?? body.moq_bands;
+    const moqBands = Array.isArray(bandsIn)
+      ? bandsIn
+          .map((b) => (b != null && typeof b === 'object' ? Number(b.value ?? b.moq ?? b.min) : Number(b)))
+          .filter((n) => Number.isFinite(n) && n > 0)
+      : null;
+    const expectedRequiredDate = String(body.expectedRequiredDate ?? body.expected_required_date ?? '').trim() || null;
     const notesIn = body.notes != null ? String(body.notes).trim() : '';
     const notes =
       notesIn ||
@@ -145,12 +158,12 @@ async function createPlanningQuotationAsk(req, res) {
       moq_hint: moqHintVal,
     });
 
-    const pendingRows = await PlanningQuotationAsk.findAll({
-      where: {
-        planning_extracted_id: planningExtractedId,
-        status: 'pending',
-      },
-    });
+    // Dedup/merge only for planning-origin asks (same PI). Procurement-origin requests always create new.
+    const pendingRows = planningExtractedId != null
+      ? await PlanningQuotationAsk.findAll({
+          where: { planning_extracted_id: planningExtractedId, status: 'pending' },
+        })
+      : [];
 
     const existing = pendingRows.find((r) => askMergeKey(r) === incomingKey);
 
@@ -162,6 +175,8 @@ async function createPlanningQuotationAsk(req, res) {
         notes,
         ...(vendorHint ? { vendor_hint: vendorHint } : {}),
         ...(moqHintVal != null ? { moq_hint: moqHintVal } : {}),
+        ...(moqBands ? { moq_bands: moqBands } : {}),
+        ...(expectedRequiredDate ? { expected_required_date: expectedRequiredDate } : {}),
       });
       const reloaded = await PlanningQuotationAsk.findByPk(existing.id, {
         include: [peIncludePlanning],
@@ -171,6 +186,9 @@ async function createPlanningQuotationAsk(req, res) {
 
     const row = await PlanningQuotationAsk.create({
       planning_extracted_id: planningExtractedId,
+      source,
+      moq_bands: moqBands,
+      expected_required_date: expectedRequiredDate,
       item_type: itemType,
       raw_material_id:
         itemType === 'RM' && rawMaterialId != null && !Number.isNaN(rawMaterialId) && rawMaterialId > 0
@@ -235,6 +253,39 @@ async function updatePlanningQuotationAsk(req, res) {
       }
       updates.quantity_requested = qty;
     }
+
+    // Editable RFQ fields (Quote Requests → Edit): vendor, MOQ bands, expected date, item, unit.
+    if (body.vendorHint !== undefined || body.vendor_hint !== undefined) {
+      updates.vendor_hint = String(body.vendorHint ?? body.vendor_hint ?? '').trim() || null;
+    }
+    if (body.expectedRequiredDate !== undefined || body.expected_required_date !== undefined) {
+      updates.expected_required_date =
+        String(body.expectedRequiredDate ?? body.expected_required_date ?? '').trim() || null;
+    }
+    const bandsIn = body.moqBands ?? body.moq_bands;
+    if (bandsIn !== undefined) {
+      updates.moq_bands = Array.isArray(bandsIn)
+        ? bandsIn
+            .map((b) => (b != null && typeof b === 'object' ? Number(b.value ?? b.moq ?? b.min) : Number(b)))
+            .filter((n) => Number.isFinite(n) && n > 0)
+        : null;
+    }
+    if (body.itemType !== undefined || body.item_type !== undefined) {
+      const it = String(body.itemType ?? body.item_type ?? '').trim().toUpperCase();
+      if (it !== 'RM' && it !== 'PM') return res.status(400).json({ error: 'itemType must be RM or PM' });
+      updates.item_type = it;
+      const rmId = body.rawMaterialId ?? body.raw_material_id;
+      const pmId = body.packMaterialId ?? body.pack_material_id;
+      updates.raw_material_id = it === 'RM' && rmId != null && Number(rmId) > 0 ? parseInt(rmId, 10) : null;
+      updates.pack_material_id = it === 'PM' && pmId != null && Number(pmId) > 0 ? parseInt(pmId, 10) : null;
+    }
+    if (body.itemCode !== undefined || body.item_code !== undefined) {
+      updates.item_code = String(body.itemCode ?? body.item_code ?? '').trim() || null;
+    }
+    if (body.itemName !== undefined || body.item_name !== undefined) {
+      updates.item_name = String(body.itemName ?? body.item_name ?? '').trim() || null;
+    }
+    if (body.unit !== undefined) updates.unit = String(body.unit ?? '').trim() || null;
 
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: 'No updates provided' });

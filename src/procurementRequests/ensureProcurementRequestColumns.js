@@ -27,6 +27,14 @@ async function ensureProcurementRequestColumns() {
         ADD COLUMN IF NOT EXISTS stock_check_due_date    DATE,
         ADD COLUMN IF NOT EXISTS stock_check_notes       TEXT;
     `);
+    // Manual / non-Planning PRs (Direct PR, blanket call-off, consignment) insert a NULL
+    // planning_extracted_id. Some environments (e.g. legacy/live snapshots) still carry a NOT NULL
+    // constraint on this column, which makes manual PR creation fail with 23502. The model already
+    // declares it nullable — align the DB. DROP NOT NULL is idempotent (no-op once already nullable).
+    await db.query(`
+      ALTER TABLE procurement_requests
+        ALTER COLUMN planning_extracted_id DROP NOT NULL;
+    `);
     return { ensured: true };
   } catch (err) {
     // Never block boot on this — reads degrade until the columns are present.

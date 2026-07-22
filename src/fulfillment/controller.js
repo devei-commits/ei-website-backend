@@ -1017,12 +1017,44 @@ async function updateOrder(req, res) {
     await row.save();
 
     // Persist the authoritative order status to sales_orders.status so Planning → PIS Extracted
-    // picks it up on its next self-healing sync (draft/cancelled SOs get hidden).
+    // picks it up on its next self-healing sync (draft/cancelled SOs get hidden; a cancelled SO's
+    // planning batches are permanently deleted there and its requirement drops out of Items Involved).
     if (nextSalesOrderStatus && rowPlain.sales_order_id) {
       await SalesOrder.update(
         { status: nextSalesOrderStatus },
         { where: { id: rowPlain.sales_order_id } }
       );
+    }
+
+    // Cancelling an SO permanently deletes ALL its planning batches — immediately here (so it happens
+    // the instant the SO is cancelled, not only on the next Planning self-healing sync). Warn if any
+    // were already sent to production (BMR/BPR raised), since that work is being discarded.
+    let cancelWarning = null;
+    if (nextSalesOrderStatus === 'Cancelled' && rowPlain.sales_order_id) {
+      const PlanningExtracted = require('../planningExtracted/models');
+      const PlanningBatch = require('../planningExtracted/planningBatchModel');
+      const pis = await PlanningExtracted.findAll({
+        where: { sales_order_id: rowPlain.sales_order_id },
+        attributes: ['id', 'sent_batch_indices'],
+      });
+      const planIds = pis.map((pi) => (pi.get ? pi.get('id') : pi.id));
+      const sentCount = pis.reduce((n, pi) => {
+        const raw = pi.get ? pi.get('sent_batch_indices') : pi.sent_batch_indices;
+        return n + (Array.isArray(raw) ? raw.length : 0);
+      }, 0);
+      if (planIds.length > 0) {
+        const removed = await PlanningBatch.destroy({
+          where: { planning_extracted_id: { [Op.in]: planIds } },
+        });
+        if (removed > 0) {
+          console.warn(
+            `[fulfillment] SO ${rowPlain.sales_order_id} cancelled — deleted ${removed} planning batch(es).`
+          );
+        }
+      }
+      if (sentCount > 0) {
+        cancelWarning = `This SO has ${sentCount} batch(es) already sent to production. Cancelling deletes all of its planning batches.`;
+      }
     }
 
     const updated = await FulfillmentOrder.findByPk(id, { include: INCLUDE_FULL });
@@ -1031,7 +1063,7 @@ async function updateOrder(req, res) {
       const so = await SalesOrder.findByPk(rowPlain.sales_order_id, { attributes: ['status'] });
       orderStatus = so ? (so.get('status') || null) : null;
     }
-    res.json(formatOrder(updated, {}, { orderStatus }));
+    res.json({ ...formatOrder(updated, {}, { orderStatus }), ...(cancelWarning ? { warning: cancelWarning } : {}) });
   } catch (err) {
     console.error('updateOrder error:', err);
     res.status(500).json({ error: 'Failed to update fulfillment order' });

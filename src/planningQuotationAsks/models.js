@@ -11,11 +11,14 @@ class PlanningQuotationAsk extends Model {}
 PlanningQuotationAsk.init(
   {
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    // Nullable: a quotation can be requested from Procurement without a planning link (source='procurement').
     planning_extracted_id: {
       type: DataTypes.INTEGER,
-      allowNull: false,
+      allowNull: true,
       references: { model: 'planning_extracted', key: 'id' },
     },
+    /** planning | procurement — where the quotation request was raised from. */
+    source: { type: DataTypes.STRING(20), allowNull: true, defaultValue: 'planning' },
     item_type: { type: DataTypes.STRING(10), allowNull: false },
     raw_material_id: { type: DataTypes.INTEGER, allowNull: true },
     pack_material_id: { type: DataTypes.INTEGER, allowNull: true },
@@ -25,6 +28,10 @@ PlanningQuotationAsk.init(
     unit: { type: DataTypes.STRING(20), allowNull: true },
     vendor_hint: { type: DataTypes.STRING(300), allowNull: true },
     moq_hint: { type: DataTypes.DECIMAL(18, 6), allowNull: true },
+    /** RFQ qty tiers to be quoted (no price): [{ min:number, max:number|null }]. */
+    moq_bands: { type: DataTypes.JSON, allowNull: true },
+    /** Expected required-by date for the quote. */
+    expected_required_date: { type: DataTypes.DATEONLY, allowNull: true },
     status: { type: DataTypes.STRING(30), allowNull: false, defaultValue: 'pending' },
     notes: { type: DataTypes.TEXT, allowNull: true },
     requested_by: { type: DataTypes.STRING(200), allowNull: true },
