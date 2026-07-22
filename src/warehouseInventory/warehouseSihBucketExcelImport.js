@@ -37,6 +37,7 @@ const BUCKET_CONFIG = {
   warehouse: {
     label: 'Main warehouse',
     sheetRule: 'consolidated_sih_sheet',
+    sheetRule: 'consolidated_sih_sheet',
     stockField: 'wh_stock',
     auditSource: 'warehouse_sih_excel_wh',
   },
@@ -345,6 +346,7 @@ async function findAllMastersByItemName(itemName) {
   if (!t) return [];
   const [rm, pm, pr] = await Promise.all([
     RawMaterial.findOne({ where: { name: { [Op.iLike]: t } } }),
+    PackMaterial.findOne({ where: { description: { [Op.iLike]: t } } }),
     PackMaterial.findOne({ where: { description: { [Op.iLike]: t } } }),
     Product.findOne({ where: { product_name: { [Op.iLike]: t } } }),
   ]);

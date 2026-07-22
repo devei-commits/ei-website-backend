@@ -71,13 +71,20 @@ function sumScopedPurchaseOrderQtyForKey(
     const poPlain = po.get ? po.get({ plain: true }) : po;
     // Only committed (approved/released) POs move qty out of "Planned" into "PO Qty".
     if (!isCommittedPurchaseOrder(poPlain)) continue;
-    if (!purchaseOrderMatchesPlanningExtractedIds(po, peSet, prPeByRequestId)) continue;
+    // A PO line is in scope if EITHER the PO is linked at PO level (reference
+    // `Planning PE-*` / PR-bridge) OR the individual line carries a
+    // `planning_extracted_id` in scope (per-line linking — one PO can serve
+    // several SOs, each line pointing at its own planning row).
+    const poLevelMatch = purchaseOrderMatchesPlanningExtractedIds(po, peSet, prPeByRequestId);
     const items = Array.isArray(poPlain.items) ? poPlain.items : [];
     for (const line of items) {
       let key = null;
       if (line.raw_material_id != null) key = `rm-${line.raw_material_id}`;
       else if (line.pack_material_id != null) key = `pm-${line.pack_material_id}`;
       if (key !== itemKey) continue;
+      const linePe = Number(line.planning_extracted_id);
+      const lineMatch = Number.isFinite(linePe) && linePe > 0 && peSet.has(linePe);
+      if (!poLevelMatch && !lineMatch) continue;
       if (key.startsWith('rm-') && rmMetaById) {
         const rmId = Number(String(key).slice(3));
         sum += procurementOrPoLineQtyToKg(line, rmMetaForId(rmMetaById, rmId));

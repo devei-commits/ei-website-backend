@@ -12,10 +12,13 @@ const {
   uploadOpenSoHeadersExcelSafe,
   postOpenSoHeadersExcelImport,
 } = require('./openSoHeadersExcelImport');
+const { importSalesOrderFromZohoBySoNo } = require('./zohoImportBySoNo');
 
 const guard = [isAuthenticated, requireModule('sales-purchase')];
 
 router.post('/import-excel', guard, uploadOpenSoHeadersExcelSafe, postOpenSoHeadersExcelImport);
+// Must precede GET '/:id' — not a conflict today (POST vs GET), but keeps static paths above params.
+router.post('/zoho-import-by-so-no', guard, importSalesOrderFromZohoBySoNo);
 router.get('/', guard, listSalesOrders);
 router.get('/:id', guard, getSalesOrderById);
 router.post('/', guard, createSalesOrder);

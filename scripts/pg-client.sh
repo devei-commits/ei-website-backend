@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Postgres client tools for backup/restore against PG16 server.
+# Postgres client tools for backup/restore. The prod server is PG17, and pg_dump must be >= the
+# server major (an older pg_dump aborts with "server version mismatch"), so backup needs client 17+.
 # Restore may require client 18+ when the dump uses a newer custom format (e.g. v1.16 from PG17+ pg_dump).
 
-PG_CLIENT_MIN_MAJOR="${PG_CLIENT_MIN_MAJOR:-16}"
+PG_CLIENT_MIN_MAJOR="${PG_CLIENT_MIN_MAJOR:-17}"
 PG_CLIENT_RESTORE_MIN_MAJOR="${PG_CLIENT_RESTORE_MIN_MAJOR:-18}"
 
 pg_client_major() {

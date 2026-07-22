@@ -1694,6 +1694,9 @@ const updateProduct = async (req, res) => {
           ...(payloadHasQualitySpecEdits(bomPayload, PR_QUALITY_SPEC_EDIT_KEYS)
             ? { quality_specs_locked: true }
             : {}),
+          ...(payloadHasQualitySpecEdits(bomPayload, PR_QUALITY_SPEC_EDIT_KEYS)
+            ? { quality_specs_locked: true }
+            : {}),
           pr_facility_licences: flattenPrFacilityLicencesForStorage(
             bomPayload.pr_facility_licences ?? bomPayload.prFacilityLicences
           ),
@@ -1891,6 +1894,9 @@ const updateProduct = async (req, res) => {
                 bomPayload.prQualityDispatchSubSpecRowsByPath
             )
           );
+        }
+        if (payloadHasQualitySpecEdits(bomPayload, PR_QUALITY_SPEC_EDIT_KEYS)) {
+          bomUpdate.quality_specs_locked = true;
         }
         if (payloadHasQualitySpecEdits(bomPayload, PR_QUALITY_SPEC_EDIT_KEYS)) {
           bomUpdate.quality_specs_locked = true;

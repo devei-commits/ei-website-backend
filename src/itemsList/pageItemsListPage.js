@@ -10,9 +10,62 @@ const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const VendorClient = require('../vendorClient/models');
 const { Product } = require('../products/models');
+const { normalizeMasterApprovalStatus } = require('../lib/masterApprovalStatus');
 
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
+const APPROVAL_ORDER = ['Draft', 'Under Review', 'Under Approval', 'Active'];
+
+/**
+ * Global price-list status index for a type: per-status master counts, and the
+ * master-FK sets that carry each non-Draft status. A master with no price list
+ * (or a Draft one) counts as Draft. Used so the status tabs' counts and filtering
+ * are computed over the WHOLE catalog, consistent with server pagination.
+ */
+async function buildStatusIndex(pageType) {
+  const fkField = fkFieldForType(pageType);
+  const rows = await ItemsList.findAll({
+    where: { type: pageType },
+    attributes: [fkField, 'status'],
+    raw: true,
+  });
+  const rank = (s) => {
+    const i = APPROVAL_ORDER.indexOf(normalizeMasterApprovalStatus(s));
+    return i < 0 ? 0 : i;
+  };
+  // canonical status per FK = the most-advanced status among its price-list rows
+  const statusByFk = new Map();
+  for (const r of rows) {
+    const fk = r[fkField];
+    if (fk == null) continue;
+    const s = normalizeMasterApprovalStatus(r.status);
+    const cur = statusByFk.get(fk);
+    if (cur == null || rank(s) > rank(cur)) statusByFk.set(fk, s);
+  }
+  const totalMasters = await masterCountForType(pageType);
+  const counts = { all: totalMasters, Draft: 0, 'Under Review': 0, 'Under Approval': 0, Active: 0 };
+  const fksByStatus = { 'Under Review': [], 'Under Approval': [], Active: [] };
+  const nonDraftFks = [];
+  let draftPriced = 0;
+  for (const [fk, s] of statusByFk) {
+    if (s === 'Draft') {
+      draftPriced += 1;
+      continue;
+    }
+    counts[s] = (counts[s] || 0) + 1;
+    nonDraftFks.push(fk);
+    if (fksByStatus[s]) fksByStatus[s].push(fk);
+  }
+  // Draft = priced-but-draft + every master with no price list at all
+  counts.Draft = draftPriced + Math.max(0, totalMasters - statusByFk.size);
+  return { counts, fksByStatus, nonDraftFks };
+}
+
+async function masterCountForType(pageType) {
+  if (pageType === 'RM') return RawMaterial.count();
+  if (pageType === 'PM') return PackMaterial.count();
+  return Product.count();
+}
 
 function toNum(x) {
   if (x == null) return null;
@@ -196,7 +249,7 @@ async function fkIdsForPartyFilter(pageType, partyId) {
   return [...new Set(listRows.map((r) => r[fkField]).filter((id) => id != null))];
 }
 
-async function fetchMasters(pageType, { search, partyId, limit, offset, fkFilterIds }) {
+async function fetchMasters(pageType, { search, partyId, limit, offset, fkFilterIds, fkExcludeIds }) {
   const searchClause = searchWhereForType(pageType, search);
   const pk = masterPkField(pageType);
   let where = searchClause ? { ...searchClause } : {};
@@ -204,6 +257,9 @@ async function fetchMasters(pageType, { search, partyId, limit, offset, fkFilter
     where = { [Op.and]: [where, { [pk]: { [Op.in]: fkFilterIds } }] };
   } else if (fkFilterIds && fkFilterIds.length === 0) {
     return { masters: [], total: 0 };
+  }
+  if (fkExcludeIds && fkExcludeIds.length > 0) {
+    where = { [Op.and]: [where, { [pk]: { [Op.notIn]: fkExcludeIds } }] };
   }
 
   if (pageType === 'RM') {
@@ -250,6 +306,9 @@ function buildItemFromMaster(pageType, master, listRow, vendorRates) {
       pack_material_id: null,
       product_id: null,
       itemsListId: listRow ? listRow.id : null,
+      status: listRow ? listRow.status || 'Draft' : 'Draft',
+      updatedAt: listRow ? listRow.updated_at || null : null,
+      createdAt: listRow ? listRow.created_at || null : null,
       vendorRates,
     };
   }
@@ -267,6 +326,9 @@ function buildItemFromMaster(pageType, master, listRow, vendorRates) {
       pack_material_id: p.id,
       product_id: null,
       itemsListId: listRow ? listRow.id : null,
+      status: listRow ? listRow.status || 'Draft' : 'Draft',
+      updatedAt: listRow ? listRow.updated_at || null : null,
+      createdAt: listRow ? listRow.created_at || null : null,
       vendorRates,
     };
   }
@@ -287,6 +349,9 @@ function buildItemFromMaster(pageType, master, listRow, vendorRates) {
     pack_material_id: null,
     product_id: prod.product_id,
     itemsListId: listRow ? listRow.id : null,
+    status: listRow ? listRow.status || 'Draft' : 'Draft',
+    updatedAt: listRow ? listRow.updated_at || null : null,
+    createdAt: listRow ? listRow.created_at || null : null,
     vendorRates,
   };
 }
@@ -302,7 +367,25 @@ async function buildPriceListPage(pageType, opts = {}) {
   const partyId = opts.partyId != null && !Number.isNaN(Number(opts.partyId)) ? Number(opts.partyId) : null;
 
   const fkField = fkFieldForType(pageType);
-  const fkFilterIds = partyId != null ? await fkIdsForPartyFilter(pageType, partyId) : null;
+  const partyFkFilterIds = partyId != null ? await fkIdsForPartyFilter(pageType, partyId) : null;
+
+  // Status tabs: counts over the whole catalog + FK sets to filter/paginate server-side.
+  const statusIndex = await buildStatusIndex(pageType);
+  const statusFilter = opts.status ? normalizeMasterApprovalStatus(opts.status) : null;
+
+  // Combine party filter (IN) and status filter (IN for non-Draft, NOT IN for Draft).
+  let fkFilterIds = partyFkFilterIds;
+  let fkExcludeIds = null;
+  if (statusFilter && statusFilter !== 'Draft') {
+    const statusFks = statusIndex.fksByStatus[statusFilter] || [];
+    fkFilterIds =
+      partyFkFilterIds != null
+        ? partyFkFilterIds.filter((id) => statusFks.includes(id))
+        : statusFks;
+  } else if (statusFilter === 'Draft') {
+    // Draft = masters with no active price list → exclude every non-Draft FK.
+    fkExcludeIds = statusIndex.nonDraftFks;
+  }
 
   const { masters, total } = await fetchMasters(pageType, {
     search,
@@ -310,6 +393,7 @@ async function buildPriceListPage(pageType, opts = {}) {
     limit,
     offset,
     fkFilterIds,
+    fkExcludeIds,
   });
 
   if (masters.length === 0) {
@@ -318,6 +402,7 @@ async function buildPriceListPage(pageType, opts = {}) {
       total,
       limit: limit ?? total,
       offset: limit != null ? offset : 0,
+      statusCounts: statusIndex.counts,
     };
   }
 
@@ -356,6 +441,7 @@ async function buildPriceListPage(pageType, opts = {}) {
     total,
     limit: limit ?? total,
     offset: limit != null ? offset : 0,
+    statusCounts: statusIndex.counts,
   };
 }
 
@@ -400,6 +486,8 @@ function parsePageQuery(req) {
   const limitRaw = req.query.limit;
   const offsetRaw = req.query.offset;
   const search = String(req.query.search || '').trim();
+  const statusRaw = String(req.query.status || '').trim();
+  const status = statusRaw && statusRaw.toLowerCase() !== 'all' ? statusRaw : null;
   const partyIdRaw = req.query.party_id;
   const partyId =
     partyIdRaw != null && String(partyIdRaw).trim() !== ''
@@ -420,6 +508,7 @@ function parsePageQuery(req) {
     limit,
     offset,
     search,
+    status,
     partyId: partyId != null && !Number.isNaN(partyId) ? partyId : null,
     paginated,
   };
