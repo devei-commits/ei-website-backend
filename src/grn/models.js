@@ -47,6 +47,8 @@ GoodsReceivedNote.init(
     generated_labels: { type: DataTypes.JSON, allowNull: true },
     /** po | transfer | return — where the inbound GRN was initiated. */
     receipt_source: { type: DataTypes.STRING(30), allowNull: true, defaultValue: 'po' },
+    /** Source MRN (material_request_notes) when this GRN was auto-created from a completed transfer. */
+    mrn_id: { type: DataTypes.INTEGER, allowNull: true },
     /** Per-tab source documents: bill, waybill, lr, coa, to_ref, dispatch_labels, credit_note, debit_note. */
     source_documents: { type: DataTypes.JSON, allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
