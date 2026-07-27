@@ -11,6 +11,7 @@ const {
   getSentBatchSummary,
   listBatches,
   getBatchById,
+  deleteBatch,
   createOrUpdateBatches,
   addOneBatchFromMaster,
   addRworkBatch,
@@ -40,6 +41,7 @@ router.post('/:id/batches/add-one', guard, addOneBatchFromMaster);
 router.post('/:id/batches/add-rework', guard, addRworkBatch);
 router.get('/:id/batches/:batchId', guard, getBatchById);
 router.put('/:id/batches/:batchId', guard, updateBatch);
+router.delete('/:id/batches/:batchId', guard, deleteBatch);
 router.get('/:id', guard, cachePlanningExtractedOne, getPlanningExtractedById);
 router.patch('/:id', guard, updatePlanningExtracted);
 

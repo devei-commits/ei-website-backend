@@ -1375,6 +1375,42 @@ async function getSentBatchSummary(req, res) {
 /**
  * GET /:id/batches — list batch-specific BOM rows for this planning extracted (batch_code, size_kg, rm_lines, pm_lines).
  */
+/**
+ * Self-heal a PI's denormalized batch fields (custom_batches, batch_count, sent/buffer indices) from
+ * the actual planning_batches rows. Fixes any drift — e.g. left by an older delete path that didn't
+ * rewrite custom_batches — which otherwise makes the Plan Batches modal show a phantom batch and block
+ * adding a new one. Idempotent: only writes when something is actually out of sync.
+ */
+async function reconcilePlanningBatchDenorm(planRow, rows) {
+  const actualCount = rows.length;
+  const desiredCustom = rows.map((r) => ({ sizeKg: Number(r.get ? r.get('size_kg') : r.size_kg) || 0 }));
+  const curCustom = Array.isArray(planRow.get ? planRow.get('custom_batches') : planRow.custom_batches)
+    ? (planRow.get ? planRow.get('custom_batches') : planRow.custom_batches)
+    : [];
+  const curCount = Number(planRow.get ? planRow.get('batch_count') : planRow.batch_count) || 0;
+  const prune = (raw) => (Array.isArray(raw) ? raw : []).map(Number).filter((n) => Number.isFinite(n) && n >= 0 && n < actualCount);
+  const curSent = Array.isArray(planRow.get ? planRow.get('sent_batch_indices') : planRow.sent_batch_indices)
+    ? (planRow.get ? planRow.get('sent_batch_indices') : planRow.sent_batch_indices).map(Number)
+    : [];
+  const curBuffer = Array.isArray(planRow.get ? planRow.get('buffer_batch_indices') : planRow.buffer_batch_indices)
+    ? (planRow.get ? planRow.get('buffer_batch_indices') : planRow.buffer_batch_indices).map(Number)
+    : [];
+  const nextSent = prune(curSent);
+  const nextBuffer = prune(curBuffer);
+  const customMismatch =
+    curCustom.length !== actualCount || desiredCustom.some((d, i) => Number(curCustom[i] && curCustom[i].sizeKg) !== d.sizeKg);
+  const sentMismatch = JSON.stringify(nextSent) !== JSON.stringify(curSent);
+  const bufferMismatch = JSON.stringify(nextBuffer) !== JSON.stringify(curBuffer);
+  if (curCount !== actualCount || customMismatch || sentMismatch || bufferMismatch) {
+    await planRow.update({
+      batch_count: actualCount,
+      custom_batches: actualCount > 0 ? desiredCustom : null,
+      sent_batch_indices: nextSent,
+      buffer_batch_indices: nextBuffer,
+    });
+  }
+}
+
 async function listBatches(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
@@ -1385,6 +1421,7 @@ async function listBatches(req, res) {
       where: { planning_extracted_id: id },
       order: [['sequence', 'ASC']],
     });
+    await reconcilePlanningBatchDenorm(planRow, rows);
     const prodBmrByPlanningBatchId = await loadProductionBmrStatusByPlanningBatchIds(
       rows.map((r) => (r.get ? r.get('id') : r.id))
     );
@@ -1912,6 +1949,101 @@ async function updateBatch(req, res) {
   }
 }
 
+/**
+ * DELETE /:id/batches/:batchId — permanently delete one planning batch.
+ * Any batch may be deleted (the UI confirms first). Hard-delete + gapless reindex of the remaining
+ * batches' `sequence`/`batch_code`, remap the PI's sent/buffer indices (drop the removed index, shift
+ * the rest down), refresh reservations, and update batch_count. A production batch linked to the
+ * deleted planning batch is auto-detached (FK is ON DELETE SET NULL), so no production row is destroyed.
+ */
+async function deleteBatch(req, res) {
+  try {
+    const planningId = parseInt(req.params.id, 10);
+    const batchId = parseInt(req.params.batchId, 10);
+    if (Number.isNaN(planningId) || Number.isNaN(batchId)) {
+      return res.status(400).json({ error: 'Invalid id or batchId' });
+    }
+    const planRow = await PlanningExtracted.findByPk(planningId);
+    if (!planRow) return res.status(404).json({ error: 'Planning extracted not found' });
+    const batch = await PlanningBatch.findOne({ where: { id: batchId, planning_extracted_id: planningId } });
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+
+    const removedSeq = Number(batch.get ? batch.get('sequence') : batch.sequence) || 0;
+    const removedIndex = removedSeq - 1; // 0-based index used by sent/buffer arrays
+
+    await db.transaction(async (t) => {
+      await batch.destroy({ transaction: t });
+
+      // Reindex survivors to a gapless 1..N. Two-phase to avoid transient collisions on the
+      // unique(planning_extracted_id, sequence) constraint.
+      const remaining = await PlanningBatch.findAll({
+        where: { planning_extracted_id: planningId },
+        order: [['sequence', 'ASC']],
+        transaction: t,
+      });
+      for (let i = 0; i < remaining.length; i += 1) {
+        await remaining[i].update({ sequence: 100000 + i }, { transaction: t });
+      }
+      for (let i = 0; i < remaining.length; i += 1) {
+        const finalSeq = i + 1;
+        await remaining[i].update(
+          { sequence: finalSeq, batch_code: `PE-${planningId}-B${finalSeq}` },
+          { transaction: t },
+        );
+      }
+
+      // Remap 0-based sent/buffer indices: drop the removed one, shift down anything above it.
+      const remap = (raw) => {
+        const arr = Array.isArray(raw) ? raw : [];
+        return arr
+          .map((v) => Number(v))
+          .filter((n) => Number.isFinite(n) && n !== removedIndex)
+          .map((n) => (n > removedIndex ? n - 1 : n))
+          .filter((n) => n >= 0 && n < remaining.length);
+      };
+      // Rebuild the denormalized custom_batches JSON (sizes, in the new gapless order) so every reader
+      // that hydrates from the PI row — chiefly the Plan Batches modal — reflects the deletion. Without
+      // this the modal re-syncs from stale custom_batches and shows the deleted batch / blocks new ones.
+      const nextCustomBatches = remaining.map((b) => ({
+        sizeKg: Number(b.get ? b.get('size_kg') : b.size_kg) || 0,
+      }));
+      await planRow.update(
+        {
+          sent_batch_indices: remap(planRow.get ? planRow.get('sent_batch_indices') : planRow.sent_batch_indices),
+          buffer_batch_indices: remap(planRow.get ? planRow.get('buffer_batch_indices') : planRow.buffer_batch_indices),
+          batch_count: remaining.length,
+          custom_batches: nextCustomBatches.length > 0 ? nextCustomBatches : null,
+        },
+        { transaction: t },
+      );
+    });
+
+    // Reserved stock must reflect the surviving batches only.
+    try {
+      await refreshReservationsFromPlanningBatches(planningId);
+    } catch (e) {
+      console.warn('[planningExtracted] deleteBatch refreshReservations failed:', e && e.message ? e.message : e);
+    }
+
+    const updated = await PlanningBatch.findAll({
+      where: { planning_extracted_id: planningId },
+      order: [['sequence', 'ASC']],
+    });
+    const prodBmrByPlanningBatchId = await loadProductionBmrStatusByPlanningBatchIds(
+      updated.map((r) => (r.get ? r.get('id') : r.id)),
+    );
+    res.json({
+      ok: true,
+      deletedBatchId: batchId,
+      batchCount: updated.length,
+      batches: updated.map((r) => formatBatchRow(r, prodBmrByPlanningBatchId)),
+    });
+  } catch (err) {
+    console.error('deleteBatch error', err);
+    res.status(500).json({ error: 'Failed to delete batch' });
+  }
+}
+
 /** Sum RM (kg) and PM (pcs) from one planning_batches row; uses PI packaging when batch has no pm_lines. */
 function accumulatePlannedBatchIntoQtyMaps(batchPlain, planPlain, rmByCode, rmByName, pmByCode, pmByName, plannedRm, plannedPm) {
   const sizeKg = Number(batchPlain.size_kg) || 0;
@@ -2165,6 +2297,9 @@ async function getItemsInvolved(req, res) {
 
       const allRmIdsForPlan = new Set([...fullRm.keys(), ...plannedRm.keys()]);
       for (const id of allRmIdsForPlan) {
+        // Batch-driven Items Involved: only surface a material that at least one of this PI's batches
+        // (planned OR sent) actually references. A PI with no batches contributes no items.
+        if (countPlanningBatchesTouchingRm(planBatchesPlain, id, rmByCode, rmByName) === 0) continue;
         const gross = (fullRm.get(id) || 0);
         const rem = Math.max(0, gross - (plannedRm.get(id) || 0));
         if (!(gross > 0) && !includeZeroRequired) continue;
@@ -2197,6 +2332,8 @@ async function getItemsInvolved(req, res) {
 
       const allPmIdsForPlan = new Set([...fullPm.keys(), ...plannedPm.keys()]);
       for (const id of allPmIdsForPlan) {
+        // Batch-driven: skip PMs that no batch of this PI references.
+        if (countPlanningBatchesTouchingPm(planBatchesPlain, id, pmByCode, pmByName, plain) === 0) continue;
         const gross = (fullPm.get(id) || 0);
         const rem = Math.max(0, gross - (plannedPm.get(id) || 0));
         if (!(gross > 0) && !includeZeroRequired) continue;
@@ -2975,6 +3112,8 @@ async function getItemsInvolvedByPlanningId(req, res) {
     const out = [];
     let idx = 0;
     for (const rid of rmIds) {
+      // Batch-driven: only include RMs referenced by at least one of this PI's batches.
+      if (countPlanningBatchesTouchingRm(planBatchesPlain, rid, rmByCodeMap, rmByNameMap) === 0) continue;
       const req = rmReq.get(rid) || {};
       const stockInHand = sihByRm.get(rid) ?? 0;
       const reserved = reservedByRm.get(rid) ?? 0;
@@ -3033,6 +3172,8 @@ async function getItemsInvolvedByPlanningId(req, res) {
       );
     }
     for (const pid of pmIds) {
+      // Batch-driven: only include PMs referenced by at least one of this PI's batches.
+      if (countPlanningBatchesTouchingPm(planBatchesPlain, pid, pmByCodeMap, pmByNameMap, plain) === 0) continue;
       const req = pmReq.get(pid) || {};
       const stockInHand = sihByPm.get(pid) ?? 0;
       const reserved = reservedByPm.get(pid) ?? 0;
@@ -3107,6 +3248,7 @@ module.exports = {
   getSentBatchSummary,
   listBatches,
   getBatchById,
+  deleteBatch,
   createOrUpdateBatches,
   addOneBatchFromMaster,
   addRworkBatch,
