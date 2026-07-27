@@ -17,6 +17,7 @@ const packMaterialsRouters = require('./src/packMaterials/routers');
 const rawMaterialsRouters = require('./src/rawMaterials/routers');
 const masterAttachmentsRouters = require('./src/masterAttachments/routers');
 const qualitySpecRulesRouters = require('./src/qualitySpecRules/routers');
+const technicalSpecRulesRouters = require('./src/technicalSpecRules/routers');
 const bomRouters = require('./src/bom/routers');
 const itemsMasterRouters = require('./src/itemsMaster/routers');
 const vendorClientRouters = require('./src/vendorClient/routers');
@@ -57,6 +58,11 @@ const { ensureLeadTimeStatsTable } = require('./src/leadTime/ensureLeadTimeStats
 const { ensurePurchaseOrderWorkflowColumns } = require('./src/purchaseOrders/ensurePurchaseOrderWorkflowColumns');
 const { ensureProcurementRequestColumns } = require('./src/procurementRequests/ensureProcurementRequestColumns');
 const { ensureQuotationAskColumns } = require('./src/planningQuotationAsks/ensureQuotationAskColumns');
+const { ensureGrnMrnIdColumn } = require('./src/grn/transferGrnFromMrn');
+const { ensureWarehousePacksTable } = require('./src/warehousePacks/ensureWarehousePacksTable');
+const { ensureQualitySpecRulesTable } = require('./src/qualitySpecRules/ensureQualitySpecRulesTable');
+const { ensureTechnicalSpecRulesTable } = require('./src/technicalSpecRules/ensureTechnicalSpecRulesTable');
+const warehousePacksRouters = require('./src/warehousePacks/routers');
 require('./src/customizationPackaging/models');
 const customizationPackagingAdminRouter = require('./src/customizationPackaging/routers');
 const { listPublicCustomizationPackaging } = require('./src/customizationPackaging/controller');
@@ -123,8 +129,10 @@ const corsOptions = {
     credentials: true,
 };
 app.use(cors(corsOptions));
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
+// Raised from the 100kb default to accommodate inline (base64) receipt/dispatch photos
+// stored in JSON columns (GRN sourceDocuments.receipt, MRN generated_labels).
+app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+app.use(express.json({ limit: '15mb' }));
 app.use(cookieParser())
 app.use(logginHandler);
 app.use(cacheInvalidationMiddleware);
@@ -165,6 +173,7 @@ app.use(`${apiPrefix}/pack-materials`, isAuthenticated, packMaterialsRouters);
 app.use(`${apiPrefix}/raw-materials`, isAuthenticated, rawMaterialsRouters);
 app.use(`${apiPrefix}/master-attachments`, masterAttachmentsRouters);
 app.use(`${apiPrefix}/quality-spec-rules`, isAuthenticated, qualitySpecRulesRouters);
+app.use(`${apiPrefix}/technical-spec-rules`, isAuthenticated, technicalSpecRulesRouters);
 app.use(`${apiPrefix}/bom`, isAuthenticated, bomRouters);
 app.use(`${apiPrefix}/items-master`, isAuthenticated, itemsMasterRouters);
 app.use(`${apiPrefix}/vendor-client`, isAuthenticated, vendorClientRouters);
@@ -173,6 +182,7 @@ app.use(`${apiPrefix}/purchase-orders`, isAuthenticated, purchaseOrdersRouters);
 app.use(`${apiPrefix}/universal-swap`, isAuthenticated, universalSwapRouters);
 app.use(`${apiPrefix}/item-groups`, isAuthenticated, itemGroupsRouters);
 app.use(`${apiPrefix}/warehouse-inventory`, isAuthenticated, warehouseInventoryRouters);
+app.use(`${apiPrefix}/warehouse-packs`, isAuthenticated, warehousePacksRouters);
 app.use(`${apiPrefix}/warehouse-locations`, isAuthenticated, warehouseLocationsRouters);
 app.use(`${apiPrefix}/warehouse`, isAuthenticated, warehouseRouters);
 app.use(`${apiPrefix}/grn`, isAuthenticated, grnRouters);
@@ -251,6 +261,10 @@ if (process.env.NODE_ENV !== 'test') {
                 await ensurePurchaseOrderWorkflowColumns();
                 await ensureProcurementRequestColumns();
                 await ensureQuotationAskColumns();
+                await ensureGrnMrnIdColumn();
+                await ensureWarehousePacksTable();
+                await ensureQualitySpecRulesTable();
+                await ensureTechnicalSpecRulesTable();
             } else {
                 await ensureTreasuryDefaults();
                 // Managed prod skips db.sync — ensure the §10 lead-time cache table, PO approval/
@@ -260,6 +274,10 @@ if (process.env.NODE_ENV !== 'test') {
                 await ensurePurchaseOrderWorkflowColumns();
                 await ensureProcurementRequestColumns();
                 await ensureQuotationAskColumns();
+                await ensureGrnMrnIdColumn();
+                await ensureWarehousePacksTable();
+                await ensureQualitySpecRulesTable();
+                await ensureTechnicalSpecRulesTable();
             }
             app.listen(port, '0.0.0.0', () => {
                 console.log(`Server is running on port ${port}`);

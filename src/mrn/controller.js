@@ -71,6 +71,18 @@ function inferMtrKind(lineItems) {
   return null;
 }
 
+/**
+ * Outbound transfer sources that use the per-line transfer-phase workflow (pick → in_transit →
+ * received_at_mu → completed). 'MTR' = production material-transfer requisition (has a BMR);
+ * 'TRQ' = ad-hoc warehouse transfer request (no BMR). Both are outbound WH→destination transfers
+ * and must be driven through the same line_transfer_status machinery, otherwise dispatch never
+ * persists a status change and the row silently reverts to In Pick on reload.
+ */
+function isOutboundTransferSource(source) {
+  const s = String(source || '').trim();
+  return s === 'MTR' || s === 'TRQ';
+}
+
 async function loadBatchMetaByBmrNo(rows) {
   const bmrNos = [
     ...new Set(
@@ -292,7 +304,7 @@ function formatRow(r, enrichedLineItems, extra = {}) {
   if (!r) return null;
   const d = r.get ? r.get({ plain: true }) : r;
   const lineItems = enrichedLineItems !== undefined ? enrichedLineItems : (d.line_items || []);
-  const isOutboundMtr = d.source === 'MTR' && !d.is_inbound_from_mu;
+  const isOutboundMtr = isOutboundTransferSource(d.source) && !d.is_inbound_from_mu;
   const status = isOutboundMtr && String(d.status || '').trim() === 'Completed' ? 'Succeeded' : (d.status || 'Pending');
   const lineTransferStatus = isOutboundMtr
     ? normalizeLineTransferMap(lineItems, d.line_transfer_status, d.status)
@@ -608,7 +620,7 @@ async function update(req, res) {
     const plainBefore = row.get ? row.get({ plain: true }) : row;
 
     const isOutboundMtrPolicy =
-      plainBefore.source === 'MTR' && !plainBefore.is_inbound_from_mu;
+      isOutboundTransferSource(plainBefore.source) && !plainBefore.is_inbound_from_mu;
     if (isOutboundMtrPolicy) {
       if (updates.wh_dispatch_zone !== undefined) delete updates.wh_dispatch_zone;
       if (String(plainBefore.mu_receive_zone || '').trim() && updates.mu_receive_zone !== undefined) {
@@ -628,7 +640,7 @@ async function update(req, res) {
     }
     const previousStatus = normalizeMrnStatus(plainBefore.status || '');
     const isOutboundMtr =
-      plainBefore.source === 'MTR' &&
+      isOutboundTransferSource(plainBefore.source) &&
       !plainBefore.is_inbound_from_mu;
 
     // Keep assigned_picker / transfer_team for outbound MTR — warehouse assigns picker before split sends; must survive refresh.
@@ -724,10 +736,24 @@ async function update(req, res) {
       }
 
       if (reqStEarly === 'Received at MU' && (!receiveIds || receiveIds.length === 0)) {
+        let anyReceived = false;
         for (const lid of getLineItemIds(lineItemsMerged)) {
           if (map[lid] === PHASE.IN_TRANSIT) {
             map[lid] = PHASE.RECEIVED_AT_MU;
             touched = true;
+            anyReceived = true;
+          }
+        }
+        // Resolve a destination rack on accept (same as the per-line receive path) so a later
+        // Complete has a rack for MTR without an extra step. No-op for zones with no rack.
+        if (anyReceived) {
+          const muRForRack =
+            updates.mu_receive_rack !== undefined ? updates.mu_receive_rack : plainBefore.mu_receive_rack;
+          if (!String(muRForRack || '').trim()) {
+            const muZForRack =
+              updates.mu_receive_zone !== undefined ? updates.mu_receive_zone : plainBefore.mu_receive_zone;
+            const resolved = await resolveProductionRackForTransfer({ zoneCode: muZForRack });
+            if (resolved?.rackCode) updates.mu_receive_rack = resolved.rackCode;
           }
         }
       }
@@ -739,9 +765,14 @@ async function update(req, res) {
           updates.mu_receive_zone !== undefined ? updates.mu_receive_zone : plainBefore.mu_receive_zone;
         const muR =
           updates.mu_receive_rack !== undefined ? updates.mu_receive_rack : plainBefore.mu_receive_rack;
-        if (!String(muZ || '').trim() || !String(muR || '').trim()) {
+        // Production transfers (MTR) land in a specific production rack, so a rack is mandatory.
+        // Ad-hoc transfer requests (TRQ) only target a destination zone — a rack is optional there.
+        const requiresRack = plainBefore.source === 'MTR';
+        if (!String(muZ || '').trim() || (requiresRack && !String(muR || '').trim())) {
           return res.status(400).json({
-            error: 'MU zone and MU rack are required before completing this transfer.',
+            error: requiresRack
+              ? 'MU zone and MU rack are required before completing this transfer.'
+              : 'Destination zone is required before completing this transfer.',
           });
         }
 
@@ -842,6 +873,24 @@ async function update(req, res) {
         await logMrnReceiveAtMuLocation(d);
       }
       await applyMtrCompletionToProductionBatch(d);
+    }
+
+    // Once dispatched (In Transit onward), emit an inbound GRN (receipt_source='transfer') so the
+    // goods appear directly in "GRN by Transfer Order" and are received via the GRN's own Confirm →
+    // receipt wizard — no separate acceptance queue. Idempotent (keyed on mrn_id); non-fatal.
+    const dispatchedStates = ['In Transit', 'Received at MU', 'Completed'];
+    if (
+      isOutboundTransferSource(d.source) &&
+      !d.is_inbound_from_mu &&
+      dispatchedStates.includes(newStatus) &&
+      newStatus !== previousStatus
+    ) {
+      try {
+        const { createTransferGrnFromMrn } = require('../grn/transferGrnFromMrn');
+        await createTransferGrnFromMrn(d);
+      } catch (e) {
+        console.warn('[mrn] transfer GRN creation failed:', e && e.message ? e.message : e);
+      }
     }
 
     const { rmMap, pmMap, productMap } = await getMastersForLineItems([refreshed]);

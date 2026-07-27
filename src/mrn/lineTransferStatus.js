@@ -37,7 +37,10 @@ function legacyPhaseForAllLines(headerStatus) {
   const s = normalizeMrnHeaderStatus(headerStatus) || 'Pending';
   if (s === 'Completed') return PHASE.COMPLETED;
   if (s === 'Received at MU') return PHASE.RECEIVED_AT_MU;
-  if (s === 'In Transit' || s === 'In Transfer' || s === 'Picked') return PHASE.IN_TRANSIT;
+  if (s === 'In Transit' || s === 'In Transfer') return PHASE.IN_TRANSIT;
+  // 'Picked' means picked and READY to dispatch — the transfer hasn't been initiated yet, so
+  // its lines are not_initiated. (Inferring in_transit here blocked dispatch from advancing them,
+  // so the status silently reverted to In Pick on reload.)
   return PHASE.NOT_INITIATED;
 }
 

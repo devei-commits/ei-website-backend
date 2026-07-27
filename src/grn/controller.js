@@ -2,6 +2,9 @@ const { softDeleteWhere, activeRowWhere } = require('../lib/softDelete');
 const { Op } = require('sequelize');
 const db = require('../../db');
 const GoodsReceivedNote = require('./models');
+// mrn_id was added to the GRN model, so every GRN SELECT includes it — ensure the column
+// exists (managed prod skips db.sync) before any read/write. Shared with the transfer bridge.
+const { ensureGrnMrnIdColumn } = require('./transferGrnFromMrn');
 
 let grnLocationZoneColumnEnsured = false;
 async function ensureGrnLocationZoneColumn() {
@@ -189,6 +192,9 @@ function enrichLineItems(lineItems, rmMap, pmMap, productMap, grnType) {
   return lineItems.map((line, index) => {
     const poQty = Number(line.poQty ?? line.po_qty) || 0;
     const rcvdQty = Number(line.rcvdQty ?? line.rcvd_qty) || 0;
+    // Left undefined for lines that never recorded a shipped qty (e.g. direct-PO GRNs, or
+    // in-transit rows created before this field existed) so the client can fall back.
+    const shippedQty = line.shippedQty != null ? Number(line.shippedQty) : undefined;
     const diff = rcvdQty - poQty;
     let item = line.item || '';
     let itemCode = line.itemCode || '';
@@ -214,6 +220,7 @@ function enrichLineItems(lineItems, rmMap, pmMap, productMap, grnType) {
       item,
       itemCode,
       poQty,
+      shippedQty,
       rcvdQty,
       invoiceQty: Number(line.invoiceQty) || 0,
       unitPrice: Number(line.unitPrice) || 0,
@@ -333,6 +340,7 @@ async function loadMastersForQc(lineItems, grnType) {
 async function qcReference(req, res) {
   try {
     await ensureGrnQcSpecsColumn();
+    await ensureGrnMrnIdColumn();
     const id = parseInt(String(req.params.id), 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await GoodsReceivedNote.findByPk(id);
@@ -544,14 +552,153 @@ function normalizePostRackingPhotos(raw) {
   return Object.keys(byRack).length > 0 ? { byRack } : null;
 }
 
+/** Confirm-Receipt step details — stored in source_documents.receipt (no dedicated columns). */
+function normalizeGrnReceiptMeta(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const out = {};
+  const str = (v) => (v != null && String(v).trim() ? String(v).trim() : undefined);
+  const assignmentType = value.assignmentType === 'specific' ? 'specific' : value.assignmentType === 'open' ? 'open' : undefined;
+  if (assignmentType) out.assignmentType = assignmentType;
+  if (str(value.assignedTo)) out.assignedTo = str(value.assignedTo);
+  for (const k of ['receiptDate', 'receiptTime', 'receivedBy', 'vehicleNumber', 'driverName', 'driverPhone', 'remarks', 'confirmedAt']) {
+    if (str(value[k])) out[k] = str(value[k]);
+  }
+  if (value.checklist && typeof value.checklist === 'object' && !Array.isArray(value.checklist)) {
+    const checklist = {};
+    for (const [ck, cv] of Object.entries(value.checklist)) {
+      if (cv === true) checklist[ck] = true;
+    }
+    if (Object.keys(checklist).length) out.checklist = checklist;
+  }
+  // Inline JPEG data URLs; cap count and per-image size so the JSON row stays bounded.
+  const MAX_PHOTOS = 8;
+  const MAX_PHOTO_BYTES = 500 * 1024; // ~500KB per compressed data URL
+  for (const k of ['vehiclePhotos', 'documentPhotos']) {
+    if (!Array.isArray(value[k])) continue;
+    const photos = value[k]
+      .filter((p) => typeof p === 'string' && p.startsWith('data:image/') && p.length <= MAX_PHOTO_BYTES)
+      .slice(0, MAX_PHOTOS);
+    if (photos.length) out[k] = photos;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/** Confirm-Details step declarations — stored in source_documents.details (no dedicated columns). */
+function normalizeGrnDetailsMeta(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const out = {};
+  const str = (v) => (v != null && String(v).trim() ? String(v).trim() : undefined);
+  if (Array.isArray(value.attachments)) {
+    const names = value.attachments.filter((a) => typeof a === 'string' && a.trim()).map((a) => a.trim()).slice(0, 50);
+    if (names.length) out.attachments = names;
+  }
+  for (const k of ['batchesReceived', 'totalWeightKg', 'totalContainers']) {
+    const n = Number(value[k]);
+    if (Number.isFinite(n) && n >= 0) out[k] = n;
+  }
+  if (value.storageRequirements && typeof value.storageRequirements === 'object' && !Array.isArray(value.storageRequirements)) {
+    const sr = {};
+    for (const [sk, sv] of Object.entries(value.storageRequirements)) {
+      if (sv === true) sr[sk] = true;
+    }
+    if (Object.keys(sr).length) out.storageRequirements = sr;
+  }
+  if (str(value.qcNotes)) out.qcNotes = str(value.qcNotes);
+  if (str(value.confirmedAt)) out.confirmedAt = str(value.confirmedAt);
+  return Object.keys(out).length ? out : null;
+}
+
+/** Batch-Details step rows — stored in source_documents.batches (no dedicated columns). */
+function normalizeGrnBatchesMeta(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const str = (v) => (v != null && String(v).trim() ? String(v).trim() : undefined);
+  const out = {};
+  if (Array.isArray(value.rows)) {
+    out.rows = value.rows.slice(0, 200).map((r) => {
+      const row = {};
+      if (r && typeof r === 'object' && !Array.isArray(r)) {
+        for (const k of ['vendorBatchNo', 'mfgDate', 'expDate', 'coaFileName']) {
+          const s = str(r[k]);
+          if (s) row[k] = s;
+        }
+        for (const k of ['noOfPacks', 'qtyPerPack']) {
+          const n = Number(r[k]);
+          if (Number.isFinite(n) && n >= 0) row[k] = n;
+        }
+      }
+      return row;
+    });
+  }
+  if (str(value.confirmedAt)) out.confirmedAt = str(value.confirmedAt);
+  return Object.keys(out).length ? out : null;
+}
+
+/** Packaging-List step rows — stored in source_documents.packaging (no dedicated columns). */
+function normalizeGrnPackagingMeta(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const str = (v) => (v != null && String(v).trim() ? String(v).trim() : undefined);
+  const out = {};
+  if (Array.isArray(value.rows)) {
+    out.rows = value.rows
+      .slice(0, 2000)
+      .map((r) => {
+        if (!r || typeof r !== 'object' || Array.isArray(r)) return null;
+        const packagingNo = str(r.packagingNo);
+        if (!packagingNo) return null;
+        const row = { packagingNo };
+        const bi = Number(r.batchIndex);
+        if (Number.isInteger(bi) && bi >= 0) row.batchIndex = bi;
+        const qty = Number(r.qty);
+        if (Number.isFinite(qty) && qty >= 0) row.qty = qty;
+        if (r.labelStatus === 'labelled' || r.labelStatus === 'pending') row.labelStatus = r.labelStatus;
+        return row;
+      })
+      .filter(Boolean);
+  }
+  if (str(value.confirmedAt)) out.confirmedAt = str(value.confirmedAt);
+  return Object.keys(out).length ? out : null;
+}
+
 function normalizeSourceDocuments(raw) {
   if (raw == null) return null;
   if (typeof raw !== 'object' || Array.isArray(raw)) return null;
   const out = {};
   for (const [key, value] of Object.entries(raw)) {
+    if (key === 'qc') {
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        const qc = {};
+        const s = (v) => (v != null && String(v).trim() ? String(v).trim() : undefined);
+        if (s(value.sentAt)) qc.sentAt = s(value.sentAt);
+        if (s(value.testDate)) qc.testDate = s(value.testDate);
+        if (value.verdict === 'accept' || value.verdict === 'reject') qc.verdict = value.verdict;
+        if (s(value.decidedAt)) qc.decidedAt = s(value.decidedAt);
+        if (Object.keys(qc).length) out.qc = qc;
+      }
+      continue;
+    }
+    if (key === 'packaging') {
+      const normalized = normalizeGrnPackagingMeta(value);
+      if (normalized) out.packaging = normalized;
+      continue;
+    }
+    if (key === 'batches') {
+      const normalized = normalizeGrnBatchesMeta(value);
+      if (normalized) out.batches = normalized;
+      continue;
+    }
     if (key === 'postRackingPhotos' || key === 'post_racking_photos') {
       const normalized = normalizePostRackingPhotos(value);
       if (normalized) out.postRackingPhotos = normalized;
+      continue;
+    }
+    if (key === 'receipt') {
+      const normalized = normalizeGrnReceiptMeta(value);
+      if (normalized) out.receipt = normalized;
+      continue;
+    }
+    if (key === 'details') {
+      const normalized = normalizeGrnDetailsMeta(value);
+      if (normalized) out.details = normalized;
       continue;
     }
     if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
@@ -578,6 +725,9 @@ function formatRow(r, enrichedLineItems) {
     type: d.type || 'RM',
     items: d.items != null ? Number(d.items) : 0,
     poValue: d.po_value != null ? Number(d.po_value) : 0,
+    // GRN-level shipped total (from the shipment batch) — fallback for legacy in-transit
+    // rows whose line items predate the per-line shippedQty field.
+    shippedQty: d.shipped_qty != null ? Number(d.shipped_qty) : null,
     expectedDate: d.expected_date || '',
     receivedDate: d.received_date || null,
     assignedTo: d.assigned_to || '',
@@ -614,6 +764,7 @@ async function list(req, res) {
     await ensureGrnQcSpecsColumn();
     await ensureGrnReceiptSourceColumn();
     await ensureGrnSourceDocumentsColumn();
+    await ensureGrnMrnIdColumn();
     const rows = await GoodsReceivedNote.findAll({
       where: activeRowWhere(),
       order: [['expected_date', 'DESC'], ['id', 'DESC']],
@@ -641,6 +792,7 @@ async function getById(req, res) {
     await ensureGrnQcSpecsColumn();
     await ensureGrnReceiptSourceColumn();
     await ensureGrnSourceDocumentsColumn();
+    await ensureGrnMrnIdColumn();
     const id = parseInt(String(req.params.id), 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await GoodsReceivedNote.findByPk(id);
@@ -663,6 +815,7 @@ async function create(req, res) {
   try {
     await ensureGrnReceiptSourceColumn();
     await ensureGrnSourceDocumentsColumn();
+    await ensureGrnMrnIdColumn();
     const body = req.body || {};
     const payload = {
       grn_no: body.grnNo || body.grn_no,
@@ -1267,6 +1420,15 @@ async function applyGrnCompletionToInventory(grnRow, opts = {}) {
     });
   }
 
+  // Materialize pack-inventory rows from the packaging list so transfers can pick real packs.
+  // Non-fatal: a pack-write failure must not roll back the aggregate inventory update.
+  try {
+    const { applyGrnPacksToInventory } = require('../warehousePacks/applyGrnPacks');
+    await applyGrnPacksToInventory(d, { transaction });
+  } catch (e) {
+    console.warn('[grn] applyGrnPacksToInventory failed:', e && e.message ? e.message : e);
+  }
+
   console.log('[grn] GRN Complete inventory apply END', {
     grnId: d.id,
     grnNo: d.grn_no,
@@ -1288,6 +1450,7 @@ async function update(req, res) {
     await ensureGrnQcSpecsColumn();
     await ensureGrnReceiptSourceColumn();
     await ensureGrnSourceDocumentsColumn();
+    await ensureGrnMrnIdColumn();
     const id = parseInt(String(req.params.id), 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await GoodsReceivedNote.findByPk(id);
@@ -1625,6 +1788,7 @@ async function applyLabelGenerationToWarehouseInventory(
 async function generateLabels(req, res) {
   try {
     await ensureGrnLocationZoneColumn();
+    await ensureGrnMrnIdColumn();
     const id = parseInt(String(req.params.id), 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await GoodsReceivedNote.findByPk(id);

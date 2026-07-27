@@ -43,6 +43,19 @@ function findPoLineMaterial(poItems, item) {
   return { raw_material_id: rm, pack_material_id: pm, unit: m.unit ?? m.uom ?? m.UOM ?? null };
 }
 
+/** Ordered quantity from the matching PO line (by code, then name) — the true "PO Qty". */
+function findPoLineOrderedQty(poItems, item) {
+  const items = Array.isArray(poItems) ? poItems : [];
+  const code = normCode(item && item.code);
+  const name = String((item && item.name) || '').trim().toLowerCase();
+  let m = null;
+  if (code) m = items.find((l) => normCode(l.code) === code);
+  if (!m && name) m = items.find((l) => String(l.name || '').trim().toLowerCase() === name);
+  if (!m) return null;
+  const q = Number(m.quantity ?? m.qty ?? m.reqQty);
+  return Number.isFinite(q) && q > 0 ? q : null;
+}
+
 /** Fallback: resolve the FK from the RM/PM master by code when the PO line carries none. */
 async function findMasterMaterial(item, transaction) {
   const code = String((item && item.code) || '').trim();
@@ -106,10 +119,14 @@ async function createGrnRow({ sb, poId, poNo, vendor, item, shippedQty, expected
   const qty = shippedQty != null ? Number(shippedQty) : null;
   // Stamp the RM/PM FK at creation so this in-transit GRN is counted by Planning immediately.
   const mat = await resolveShipmentLineMaterial(poItems, item, transaction);
+  // poQty = the true ordered quantity from the PO line; shippedQty = what left on this truck.
+  // Falls back to the shipped qty only when the PO line can't be matched (unlinked shipment).
+  const orderedQty = findPoLineOrderedQty(poItems, item);
   const lineItem = {
     item: item ? (item.name || '') : '',
     itemCode: item ? (item.code || '') : '',
-    poQty: qty || 0,
+    poQty: orderedQty != null ? orderedQty : (qty || 0),
+    shippedQty: qty || 0,
     rcvdQty: 0,
     invoiceQty: 0,
   };
