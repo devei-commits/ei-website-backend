@@ -230,15 +230,22 @@ async function getLocationById(req, res) {
   try {
     const id = parseInt(String(req.params.id), 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid location id' });
-    const loc = await WarehouseLocation.findByPk(id, {
+    // Use findAll({where:{id}})+[0] rather than findByPk(id,{include}) — findByPk builds a
+    // subquery+LIMIT that returns NULL when combined with the nested hasMany racks→items include
+    // (Postgres/Sequelize quirk seen on this DB). findAll (same shape the list endpoint uses) is
+    // reliable; scoping to one id keeps it a single-row read.
+    const rows = await WarehouseLocation.findAll({
+      where: { id },
       include: [
         {
           model: WarehouseRack,
           as: 'WarehouseRacks',
-          include: [{ model: WarehouseRackItem, as: 'WarehouseRackItems' }],
+          required: false,
+          include: [{ model: WarehouseRackItem, as: 'WarehouseRackItems', required: false }],
         },
       ],
     });
+    const loc = rows[0];
     if (!loc) return res.status(404).json({ error: 'Location not found' });
     const invMap = await buildInventorySummaryMap();
     const locPlain = loc.get ? loc.get({ plain: true }) : loc;

@@ -2,6 +2,7 @@
  * Warehouse Overview — KPIs, zones (from locations), recent activity, open GRNs.
  * Composes data from warehouse_inventory, warehouse_locations, grn, mrn.
  */
+const { fn, col } = require('sequelize');
 const WarehouseInventory = require('../warehouseInventory/models');
 const { WarehouseLocation, WarehouseRack, WarehouseRackItem } = require('../warehouseLocations/models');
 const GoodsReceivedNote = require('../grn/models');
@@ -16,35 +17,29 @@ function toNum(x) {
   return Number.isNaN(n) ? 0 : n;
 }
 
-/** Build inventory summary map for rack item counts (code, name, type). */
-async function buildInventorySummaryMap() {
-  const whRows = await WarehouseInventory.findAll({ order: [['id', 'ASC']] });
-  const rmIds = [...new Set(whRows.map((r) => r.raw_material_id).filter(Boolean))];
-  const pmIds = [...new Set(whRows.map((r) => r.pack_material_id).filter(Boolean))];
-  const productIds = [...new Set(whRows.map((r) => r.product_id).filter(Boolean))];
+/**
+ * Resolve display names (code/name) for a SMALL set of warehouse_inventory rows — the low-stock
+ * ones only. The landing must not fetch the full RM/PM/Product catalogs just to label a handful
+ * of alerts, so this takes the already-filtered rows and looks up only their masters.
+ * @returns Map<warehouseInventoryId, {code, name}>
+ */
+async function buildNameMapForRows(rows) {
+  const rmIds = [...new Set(rows.filter((r) => r.item_type === 'RM').map((r) => r.raw_material_id).filter(Boolean))];
+  const pmIds = [...new Set(rows.filter((r) => r.item_type === 'PM').map((r) => r.pack_material_id).filter(Boolean))];
+  const prIds = [...new Set(rows.filter((r) => r.item_type === 'PR').map((r) => r.product_id).filter(Boolean))];
   const [rms, pms, products] = await Promise.all([
-    rmIds.length ? RawMaterial.findAll({ where: { id: rmIds }, attributes: ['id', 'code', 'name'] }) : [],
-    pmIds.length ? PackMaterial.findAll({ where: { id: pmIds }, attributes: ['id', 'code', 'description'] }) : [],
-    productIds.length ? Product.findAll({ where: { product_id: productIds }, attributes: ['product_id', 'product_code', 'product_name'] }) : [],
+    rmIds.length ? RawMaterial.findAll({ where: { id: rmIds }, attributes: ['id', 'code', 'name'], raw: true }) : [],
+    pmIds.length ? PackMaterial.findAll({ where: { id: pmIds }, attributes: ['id', 'code', 'description'], raw: true }) : [],
+    prIds.length ? Product.findAll({ where: { product_id: prIds }, attributes: ['product_id', 'product_code', 'product_name'], raw: true }) : [],
   ]);
   const rmMap = new Map(rms.map((r) => [r.id, { code: r.code || '', name: r.name || r.code || '' }]));
   const pmMap = new Map(pms.map((p) => [p.id, { code: p.code || '', name: p.description || p.code || '' }]));
-  const productMap = new Map(products.map((p) => [p.product_id, { code: p.product_code || '', name: p.product_name || p.product_code || '' }]));
+  const prMap = new Map(products.map((p) => [p.product_id, { code: p.product_code || '', name: p.product_name || p.product_code || '' }]));
   const out = new Map();
-  for (const w of whRows) {
-    const wh = w.get ? w.get({ plain: true }) : w;
-    let code = '', name = '', type = 'RM';
-    if (wh.item_type === 'RM' && wh.raw_material_id) {
-      const m = rmMap.get(wh.raw_material_id);
-      if (m) { code = m.code; name = m.name; type = 'RM'; }
-    } else if (wh.item_type === 'PM' && wh.pack_material_id) {
-      const m = pmMap.get(wh.pack_material_id);
-      if (m) { code = m.code; name = m.name; type = 'PM'; }
-    } else if (wh.item_type === 'PR' && wh.product_id) {
-      const m = productMap.get(wh.product_id);
-      if (m) { code = m.code; name = m.name; type = 'FG/PR'; }
-    }
-    out.set(wh.id, { code, name, type });
+  for (const wh of rows) {
+    if (wh.item_type === 'RM') out.set(wh.id, rmMap.get(wh.raw_material_id) || {});
+    else if (wh.item_type === 'PM') out.set(wh.id, pmMap.get(wh.pack_material_id) || {});
+    else if (wh.item_type === 'PR') out.set(wh.id, prMap.get(wh.product_id) || {});
   }
   return out;
 }
@@ -67,63 +62,88 @@ function timeAgo(date) {
 
 /**
  * GET /api/v1/warehouse/overview
- * Returns { kpis, zones, recentActivity, openGrns, alertCount }.
+ * Landing summary only — counts, zone summaries, recent activity, open GRNs, and the top low-stock
+ * items. Deliberately lightweight: it does NOT return the full inventory / locations / GRN / MRN
+ * rows (those are fetched lazily when the user drills into a zone or opens Inventory).
+ * Returns { kpis, zones, recentActivity, openGrns, lowStockItems, alertCount }.
  */
 async function getOverview(req, res) {
   try {
-    const [invMap, whRows] = await Promise.all([
-      buildInventorySummaryMap(),
-      WarehouseInventory.findAll({
-        order: [['item_type', 'ASC'], ['raw_material_id', 'ASC'], ['pack_material_id', 'ASC'], ['product_id', 'ASC']],
+    // Inventory KPIs are computed in SQL — never load the full inventory table (thousands of rows)
+    // just to count. Status mirrors the list logic: only rows still flagged 'In Stock' with a
+    // reorder point can fall Low/Critical (< reorder_pt / < half reorder_pt on total on-hand).
+    const sequelize = WarehouseInventory.sequelize;
+    const sih = '(COALESCE(wh_stock,0)+COALESCE(ml1_stock,0)+COALESCE(ml2_stock,0))';
+    const inStock = "COALESCE(NULLIF(TRIM(qc_status),''),'In Stock') = 'In Stock'";
+    const lowCond = `(${inStock}) AND COALESCE(reorder_pt,0) > 0 AND ${sih} < reorder_pt`;
+
+    const [
+      countsRows,
+      lowRowsRaw,
+      grnRows,
+      mrnRows,
+      locations,
+      rackItemCounts,
+    ] = await Promise.all([
+      sequelize.query(
+        `SELECT
+           COUNT(*)::int AS total_skus,
+           COUNT(*) FILTER (WHERE ${lowCond})::int AS low_critical,
+           COUNT(*) FILTER (WHERE item_type='PR' AND LOWER(COALESCE(qc_status,'')) LIKE '%qc%')::int AS fg_under_qc
+         FROM warehouse_inventory`,
+        { type: sequelize.QueryTypes.SELECT },
+      ),
+      // Only the handful of low-stock rows actually shown (alerts + list), critical first.
+      sequelize.query(
+        `SELECT id, item_type, raw_material_id, pack_material_id, product_id, wh_unit,
+           ${sih} AS sih, reorder_pt, updated_at, created_at,
+           CASE WHEN ${sih} < reorder_pt*0.5 THEN 'Critical' ELSE 'Low Stock' END AS status
+         FROM warehouse_inventory
+         WHERE ${lowCond}
+         ORDER BY status ASC, updated_at DESC NULLS LAST
+         LIMIT 5`,
+        { type: sequelize.QueryTypes.SELECT },
+      ),
+      GoodsReceivedNote.findAll({
+        attributes: ['id', 'grn_no', 'po_no', 'vendor', 'status', 'items', 'po_value', 'received_date', 'expected_date', 'updated_at'],
+        order: [['expected_date', 'DESC'], ['id', 'DESC']],
+        raw: true,
       }),
-    ]);
-
-    let totalSkus = 0;
-    let lowCriticalStock = 0;
-    let fgUnderQc = 0;
-    const lowStockAlerts = [];
-
-    for (const w of whRows) {
-      const wh = w.get ? w.get({ plain: true }) : w;
-      const whStock = toNum(wh.wh_stock);
-      const ml1 = toNum(wh.ml1_stock);
-      const ml2 = toNum(wh.ml2_stock);
-      const stockInHand = whStock + ml1 + ml2;
-      const reorderPt = toNum(wh.reorder_pt);
-      let status = (wh.qc_status || 'In Stock').trim();
-      if (status === 'In Stock' && reorderPt > 0) {
-        if (stockInHand < reorderPt * 0.5) status = 'Critical';
-        else if (stockInHand < reorderPt) status = 'Low Stock';
-      }
-      totalSkus += 1;
-      if (status === 'Low Stock' || status === 'Critical') {
-        lowCriticalStock += 1;
-        const inv = invMap.get(wh.id) || {};
-        lowStockAlerts.push({
-          id: `alert-wh-${wh.id}`,
-          type: 'alert',
-          title: `Low stock — ${inv.name || inv.code || wh.id} (${inv.code || ''})`,
-          subtitle: `Stock: ${stockInHand} · Reorder: ${reorderPt}`,
-          meta: timeAgo(wh.updated_at),
-          sortAt: wh.updated_at || wh.created_at,
-        });
-      }
-      if (wh.item_type === 'PR' && (wh.qc_status || '').toLowerCase().includes('qc')) {
-        fgUnderQc += 1;
-      }
-    }
-
-    const [grnRows, mrnRows, locations] = await Promise.all([
-      GoodsReceivedNote.findAll({ order: [['expected_date', 'DESC'], ['id', 'DESC']] }),
-      MaterialRequestNote.findAll({ order: [['id', 'DESC']] }),
+      MaterialRequestNote.findAll({
+        attributes: ['id', 'mrn_no', 'status', 'assigned_picker', 'requested_by', 'notes', 'updated_at'],
+        order: [['id', 'DESC']],
+        raw: true,
+      }),
       WarehouseLocation.findAll({
         order: [['id', 'ASC']],
         include: [
-          { model: WarehouseRack, as: 'WarehouseRacks', required: false, include: [{ model: WarehouseRackItem, as: 'WarehouseRackItems', required: false }] },
+          // Racks only — NOT their items. Item counts come from the aggregate below, so the landing
+          // never materialises every warehouse_rack_items row just to show per-zone counts.
+          { model: WarehouseRack, as: 'WarehouseRacks', required: false, attributes: ['id', 'code', 'levels', 'slots_total'] },
         ],
+      }),
+      WarehouseRackItem.findAll({
+        attributes: ['rack_id', [fn('COUNT', col('id')), 'cnt']],
+        group: ['rack_id'],
+        raw: true,
       }),
     ]);
 
+    const counts = countsRows[0] || {};
+    const totalSkus = toNum(counts.total_skus);
+    const lowCriticalStock = toNum(counts.low_critical);
+    const fgUnderQc = toNum(counts.fg_under_qc);
+    const lowRows = lowRowsRaw.map((r) => ({
+      ...r,
+      _stockInHand: toNum(r.sih),
+      _reorderPt: toNum(r.reorder_pt),
+      _status: r.status,
+    }));
+
+    // Names only for the low-stock rows (small set), never the whole catalog.
+    const nameMap = await buildNameMapForRows(lowRows);
+
+    const itemCountByRack = new Map(rackItemCounts.map((r) => [r.rack_id, toNum(r.cnt)]));
     const pendingGrn = grnRows.filter((r) => (r.status || '') !== 'GRN Complete').length;
     const openMrn = mrnRows.filter((r) => (r.status || '') !== 'Completed').length;
 
@@ -136,15 +156,14 @@ async function getOverview(req, res) {
       let utilisationSum = 0;
       const tags = [];
       racks.forEach((r) => {
-        const rPlain = r.get ? r.get({ plain: true }) : r;
-        const items = rPlain.WarehouseRackItems || [];
-        itemsCount += items.length;
-        const levels = toNum(rPlain.levels) || 4;
-        const slots = toNum(rPlain.slots_total) || 16;
+        const cnt = itemCountByRack.get(r.id) || 0;
+        itemsCount += cnt;
+        const levels = toNum(r.levels) || 4;
+        const slots = toNum(r.slots_total) || 16;
         const totalSlots = levels * slots;
-        const pct = totalSlots > 0 ? Math.round((items.length / totalSlots) * 100) : 0;
+        const pct = totalSlots > 0 ? Math.round((cnt / totalSlots) * 100) : 0;
         utilisationSum += pct;
-        if (rPlain.code) tags.push(rPlain.code);
+        if (r.code) tags.push(r.code);
       });
       const utilisationPct = racks.length ? Math.round(utilisationSum / racks.length) : 0;
       const areaSqm = locPlain.area_sqm != null ? locPlain.area_sqm : '';
@@ -165,8 +184,7 @@ async function getOverview(req, res) {
     });
 
     const recentActivity = [];
-    grnRows.slice(0, 5).forEach((r) => {
-      const d = r.get ? r.get({ plain: true }) : r;
+    grnRows.slice(0, 5).forEach((d) => {
       const statusLabel = d.status === 'GRN Complete' ? 'completed' : d.status || 'Pending';
       recentActivity.push({
         id: `grn-${d.id}`,
@@ -177,8 +195,7 @@ async function getOverview(req, res) {
         sortAt: d.received_date || d.expected_date || d.updated_at,
       });
     });
-    mrnRows.slice(0, 5).forEach((r) => {
-      const d = r.get ? r.get({ plain: true }) : r;
+    mrnRows.slice(0, 5).forEach((d) => {
       recentActivity.push({
         id: `mrn-${d.id}`,
         type: 'mrn',
@@ -188,23 +205,43 @@ async function getOverview(req, res) {
         sortAt: d.updated_at,
       });
     });
-    lowStockAlerts.slice(0, 5).forEach((a) => recentActivity.push(a));
+    lowRows.slice(0, 5).forEach((wh) => {
+      const nm = nameMap.get(wh.id) || {};
+      recentActivity.push({
+        id: `alert-wh-${wh.id}`,
+        type: 'alert',
+        title: `Low stock — ${nm.name || nm.code || wh.id} (${nm.code || ''})`,
+        subtitle: `Stock: ${wh._stockInHand} · Reorder: ${wh._reorderPt}`,
+        meta: timeAgo(wh.updated_at),
+        sortAt: wh.updated_at || wh.created_at,
+      });
+    });
     recentActivity.sort((a, b) => new Date(b.sortAt || 0) - new Date(a.sortAt || 0));
     const recentActivityClean = recentActivity.slice(0, 10).map(({ id, type, title, subtitle, meta }) => ({ id, type, title, subtitle, meta }));
+
+    const lowStockItems = lowRows.slice(0, 5).map((wh) => {
+      const nm = nameMap.get(wh.id) || {};
+      return {
+        id: `wh-${wh.id}`,
+        code: nm.code || '',
+        name: nm.name || '',
+        status: wh._status,
+        stockInHand: wh._stockInHand,
+        whUnit: wh.wh_unit || '',
+        reorderPt: wh._reorderPt,
+      };
+    });
 
     const openGrns = grnRows
       .filter((r) => (r.status || '') !== 'GRN Complete')
       .slice(0, 10)
-      .map((r) => {
-        const d = r.get ? r.get({ plain: true }) : r;
-        return {
-          id: String(d.id),
-          grnNo: d.grn_no,
-          poNo: d.po_no || '',
-          vendor: d.vendor || '',
-          status: d.status || 'Pending',
-        };
-      });
+      .map((d) => ({
+        id: String(d.id),
+        grnNo: d.grn_no,
+        poNo: d.po_no || '',
+        vendor: d.vendor || '',
+        status: d.status || 'Pending',
+      }));
 
     const kpis = [
       { id: 'total-skus', label: 'Total SKUs', subtitle: 'RM · PM · Finished Goods', value: String(totalSkus), accentColor: 'border-emerald-500 text-emerald-600 bg-emerald-50' },
@@ -220,6 +257,7 @@ async function getOverview(req, res) {
       zones,
       recentActivity: recentActivityClean,
       openGrns,
+      lowStockItems,
       alertCount: lowCriticalStock,
     });
   } catch (err) {

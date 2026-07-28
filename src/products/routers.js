@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { requireModule } = require('../middleware/security');
 const { requireMasterApprovalUpdate } = require('../lib/masterApprovalAuth');
-const { getAllProducts, saveProduct, syncPrProductZoho, importPrFromZohoBySku, createPRRegistration, getProductById, getProductDetail, updateProduct, patchProductApprovalStatus, claimProductApprovalTrack, getProductApprovalStatusHistory, deleteProduct, getCategory, saveCategory, getCategoryById, updateCategory, deleteCategory } = require('./controller');
+const { getAllProducts, saveProduct, syncPrProductZoho, importPrFromZohoBySku, createPRRegistration, getProductById, getProductDetail, updateProduct, setProductItemQualitySpecs, patchProductApprovalStatus, claimProductApprovalTrack, getProductApprovalStatusHistory, deleteProduct, getCategory, saveCategory, getCategoryById, updateCategory, deleteCategory } = require('./controller');
 const { getZohoCompositeSkuBomSuggestion } = require('./zohoCompositeSkuBomSuggestion');
 const {
   uploadSkuBomExcelMiddleware,
@@ -83,6 +83,7 @@ router.patch('/:id([0-9]+)/approval-status', requireCatalogueModule, requireMast
 // Claim an open RM/PM section on first touch — catalogue-gated (same as editing the product),
 // so any editor takes ownership immediately, not only approval-permission holders.
 router.patch('/:id([0-9]+)/approval-track-claim', requireCatalogueModule, claimProductApprovalTrack);
+router.patch('/:id([0-9]+)/quality-specs', requireCatalogueModule, setProductItemQualitySpecs);
 router.put('/:id', requireCatalogueModule, updateProduct);
 router.delete('/:id([0-9]+)', requireCatalogueModule, deleteProduct);
 router.post('/categories', requireCatalogueModule, saveCategory);

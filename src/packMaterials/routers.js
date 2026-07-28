@@ -10,6 +10,7 @@ const {
   importPmFromZohoBySku,
   createPackMaterial,
   updatePackMaterial,
+  setPackMaterialItemQualitySpecs,
   patchPackMaterialApprovalStatus,
   getPackMaterialApprovalStatusHistory,
   deletePackMaterial,
@@ -61,6 +62,7 @@ router.get('/:id/reserved-stock', requirePackMaterials, getReservedStock);
 router.get('/:id', requirePackMaterials, cachePackMaterialsOne, getPackMaterialById);
 router.get('/:id/approval-status/history', requirePackMaterialsListRead, getPackMaterialApprovalStatusHistory);
 router.patch('/:id/approval-status', requirePackMaterials, requireMasterApprovalUpdate('PM'), patchPackMaterialApprovalStatus);
+router.patch('/:id/quality-specs', requirePackMaterials, setPackMaterialItemQualitySpecs);
 router.put('/:id', requirePackMaterials, updatePackMaterial);
 router.delete('/:id', requirePackMaterials, deletePackMaterial);
 router.get('/', requirePackMaterialsListRead, cachePackMaterialsList, listPackMaterials);

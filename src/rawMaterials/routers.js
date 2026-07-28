@@ -9,6 +9,7 @@ const {
   importRmFromZohoBySku,
   createRawMaterial,
   updateRawMaterial,
+  setRawMaterialItemQualitySpecs,
   patchRawMaterialApprovalStatus,
   getRawMaterialApprovalStatusHistory,
   deleteRawMaterial,
@@ -60,6 +61,7 @@ router.get('/:id/reserved-stock', requireRawMaterials, getReservedStock);
 router.get('/:id', requireRawMaterials, cacheRawMaterialsOne, getRawMaterialById);
 router.get('/:id/approval-status/history', requireRawMaterialsListRead, getRawMaterialApprovalStatusHistory);
 router.patch('/:id/approval-status', requireRawMaterials, requireMasterApprovalUpdate('RM'), patchRawMaterialApprovalStatus);
+router.patch('/:id/quality-specs', requireRawMaterials, setRawMaterialItemQualitySpecs);
 router.put('/:id', requireRawMaterials, updateRawMaterial);
 router.delete('/:id', requireRawMaterials, deleteRawMaterial);
 

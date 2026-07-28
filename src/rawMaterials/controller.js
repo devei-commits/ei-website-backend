@@ -45,6 +45,7 @@ const {
 const { createMasterApprovalStatusHistoryHandler } = require('../lib/masterApprovalStatusHistory');
 const { RM_QUALITY_SPEC_EDIT_KEYS, payloadHasQualitySpecEdits } = require('../qualitySpecRules/itemLock');
 const { resolveEntityQualitySpecs } = require('../qualitySpecRules/resolveForItem');
+const { resolveEntityTechnicalSpecs } = require('../technicalSpecRules/resolveForItem');
 const { resolveRmQualitySpecCategoryFromRow } = require('../qualitySpecRules/rmCategoryResolve');
 /** List-view only (no form_data). */
 function formatRawMaterial(row) {
@@ -92,13 +93,14 @@ async function formatRawMaterialFull(row) {
   const locked = d.quality_specs_locked === true;
   const fd = d.form_data != null && typeof d.form_data === 'object' && !Array.isArray(d.form_data) ? d.form_data : {};
 
+  const { category, subCategory, subSubCategory } = resolveRmQualitySpecCategoryFromRow({
+    category: d.category,
+    group: d.group,
+    form_data: fd,
+  });
+
   let form_data = d.form_data ?? null;
   if (!locked) {
-    const { category, subCategory, subSubCategory } = resolveRmQualitySpecCategoryFromRow({
-      category: d.category,
-      group: d.group,
-      form_data: fd,
-    });
     const { commonRows, subRows } = await resolveEntityQualitySpecs('RM', category, subCategory, subSubCategory);
     const pathKey = category && subCategory ? `${category}::${subCategory}` : null;
     form_data = {
@@ -108,7 +110,11 @@ async function formatRawMaterialFull(row) {
     };
   }
 
-  return { ...base, form_data, quality_specs_locked: locked };
+  // Technical specs (TECH custom fields) are always live-resolved from the category/sub-category
+  // rule — unlike quality specs there's no per-item lock, so we resolve regardless of `locked`.
+  const resolved_technical_specs = await resolveEntityTechnicalSpecs('RM', category, subCategory, subSubCategory);
+
+  return { ...base, form_data, quality_specs_locked: locked, resolved_technical_specs };
 }
 
 /** Marks `fields.quality_specs_locked = true` (never false) when the payload touched RM quality specs. */
@@ -1009,6 +1015,35 @@ const getRawMaterialApprovalStatusHistory = createMasterApprovalStatusHistoryHan
   RawMaterial.findByPk(req.params.id)
 );
 
+/**
+ * PATCH /api/v1/raw-materials/:id/quality-specs — set THIS item's own quality specs.
+ * Merges ONLY the provided quality-spec keys into the existing form_data (never clobbering other
+ * form_data keys) and one-way locks the item (`quality_specs_locked = true`) so it stops tracking
+ * category/sub-category rule changes. Body: { rmQualitySpecRows?, rmQualitySubSpecRowsByPath? }.
+ */
+async function setRawMaterialItemQualitySpecs(req, res) {
+  try {
+    const row = await RawMaterial.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Raw material not found' });
+    const b = req.body || {};
+    const exFd =
+      row.form_data != null && typeof row.form_data === 'object' && !Array.isArray(row.form_data)
+        ? row.form_data
+        : {};
+    const merged = { ...exFd };
+    if (b.rmQualitySpecRows !== undefined) merged.rmQualitySpecRows = b.rmQualitySpecRows;
+    if (b.rmQualitySubSpecRowsByPath !== undefined) {
+      merged.rmQualitySubSpecRowsByPath = b.rmQualitySubSpecRowsByPath;
+    }
+    await row.update({ form_data: merged, quality_specs_locked: true });
+    redis.delByPattern('raw-materials:').catch(() => {});
+    res.json(await formatRawMaterialFull(row));
+  } catch (err) {
+    console.error('setRawMaterialItemQualitySpecs error', err);
+    res.status(500).json({ error: err.message || 'Failed to set item quality specs' });
+  }
+}
+
 module.exports = {
   listRawMaterials,
   getRawMaterialById,
@@ -1016,6 +1051,7 @@ module.exports = {
   importRmFromZohoBySku,
   createRawMaterial,
   updateRawMaterial,
+  setRawMaterialItemQualitySpecs,
   patchRawMaterialApprovalStatus,
   getRawMaterialApprovalStatusHistory,
   deleteRawMaterial,

@@ -43,6 +43,7 @@ const {
 const { createMasterApprovalStatusHistoryHandler } = require('../lib/masterApprovalStatusHistory');
 const { PM_QUALITY_SPEC_EDIT_KEYS, payloadHasQualitySpecEdits } = require('../qualitySpecRules/itemLock');
 const { resolveEntityQualitySpecs } = require('../qualitySpecRules/resolveForItem');
+const { resolveEntityTechnicalSpecs } = require('../technicalSpecRules/resolveForItem');
 const { resolvePmQualitySpecCategoryFromRow } = require('../qualitySpecRules/pmCategoryResolve');
 
 /** All PM stock is counted in pieces (aligned with planning, production, warehouse). */
@@ -239,14 +240,19 @@ async function formatPackMaterialFull(row) {
   const locked = d.quality_specs_locked === true;
   const fd = d.form_data != null && typeof d.form_data === 'object' && !Array.isArray(d.form_data) ? d.form_data : {};
 
+  const { category } = resolvePmQualitySpecCategoryFromRow({ group: d.group, material: d.material, form_data: fd });
+
   let form_data = d.form_data ?? null;
   if (!locked) {
-    const { category } = resolvePmQualitySpecCategoryFromRow({ group: d.group, material: d.material, form_data: fd });
     const { commonRows } = await resolveEntityQualitySpecs('PM', category, '');
     form_data = { ...fd, pmQualitySpecRows: commonRows };
   }
 
-  return { ...base, form_data, quality_specs_locked: locked };
+  // Technical specs (TECH custom fields) are always live-resolved from the category rule —
+  // unlike quality specs there's no per-item lock, so we resolve regardless of `locked`.
+  const resolved_technical_specs = await resolveEntityTechnicalSpecs('PM', category, '', '');
+
+  return { ...base, form_data, quality_specs_locked: locked, resolved_technical_specs };
 }
 
 /** Marks `fields.quality_specs_locked = true` (never false) when the payload touched PM quality specs. */
@@ -1028,6 +1034,39 @@ const getPackMaterialApprovalStatusHistory = createMasterApprovalStatusHistoryHa
   PackMaterial.findByPk(req.params.id)
 );
 
+/**
+ * PATCH /api/v1/pack-materials/:id/quality-specs — set THIS item's own quality specs.
+ * Merges ONLY the provided quality-spec keys into the existing form_data (never clobbering other
+ * form_data keys) and one-way locks the item (`quality_specs_locked = true`) so it stops tracking
+ * category rule changes. Body: { pmQualitySpecRows?, pmQualitySubSpecRowsByPath? }.
+ */
+async function setPackMaterialItemQualitySpecs(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const row = await PackMaterial.findByPk(id);
+    if (!row) return res.status(404).json({ error: 'Pack material not found' });
+    const b = req.body || {};
+    const exFd =
+      row.form_data != null && typeof row.form_data === 'object' && !Array.isArray(row.form_data)
+        ? row.form_data
+        : {};
+    const merged = { ...exFd };
+    if (b.pmQualitySpecRows !== undefined) merged.pmQualitySpecRows = b.pmQualitySpecRows;
+    if (b.pmQualitySubSpecRowsByPath !== undefined) {
+      merged.pmQualitySubSpecRowsByPath = b.pmQualitySubSpecRowsByPath;
+    }
+    row.set('form_data', merged);
+    row.set('quality_specs_locked', true);
+    await row.save();
+    redis.delByPattern('pack-materials:').catch(() => {});
+    res.json(await formatPackMaterialFull(row));
+  } catch (err) {
+    console.error('setPackMaterialItemQualitySpecs error', err);
+    res.status(500).json({ error: err.message || 'Failed to set item quality specs' });
+  }
+}
+
 module.exports = {
   listPackMaterials,
   getNextCode,
@@ -1036,6 +1075,7 @@ module.exports = {
   importPmFromZohoBySku,
   createPackMaterial,
   updatePackMaterial,
+  setPackMaterialItemQualitySpecs,
   patchPackMaterialApprovalStatus,
   getPackMaterialApprovalStatusHistory,
   deletePackMaterial,

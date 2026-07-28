@@ -73,6 +73,7 @@ const {
   resolvePrSubSpecPath,
 } = require('../qualitySpecRules/prCategoryResolve');
 const { resolvePrEntityQualitySpecs } = require('../qualitySpecRules/resolveForItem');
+const { resolveEntityTechnicalSpecs } = require('../technicalSpecRules/resolveForItem');
 const { normalizePmSubCategorySlug, pmLevelForSubCategorySlug } = require('../lib/pmSubCategoryRules');
 const { nextNumericSuffixAfterMax } = require('../lib/nextNumericMasterCode');
 const {
@@ -1413,8 +1414,17 @@ const getProductDetail = async (req, res) => {
       pr_quality_final_sub_spec_rows_by_path = pathKey ? { [pathKey]: final.subRows } : {};
       pr_quality_dispatch_sub_spec_rows_by_path = pathKey ? { [pathKey]: dispatch.subRows } : {};
     }
+
+    // Technical specs (TECH custom fields) are live-resolved from the category/sub-category rule.
+    // PR is a single technical namespace (no bulk/final/dispatch split) — see technicalSpecRules.
+    let resolved_technical_specs = [];
+    if (prCategory) {
+      const prTechSubCategory = resolvePrQualitySpecSubCategory(prCategory, parsedNotes.pr_sub_category || '');
+      resolved_technical_specs = await resolveEntityTechnicalSpecs('PR', prCategory, prTechSubCategory, '');
+    }
     res.json({
       ...plain,
+      resolved_technical_specs,
       pr_quality_spec_rows_by_section,
       pr_quality_bulk_sub_spec_rows_by_path,
       pr_quality_final_sub_spec_rows_by_path,
@@ -2238,6 +2248,76 @@ const getProductApprovalStatusHistory = createMasterApprovalStatusHistoryHandler
   Product.findByPk(req.params.id)
 );
 
+/** Admin item-specific PR entity → BOM section key + which sub-by-path object it maps to. */
+const PR_ITEM_SECTION_MAP = {
+  bulk: { sectionKey: 'bulkClearance', sub: 'bulk' },
+  final: { sectionKey: 'finalClearance', sub: 'final' },
+  dispatch: { sectionKey: 'dispatchSpecs', sub: 'dispatch' },
+};
+
+/**
+ * PATCH /api/v1/products/:id/quality-specs — set THIS product's own quality specs for ONE PR section.
+ * PR quality specs live on the product's BOM (spec_tests / spec_fg / spec_release / spec_process
+ * columns), not on form_data. We hydrate ALL current sections first and overlay only the target
+ * section, so the other sections are never clobbered, then one-way lock the BOM
+ * (`quality_specs_locked = true`). Body: { section: 'bulk'|'final'|'dispatch', rows, subRowsByPath? }.
+ */
+async function setProductItemQualitySpecs(req, res) {
+  try {
+    const product = await Product.findByPk(req.params.id);
+    if (!product) return res.status(404).json({ error: 'Product not found' });
+    const b = req.body || {};
+    const section = String(b.section || '').trim().toLowerCase();
+    const map = PR_ITEM_SECTION_MAP[section];
+    if (!map) {
+      return res.status(400).json({ error: 'Invalid section. Use one of: bulk | final | dispatch.' });
+    }
+    const rows = Array.isArray(b.rows) ? b.rows : [];
+    const subRowsByPath =
+      b.subRowsByPath && typeof b.subRowsByPath === 'object' && !Array.isArray(b.subRowsByPath)
+        ? b.subRowsByPath
+        : undefined;
+
+    const bom = await BOM.findOne({ where: { product_id: product.product_id } });
+    if (!bom) {
+      return res.status(404).json({ error: 'Product has no BOM to store quality specs on' });
+    }
+    const bomPlain = bom.get ? bom.get({ plain: true }) : bom;
+
+    // Hydrate ALL current section rows + every sub-by-path so we only overlay the target section.
+    const bySection = hydratePrQualitySpecRowsBySectionFromBom(bomPlain);
+    let bulkSub = hydratePrQualityBulkSubSpecRowsByPathFromBom(bomPlain);
+    let finalSub = hydratePrQualityFinalSubSpecRowsByPathFromBom(bomPlain);
+    let dispatchSub = hydratePrQualityDispatchSubSpecRowsByPathFromBom(bomPlain);
+
+    bySection[map.sectionKey] = rows;
+    if (subRowsByPath !== undefined) {
+      if (map.sub === 'bulk') bulkSub = subRowsByPath;
+      else if (map.sub === 'final') finalSub = subRowsByPath;
+      else dispatchSub = subRowsByPath;
+    }
+
+    const patch = prQualitySpecBomColumnPatch(bySection, bulkSub, finalSub, dispatchSub);
+    patch.quality_specs_locked = true;
+    patch.updated_at = new Date();
+    await bom.update(patch);
+    redisCache.delByPattern('products:').catch(() => {});
+
+    res.json({
+      ok: true,
+      product_id: product.product_id,
+      quality_specs_locked: true,
+      pr_quality_spec_rows_by_section: bySection,
+      pr_quality_bulk_sub_spec_rows_by_path: bulkSub,
+      pr_quality_final_sub_spec_rows_by_path: finalSub,
+      pr_quality_dispatch_sub_spec_rows_by_path: dispatchSub,
+    });
+  } catch (err) {
+    console.error('setProductItemQualitySpecs error', err);
+    res.status(500).json({ error: err.message || 'Failed to set item quality specs' });
+  }
+}
+
 module.exports = {
     saveProduct,
     syncPrProductZoho,
@@ -2247,6 +2327,7 @@ module.exports = {
     getProductById,
     getProductDetail,
     updateProduct,
+    setProductItemQualitySpecs,
     applyPrSectionChangeEffects,
     patchProductApprovalStatus,
     claimProductApprovalTrack,
