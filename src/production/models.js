@@ -129,6 +129,10 @@ ProductionBatch.init(
     qc_specs: { type: DataTypes.JSON, allowNull: true },
     remarks: { type: DataTypes.TEXT, allowNull: true },
     due_date: { type: DataTypes.DATEONLY, allowNull: true },
+    /** Batch priority (LOW | MEDIUM | HIGH) — drives ordering in the Batches view. */
+    priority: { type: DataTypes.STRING(10), allowNull: false, defaultValue: 'MEDIUM' },
+    /** Free-text need-by note shown to the Shift Lead (distinct from `remarks`, which also carries rework reasons). */
+    need_by_note: { type: DataTypes.TEXT, allowNull: true },
 
     compatible_vessels: { type: DataTypes.JSON, allowNull: true },
     compatible_fill_lines: { type: DataTypes.JSON, allowNull: true },

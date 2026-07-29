@@ -32,6 +32,12 @@ const {
   resolvePmIdFromPlanningLine,
   resolveRmIdFromMaterialSnapshotRow,
 } = require('../lib/planningRmResolve');
+const {
+  isKitRmLines,
+  loadSubBomMap,
+  expandKitToMaterialRows,
+  expandKitBomToMaterials,
+} = require('./kitBomExpansion');
 const { getCreatedAndRemainingUnitsFromPlanningRow } = require('./planningSlaUnits');
 const { computePlanningSlaMeta } = require('../lib/planningSla');
 const {
@@ -351,6 +357,16 @@ async function syncPlanningRowMaterialsFromBomLines(planRow, rmLines, pmLines) {
   const batchSizeKg = Number(planRow.batch_size_kg) || 500;
   const orderQtyNum = parseInt(String(planRow.order_qty_display || '0').replace(/\D/g, ''), 10) || 0;
   const totalKg = parseFloat(String(planRow.total_kg_display || '0').replace(/[^\d.]/g, '')) || 0;
+
+  // Kit PR: rm_lines reference sub-PRs, not raw materials. Expand into the sub-PRs' real
+  // RM + PM plus the kit's own outer packaging so the stored snapshot matches the read path.
+  if (isKitRmLines(rmLines)) {
+    const snap = await expandKitBomToMaterials(rmLines, pmLines, orderQtyNum);
+    planRow.raw_materials = snap.raw_materials;
+    planRow.packaging_materials = snap.packaging_materials;
+    await planRow.save();
+    return;
+  }
 
   const rmCodes = [
     ...new Set(
@@ -1243,9 +1259,12 @@ async function putBomOverride(req, res) {
 async function getBomCopyForPlanning(planningExtractedId) {
   const override = await PlanningBomOverride.findOne({ where: { planning_extracted_id: planningExtractedId } });
   if (override && ((Array.isArray(override.rm_lines) && override.rm_lines.length > 0) || (Array.isArray(override.pm_lines) && override.pm_lines.length > 0))) {
+    const rmLines = normalizeRmLines(override.rm_lines || []);
+    // Override / batch copies don't carry the is_kit flag — detect kits by line shape.
     return {
-      rmLines: normalizeRmLines(override.rm_lines || []),
+      rmLines,
       pmLines: normalizePmLines(override.pm_lines || []),
+      isKit: isKitRmLines(rmLines),
     };
   }
 
@@ -1261,19 +1280,23 @@ async function getBomCopyForPlanning(planningExtractedId) {
   const lastRmLines = Array.isArray(lastBatchPlain?.rm_lines) ? lastBatchPlain.rm_lines : [];
   const lastPmLines = Array.isArray(lastBatchPlain?.pm_lines) ? lastBatchPlain.pm_lines : [];
   if (lastRmLines.length > 0 || lastPmLines.length > 0) {
+    const rmLines = normalizeRmLines(lastRmLines);
     return {
-      rmLines: normalizeRmLines(lastRmLines),
+      rmLines,
       pmLines: normalizePmLines(lastPmLines),
+      isKit: isKitRmLines(rmLines),
     };
   }
 
   const planRow = await PlanningExtracted.findByPk(planningExtractedId, { attributes: ['product_id'] });
-  if (!planRow || planRow.product_id == null) return { rmLines: [], pmLines: [] };
-  const bom = await BOM.findOne({ where: { product_id: planRow.product_id }, attributes: ['rm_lines', 'pm_lines'] });
-  if (!bom) return { rmLines: [], pmLines: [] };
+  if (!planRow || planRow.product_id == null) return { rmLines: [], pmLines: [], isKit: false };
+  const bom = await BOM.findOne({ where: { product_id: planRow.product_id }, attributes: ['rm_lines', 'pm_lines', 'is_kit'] });
+  if (!bom) return { rmLines: [], pmLines: [], isKit: false };
+  const rmLines = normalizeRmLines(Array.isArray(bom.rm_lines) ? bom.rm_lines : []);
   return {
-    rmLines: normalizeRmLines(Array.isArray(bom.rm_lines) ? bom.rm_lines : []),
+    rmLines,
     pmLines: normalizePmLines(Array.isArray(bom.pm_lines) ? bom.pm_lines : []),
+    isKit: !!bom.is_kit || isKitRmLines(rmLines),
   };
 }
 
@@ -1289,7 +1312,7 @@ async function getConfirmedPiMaterialSnapshot(planPlain) {
   }
   try {
     const planId = planPlain.id;
-    const { rmLines, pmLines } = await getBomCopyForPlanning(planId);
+    const { rmLines, pmLines, isKit } = await getBomCopyForPlanning(planId);
     const hasLines =
       (Array.isArray(rmLines) && rmLines.length > 0) ||
       (Array.isArray(pmLines) && pmLines.length > 0);
@@ -1299,7 +1322,10 @@ async function getConfirmedPiMaterialSnapshot(planPlain) {
     const orderQty = parseOrderQtyNum(planPlain.order_qty_display);
     const totalKg = parseFloat(String(planPlain.total_kg_display || '0').replace(/[^\d.]/g, '')) || 0;
     const batchSizeKg = Number(planPlain.batch_size_kg) || 500;
-    const snap = buildPlanningSnapshotFromBom(rmLines, pmLines, orderQty, totalKg, batchSizeKg);
+    // Kit PR: expand sub-PR lines into their real RM + PM plus the kit's own pack material.
+    const snap = isKit
+      ? await expandKitBomToMaterials(rmLines, pmLines, orderQty)
+      : buildPlanningSnapshotFromBom(rmLines, pmLines, orderQty, totalKg, batchSizeKg);
     return {
       rawMaterials: snap.raw_materials,
       packagingMaterials: snap.packaging_materials,
@@ -2075,12 +2101,34 @@ async function deleteBatch(req, res) {
 }
 
 /** Sum RM (kg) and PM (pcs) from one planning_batches row; uses PI packaging when batch has no pm_lines. */
-function accumulatePlannedBatchIntoQtyMaps(batchPlain, planPlain, rmByCode, rmByName, pmByCode, pmByName, plannedRm, plannedPm) {
+function accumulatePlannedBatchIntoQtyMaps(batchPlain, planPlain, rmByCode, rmByName, pmByCode, pmByName, plannedRm, plannedPm, subBomMap) {
   const sizeKg = Number(batchPlain.size_kg) || 0;
   const orderQty = parseInt(String(planPlain.order_qty_display || '0').replace(/\D/g, ''), 10) || 0;
   const totalKg = parseFloat(String(planPlain.total_kg_display || '0').replace(/[^\d.]/g, '')) || 0;
   const kgPerUnit = orderQty > 0 && totalKg > 0 ? totalKg / orderQty : 1;
   const unitsForBatch = kgPerUnit > 0 ? sizeKg / kgPerUnit : 0;
+
+  // Kit batch: rm_lines reference sub-PRs. Expand into real RM + PM (sub-PR materials + kit's own
+  // pack material) so allocated qty subtracts against the same ids Items Involved surfaces.
+  if (isKitRmLines(batchPlain.rm_lines)) {
+    const { raw_materials, packaging_materials } = expandKitToMaterialRows(
+      batchPlain.rm_lines,
+      batchPlain.pm_lines,
+      unitsForBatch,
+      subBomMap || new Map()
+    );
+    for (const r of raw_materials) {
+      const id = resolveRmIdFromMaterialSnapshotRow(r, rmByCode, rmByName);
+      if (id == null || Number.isNaN(id)) continue;
+      plannedRm.set(id, (plannedRm.get(id) || 0) + (Number(r.quantity) || 0));
+    }
+    for (const p of packaging_materials) {
+      const id = resolvePmIdFromPlanningLine(p, pmByCode, pmByName);
+      if (id == null || Number.isNaN(id)) continue;
+      plannedPm.set(id, (plannedPm.get(id) || 0) + (Number(p.quantity) || 0));
+    }
+    return;
+  }
 
   const rmLines = Array.isArray(batchPlain.rm_lines) ? batchPlain.rm_lines : [];
   for (const line of rmLines) {
@@ -2118,16 +2166,27 @@ function accumulatePlannedBatchIntoQtyMaps(batchPlain, planPlain, rmByCode, rmBy
   }
 }
 
-function countPlanningBatchesTouchingRm(planBatchesPlain, rmId, rmByCode, rmByName) {
+function countPlanningBatchesTouchingRm(planBatchesPlain, rmId, rmByCode, rmByName, subBomMap) {
   let n = 0;
   for (const bp of planBatchesPlain) {
-    const lines = Array.isArray(bp.rm_lines) ? bp.rm_lines : [];
     let touches = false;
-    for (const line of lines) {
-      const id = resolveRmIdFromPlanningLine(line, rmByCode, rmByName);
-      if (id === rmId) {
-        touches = true;
-        break;
+    if (isKitRmLines(bp.rm_lines)) {
+      // Kit batch: check the expanded sub-PR RM rows (kitUnits arbitrary — only membership matters).
+      const { raw_materials } = expandKitToMaterialRows(bp.rm_lines, bp.pm_lines, 1, subBomMap || new Map());
+      for (const r of raw_materials) {
+        if (resolveRmIdFromMaterialSnapshotRow(r, rmByCode, rmByName) === rmId) {
+          touches = true;
+          break;
+        }
+      }
+    } else {
+      const lines = Array.isArray(bp.rm_lines) ? bp.rm_lines : [];
+      for (const line of lines) {
+        const id = resolveRmIdFromPlanningLine(line, rmByCode, rmByName);
+        if (id === rmId) {
+          touches = true;
+          break;
+        }
       }
     }
     if (touches) n += 1;
@@ -2135,10 +2194,23 @@ function countPlanningBatchesTouchingRm(planBatchesPlain, rmId, rmByCode, rmByNa
   return n;
 }
 
-function countPlanningBatchesTouchingPm(planBatchesPlain, pmId, pmByCode, pmByName, planPlain) {
+function countPlanningBatchesTouchingPm(planBatchesPlain, pmId, pmByCode, pmByName, planPlain, subBomMap) {
   let n = 0;
   const orderQty = parseInt(String(planPlain.order_qty_display || '0').replace(/\D/g, ''), 10) || 0;
   for (const bp of planBatchesPlain) {
+    // Kit batch: the relevant PMs are the sub-PRs' own packaging plus the kit's outer packaging.
+    if (isKitRmLines(bp.rm_lines)) {
+      const { packaging_materials } = expandKitToMaterialRows(bp.rm_lines, bp.pm_lines, 1, subBomMap || new Map());
+      let kitTouches = false;
+      for (const p of packaging_materials) {
+        if (resolvePmIdFromPlanningLine(p, pmByCode, pmByName) === pmId) {
+          kitTouches = true;
+          break;
+        }
+      }
+      if (kitTouches) n += 1;
+      continue;
+    }
     let pmLines = Array.isArray(bp.pm_lines) ? bp.pm_lines : [];
     if (pmLines.length === 0) {
       const pkg = Array.isArray(planPlain.packaging_materials) ? planPlain.packaging_materials : [];
@@ -2320,19 +2392,27 @@ async function getItemsInvolved(req, res) {
       const planBatchesPlain = planBatchesRaw.map((batchRow) => (batchRow.get ? batchRow.get({ plain: true }) : batchRow));
       const planBatchesSent = filterPlanningBatchesSentToProduction(plain, planBatchesPlain);
 
+      // Kit batches store PR-reference lines. Preload each referenced sub-PR's BOM once so the
+      // batch-accounting below can expand kit lines into the real sub-materials (else kit items
+      // never surface — a material shows only if a batch "touches" it).
+      const subBomMap = new Map();
+      for (const bp of planBatchesPlain) {
+        if (isKitRmLines(bp.rm_lines)) await loadSubBomMap(bp.rm_lines, 0, subBomMap);
+      }
+
       const plannedRm = new Map();
       const plannedPm = new Map();
       // Only batches sent to production count toward planned qty / unallocated / "used in" batch count.
       // Draft rows (next batch auto-created in Plan Batches) stay in DB but are excluded until sent.
       for (const bp of planBatchesSent) {
-        accumulatePlannedBatchIntoQtyMaps(bp, plain, rmByCode, rmByName, pmByCode, pmByName, plannedRm, plannedPm);
+        accumulatePlannedBatchIntoQtyMaps(bp, plain, rmByCode, rmByName, pmByCode, pmByName, plannedRm, plannedPm, subBomMap);
       }
 
       const allRmIdsForPlan = new Set([...fullRm.keys(), ...plannedRm.keys()]);
       for (const id of allRmIdsForPlan) {
         // Batch-driven Items Involved: only surface a material that at least one of this PI's batches
         // (planned OR sent) actually references. A PI with no batches contributes no items.
-        if (countPlanningBatchesTouchingRm(planBatchesPlain, id, rmByCode, rmByName) === 0) continue;
+        if (countPlanningBatchesTouchingRm(planBatchesPlain, id, rmByCode, rmByName, subBomMap) === 0) continue;
         const gross = (fullRm.get(id) || 0);
         const rem = Math.max(0, gross - (plannedRm.get(id) || 0));
         if (!(gross > 0) && !includeZeroRequired) continue;
@@ -2360,13 +2440,15 @@ async function getItemsInvolved(req, res) {
         if (planId && !agg.planningExtractedIds.includes(planId)) agg.planningExtractedIds.push(planId);
         if (name) agg.name = name;
         if (code) agg.code = code;
-        agg.batchCount += countPlanningBatchesTouchingRm(planBatchesSent, id, rmByCode, rmByName);
+        // Count ALL batches (incl. drafts) that use this material — matches the surfacing guard above,
+        // so a row driven by a draft batch shows its real batch count instead of a misleading 0.
+        agg.batchCount += countPlanningBatchesTouchingRm(planBatchesPlain, id, rmByCode, rmByName, subBomMap);
       }
 
       const allPmIdsForPlan = new Set([...fullPm.keys(), ...plannedPm.keys()]);
       for (const id of allPmIdsForPlan) {
         // Batch-driven: skip PMs that no batch of this PI references.
-        if (countPlanningBatchesTouchingPm(planBatchesPlain, id, pmByCode, pmByName, plain) === 0) continue;
+        if (countPlanningBatchesTouchingPm(planBatchesPlain, id, pmByCode, pmByName, plain, subBomMap) === 0) continue;
         const gross = (fullPm.get(id) || 0);
         const rem = Math.max(0, gross - (plannedPm.get(id) || 0));
         if (!(gross > 0) && !includeZeroRequired) continue;
@@ -2394,7 +2476,8 @@ async function getItemsInvolved(req, res) {
         if (planId && !agg.planningExtractedIds.includes(planId)) agg.planningExtractedIds.push(planId);
         if (name) agg.name = name;
         if (code) agg.code = code;
-        agg.batchCount += countPlanningBatchesTouchingPm(planBatchesSent, id, pmByCode, pmByName, plain);
+        // Count ALL batches (incl. drafts) that use this material — matches the surfacing guard above.
+        agg.batchCount += countPlanningBatchesTouchingPm(planBatchesPlain, id, pmByCode, pmByName, plain, subBomMap);
       }
     }
 
@@ -2934,6 +3017,11 @@ async function getItemsInvolvedByPlanningId(req, res) {
     const planBatchesList = await PlanningBatch.findAll({ where: { planning_extracted_id: id }, order: [['sequence', 'ASC']] });
     const planBatchesPlain = planBatchesList.map((b) => (b.get ? b.get({ plain: true }) : b));
     const planBatchesSent = filterPlanningBatchesSentToProduction(plain, planBatchesPlain);
+    // Kit batches store PR-reference lines — preload sub-PR BOMs so batch accounting can expand them.
+    const subBomMap = new Map();
+    for (const bp of planBatchesPlain) {
+      if (isKitRmLines(bp.rm_lines)) await loadSubBomMap(bp.rm_lines, 0, subBomMap);
+    }
     const rmByCodeMap = new Map();
     const rmByNameMap = new Map();
     const pmByCodeMap = new Map();
@@ -2981,7 +3069,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
     const plannedRmFromBatches = new Map();
     const plannedPmFromBatches = new Map();
     for (const bp of planBatchesSent) {
-      accumulatePlannedBatchIntoQtyMaps(bp, plain, rmByCodeMap, rmByNameMap, pmByCodeMap, pmByNameMap, plannedRmFromBatches, plannedPmFromBatches);
+      accumulatePlannedBatchIntoQtyMaps(bp, plain, rmByCodeMap, rmByNameMap, pmByCodeMap, pmByNameMap, plannedRmFromBatches, plannedPmFromBatches, subBomMap);
     }
 
     // Match global items-involved: include materials on sent batches even when absent from BOM snapshot.
@@ -3146,7 +3234,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
     let idx = 0;
     for (const rid of rmIds) {
       // Batch-driven: only include RMs referenced by at least one of this PI's batches.
-      if (countPlanningBatchesTouchingRm(planBatchesPlain, rid, rmByCodeMap, rmByNameMap) === 0) continue;
+      if (countPlanningBatchesTouchingRm(planBatchesPlain, rid, rmByCodeMap, rmByNameMap, subBomMap) === 0) continue;
       const req = rmReq.get(rid) || {};
       const stockInHand = sihByRm.get(rid) ?? 0;
       const reserved = reservedByRm.get(rid) ?? 0;
@@ -3193,7 +3281,8 @@ async function getItemsInvolvedByPlanningId(req, res) {
         plannedQty,
         poQty: netOpenPoQtyKg(`rm-${rid}`),
         inTransit: inTransitKg,
-        batchCount: countPlanningBatchesTouchingRm(planBatchesSent, rid, rmByCodeMap, rmByNameMap),
+        // Count ALL batches (incl. drafts) that use this material — matches the surfacing guard.
+        batchCount: countPlanningBatchesTouchingRm(planBatchesPlain, rid, rmByCodeMap, rmByNameMap, subBomMap),
       };
       out.push(
         finalizeItemsInvolvedRmRow(rmRowKg, rmMeta, {
@@ -3206,7 +3295,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
     }
     for (const pid of pmIds) {
       // Batch-driven: only include PMs referenced by at least one of this PI's batches.
-      if (countPlanningBatchesTouchingPm(planBatchesPlain, pid, pmByCodeMap, pmByNameMap, plain) === 0) continue;
+      if (countPlanningBatchesTouchingPm(planBatchesPlain, pid, pmByCodeMap, pmByNameMap, plain, subBomMap) === 0) continue;
       const req = pmReq.get(pid) || {};
       const stockInHand = sihByPm.get(pid) ?? 0;
       const reserved = reservedByPm.get(pid) ?? 0;
@@ -3246,7 +3335,8 @@ async function getItemsInvolvedByPlanningId(req, res) {
         plannedQty,
         poQty: netOpenPoQtyKg(`pm-${pid}`),
         inTransit,
-        batchCount: countPlanningBatchesTouchingPm(planBatchesSent, pid, pmByCodeMap, pmByNameMap, plain),
+        // Count ALL batches (incl. drafts) that use this material — matches the surfacing guard.
+        batchCount: countPlanningBatchesTouchingPm(planBatchesPlain, pid, pmByCodeMap, pmByNameMap, plain, subBomMap),
       });
     }
 

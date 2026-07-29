@@ -65,6 +65,12 @@ BOM.init(
     pr_facility_licences: { type: DataTypes.JSON, allowNull: true },
     /** Once true, this item's own saved quality specs win over the category/sub-category rule (one-way). */
     quality_specs_locked: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+    /**
+     * Kit product: rm_lines carry references to other PRs (sub-products) instead of raw materials,
+     * and pm_lines carry the kit's own outer packaging. In Items Involved a kit expands into each
+     * sub-PR's RM + PM plus the kit's own pack material.
+     */
+    is_kit: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   },
   { sequelize: db, modelName: 'BOM', tableName: 'boms', timestamps: true, createdAt: 'created_at', updatedAt: 'updated_at' }
 );

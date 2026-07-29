@@ -17,7 +17,7 @@ const { createRworkPlanningBatch, createSplitPlanningBatch } = require('../plann
 const SalesOrder = require('../salesOrders/models');
 const ProcurementRequest = require('../procurementRequests/models');
 const { hasGranularAccess } = require('../middleware/security');
-const { roundPlanningMaterialQty } = require('../planningExtracted/orderKgMath');
+const { roundPlanningMaterialQty, parseFillSizeToKgPerUnit } = require('../planningExtracted/orderKgMath');
 const {
   assertBatchEligibleForVesselSplit,
   hasDispensingProgress,
@@ -221,6 +221,8 @@ function formatBatch(row, visibility = { canViewBmr: true, canViewBpr: true, can
     qcSpecs: d.qc_specs || [],
     remarks: d.remarks || '',
     dueDate: d.due_date || '',
+    priority: d.priority || 'MEDIUM',
+    needByNote: d.need_by_note || '',
     compatibleVessels: d.compatible_vessels || undefined,
     compatibleFillLines: d.compatible_fill_lines || undefined,
     compatiblePackLines: d.compatible_pack_lines || undefined,
@@ -304,7 +306,7 @@ const BATCH_ALLOWED_FIELDS = [
   'dispensing_rm', 'dispensing_pm',
   'bulk_yield', 'fill_yield', 'fg_yield',
   'bulk_batch_accepted', 'fill_batch_accepted', 'fg_batch_accepted',
-  'qc_specs', 'remarks', 'due_date',
+  'qc_specs', 'remarks', 'due_date', 'priority', 'need_by_note',
   'compatible_vessels', 'compatible_fill_lines', 'compatible_pack_lines',
   'required_volume_liters',
 ];
@@ -329,6 +331,7 @@ const BATCH_CAMEL_TO_SNAKE = {
   bulkYield: 'bulk_yield', fillYield: 'fill_yield', fgYield: 'fg_yield',
   bulkBatchAccepted: 'bulk_batch_accepted', fillBatchAccepted: 'fill_batch_accepted',
   fgBatchAccepted: 'fg_batch_accepted', qcSpecs: 'qc_specs', dueDate: 'due_date',
+  priority: 'priority', needByNote: 'need_by_note',
   compatibleVessels: 'compatible_vessels', compatibleFillLines: 'compatible_fill_lines',
   compatiblePackLines: 'compatible_pack_lines',
   requiredVolumeLiters: 'required_volume_liters',
@@ -3232,6 +3235,48 @@ async function buildFgProductSpecsForBatch(batchPlain) {
  * Fallback: product master BOM from boms table.
  * Includes qcReference: master bulk specs per RM/PM line + product Specs & Stability for the batch SKU.
  */
+/**
+ * Per-batch kg-per-unit + client, for the Edit Batch modal's units<->kg conversion and read-only header.
+ * kgPerUnit prefers the linked planning row (total_kg / order_qty = bulk kg incl. overage), then the
+ * product's net fill size, else 0 (caller falls back to editing kg directly).
+ */
+async function computeBatchUnitBasis(d) {
+  let kgPerUnit = 0;
+  let client = '';
+  try {
+    const peId = await resolvePlanningExtractedIdForBatch(d);
+    if (peId != null) {
+      const pe = await PlanningExtracted.findByPk(peId, {
+        attributes: ['total_kg_display', 'order_qty_display', 'product_id'],
+      });
+      if (pe) {
+        const totalKg = parseFloat(String(pe.total_kg_display || '0').replace(/[^\d.]/g, '')) || 0;
+        const orderQty = parseInt(String(pe.order_qty_display || '0').replace(/\D/g, ''), 10) || 0;
+        if (totalKg > 0 && orderQty > 0) kgPerUnit = totalKg / orderQty;
+        if (!(kgPerUnit > 0) && pe.product_id != null) {
+          const prod = await Product.findByPk(pe.product_id, { attributes: ['fill_size'] });
+          const fromFill = prod ? parseFillSizeToKgPerUnit(prod.fill_size, 1) : 0;
+          if (fromFill > 0) kgPerUnit = fromFill;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[production] computeBatchUnitBasis kgPerUnit:', e && e.message ? e.message : e);
+  }
+  try {
+    if (d.so_no) {
+      const so = await SalesOrder.findOne({
+        where: { order_id: d.so_no },
+        attributes: ['customer_name'],
+      });
+      if (so) client = so.customer_name || '';
+    }
+  } catch (e) {
+    console.warn('[production] computeBatchUnitBasis client:', e && e.message ? e.message : e);
+  }
+  return { kgPerUnit: kgPerUnit > 0 ? kgPerUnit : null, client };
+}
+
 async function getBatchBom(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
@@ -3243,10 +3288,18 @@ async function getBatchBom(req, res) {
     const { rmLines, pmLines, source, batchSizeKg } = await getBomLinesForBatch(d);
     const normalized = await normalizeBatchBomLines(rmLines, pmLines);
     if (BOM_DEBUG) console.log('[BOM-DEBUG] GET /batches/:id/bom response: source=', source, 'rmLines=', rmLines.length, 'pmLines=', pmLines.length);
-    const [ingredientBulkSpecs, fgProductSpecs] = await Promise.all([
+    const [ingredientBulkSpecs, fgProductSpecs, unitBasis] = await Promise.all([
       buildIngredientBulkSpecsForBom(normalized.rmLines, normalized.pmLines),
       buildFgProductSpecsForBatch(d),
+      computeBatchUnitBasis(d),
     ]);
+    const effectiveKg = (batchSizeKg != null && batchSizeKg > 0)
+      ? batchSizeKg
+      : (Number(d.batch_size) || 0);
+    const batchUnits =
+      unitBasis.kgPerUnit && unitBasis.kgPerUnit > 0 && effectiveKg > 0
+        ? Math.round(effectiveKg / unitBasis.kgPerUnit)
+        : null;
     res.json({
       success: true,
       data: {
@@ -3254,6 +3307,9 @@ async function getBatchBom(req, res) {
         pmLines: normalized.pmLines,
         source,
         batchSizeKg: batchSizeKg ?? undefined,
+        kgPerUnit: unitBasis.kgPerUnit ?? undefined,
+        batchUnits: batchUnits ?? undefined,
+        client: unitBasis.client || undefined,
         qcReference: { ingredientBulkSpecs, fgProductSpecs },
       },
     });
