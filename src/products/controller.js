@@ -682,22 +682,35 @@ const createPRRegistration = async (req, res) => {
     const pm_lines = Array.isArray(b.pm_lines) ? b.pm_lines : (Array.isArray(b.pmLines) ? b.pmLines : []);
     const process_steps = Array.isArray(b.process_steps) ? b.process_steps : (Array.isArray(b.processSteps) ? b.processSteps : []);
 
+    // Kit PR: rm_lines reference sub-PRs (not raw materials), so the formula %/SKU-BOM validations
+    // below don't apply. The kit still requires its own packaging (pm_lines).
+    const isKit = b.is_kit === true || b.isKit === true;
+
     const isDraftSave = isPrDraftWrite(b, preProduct);
 
     if (!isDraftSave) {
-      if (countMeaningfulRmLines(rm_lines) < 1) {
+      if (!isKit && countMeaningfulRmLines(rm_lines) < 1) {
         return res.status(400).json({
           error:
             'At least one formula (RM) line is required. Add ingredients in Formula BOM before registering.',
           code: 'PR_MISSING_RM_LINES',
         });
       }
-      const formulaPctV = validateFormulaPctNotOver100(rm_lines);
-      if (!formulaPctV.ok) {
+      if (isKit && rm_lines.length < 1) {
         return res.status(400).json({
-          error: formulaPctV.error,
-          code: formulaPctV.code,
+          error:
+            'A kit requires at least one component PR in the Formula BOM. Add sub-products before registering.',
+          code: 'KIT_MISSING_PR_LINES',
         });
+      }
+      if (!isKit) {
+        const formulaPctV = validateFormulaPctNotOver100(rm_lines);
+        if (!formulaPctV.ok) {
+          return res.status(400).json({
+            error: formulaPctV.error,
+            code: formulaPctV.code,
+          });
+        }
       }
       if (countMeaningfulPmLines(pm_lines) < 1) {
         return res.status(400).json({
@@ -706,7 +719,7 @@ const createPRRegistration = async (req, res) => {
           code: 'PR_MISSING_PM_LINES',
         });
       }
-    } else {
+    } else if (!isKit) {
       const formulaPctDraft = validateFormulaPctNotOver100(rm_lines);
       if (!formulaPctDraft.ok) {
         return res.status(400).json({
@@ -716,8 +729,8 @@ const createPRRegistration = async (req, res) => {
       }
     }
 
-    const skuRegLines = Array.isArray(b.sku_rm_lines) ? b.sku_rm_lines : [];
-    if (!isDraftSave) {
+    const skuRegLines = isKit ? [] : (Array.isArray(b.sku_rm_lines) ? b.sku_rm_lines : []);
+    if (!isDraftSave && !isKit) {
       const skuRegV = validateSkuBomTotals({
         lines: skuRegLines,
         limitQty: b.sku_bom_limit_qty ?? b.skuBomLimitQty,
@@ -880,15 +893,18 @@ const createPRRegistration = async (req, res) => {
         pr_facility_licences: flattenPrFacilityLicencesForStorage(
           b.pr_facility_licences ?? b.prFacilityLicences
         ),
+        is_kit: isKit,
         rm_lines,
-        sku_rm_lines: Array.isArray(b.sku_rm_lines) ? b.sku_rm_lines : [],
-        sku_bom_limit_qty:
-          b.sku_bom_limit_qty != null && b.sku_bom_limit_qty !== ''
+        // A kit has no per-unit RM SKU BOM — its formula lines reference sub-PRs.
+        sku_rm_lines: isKit ? [] : (Array.isArray(b.sku_rm_lines) ? b.sku_rm_lines : []),
+        sku_bom_limit_qty: isKit
+          ? null
+          : b.sku_bom_limit_qty != null && b.sku_bom_limit_qty !== ''
             ? b.sku_bom_limit_qty
             : b.skuBomLimitQty != null && b.skuBomLimitQty !== ''
               ? b.skuBomLimitQty
               : null,
-        sku_bom_limit_uom: (b.sku_bom_limit_uom ?? b.skuBomLimitUom) || null,
+        sku_bom_limit_uom: isKit ? null : ((b.sku_bom_limit_uom ?? b.skuBomLimitUom) || null),
         pm_lines,
         process_steps,
         product_id: product.product_id,
@@ -922,11 +938,12 @@ const createPRRegistration = async (req, res) => {
       }
 
       // Link selected RM/PM master items to this product code for downstream usage/pricing.
+      // A kit's rm_lines are PR references (not RM masters) — link only its packaging.
       await linkMaterialMastersToProductCode(
         product,
         {
-          rm_lines,
-          sku_rm_lines: Array.isArray(b.sku_rm_lines) ? b.sku_rm_lines : [],
+          rm_lines: isKit ? [] : rm_lines,
+          sku_rm_lines: isKit ? [] : (Array.isArray(b.sku_rm_lines) ? b.sku_rm_lines : []),
           pm_lines,
         },
         { transaction: t, productCodeOverride: product_code }
@@ -1246,10 +1263,22 @@ const getProductDetail = async (req, res) => {
     const pmLines = (bom && bom.pm_lines) ? bom.pm_lines : [];
     const processSteps = (bom && bom.process_steps) ? bom.process_steps : [];
 
+    const isKit = bom ? !!bom.is_kit : false;
     const phases = {};
     rmLines.forEach((line) => {
       const phase = line.phase || 'Other';
       if (!phases[phase]) phases[phase] = [];
+      if (isKit) {
+        // Kit formula line references a sub-PR (finished product), not a raw material.
+        phases[phase].push({
+          type: 'PR',
+          product_id: line.product_id ?? line.productId ?? null,
+          product_code: line.product_code ?? line.productCode ?? line.rm_code ?? null,
+          name: line.name ?? line.product_name ?? line.inci_name ?? '',
+          units_per_kit: Number(line.units_per_kit ?? line.unitsPerKit ?? line.qty ?? line.qty_per_unit ?? 0) || 0,
+        });
+        return;
+      }
       const lineSg = Number(line.specific_gravity ?? line.specificGravity);
       const itemGroupId = line.item_group_id ?? line.itemGroupId ?? null;
       const itemGroupName = line.item_group_name ?? line.itemGroupName ?? null;
@@ -1436,6 +1465,7 @@ const getProductDetail = async (req, res) => {
       internal_sku_code: plain.product_code ?? null,
       zoho_sku_code: plain.zoho_sku_code ?? null,
       bom_composite_item: bom ? bom.bom_composite_item : null,
+      is_kit: bom ? !!bom.is_kit : false,
       bom_tax_preference: bom ? bom.bom_tax_preference : null,
       bom_returnable: bom ? bom.bom_returnable : null,
       bom_associate_items: bom ? bom.bom_associate_items : null,
@@ -1645,25 +1675,36 @@ const updateProduct = async (req, res) => {
         }
       }
 
+      // Kit PR: formula lines reference sub-PRs (not raw materials), so the formula %/SKU-BOM
+      // validations don't apply. Prefer the payload flag; fall back to the stored BOM.
+      const isKitUpd =
+        bomPayload.is_kit === true || bomPayload.isKit === true
+          ? true
+          : bomPayload.is_kit === false || bomPayload.isKit === false
+            ? false
+            : !!(bom && bom.is_kit);
+
       if (!bom) {
         const nextRm = rmFromPayload ? bomPayload.rm_lines : [];
         const nextPm = pmFromPayload ? bomPayload.pm_lines : [];
-        if (!isDraftSave && (countMeaningfulRmLines(nextRm) < 1 || countMeaningfulPmLines(nextPm) < 1)) {
+        if (!isDraftSave && ((!isKitUpd && countMeaningfulRmLines(nextRm) < 1) || countMeaningfulPmLines(nextPm) < 1)) {
           return res.status(400).json({
             error:
               'BOM must include at least one formula (RM) line and one packaging (PM) line.',
             code: 'BOM_MISSING_LINES',
           });
         }
-        const formulaPctCreate = validateFormulaPctNotOver100(nextRm);
-        if (!formulaPctCreate.ok) {
-          return res.status(400).json({
-            error: formulaPctCreate.error,
-            code: formulaPctCreate.code,
-          });
+        if (!isKitUpd) {
+          const formulaPctCreate = validateFormulaPctNotOver100(nextRm);
+          if (!formulaPctCreate.ok) {
+            return res.status(400).json({
+              error: formulaPctCreate.error,
+              code: formulaPctCreate.code,
+            });
+          }
         }
-        const nextSkuCreate = Array.isArray(bomPayload.sku_rm_lines) ? bomPayload.sku_rm_lines : [];
-        if (!isDraftSave) {
+        const nextSkuCreate = isKitUpd ? [] : (Array.isArray(bomPayload.sku_rm_lines) ? bomPayload.sku_rm_lines : []);
+        if (!isDraftSave && !isKitUpd) {
           const skuCreateV = validateSkuBomTotals({
             lines: nextSkuCreate,
             limitQty: bomPayload.sku_bom_limit_qty ?? bomPayload.skuBomLimitQty,
@@ -1680,10 +1721,11 @@ const updateProduct = async (req, res) => {
           product_id: productId,
           type: 'FG',
           status: 'Draft',
+          is_kit: isKitUpd,
           rm_lines: nextRm,
           sku_rm_lines: nextSkuCreate,
-          sku_bom_limit_qty: bomPayload.sku_bom_limit_qty ?? bomPayload.skuBomLimitQty ?? null,
-          sku_bom_limit_uom: bomPayload.sku_bom_limit_uom ?? bomPayload.skuBomLimitUom ?? null,
+          sku_bom_limit_qty: isKitUpd ? null : (bomPayload.sku_bom_limit_qty ?? bomPayload.skuBomLimitQty ?? null),
+          sku_bom_limit_uom: isKitUpd ? null : (bomPayload.sku_bom_limit_uom ?? bomPayload.skuBomLimitUom ?? null),
           pm_lines: nextPm,
           process_steps: Array.isArray(bomPayload.process_steps) ? bomPayload.process_steps : [],
           client: bomPayload.brand_client ?? bomPayload.brandClient ?? product.brand_name ?? null,
@@ -1741,14 +1783,14 @@ const updateProduct = async (req, res) => {
         const mergedRm = rmFromPayload ? bomPayload.rm_lines : bom.rm_lines || [];
         const mergedPm = pmFromPayload ? bomPayload.pm_lines : bom.pm_lines || [];
         if (!isDraftSave && (rmFromPayload || pmFromPayload)) {
-          if (countMeaningfulRmLines(mergedRm) < 1 || countMeaningfulPmLines(mergedPm) < 1) {
+          if ((!isKitUpd && countMeaningfulRmLines(mergedRm) < 1) || countMeaningfulPmLines(mergedPm) < 1) {
             return res.status(400).json({
               error:
                 'BOM must keep at least one formula (RM) line and one packaging (PM) line.',
               code: 'BOM_MISSING_LINES',
             });
           }
-          if (rmFromPayload) {
+          if (rmFromPayload && !isKitUpd) {
             const formulaPctUpd = validateFormulaPctNotOver100(mergedRm);
             if (!formulaPctUpd.ok) {
               return res.status(400).json({
@@ -1757,7 +1799,7 @@ const updateProduct = async (req, res) => {
               });
             }
           }
-        } else if (isDraftSave && rmFromPayload) {
+        } else if (isDraftSave && rmFromPayload && !isKitUpd) {
           const formulaPctDraft = validateFormulaPctNotOver100(mergedRm);
           if (!formulaPctDraft.ok) {
             return res.status(400).json({
@@ -1787,6 +1829,7 @@ const updateProduct = async (req, res) => {
 
         const mustValidateSkuBom =
           !isDraftSave &&
+          !isKitUpd &&
           (meaningfulSkuInPayload ||
             ((limitQtyChanged || limitUomChanged) && meaningfulStoredSku));
 
@@ -1889,6 +1932,15 @@ const updateProduct = async (req, res) => {
           bomUpdate.bom_composite_item = !!bomPayload.bom_composite_item;
         } else if (bomPayload.bomCompositeItem !== undefined) {
           bomUpdate.bom_composite_item = !!bomPayload.bomCompositeItem;
+        }
+        if (bomPayload.is_kit !== undefined || bomPayload.isKit !== undefined) {
+          bomUpdate.is_kit = isKitUpd;
+          // Switching a BOM to a kit clears its per-unit RM SKU BOM (formula lines are sub-PR refs).
+          if (isKitUpd) {
+            bomUpdate.sku_rm_lines = [];
+            bomUpdate.sku_bom_limit_qty = null;
+            bomUpdate.sku_bom_limit_uom = null;
+          }
         }
         if (
           bomPayload.pr_quality_spec_rows_by_section !== undefined ||
