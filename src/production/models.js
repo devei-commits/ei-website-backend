@@ -134,6 +134,22 @@ ProductionBatch.init(
     /** Free-text need-by note shown to the Shift Lead (distinct from `remarks`, which also carries rework reasons). */
     need_by_note: { type: DataTypes.TEXT, allowNull: true },
 
+    /** BMR/BPR document QA review (pending | approved) — gates Initiate Dispensing. Set via the quality-gated qa-approve endpoint. */
+    bmr_qa_status: { type: DataTypes.STRING(20), allowNull: false, defaultValue: 'pending' },
+    bmr_qa_approved_by: { type: DataTypes.STRING(120), allowNull: true },
+    bmr_qa_reviewed_at: { type: DataTypes.DATE, allowNull: true },
+    bpr_qa_status: { type: DataTypes.STRING(20), allowNull: false, defaultValue: 'pending' },
+    bpr_qa_approved_by: { type: DataTypes.STRING(120), allowNull: true },
+    bpr_qa_reviewed_at: { type: DataTypes.DATE, allowNull: true },
+
+    /**
+     * IPQA pre-production gate (checklist). Shape:
+     * { verifications: { <key>: { status:'pass'|'fail', by, at } }, confirms: { <key>: { by, at } } }.
+     * IPQA verifications gate "Start Production" (dispensing → in_production); production confirms are the
+     * production lead's own pre-conditions. Missing key = pending.
+     */
+    pre_production_gate: { type: DataTypes.JSON, allowNull: true },
+
     compatible_vessels: { type: DataTypes.JSON, allowNull: true },
     compatible_fill_lines: { type: DataTypes.JSON, allowNull: true },
     compatible_pack_lines: { type: DataTypes.JSON, allowNull: true },

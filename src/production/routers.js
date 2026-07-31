@@ -7,6 +7,9 @@ const {
   listTeam,
   listBatches, getBatchById, createBatch, createRworkBatch, splitBatchForVessel, updateBatch, deleteBatch, getBatchBom, getBatchMtrReserved, getBatchDispensingMuStock, syncBatchesFromPlanning,
   listReservedItems, reserveBatchLines, unreserveBatchLines, getBatchReservationCoverage,
+  qaApproveBatchDoc,
+  ipqaVerifyBatchGate,
+  productionConfirmBatchGate,
 } = require('./controller');
 
 const guard = [isAuthenticated, requireModule('order-management')];
@@ -25,6 +28,11 @@ const productionWriteGuard = [
     { resource: 'order-management.production-bpr', action: 'edit' },
     { resource: 'order-management.production-transfer-yield', action: 'edit' },
   ]),
+];
+// QA sign-off on BMR/BPR docs requires the Quality submodule's approve action specifically.
+const qualityApproveGuard = [
+  ...guard,
+  requireAnyGranularAccess([{ resource: 'order-management.quality', action: 'approve' }]),
 ];
 
 async function requireBatchGranularEdit(req, res, next) {
@@ -76,6 +84,10 @@ router.post('/batches/split-for-vessel', productionWriteGuard, splitBatchForVess
 router.get('/batches/:id/bom', productionReadGuard, cacheProduction, getBatchBom);
 router.get('/batches/:id/mtr-reserved', productionReadGuard, getBatchMtrReserved);
 router.get('/batches/:id/reservation-coverage', productionReadGuard, getBatchReservationCoverage);
+router.post('/batches/:id/qa-approve', qualityApproveGuard, qaApproveBatchDoc);
+// IPQA pre-production gate: quality user marks verifications; production lead ticks their confirmations.
+router.post('/batches/:id/ipqa-verify', qualityApproveGuard, ipqaVerifyBatchGate);
+router.post('/batches/:id/production-confirm', ...guard, requireBatchGranularEdit, productionConfirmBatchGate);
 router.post('/batches/:id/reserve-lines', productionWriteGuard, reserveBatchLines);
 router.post('/batches/:id/unreserve-lines', productionWriteGuard, unreserveBatchLines);
 router.get('/batches/:id/dispensing-mu-stock', productionReadGuard, getBatchDispensingMuStock);

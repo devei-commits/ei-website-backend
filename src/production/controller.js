@@ -223,6 +223,13 @@ function formatBatch(row, visibility = { canViewBmr: true, canViewBpr: true, can
     dueDate: d.due_date || '',
     priority: d.priority || 'MEDIUM',
     needByNote: d.need_by_note || '',
+    bmrQaStatus: d.bmr_qa_status || 'pending',
+    bmrQaApprovedBy: d.bmr_qa_approved_by || '',
+    bmrQaReviewedAt: d.bmr_qa_reviewed_at || '',
+    bprQaStatus: d.bpr_qa_status || 'pending',
+    bprQaApprovedBy: d.bpr_qa_approved_by || '',
+    bprQaReviewedAt: d.bpr_qa_reviewed_at || '',
+    preProductionGate: d.pre_production_gate || null,
     compatibleVessels: d.compatible_vessels || undefined,
     compatibleFillLines: d.compatible_fill_lines || undefined,
     compatiblePackLines: d.compatible_pack_lines || undefined,
@@ -3288,10 +3295,11 @@ async function getBatchBom(req, res) {
     const { rmLines, pmLines, source, batchSizeKg } = await getBomLinesForBatch(d);
     const normalized = await normalizeBatchBomLines(rmLines, pmLines);
     if (BOM_DEBUG) console.log('[BOM-DEBUG] GET /batches/:id/bom response: source=', source, 'rmLines=', rmLines.length, 'pmLines=', pmLines.length);
-    const [ingredientBulkSpecs, fgProductSpecs, unitBasis] = await Promise.all([
+    const [ingredientBulkSpecs, fgProductSpecs, unitBasis, processSteps] = await Promise.all([
       buildIngredientBulkSpecsForBom(normalized.rmLines, normalized.pmLines),
       buildFgProductSpecsForBatch(d),
       computeBatchUnitBasis(d),
+      buildProcessStepsForBatch(d),
     ]);
     const effectiveKg = (batchSizeKg != null && batchSizeKg > 0)
       ? batchSizeKg
@@ -3311,11 +3319,124 @@ async function getBatchBom(req, res) {
         batchUnits: batchUnits ?? undefined,
         client: unitBasis.client || undefined,
         qcReference: { ingredientBulkSpecs, fgProductSpecs },
+        processSteps,
       },
     });
   } catch (err) {
     console.error('getBatchBom error', err);
     res.status(500).json({ success: false, error: 'Failed to fetch batch BOM' });
+  }
+}
+
+/**
+ * Process steps for a batch's product, split for BMR (production) vs BPR (packaging) documents.
+ * Reads boms.process_steps (`{step_number, description, duration_minutes, step_kind}`).
+ * @returns {Promise<{ production: object[], packaging: object[] }>}
+ */
+async function buildProcessStepsForBatch(d) {
+  try {
+    const pid = await resolveProductIdForBomFallback(d);
+    if (pid == null) return { production: [], packaging: [] };
+    const bom = await BOM.findOne({ where: { product_id: pid }, attributes: ['process_steps'] });
+    const steps = bom && Array.isArray(bom.process_steps) ? bom.process_steps : [];
+    const kindOf = (s) => String(s.step_kind ?? s.stepKind ?? 'production').toLowerCase();
+    return {
+      production: steps.filter((s) => kindOf(s) !== 'packaging'),
+      packaging: steps.filter((s) => kindOf(s) === 'packaging'),
+    };
+  } catch (e) {
+    console.warn('[production] buildProcessStepsForBatch:', e && e.message ? e.message : e);
+    return { production: [], packaging: [] };
+  }
+}
+
+/**
+ * POST /batches/:id/qa-approve  { doc: 'bmr' | 'bpr' } — QA sign-off on a batch document.
+ * Quality-gated (order-management.quality.approve). Stamps approver + timestamp and flips the QA status.
+ */
+async function qaApproveBatchDoc(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const doc = String((req.body && req.body.doc) || '').toLowerCase();
+    if (doc !== 'bmr' && doc !== 'bpr') {
+      return res.status(400).json({ error: "doc must be 'bmr' or 'bpr'" });
+    }
+    const batch = await ProductionBatch.findByPk(id);
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    const { readActorFromReq } = require('../lib/masterApprovalStatusHistory');
+    const actor = readActorFromReq(req);
+    const approvedBy = actor.displayName || (actor.userId ? `User #${actor.userId}` : 'QA');
+    const patch = doc === 'bmr'
+      ? { bmr_qa_status: 'approved', bmr_qa_approved_by: approvedBy, bmr_qa_reviewed_at: new Date() }
+      : { bpr_qa_status: 'approved', bpr_qa_approved_by: approvedBy, bpr_qa_reviewed_at: new Date() };
+    await batch.update(patch);
+    const visibility = await getBatchVisibility(req);
+    return res.json(formatBatch(batch, visibility));
+  } catch (err) {
+    console.error('qaApproveBatchDoc error', err);
+    return res.status(500).json({ error: 'Failed to approve document' });
+  }
+}
+
+/** Merge a value into the batch's pre_production_gate JSON (verifications / confirms sub-maps). */
+function withGatePatch(existing, section, key, value) {
+  const gate = existing && typeof existing === 'object' ? { ...existing } : {};
+  const sub = gate[section] && typeof gate[section] === 'object' ? { ...gate[section] } : {};
+  sub[key] = value;
+  gate[section] = sub;
+  return gate;
+}
+
+/**
+ * POST /batches/:id/ipqa-verify  { key, status:'pass'|'fail' } — IPQA marks a pre-production verification.
+ * Quality-gated (order-management.quality.approve). Gates "Start Production" once all verifications pass.
+ */
+async function ipqaVerifyBatchGate(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const key = String((req.body && req.body.key) || '').trim();
+    const status = String((req.body && req.body.status) || '').toLowerCase();
+    if (!key) return res.status(400).json({ error: 'key is required' });
+    if (status !== 'pass' && status !== 'fail') return res.status(400).json({ error: "status must be 'pass' or 'fail'" });
+    const batch = await ProductionBatch.findByPk(id);
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    const { readActorFromReq } = require('../lib/masterApprovalStatusHistory');
+    const actor = readActorFromReq(req);
+    const by = actor.displayName || (actor.userId ? `User #${actor.userId}` : 'IPQA');
+    const gate = withGatePatch(batch.pre_production_gate, 'verifications', key, { status, by, at: new Date() });
+    await batch.update({ pre_production_gate: gate });
+    const visibility = await getBatchVisibility(req);
+    return res.json(formatBatch(batch, visibility));
+  } catch (err) {
+    console.error('ipqaVerifyBatchGate error', err);
+    return res.status(500).json({ error: 'Failed to record verification' });
+  }
+}
+
+/**
+ * POST /batches/:id/production-confirm  { key } — production lead ticks a pre-production confirmation.
+ * Gated like other batch edits (production-bmr.edit via requireBatchGranularEdit on the route).
+ */
+async function productionConfirmBatchGate(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const key = String((req.body && req.body.key) || '').trim();
+    if (!key) return res.status(400).json({ error: 'key is required' });
+    const batch = await ProductionBatch.findByPk(id);
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    const { readActorFromReq } = require('../lib/masterApprovalStatusHistory');
+    const actor = readActorFromReq(req);
+    const by = actor.displayName || (actor.userId ? `User #${actor.userId}` : 'Operator');
+    const gate = withGatePatch(batch.pre_production_gate, 'confirms', key, { by, at: new Date() });
+    await batch.update({ pre_production_gate: gate });
+    const visibility = await getBatchVisibility(req);
+    return res.json(formatBatch(batch, visibility));
+  } catch (err) {
+    console.error('productionConfirmBatchGate error', err);
+    return res.status(500).json({ error: 'Failed to record confirmation' });
   }
 }
 
@@ -3558,6 +3679,9 @@ module.exports = {
   listTeam,
   listBatches, getBatchById, createBatch, createRworkBatch, splitBatchForVessel, updateBatch, deleteBatch, getBatchBom, getBatchMtrReserved, getBatchDispensingMuStock, syncBatchesFromPlanning,
   listReservedItems, reserveBatchLines, unreserveBatchLines, getBatchReservationCoverage,
+  qaApproveBatchDoc,
+  ipqaVerifyBatchGate,
+  productionConfirmBatchGate,
   computeRequiredVolumeLiters,
   applyRmReservedToInventory,
   applyPmReservedToInventory,

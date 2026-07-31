@@ -16,8 +16,15 @@ async function ensureProductionBatchColumns() {
   try {
     await db.query(`
       ALTER TABLE production_batches
-        ADD COLUMN IF NOT EXISTS priority     VARCHAR(10) NOT NULL DEFAULT 'MEDIUM',
-        ADD COLUMN IF NOT EXISTS need_by_note TEXT;
+        ADD COLUMN IF NOT EXISTS priority            VARCHAR(10) NOT NULL DEFAULT 'MEDIUM',
+        ADD COLUMN IF NOT EXISTS need_by_note        TEXT,
+        ADD COLUMN IF NOT EXISTS bmr_qa_status       VARCHAR(20) NOT NULL DEFAULT 'pending',
+        ADD COLUMN IF NOT EXISTS bmr_qa_approved_by  VARCHAR(120),
+        ADD COLUMN IF NOT EXISTS bmr_qa_reviewed_at  TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS bpr_qa_status       VARCHAR(20) NOT NULL DEFAULT 'pending',
+        ADD COLUMN IF NOT EXISTS bpr_qa_approved_by  VARCHAR(120),
+        ADD COLUMN IF NOT EXISTS bpr_qa_reviewed_at  TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS pre_production_gate JSONB;
     `);
     return { ensured: true };
   } catch (err) {
