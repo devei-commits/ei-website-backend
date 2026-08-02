@@ -34,6 +34,7 @@ function formatSwapRow(row, fromRm = null, toRm = null) {
     swapRatio: d.swap_ratio != null ? Number(d.swap_ratio) : 1,
     reason: d.reason || '',
     approvedBy: d.approved_by || '',
+    status: d.status || 'applied',
     date: d.created_at ? new Date(d.created_at).toISOString().split('T')[0] : '',
     affectedGroupIds: Array.isArray(d.affected_group_ids) ? d.affected_group_ids : [],
     affectedBomIds: Array.isArray(d.affected_bom_ids) ? d.affected_bom_ids : [],
@@ -144,121 +145,224 @@ async function listHistory(req, res) {
  * - swapRatio: e.g. 0.9 = 90% of original usage becomes replacement; in BOM, new_pct = pct_w_w * swapRatio, remainder = pct_w_w * (1 - swapRatio).
  * - Updates: item_groups (member_ids), BOM rm_lines (by rm_code with ratio).
  */
-async function applySwap(req, res) {
-  try {
-    const body = req.body || {};
-    const fromRawMaterialId = parseInt(body.fromRawMaterialId ?? body.from_raw_material_id, 10);
-    const toRawMaterialId = parseInt(body.toRawMaterialId ?? body.to_raw_material_id, 10);
-    const swapRatio = Math.max(0, Math.min(2, Number(body.swapRatio ?? body.swap_ratio ?? 1)));
-    const reason = body.reason ?? '';
-    const approvedBy = body.approvedBy ?? body.approved_by ?? '';
-    const approvedByUserId = body.approvedByUserId != null ? parseInt(body.approvedByUserId, 10) : null;
-    let selectedGroupIds = body.selectedGroupIds ?? body.affected_group_ids ?? [];
-    let selectedBomIds = body.selectedBomIds ?? body.affected_bom_ids ?? [];
-    if (!Array.isArray(selectedGroupIds)) selectedGroupIds = [];
-    if (!Array.isArray(selectedBomIds)) selectedBomIds = [];
+/** Parse + normalize the swap inputs from a request body (shared by draft / apply / finalize). */
+function parseSwapBody(body = {}) {
+  const fromRawMaterialId = parseInt(body.fromRawMaterialId ?? body.from_raw_material_id, 10);
+  const toRawMaterialId = parseInt(body.toRawMaterialId ?? body.to_raw_material_id, 10);
+  const swapRatio = Math.max(0, Math.min(2, Number(body.swapRatio ?? body.swap_ratio ?? 1)));
+  const approvedByUserId = body.approvedByUserId != null ? parseInt(body.approvedByUserId, 10) : null;
+  let selectedGroupIds = body.selectedGroupIds ?? body.affected_group_ids ?? [];
+  let selectedBomIds = body.selectedBomIds ?? body.affected_bom_ids ?? [];
+  if (!Array.isArray(selectedGroupIds)) selectedGroupIds = [];
+  if (!Array.isArray(selectedBomIds)) selectedBomIds = [];
+  return {
+    fromRawMaterialId,
+    toRawMaterialId,
+    swapRatio,
+    reason: body.reason ?? '',
+    approvedBy: body.approvedBy ?? body.approved_by ?? '',
+    approvedByUserId: Number.isNaN(approvedByUserId) ? null : approvedByUserId,
+    numericGroupIds: selectedGroupIds.map((id) => parseInt(id, 10)).filter((n) => !Number.isNaN(n)),
+    numericBomIds: selectedBomIds.map((id) => parseInt(id, 10)).filter((n) => !Number.isNaN(n)),
+  };
+}
 
-    if (Number.isNaN(fromRawMaterialId) || Number.isNaN(toRawMaterialId)) {
+/**
+ * Execute the swap against item_groups (member_ids) + PR BOM rm_lines (ratio). Pure DB effects — no
+ * history row. Returns { updatedGroupsCount, updatedBomsCount }.
+ */
+async function applySwapEffects({ fromRawMaterialId, toRawMaterialId, swapRatio, numericGroupIds, numericBomIds, fromPlain, toPlain }) {
+  const fromCode = fromPlain.code || '';
+  const toCode = toPlain.code || '';
+  const toInci = toPlain.inci || toPlain.name || toCode;
+
+  let updatedGroupsCount = 0;
+  for (const groupId of numericGroupIds) {
+    const group = await ItemGroup.findByPk(groupId);
+    if (!group || group.type !== 'RM') continue;
+    const plain = group.get ? group.get({ plain: true }) : group;
+    const memberIds = toIntList(plain.member_ids);
+    if (!memberIds.includes(fromRawMaterialId)) continue;
+    const newMemberIds = memberIds.map((id) => (id === fromRawMaterialId ? toRawMaterialId : id));
+    await group.update({ member_ids: newMemberIds });
+    updatedGroupsCount++;
+  }
+
+  // Apply ratio swap only to selected PR BOMs that contain the from-ingredient.
+  let updatedBomsCount = 0;
+  const prBoms = numericBomIds.length > 0
+    ? await BOM.findAll({ where: { id: numericBomIds, product_id: { [Op.ne]: null } } })
+    : [];
+  for (const bom of prBoms) {
+    const rmLines = Array.isArray(bom.rm_lines) ? [...bom.rm_lines] : [];
+    let changed = false;
+    const newRmLines = [];
+    for (const line of rmLines) {
+      if (!lineIsFromIngredient(line, fromCode, fromRawMaterialId)) {
+        newRmLines.push(line);
+        continue;
+      }
+      const pct = Number(line.pct_w_w ?? line.pctWw ?? line.pct ?? 0);
+      if (pct <= 0) {
+        newRmLines.push(line);
+        continue;
+      }
+      changed = true;
+      const { newPct, remainderPct } = applySwapRatioToPct(pct, swapRatio);
+      if (newPct > 0) {
+        const newLine = { phase: line.phase, inci_name: toInci, rm_code: toCode, pct_w_w: newPct, uom: line.uom || 'kg' };
+        if (toRawMaterialId != null) newLine.raw_material_id = toRawMaterialId;
+        newRmLines.push(newLine);
+      }
+      if (remainderPct > 0) {
+        const remainderLine = { phase: line.phase, inci_name: line.inci_name || line.inciName || fromPlain.inci || fromPlain.name, rm_code: fromCode, pct_w_w: remainderPct, uom: line.uom || 'kg' };
+        if (fromRawMaterialId != null) remainderLine.raw_material_id = fromRawMaterialId;
+        newRmLines.push(remainderLine);
+      }
+    }
+    if (changed) {
+      await bom.update({ rm_lines: newRmLines });
+      updatedBomsCount++;
+    }
+  }
+  return { updatedGroupsCount, updatedBomsCount };
+}
+
+/**
+ * POST /api/v1/universal-swap/draft — save a swap as a DRAFT (no changes applied).
+ * Stores the from/to/ratio/reason/approver + selected groups & BOMs; finalize later to execute.
+ */
+async function saveDraft(req, res) {
+  try {
+    const p = parseSwapBody(req.body);
+    if (Number.isNaN(p.fromRawMaterialId) || Number.isNaN(p.toRawMaterialId)) {
       return res.status(400).json({ error: 'fromRawMaterialId and toRawMaterialId are required' });
     }
+    const [fromRm, toRm] = await Promise.all([
+      RawMaterial.findByPk(p.fromRawMaterialId),
+      RawMaterial.findByPk(p.toRawMaterialId),
+    ]);
+    if (!fromRm) return res.status(400).json({ error: 'From raw material not found' });
+    if (!toRm) return res.status(400).json({ error: 'To raw material not found' });
+    const row = await UniversalSwapHistory.create({
+      from_raw_material_id: p.fromRawMaterialId,
+      to_raw_material_id: p.toRawMaterialId,
+      swap_ratio: p.swapRatio,
+      reason: p.reason,
+      approved_by: p.approvedBy,
+      approved_by_user_id: p.approvedByUserId,
+      affected_group_ids: p.numericGroupIds.length > 0 ? p.numericGroupIds : null,
+      affected_bom_ids: p.numericBomIds.length > 0 ? p.numericBomIds : null,
+      status: 'draft',
+    });
+    return res.status(201).json(formatSwapRow(row, fromRm.get ? fromRm.get({ plain: true }) : fromRm, toRm.get ? toRm.get({ plain: true }) : toRm));
+  } catch (err) {
+    console.error('saveDraft error', err);
+    return res.status(500).json({ error: err.message || 'Failed to save draft' });
+  }
+}
 
-    const numericGroupIds = selectedGroupIds.map((id) => parseInt(id, 10)).filter((n) => !Number.isNaN(n));
-    const numericBomIds = selectedBomIds.map((id) => parseInt(id, 10)).filter((n) => !Number.isNaN(n));
+/**
+ * POST /api/v1/universal-swap/:id/finalize — execute a saved DRAFT swap (applies BOM/group changes)
+ * and mark it applied. Optional body may override the selected groups/BOMs before applying.
+ */
+async function finalizeSwap(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const row = await UniversalSwapHistory.findByPk(id);
+    if (!row) return res.status(404).json({ error: 'Draft not found' });
+    const rec = row.get ? row.get({ plain: true }) : row;
+    if (rec.status === 'applied') return res.status(409).json({ error: 'This swap is already applied.' });
+
+    const body = req.body || {};
+    const swapRatio = body.swapRatio != null || body.swap_ratio != null
+      ? Math.max(0, Math.min(2, Number(body.swapRatio ?? body.swap_ratio)))
+      : (rec.swap_ratio != null ? Number(rec.swap_ratio) : 1);
+    const numericGroupIds = Array.isArray(body.selectedGroupIds ?? body.affected_group_ids)
+      ? (body.selectedGroupIds ?? body.affected_group_ids).map((x) => parseInt(x, 10)).filter((n) => !Number.isNaN(n))
+      : toIntList(rec.affected_group_ids);
+    const numericBomIds = Array.isArray(body.selectedBomIds ?? body.affected_bom_ids)
+      ? (body.selectedBomIds ?? body.affected_bom_ids).map((x) => parseInt(x, 10)).filter((n) => !Number.isNaN(n))
+      : toIntList(rec.affected_bom_ids);
 
     const [fromRm, toRm] = await Promise.all([
-      RawMaterial.findByPk(fromRawMaterialId),
-      RawMaterial.findByPk(toRawMaterialId),
+      RawMaterial.findByPk(rec.from_raw_material_id),
+      RawMaterial.findByPk(rec.to_raw_material_id),
     ]);
     if (!fromRm) return res.status(400).json({ error: 'From raw material not found' });
     if (!toRm) return res.status(400).json({ error: 'To raw material not found' });
     const fromPlain = fromRm.get ? fromRm.get({ plain: true }) : fromRm;
     const toPlain = toRm.get ? toRm.get({ plain: true }) : toRm;
-    const fromCode = fromPlain.code || '';
-    const toCode = toPlain.code || '';
-    const toInci = toPlain.inci || toPlain.name || toCode;
 
-    const historyRow = await UniversalSwapHistory.create({
-      from_raw_material_id: fromRawMaterialId,
-      to_raw_material_id: toRawMaterialId,
+    const { updatedGroupsCount, updatedBomsCount } = await applySwapEffects({
+      fromRawMaterialId: rec.from_raw_material_id,
+      toRawMaterialId: rec.to_raw_material_id,
+      swapRatio,
+      numericGroupIds,
+      numericBomIds,
+      fromPlain,
+      toPlain,
+    });
+
+    await row.update({
+      status: 'applied',
       swap_ratio: swapRatio,
-      reason: reason,
-      approved_by: approvedBy,
-      approved_by_user_id: Number.isNaN(approvedByUserId) ? null : approvedByUserId,
       affected_group_ids: numericGroupIds.length > 0 ? numericGroupIds : null,
       affected_bom_ids: numericBomIds.length > 0 ? numericBomIds : null,
     });
 
-    let updatedGroupsCount = 0;
-    for (const groupId of numericGroupIds) {
-      const group = await ItemGroup.findByPk(groupId);
-      if (!group || group.type !== 'RM') continue;
-      const plain = group.get ? group.get({ plain: true }) : group;
-      const memberIds = toIntList(plain.member_ids);
-      if (!memberIds.includes(fromRawMaterialId)) continue;
-      const newMemberIds = memberIds.map((id) => (id === fromRawMaterialId ? toRawMaterialId : id));
-      await group.update({ member_ids: newMemberIds });
-      updatedGroupsCount++;
-    }
+    return res.json({ ...formatSwapRow(row, fromPlain, toPlain), updatedGroupsCount, updatedBomsCount });
+  } catch (err) {
+    console.error('finalizeSwap error', err);
+    return res.status(500).json({ error: err.message || 'Failed to finalize swap' });
+  }
+}
 
-    // Apply ratio swap only to selected PR BOMs that contain the from-ingredient.
-    let updatedBomsCount = 0;
-    const prBoms = numericBomIds.length > 0
-      ? await BOM.findAll({ where: { id: numericBomIds, product_id: { [Op.ne]: null } } })
-      : [];
-    for (const bom of prBoms) {
-      const rmLines = Array.isArray(bom.rm_lines) ? [...bom.rm_lines] : [];
-      let changed = false;
-      const newRmLines = [];
-      for (const line of rmLines) {
-        if (!lineIsFromIngredient(line, fromCode, fromRawMaterialId)) {
-          newRmLines.push(line);
-          continue;
-        }
-        const pct = Number(line.pct_w_w ?? line.pctWw ?? line.pct ?? 0);
-        if (pct <= 0) {
-          newRmLines.push(line);
-          continue;
-        }
-        changed = true;
-        const { newPct, remainderPct } = applySwapRatioToPct(pct, swapRatio);
-        if (newPct > 0) {
-          const newLine = {
-            phase: line.phase,
-            inci_name: toInci,
-            rm_code: toCode,
-            pct_w_w: newPct,
-            uom: line.uom || 'kg',
-          };
-          if (toRawMaterialId != null) newLine.raw_material_id = toRawMaterialId;
-          newRmLines.push(newLine);
-        }
-        if (remainderPct > 0) {
-          const remainderLine = {
-            phase: line.phase,
-            inci_name: line.inci_name || line.inciName || fromPlain.inci || fromPlain.name,
-            rm_code: fromCode,
-            pct_w_w: remainderPct,
-            uom: line.uom || 'kg',
-          };
-          if (fromRawMaterialId != null) remainderLine.raw_material_id = fromRawMaterialId;
-          newRmLines.push(remainderLine);
-        }
-      }
-      if (changed) {
-        await bom.update({ rm_lines: newRmLines });
-        updatedBomsCount++;
-      }
+/**
+ * POST /api/v1/universal-swap/apply — save + apply in one shot (status='applied'). Kept for direct apply.
+ */
+async function applySwap(req, res) {
+  try {
+    const p = parseSwapBody(req.body);
+    if (Number.isNaN(p.fromRawMaterialId) || Number.isNaN(p.toRawMaterialId)) {
+      return res.status(400).json({ error: 'fromRawMaterialId and toRawMaterialId are required' });
     }
+    const [fromRm, toRm] = await Promise.all([
+      RawMaterial.findByPk(p.fromRawMaterialId),
+      RawMaterial.findByPk(p.toRawMaterialId),
+    ]);
+    if (!fromRm) return res.status(400).json({ error: 'From raw material not found' });
+    if (!toRm) return res.status(400).json({ error: 'To raw material not found' });
+    const fromPlain = fromRm.get ? fromRm.get({ plain: true }) : fromRm;
+    const toPlain = toRm.get ? toRm.get({ plain: true }) : toRm;
 
-    const formatted = formatSwapRow(historyRow, fromPlain, toPlain);
-    res.status(201).json({
-      ...formatted,
-      updatedGroupsCount: updatedGroupsCount,
-      updatedBomsCount: updatedBomsCount,
+    const historyRow = await UniversalSwapHistory.create({
+      from_raw_material_id: p.fromRawMaterialId,
+      to_raw_material_id: p.toRawMaterialId,
+      swap_ratio: p.swapRatio,
+      reason: p.reason,
+      approved_by: p.approvedBy,
+      approved_by_user_id: p.approvedByUserId,
+      affected_group_ids: p.numericGroupIds.length > 0 ? p.numericGroupIds : null,
+      affected_bom_ids: p.numericBomIds.length > 0 ? p.numericBomIds : null,
+      status: 'applied',
     });
+
+    const { updatedGroupsCount, updatedBomsCount } = await applySwapEffects({
+      fromRawMaterialId: p.fromRawMaterialId,
+      toRawMaterialId: p.toRawMaterialId,
+      swapRatio: p.swapRatio,
+      numericGroupIds: p.numericGroupIds,
+      numericBomIds: p.numericBomIds,
+      fromPlain,
+      toPlain,
+    });
+
+    return res.status(201).json({ ...formatSwapRow(historyRow, fromPlain, toPlain), updatedGroupsCount, updatedBomsCount });
   } catch (err) {
     console.error('applySwap error', err);
-    res.status(500).json({ error: err.message || 'Failed to apply swap' });
+    return res.status(500).json({ error: err.message || 'Failed to apply swap' });
   }
 }
 
@@ -309,6 +413,8 @@ module.exports = {
   getAffected,
   listHistory,
   applySwap,
+  saveDraft,
+  finalizeSwap,
   getHistoryAffected,
   formatSwapRow,
 };

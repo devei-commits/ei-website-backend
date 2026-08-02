@@ -2009,8 +2009,9 @@ async function updateBatch(req, res) {
  * DELETE /:id/batches/:batchId — permanently delete one planning batch.
  * Any batch may be deleted (the UI confirms first). Hard-delete + gapless reindex of the remaining
  * batches' `sequence`/`batch_code`, remap the PI's sent/buffer indices (drop the removed index, shift
- * the rest down), refresh reservations, and update batch_count. A production batch linked to the
- * deleted planning batch is auto-detached (FK is ON DELETE SET NULL), so no production row is destroyed.
+ * the rest down), refresh reservations, and update batch_count. Any production batch linked to the
+ * deleted planning batch is also soft-deleted (mirrors the Production module's own delete), so it drops
+ * off the Production side too.
  */
 async function deleteBatch(req, res) {
   try {
@@ -2029,6 +2030,10 @@ async function deleteBatch(req, res) {
 
     await db.transaction(async (t) => {
       await batch.destroy({ transaction: t });
+
+      // Also remove the linked production batch(es) so the deletion propagates to the Production side.
+      // Soft-delete (mirrors production's own deleteBatch) — the Production views filter to active rows.
+      await softDeleteWhere(ProductionBatch, { planning_batch_id: batchId }, { transaction: t });
 
       // Reindex survivors to a gapless 1..N. Two-phase to avoid transient collisions on the
       // unique(planning_extracted_id, sequence) constraint.

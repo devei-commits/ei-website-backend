@@ -19,6 +19,8 @@ UniversalSwapHistory.init(
     approved_by_user_id: { type: DataTypes.INTEGER, allowNull: true },
     affected_group_ids: { type: DataTypes.JSON, allowNull: true }, // [1, 2] item_groups ids
     affected_bom_ids: { type: DataTypes.JSON, allowNull: true }, // [10, 11] bom ids (PR formulas)
+    /** draft = saved but not applied; applied = swap executed against item_groups + BOM rm_lines. */
+    status: { type: DataTypes.STRING(20), allowNull: false, defaultValue: 'applied' },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
     deleted_at: { type: DataTypes.DATE, allowNull: true },

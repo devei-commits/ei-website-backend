@@ -64,6 +64,7 @@ const { ensureQualitySpecRulesTable } = require('./src/qualitySpecRules/ensureQu
 const { ensureTechnicalSpecRulesTable } = require('./src/technicalSpecRules/ensureTechnicalSpecRulesTable');
 const { ensureBomIsKitColumn } = require('./src/bom/ensureBomIsKitColumn');
 const { ensureProductionBatchColumns } = require('./src/production/ensureProductionBatchColumns');
+const { ensureUniversalSwapColumns } = require('./src/universalSwap/ensureUniversalSwapColumns');
 const warehousePacksRouters = require('./src/warehousePacks/routers');
 require('./src/customizationPackaging/models');
 const customizationPackagingAdminRouter = require('./src/customizationPackaging/routers');
@@ -269,6 +270,7 @@ if (process.env.NODE_ENV !== 'test') {
                 await ensureTechnicalSpecRulesTable();
                 await ensureBomIsKitColumn();
                 await ensureProductionBatchColumns();
+                await ensureUniversalSwapColumns();
             } else {
                 await ensureTreasuryDefaults();
                 // Managed prod skips db.sync — ensure the §10 lead-time cache table, PO approval/
@@ -284,6 +286,7 @@ if (process.env.NODE_ENV !== 'test') {
                 await ensureTechnicalSpecRulesTable();
                 await ensureBomIsKitColumn();
                 await ensureProductionBatchColumns();
+                await ensureUniversalSwapColumns();
             }
             app.listen(port, '0.0.0.0', () => {
                 console.log(`Server is running on port ${port}`);
