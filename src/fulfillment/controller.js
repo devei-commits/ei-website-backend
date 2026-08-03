@@ -216,7 +216,8 @@ function formatOrder(row, batchMap = {}, extra = {}) {
     dispatchDate: d.dispatch_date || undefined,
     courier: d.courier || undefined,
     zohoInvoiceId: d.zoho_invoice_id || undefined,
-    rawImport: d.raw_import || null,
+    // Large raw import blob — only sent from the single-order endpoint (see extra.includeRawImport).
+    ...(extra.includeRawImport === false ? {} : { rawImport: d.raw_import || null }),
     items,
   };
 }
@@ -334,24 +335,59 @@ async function getNextBMRBPRSequence(year) {
   return { bmrNo: `BMR-${year}-${suffix}`, bprNo: `BPR-${year}-${suffix}` };
 }
 
+const PRODUCTION_BATCH_SYNC_ATTRS = ['id', 'so_no', 'bmr_no', 'bpr_no', 'sku', 'product_name', 'batch_size', 'order_qty', 'total_batches', 'bpr_status', 'fg_yield', 'fill_yield'];
+
+/**
+ * Load production batches for many SOs in one query, grouped by so_no.
+ * Lets the list endpoint sync N orders without running N separate batch queries.
+ * @param {string[]} soNos
+ * @returns {Promise<Map<string, object[]>>}
+ */
+async function loadProductionBatchesBySoNo(soNos) {
+  const map = new Map();
+  const unique = [...new Set((soNos || []).filter(Boolean))];
+  if (!unique.length) return map;
+  const rows = await ProductionBatch.findAll({
+    where: { so_no: { [Op.in]: unique } },
+    attributes: PRODUCTION_BATCH_SYNC_ATTRS,
+    order: [['batch_index', 'ASC'], ['id', 'ASC']],
+  });
+  for (const row of rows) {
+    const soNo = row.get ? row.get('so_no') : row.so_no;
+    if (!map.has(soNo)) map.set(soNo, []);
+    map.get(soNo).push(row);
+  }
+  return map;
+}
+
 /**
  * Ensure fulfillment has a batch split for every production batch linked to this SO (from Planning).
  * So the SO detail shows all batches and which are FG ready.
+ * @param {object} orderRow fulfillment order (with `items` + `batchSplits` included)
+ * @param {Map<string, object[]>|null} preloadedBatchesBySoNo pre-grouped batches, to avoid a per-order query
+ * @returns {Promise<boolean>} true when any split row was created or updated
  */
-async function syncOrderSplitsFromProduction(orderRow) {
+async function syncOrderSplitsFromProduction(orderRow, preloadedBatchesBySoNo = null) {
   const d = orderRow.get ? orderRow.get({ plain: true }) : orderRow;
   const soNo = d.so_no;
-  if (!soNo) return;
+  if (!soNo) return false;
   const orderId = d.id;
   const items = d.items || [];
-  if (!items.length) return;
+  if (!items.length) return false;
 
-  const prodBatches = await ProductionBatch.findAll({
-    where: { so_no: soNo },
-    attributes: ['id', 'bmr_no', 'bpr_no', 'sku', 'product_name', 'batch_size', 'order_qty', 'total_batches', 'bpr_status', 'fg_yield', 'fill_yield'],
-    order: [['batch_index', 'ASC'], ['id', 'ASC']],
-  });
-  if (!prodBatches.length) return;
+  // On the list endpoint the caller pre-loads every SO's batches in one query (see loadProductionBatchesBySoNo)
+  // so this stays a single query per request instead of one per order.
+  const prodBatches = preloadedBatchesBySoNo
+    ? (preloadedBatchesBySoNo.get(soNo) || [])
+    : await ProductionBatch.findAll({
+        where: { so_no: soNo },
+        attributes: PRODUCTION_BATCH_SYNC_ATTRS,
+        order: [['batch_index', 'ASC'], ['id', 'ASC']],
+      });
+  if (!prodBatches.length) return false;
+
+  // Tracks whether any row was actually written, so callers can skip a re-fetch when nothing changed.
+  let changed = false;
 
   for (const item of items) {
     const itemSku = (item.sku || '').trim().toLowerCase();
@@ -392,6 +428,7 @@ async function syncOrderSplitsFromProduction(orderRow) {
           },
           { where: { id: placeholder.id } }
         );
+        changed = true;
       } else {
         await FulfillmentBatchSplit.create({
           fulfillment_order_item_id: item.id,
@@ -403,6 +440,7 @@ async function syncOrderSplitsFromProduction(orderRow) {
           fg_qty: fgQty,
           ff_status: isFgReady ? 'fg_ready' : 'fg_pending',
         });
+        changed = true;
       }
       existingSplitBatchIds.add(plain.id);
     }
@@ -418,14 +456,16 @@ async function syncOrderSplitsFromProduction(orderRow) {
     }
   });
   const batchIdsToBackfill = Object.keys(batchIdToProduced).map(Number).filter(Boolean);
-  if (batchIdsToBackfill.length === 0) return;
+  if (batchIdsToBackfill.length === 0) return changed;
 
+  // Single read of every fg_ready split for this order — reused by both the backfill and the
+  // repair pass below (the repair pass used to re-query once per production batch).
   const existingSplits = await FulfillmentBatchSplit.findAll({
     where: { fulfillment_order_id: orderId, production_batch_id: batchIdsToBackfill },
     order: [['production_batch_id', 'ASC'], ['id', 'ASC']],
   });
   const splitsWithZeroFg = existingSplits.filter((s) => !(Number(s.fg_qty) > 0));
-  if (splitsWithZeroFg.length === 0) return;
+  if (splitsWithZeroFg.length === 0) return changed;
 
   let remainingByBatch = { ...batchIdToProduced };
   for (const split of splitsWithZeroFg) {
@@ -437,46 +477,76 @@ async function syncOrderSplitsFromProduction(orderRow) {
     if (qty > 0) {
       await split.update({ fg_qty: qty, ff_status: 'fg_ready' });
       remainingByBatch[bid] = produced - qty;
+      changed = true;
     }
   }
 
   // Repair splits that still store planned qty while production QC yields are lower (or higher).
+  // `existingSplits` instances were mutated in place by the backfill above, so their fg_qty is current.
+  const splitsByBatchId = new Map();
+  for (const split of existingSplits) {
+    const bid = split.production_batch_id;
+    if (!splitsByBatchId.has(bid)) splitsByBatchId.set(bid, []);
+    splitsByBatchId.get(bid).push(split);
+  }
   for (const pb of prodBatches) {
     const plain = pb.get ? pb.get({ plain: true }) : pb;
     if (plain.bpr_status !== 'fg_ready') continue;
     const produced = resolveFgReadyProducedQty(plain);
     if (!(produced >= 0)) continue;
-    const splits = await FulfillmentBatchSplit.findAll({
-      where: { fulfillment_order_id: orderId, production_batch_id: plain.id },
-    });
-    for (const split of splits) {
+    for (const split of splitsByBatchId.get(plain.id) || []) {
       const planned = Number(split.planned_qty) || 0;
       const correct = Math.min(planned > 0 ? planned : produced, produced);
       const stored = Number(split.fg_qty) || 0;
       if (correct >= 0 && stored !== correct) {
         await split.update({ fg_qty: correct, ff_status: 'fg_ready' });
+        changed = true;
       }
     }
   }
+  return changed;
 }
 
 /* ── CRUD ── */
 
 async function listOrders(req, res) {
   try {
-    let rows = await FulfillmentOrder.findAll({
+    // Opt-in pagination. Without page/page_size the response stays a plain array so existing
+    // callers are unaffected; with them it returns { rows, total, page, pageSize }.
+    const paginated = req.query.page != null || req.query.page_size != null;
+    const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const pageSize = Math.min(500, Math.max(1, parseInt(req.query.page_size, 10) || 100));
+    const baseQuery = {
       where: activeRowWhere(),
       include: INCLUDE_FULL,
       order: [['due_date', 'ASC'], ['id', 'ASC']],
-    });
-    for (const row of rows) {
-      await syncOrderSplitsFromProduction(row);
+      ...(paginated ? { limit: pageSize, offset: (pageNum - 1) * pageSize } : {}),
+    };
+
+    let total = null;
+    let rows;
+    if (paginated) {
+      const result = await FulfillmentOrder.findAndCountAll(baseQuery);
+      total = result.count;
+      rows = result.rows;
+    } else {
+      rows = await FulfillmentOrder.findAll(baseQuery);
     }
-    rows = await FulfillmentOrder.findAll({
-      where: activeRowWhere(),
-      include: INCLUDE_FULL,
-      order: [['due_date', 'ASC'], ['id', 'ASC']],
-    });
+
+    // One batch query for the whole page instead of one per order, and only re-read the orders
+    // when the sync actually wrote something (the steady-state case writes nothing).
+    const batchesBySoNo = await loadProductionBatchesBySoNo(
+      rows.map((r) => (r.get ? r.get('so_no') : r.so_no))
+    );
+    let mutated = false;
+    for (const row of rows) {
+      if (await syncOrderSplitsFromProduction(row, batchesBySoNo)) mutated = true;
+    }
+    if (mutated) {
+      rows = paginated
+        ? (await FulfillmentOrder.findAndCountAll(baseQuery)).rows
+        : await FulfillmentOrder.findAll(baseQuery);
+    }
     const batchIds = rows.flatMap((r) => {
       const d = r.get ? r.get({ plain: true }) : r;
       return (d.items || []).flatMap((i) => (i.batchSplits || []).map((s) => s.production_batch_id).filter(Boolean));
@@ -489,10 +559,13 @@ async function listOrders(req, res) {
       const soRows = await SalesOrder.findAll({ where: { id: { [Op.in]: soIds } }, attributes: ['id', 'status'] });
       soRows.forEach((s) => { const sd = s.get({ plain: true }); orderStatusMap.set(sd.id, sd.status || null); });
     }
-    res.json(rows.map((row) => {
+    // `rawImport` is the untouched Zoho/Excel import blob — several KB per order and unused by any
+    // list view, so it is omitted here. GET /fulfillment/:id still returns it.
+    const payload = rows.map((row) => {
       const sid = row.get ? row.get('sales_order_id') : row.sales_order_id;
-      return formatOrder(row, batchMap, { orderStatus: orderStatusMap.get(sid) || null });
-    }));
+      return formatOrder(row, batchMap, { orderStatus: orderStatusMap.get(sid) || null, includeRawImport: false });
+    });
+    res.json(paginated ? { rows: payload, total, page: pageNum, pageSize } : payload);
   } catch (err) {
     console.error('listOrders error:', err);
     res.status(500).json({ error: 'Failed to fetch fulfillment orders' });
@@ -505,8 +578,10 @@ async function getOrderById(req, res) {
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     let row = await FulfillmentOrder.findByPk(id, { include: INCLUDE_FULL });
     if (!row) return res.status(404).json({ error: 'Fulfillment order not found' });
-    await syncOrderSplitsFromProduction(row);
-    row = await FulfillmentOrder.findByPk(id, { include: INCLUDE_FULL });
+    // Only re-read when the sync actually wrote something — this is the per-click detail path.
+    if (await syncOrderSplitsFromProduction(row)) {
+      row = await FulfillmentOrder.findByPk(id, { include: INCLUDE_FULL });
+    }
     const d = row.get ? row.get({ plain: true }) : row;
     const batchIds = (d.items || []).flatMap((i) => (i.batchSplits || []).map((s) => s.production_batch_id).filter(Boolean));
     const batchMap = await getBatchStatusMap(batchIds);
@@ -1043,6 +1118,23 @@ async function updateOrder(req, res) {
         return n + (Array.isArray(raw) ? raw.length : 0);
       }, 0);
       if (planIds.length > 0) {
+        // Cascade to Production FIRST (capture planning batch ids before the hard-delete severs the link):
+        // a cancelled SO must leave no live production batch behind.
+        const pbRows = await PlanningBatch.findAll({
+          where: { planning_extracted_id: { [Op.in]: planIds } },
+          attributes: ['id'],
+        });
+        const planningBatchIds = pbRows.map((b) => (b.get ? b.get('id') : b.id));
+        if (planningBatchIds.length > 0) {
+          const prodRemoved = await softDeleteWhere(ProductionBatch, {
+            planning_batch_id: { [Op.in]: planningBatchIds },
+          });
+          if (prodRemoved > 0) {
+            console.warn(
+              `[fulfillment] SO ${rowPlain.sales_order_id} cancelled — soft-deleted ${prodRemoved} production batch(es).`
+            );
+          }
+        }
         const removed = await PlanningBatch.destroy({
           where: { planning_extracted_id: { [Op.in]: planIds } },
         });
@@ -1104,7 +1196,51 @@ async function cancelOrder(req, res) {
       manual_status_override: true,
       notes: reason ? `${prevNotes}${prevNotes ? '\n' : ''}[Cancelled] ${reason}`.trim() : prevNotes,
     });
-    res.json(formatOrder(await FulfillmentOrder.findByPk(id, { include: INCLUDE_FULL })));
+
+    // Mirror the Edit-SO → "Cancelled" path: the authoritative order status lives on
+    // sales_orders.status, and the SO Dashboard pill resolves from THAT first (falling back to
+    // commercial_status only when it's blank). Without this write the row keeps showing its prior
+    // status (e.g. "Approved") even though the fulfillment row is cancelled. We also permanently
+    // delete the SO's planning batches so its requirement drops out of Planning → Items Involved,
+    // exactly as cancelling from the Edit-SO modal does.
+    const salesOrderId = row.get('sales_order_id');
+    if (salesOrderId) {
+      await SalesOrder.update({ status: 'Cancelled' }, { where: { id: salesOrderId } });
+      const PlanningExtracted = require('../planningExtracted/models');
+      const PlanningBatch = require('../planningExtracted/planningBatchModel');
+      const pis = await PlanningExtracted.findAll({
+        where: { sales_order_id: salesOrderId },
+        attributes: ['id'],
+      });
+      const planIds = pis.map((pi) => (pi.get ? pi.get('id') : pi.id));
+      if (planIds.length > 0) {
+        // Cascade to Production FIRST — capture the planning batch ids before they are destroyed, then
+        // soft-delete the production batches linked to them. Otherwise the hard-delete below severs the
+        // planning_batch_id link and leaves live production batches orphaned under a cancelled SO.
+        const pbRows = await PlanningBatch.findAll({
+          where: { planning_extracted_id: { [Op.in]: planIds } },
+          attributes: ['id'],
+        });
+        const planningBatchIds = pbRows.map((b) => (b.get ? b.get('id') : b.id));
+        if (planningBatchIds.length > 0) {
+          const prodRemoved = await softDeleteWhere(ProductionBatch, {
+            planning_batch_id: { [Op.in]: planningBatchIds },
+          });
+          if (prodRemoved > 0) {
+            console.warn(`[fulfillment] SO ${salesOrderId} cancelled — soft-deleted ${prodRemoved} production batch(es).`);
+          }
+        }
+        const removed = await PlanningBatch.destroy({
+          where: { planning_extracted_id: { [Op.in]: planIds } },
+        });
+        if (removed > 0) {
+          console.warn(`[fulfillment] SO ${salesOrderId} cancelled — deleted ${removed} planning batch(es).`);
+        }
+      }
+    }
+
+    const updated = await FulfillmentOrder.findByPk(id, { include: INCLUDE_FULL });
+    res.json(formatOrder(updated, {}, { orderStatus: salesOrderId ? 'Cancelled' : null }));
   } catch (err) {
     console.error('cancelOrder error:', err);
     res.status(500).json({ error: 'Failed to cancel sales order' });

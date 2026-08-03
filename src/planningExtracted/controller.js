@@ -857,6 +857,25 @@ async function syncPlanningExtractedFromSalesOrders() {
         });
         const planIds = planRows.map((p) => (p.get ? p.get('id') : p.id));
         if (planIds.length > 0) {
+          // Cascade to the Production side FIRST (capture planning batch ids before they are destroyed):
+          // a cancelled SO must not leave live production batches behind, otherwise they keep showing up
+          // in Production for an order that no longer exists. Soft-delete (mirrors production's own delete)
+          // so the Production views — which filter to active rows — drop them.
+          const pbRows = await PlanningBatch.findAll({
+            where: { planning_extracted_id: { [Op.in]: planIds } },
+            attributes: ['id'],
+          });
+          const planningBatchIds = pbRows.map((b) => (b.get ? b.get('id') : b.id));
+          if (planningBatchIds.length > 0) {
+            const prodRemoved = await softDeleteWhere(ProductionBatch, {
+              planning_batch_id: { [Op.in]: planningBatchIds },
+            });
+            if (prodRemoved > 0) {
+              console.warn(
+                `[planningExtracted] SO ${so.order_id || so.id} cancelled — soft-deleted ${prodRemoved} production batch(es).`
+              );
+            }
+          }
           const removed = await PlanningBatch.destroy({
             where: { planning_extracted_id: { [Op.in]: planIds } },
           });
