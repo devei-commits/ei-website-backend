@@ -118,6 +118,15 @@ async function upsertByPurchaseOrderId(req, res) {
       PoTracking.findOne({ where: { purchase_order_id: purchaseOrderId } }),
     ]);
     if (!po) return res.status(404).json({ error: 'Purchase order not found' });
+
+    // Detect the shipment-initiated transition (shipped_at newly set) BEFORE we mutate the row,
+    // so we can materialize the In-Transit GRN exactly once.
+    const prevShippedAt = row ? row.get('shipped_at') : null;
+    const nowShippedAt = updates.shipped_at;
+    const isShippedTransition =
+      nowShippedAt != null && String(nowShippedAt).trim() !== '' &&
+      (prevShippedAt == null || String(prevShippedAt).trim() === '');
+
     let trackingRow;
     if (row) {
       await row.update(updates);
@@ -125,6 +134,18 @@ async function upsertByPurchaseOrderId(req, res) {
     } else {
       trackingRow = await PoTracking.create({ purchase_order_id: purchaseOrderId, ...updates });
     }
+
+    // Shipment initiated → surface the PO in Warehouse Inbound (GRN by PO). Idempotent: skips
+    // when the PO already has an active GRN. Runs before the in-transit sync so it counts the new rows.
+    if (isShippedTransition) {
+      try {
+        const { autoCreateInTransitGrnForShippedPo } = require('../grn/shipmentBatchController');
+        await autoCreateInTransitGrnForShippedPo(purchaseOrderId);
+      } catch (e) {
+        console.warn('[po-tracking] auto-create In-Transit GRN on shipped failed:', e && e.message ? e.message : e);
+      }
+    }
+
     try {
       const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
       await syncWarehouseInTransitAll();

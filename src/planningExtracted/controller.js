@@ -69,23 +69,6 @@ const {
   validateUpdateOnlyBatchPayload,
 } = require('./planningBatchEditLock');
 
-/** Idempotent schema patch: adds bom_specific_gravity on Postgres if missing. Lazy, safe to call repeatedly. */
-let bomSgColumnEnsured = false;
-async function ensureBomSgColumn() {
-  if (bomSgColumnEnsured) return;
-  bomSgColumnEnsured = true;
-  try {
-    const dialect = db.getDialect && db.getDialect();
-    if (dialect === 'postgres') {
-      await db.query(
-        'ALTER TABLE planning_extracted ADD COLUMN IF NOT EXISTS bom_specific_gravity NUMERIC(5,3)'
-      );
-    }
-  } catch (e) {
-    console.warn('[planning-extracted] ensureBomSgColumn:', e && e.message ? e.message : e);
-  }
-}
-
 /** Whether `sent_batch_indices` includes this 0-based batch index (coerces string/number from JSON). */
 function isBatchIndexSent(sentRaw, batchIndex0) {
   const sent = Array.isArray(sentRaw) ? sentRaw : [];
@@ -510,44 +493,38 @@ const RESERVE_EPS_PCS = 1e-6;
  * Central table stays in sync so feasibility and everywhere else see correct reserved/available.
  * Formula: reserved = sum(quantity_reserved) for that item (planning + production batches); available = SIH - reserved.
  */
+// H8: recompute warehouse_inventory.reserved = SUM(reserved_batch_items) for each item.
+// This is an absolute recompute; a bare SUM-then-UPDATE races (two concurrent syncs both
+// read a stale sum → under-reserved). Serialize per item by locking the inventory row
+// FOR UPDATE inside a txn and computing the SUM under the lock, so the write always
+// reflects every committed reservation. findOrCreate handles the first-time create race.
 async function syncWarehouseReserved(affectedRmIds, affectedPmIds) {
-  for (const rid of affectedRmIds) {
-    const sum = await ReservedBatchItem.sum('quantity_reserved', {
-      where: { raw_material_id: rid },
-    });
-    const val = sum != null ? Number(sum) : 0;
-    const [updated] = await WarehouseInventory.update(
-      { reserved: val },
-      { where: { item_type: 'RM', raw_material_id: rid } }
-    );
-    if (!updated) {
-      await WarehouseInventory.create({
-        item_type: 'RM',
-        raw_material_id: rid,
-        wh_unit: 'KG',
-        stock_in_hand: 0,
-        reserved: val,
+  const dbi = WarehouseInventory.sequelize;
+  const syncOne = async (where, defaults, sumWhere) => {
+    await dbi.transaction(async (t) => {
+      const [ensured] = await WarehouseInventory.findOrCreate({
+        where,
+        defaults: { ...where, ...defaults, reserved: 0 },
+        transaction: t,
       });
-    }
+      const inv = await WarehouseInventory.findByPk(ensured.id, { lock: t.LOCK.UPDATE, transaction: t });
+      const sum = await ReservedBatchItem.sum('quantity_reserved', { where: sumWhere, transaction: t });
+      await inv.update({ reserved: sum != null ? Number(sum) : 0 }, { transaction: t });
+    });
+  };
+  for (const rid of affectedRmIds) {
+    await syncOne(
+      { item_type: 'RM', raw_material_id: rid },
+      { wh_unit: 'KG', stock_in_hand: 0 },
+      { raw_material_id: rid }
+    );
   }
   for (const pid of affectedPmIds) {
-    const sum = await ReservedBatchItem.sum('quantity_reserved', {
-      where: { pack_material_id: pid },
-    });
-    const val = sum != null ? Number(sum) : 0;
-    const [updated] = await WarehouseInventory.update(
-      { reserved: val },
-      { where: { item_type: 'PM', pack_material_id: pid } }
+    await syncOne(
+      { item_type: 'PM', pack_material_id: pid },
+      { wh_unit: 'PCS', stock_in_hand: 0 },
+      { pack_material_id: pid }
     );
-    if (!updated) {
-      await WarehouseInventory.create({
-        item_type: 'PM',
-        pack_material_id: pid,
-        wh_unit: 'PCS',
-        stock_in_hand: 0,
-        reserved: val,
-      });
-    }
   }
 }
 
@@ -1077,7 +1054,6 @@ async function updatePlanningExtracted(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
-    await ensureBomSgColumn();
     const row = await PlanningExtracted.findByPk(id);
     if (!row) return res.status(404).json({ error: 'Planning extracted not found' });
     const prevBomConfirmedAt = row.get ? row.get('bom_confirmed_at') : row.bom_confirmed_at;

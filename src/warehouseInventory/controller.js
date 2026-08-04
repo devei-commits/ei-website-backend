@@ -33,28 +33,6 @@ function inventoryAvailable(stockInHand, reserved) {
   return Math.max(0, toNum(stockInHand) - toNum(reserved));
 }
 
-let locationHistoryAuditEnsured = false;
-async function ensureLocationHistoryAuditColumns() {
-  if (locationHistoryAuditEnsured) return;
-  locationHistoryAuditEnsured = true;
-  try {
-    const dialect = db.getDialect && db.getDialect();
-    if (dialect === 'postgres') {
-      await db.query(
-        'ALTER TABLE warehouse_inventory_location_history ADD COLUMN IF NOT EXISTS changes_json JSONB'
-      );
-      await db.query(
-        'ALTER TABLE warehouse_inventory_location_history ADD COLUMN IF NOT EXISTS note TEXT'
-      );
-    }
-  } catch (e) {
-    console.warn(
-      '[warehouse-inventory] ensureLocationHistoryAuditColumns:',
-      e && e.message ? e.message : e
-    );
-  }
-}
-
 /** Normalized snapshot for audit trail (PATCH inventory). */
 function inventoryAuditSnapshot(wh) {
   const w = wh.get ? wh.get({ plain: true }) : wh;
@@ -369,7 +347,6 @@ async function list(req, res) {
  */
 async function updateStock(req, res) {
   try {
-    await ensureLocationHistoryAuditColumns();
     const id = parseInt(String(req.params.id), 10);
     if (Number.isNaN(id)) {
       return res.status(400).json({ error: 'Invalid warehouse inventory id' });

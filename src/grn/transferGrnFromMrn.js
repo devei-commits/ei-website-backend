@@ -9,19 +9,6 @@
 const db = require('../../db');
 const GoodsReceivedNote = require('./models');
 
-let mrnIdColumnEnsured = false;
-async function ensureGrnMrnIdColumn() {
-  if (mrnIdColumnEnsured) return;
-  mrnIdColumnEnsured = true;
-  try {
-    if (db.getDialect && db.getDialect() === 'postgres') {
-      await db.query('ALTER TABLE goods_received_notes ADD COLUMN IF NOT EXISTS mrn_id INTEGER');
-    }
-  } catch (e) {
-    console.warn('[grn] ensure mrn_id column skipped:', e && e.message ? e.message : e);
-  }
-}
-
 function pad4(n) {
   return String(n).padStart(4, '0');
 }
@@ -61,7 +48,6 @@ function transferGrnLineItems(mrnLineItems) {
  */
 async function createTransferGrnFromMrn(mrnPlain) {
   if (!mrnPlain || mrnPlain.id == null) return null;
-  await ensureGrnMrnIdColumn();
   const mrnId = Number(mrnPlain.id);
 
   // Idempotency — one transfer GRN per MRN.
@@ -106,4 +92,4 @@ async function createTransferGrnFromMrn(mrnPlain) {
   return grn;
 }
 
-module.exports = { createTransferGrnFromMrn, ensureGrnMrnIdColumn };
+module.exports = { createTransferGrnFromMrn };
