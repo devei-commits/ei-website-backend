@@ -301,9 +301,27 @@ async function listSalesOrdersDashboard(req, res) {
 
     if (search) {
       const s = `%${search}%`;
+      // Also match the SO's line items by PR name / PR code. The Product column shows the first
+      // item's product_name and product_code (falling back to sku), so those are matched too.
+      // Resolved to order ids first, which keeps server-side pagination counts correct.
+      const itemMatches = await FulfillmentOrderItem.findAll({
+        where: activeRowWhere({
+          [Op.or]: [
+            { product_name: { [Op.iLike]: s } },
+            { product_code: { [Op.iLike]: s } },
+            { sku: { [Op.iLike]: s } },
+          ],
+        }),
+        attributes: ['fulfillment_order_id'],
+        group: ['fulfillment_order_id'],
+      });
+      const itemOrderIds = [...new Set(
+        itemMatches.map((r) => Number(r.get('fulfillment_order_id'))).filter((n) => Number.isFinite(n))
+      )];
       where[Op.or] = [
         { so_no: { [Op.iLike]: s } },
         { customer_name: { [Op.iLike]: s } },
+        ...(itemOrderIds.length ? [{ id: { [Op.in]: itemOrderIds } }] : []),
       ];
     }
 

@@ -269,12 +269,20 @@ function buildPoBreakdownByKey(allPos) {
       const q = Number(line.quantity ?? line.qty ?? line.poQty ?? 0) || 0;
       if (!(q > 0)) continue;
       const unit = String(line.unit ?? line.uom ?? line.UOM ?? '').trim() || (key.startsWith('rm-') ? 'KG' : 'PCS');
+      // Per-line editable "connecting date" (expected arrival). Falls back to null; the PO-level
+      // expected_shipment_date is still exposed separately as `expectedDate`.
+      const cDate = line.connectingDate || line.connecting_date || null;
       const prev = perKey.get(key);
-      if (prev) prev.qty += q; else perKey.set(key, { qty: q, unit });
+      if (prev) {
+        prev.qty += q;
+        if (!prev.connectingDate && cDate) prev.connectingDate = cDate;
+      } else {
+        perKey.set(key, { qty: q, unit, connectingDate: cDate });
+      }
     }
-    for (const [key, { qty, unit }] of perKey) {
+    for (const [key, { qty, unit, connectingDate }] of perKey) {
       if (!byKey.has(key)) byKey.set(key, []);
-      byKey.get(key).push({ ref: poNo, qty, unit, status, expectedDate });
+      byKey.get(key).push({ ref: poNo, qty, unit, status, expectedDate, connectingDate: connectingDate || null });
     }
   }
   return byKey;

@@ -683,7 +683,7 @@ async function reserveStockForPlanningExtracted(planningExtractedId, planRow) {
     const qty = Number(line.quantity);
     if (!(qty > 0)) continue;
     const w = await WarehouseInventory.findOne({ where: { item_type: 'RM', raw_material_id: rmId } });
-    const stockInHand = Number(w?.stock_in_hand) || 0;
+    const stockInHand = (Number(w?.wh_stock) || 0) + (Number(w?.ml1_stock) || 0) + (Number(w?.ml2_stock) || 0);
     const reservedExisting = Number(w?.reserved) || 0;
     const free = Math.max(0, stockInHand - reservedExisting);
     const reserveQty = Math.min(qty, free);
@@ -709,7 +709,7 @@ async function reserveStockForPlanningExtracted(planningExtractedId, planRow) {
     const qty = Number(line.quantity);
     if (!(qty > 0)) continue;
     const w = await WarehouseInventory.findOne({ where: { item_type: 'PM', pack_material_id: pmId } });
-    const stockInHand = Number(w?.stock_in_hand) || 0;
+    const stockInHand = (Number(w?.wh_stock) || 0) + (Number(w?.ml1_stock) || 0) + (Number(w?.ml2_stock) || 0);
     const reservedExisting = Number(w?.reserved) || 0;
     const free = Math.max(0, stockInHand - reservedExisting);
     const reserveQty = Math.min(qty, free);
@@ -2648,7 +2648,12 @@ async function getItemsInvolved(req, res) {
     const statusByPm = new Map();
     const whUnitByRm = new Map();
     for (const w of whRows) {
-      const s = toNum(w.stock_in_hand);
+      // Compute stock-in-hand LIVE from the location columns (WH + ML1 + ML2) instead of trusting the
+      // stored stock_in_hand rollup column. That column can drift stale — e.g. stock lands in ML1
+      // (ml1_stock = 5800) but stock_in_hand is not recomputed and stays 0 — which made Planning SIH
+      // read 0 while the stock physically existed. The Warehouse Inventory list already derives it this
+      // way (controller.js: `stockInHand = whStock + ml1Stock + ml2Stock`); mirror it so the two agree.
+      const s = toNum(w.wh_stock) + toNum(w.ml1_stock) + toNum(w.ml2_stock);
       const whId = w.id;
       const batchNumber = w.batch_number || null;
       const expiryDate = w.expiry_date || null;
@@ -3207,7 +3212,9 @@ async function getItemsInvolvedByPlanningId(req, res) {
     const expiryByPm = new Map();
     const inTransitByPm = new Map();
     for (const w of whRows) {
-      const s = Number(w.stock_in_hand) || 0;
+      // Live stock-in-hand = WH + ML1 + ML2 (the stored stock_in_hand rollup can drift stale; see the
+      // sibling loop above). Reading the stored column here made this SIH path read 0 while stock existed.
+      const s = (Number(w.wh_stock) || 0) + (Number(w.ml1_stock) || 0) + (Number(w.ml2_stock) || 0);
       const resv = Number(w.reserved) || 0;
       const inTr = Number(w.in_transit) || 0;
       if (w.item_type === 'RM' && w.raw_material_id) {

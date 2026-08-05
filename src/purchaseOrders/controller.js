@@ -428,10 +428,56 @@ async function deletePurchaseOrder(req, res) {
   }
 }
 
+/**
+ * PATCH /:id/connecting-dates — set the per-line "connecting date" (expected arrival) on a PO.
+ * Body: { updates: { "<lineKey>": "YYYY-MM-DD" | null, ... } } where lineKey is "rm-<id>" / "pm-<id>"
+ * or the item code. Stored as `connectingDate` on each matching item in the PO's items JSON (no schema
+ * change). Surfaced against Planned/PO qty in Items Involved via buildPoBreakdownByKey.
+ */
+async function updatePoConnectingDates(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const row = await PurchaseOrder.findByPk(id);
+    if (!row) return res.status(404).json({ error: 'Purchase order not found' });
+
+    const updates = req.body && req.body.updates;
+    if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+      return res.status(400).json({ error: 'updates must be an object of lineKey -> date' });
+    }
+
+    const rawItems = row.get('items');
+    const items = Array.isArray(rawItems) ? rawItems.map((it) => ({ ...it })) : [];
+    let changed = 0;
+    for (const it of items) {
+      const rmKey = it.raw_material_id != null ? `rm-${it.raw_material_id}` : null;
+      const pmKey = it.pack_material_id != null ? `pm-${it.pack_material_id}` : null;
+      const code = it.code || it.itemCode || it.sku || null;
+      let val;
+      if (rmKey && updates[rmKey] !== undefined) val = updates[rmKey];
+      else if (pmKey && updates[pmKey] !== undefined) val = updates[pmKey];
+      else if (code && updates[code] !== undefined) val = updates[code];
+      else continue;
+      it.connectingDate = val == null || String(val).trim() === '' ? null : String(val).trim();
+      changed += 1;
+    }
+    if (changed === 0) return res.status(400).json({ error: 'No matching PO lines for the given keys' });
+
+    row.set('items', items);
+    row.changed('items', true); // JSON mutation must be flagged for Sequelize to persist it
+    await row.save();
+    res.json({ id, updated: changed, items });
+  } catch (err) {
+    console.error('updatePoConnectingDates error:', err);
+    res.status(500).json({ error: 'Failed to update connecting dates' });
+  }
+}
+
 module.exports = {
   listPurchaseOrders,
   getPurchaseOrderById,
   createPurchaseOrder,
   updatePurchaseOrder,
+  updatePoConnectingDates,
   deletePurchaseOrder,
 };

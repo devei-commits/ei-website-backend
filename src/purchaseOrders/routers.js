@@ -6,6 +6,7 @@ const {
   getPurchaseOrderById,
   createPurchaseOrder,
   updatePurchaseOrder,
+  updatePoConnectingDates,
   deletePurchaseOrder,
 } = require('./controller');
 const {
@@ -85,6 +86,7 @@ router.post('/:id/grn-exception/rtv', guard, notBlocked, raiseRtv);
 router.post('/:id/grn-exception/rtv-resolve', guard, notBlocked, resolveRtv);
 router.get('/:id', guard, getPurchaseOrderById);
 router.post('/', guard, createPurchaseOrder);
+router.patch('/:id/connecting-dates', guard, updatePoConnectingDates);
 router.put('/:id', guard, updatePurchaseOrder);
 router.delete('/:id', guard, deletePurchaseOrder);
 

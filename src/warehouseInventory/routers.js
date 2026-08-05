@@ -11,6 +11,7 @@ const {
   listLowThresholdAlerts,
   listUsageStats,
   getConsumptionBetween,
+  getReservedItems,
 } = require('./controller');
 const {
   uploadInventorySummaryExcelSafe,
@@ -59,6 +60,7 @@ router.post(
 );
 router.get('/', isAuthenticated, cacheWarehouseInventoryList, list);
 router.get('/location-history', isAuthenticated, listAllLocationHistory);
+router.get('/reserved-items', isAuthenticated, getReservedItems);
 router.get('/low-threshold-alerts', isAuthenticated, listLowThresholdAlerts);
 router.get('/usage-stats', isAuthenticated, listUsageStats);
 router.get('/consumption-between', isAuthenticated, getConsumptionBetween);

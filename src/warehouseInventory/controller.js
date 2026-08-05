@@ -1164,6 +1164,113 @@ async function getConsumptionBetween(req, res) {
   }
 }
 
+/**
+ * GET /reserved-items — every material that currently has reservations, with a full breakdown of
+ * WHERE each is reserved (planning / production / fulfillment), the SO, and qty. This answers
+ * "reserved qty is showing but I can't see where" — the production Material-Reservation panel only
+ * renders production-batch reservations, so planning/fulfillment reservations are otherwise invisible.
+ * Read-only; groups reserved_batch_items by item and attaches live stock (stock_in_hand = wh+ml1+ml2).
+ */
+async function getReservedItems(req, res) {
+  try {
+    const rows = await db.query(
+      `SELECT
+         rbi.id AS reservation_id,
+         rbi.quantity_reserved::float8 AS qty,
+         rbi.unit,
+         rbi.created_at,
+         CASE WHEN rbi.raw_material_id IS NOT NULL THEN 'RM' ELSE 'PM' END AS item_type,
+         COALESCE(rbi.raw_material_id, rbi.pack_material_id) AS item_id,
+         COALESCE(rm.code, pm.code) AS code,
+         COALESCE(rm.name, pm.description, pm.code) AS name,
+         CASE
+           WHEN rbi.production_batch_id IS NOT NULL THEN 'production'
+           WHEN rbi.fulfillment_order_item_id IS NOT NULL THEN 'fulfillment'
+           WHEN rbi.planning_extracted_id IS NOT NULL THEN 'planning'
+           ELSE 'unlinked' END AS source,
+         rbi.planning_extracted_id,
+         rbi.production_batch_id,
+         rbi.fulfillment_order_item_id,
+         COALESCE(so.order_id, pb.so_no, fo.so_no) AS so_no,
+         COALESCE(so.status, '') AS so_status,
+         COALESCE(so.customer_name, fo.customer_name) AS customer,
+         pb.batch_no AS production_batch_no,
+         pb.bmr_status AS production_bmr_status
+       FROM reserved_batch_items rbi
+       LEFT JOIN raw_materials rm ON rm.id = rbi.raw_material_id
+       LEFT JOIN pack_materials pm ON pm.id = rbi.pack_material_id
+       LEFT JOIN planning_extracted pe ON pe.id = rbi.planning_extracted_id
+       LEFT JOIN sales_orders so ON so.id = pe.sales_order_id
+       LEFT JOIN production_batches pb ON pb.id = rbi.production_batch_id
+       LEFT JOIN fulfillment_order_items foi ON foi.id = rbi.fulfillment_order_item_id
+       LEFT JOIN fulfillment_orders fo ON fo.id = foi.fulfillment_order_id
+       WHERE rbi.quantity_reserved > 0
+       ORDER BY COALESCE(rm.code, pm.code), rbi.id`,
+      { type: db.QueryTypes.SELECT }
+    );
+
+    // Live stock context per item (stock_in_hand = wh + ml1 + ml2; plus the reserved column).
+    const whRows = await WarehouseInventory.findAll({
+      attributes: ['item_type', 'raw_material_id', 'pack_material_id', 'wh_stock', 'ml1_stock', 'ml2_stock', 'reserved', 'wh_unit'],
+    });
+    const stockByKey = new Map();
+    for (const w of whRows) {
+      const p = w.get ? w.get({ plain: true }) : w;
+      const key = `${p.item_type}-${p.item_type === 'RM' ? p.raw_material_id : p.pack_material_id}`;
+      stockByKey.set(key, {
+        stockInHand: toNum(p.wh_stock) + toNum(p.ml1_stock) + toNum(p.ml2_stock),
+        reserved: toNum(p.reserved),
+        whUnit: p.wh_unit,
+      });
+    }
+
+    const byItem = new Map();
+    for (const r of rows) {
+      const key = `${r.item_type}-${r.item_id}`;
+      let bucket = byItem.get(key);
+      if (!bucket) {
+        const stock = stockByKey.get(key) || { stockInHand: 0, whUnit: null };
+        bucket = {
+          itemType: r.item_type,
+          itemId: r.item_id,
+          code: r.code,
+          name: r.name,
+          unit: r.unit || stock.whUnit || (r.item_type === 'RM' ? 'KG' : 'PCS'),
+          stockInHand: stock.stockInHand,
+          reservedTotal: 0,
+          available: 0,
+          reservations: [],
+        };
+        byItem.set(key, bucket);
+      }
+      bucket.reservedTotal += Number(r.qty) || 0;
+      bucket.reservations.push({
+        reservationId: r.reservation_id,
+        source: r.source,
+        qty: Number(r.qty) || 0,
+        soNo: r.so_no || null,
+        soStatus: r.so_status || null,
+        customer: r.customer || null,
+        planningExtractedId: r.planning_extracted_id,
+        productionBatchId: r.production_batch_id,
+        productionBatchNo: r.production_batch_no || null,
+        productionBmrStatus: r.production_bmr_status || null,
+        fulfillmentOrderItemId: r.fulfillment_order_item_id,
+        createdAt: r.created_at,
+      });
+    }
+
+    const items = [...byItem.values()]
+      .map((it) => ({ ...it, available: Math.max(0, it.stockInHand - it.reservedTotal) }))
+      .sort((a, b) => b.reservedTotal - a.reservedTotal);
+
+    res.json({ items });
+  } catch (err) {
+    console.error('getReservedItems error:', err);
+    res.status(500).json({ error: 'Failed to load reserved items' });
+  }
+}
+
 module.exports = {
   list,
   listPayload,
@@ -1175,4 +1282,5 @@ module.exports = {
   listLowThresholdAlerts,
   listUsageStats,
   getConsumptionBetween,
+  getReservedItems,
 };
