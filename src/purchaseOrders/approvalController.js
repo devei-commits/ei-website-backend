@@ -55,7 +55,23 @@ function amountOf(row) {
   const fromItems = computePoAmountFromItems(items);
   if (fromItems > 0) return fromItems;
   const snap = Number(row.get('approval_amount'));
-  return Number.isFinite(snap) && snap > 0 ? snap : 0;
+  if (Number.isFinite(snap) && snap > 0) return snap;
+  // H10: never let a real PO route as amount 0 (which would skip the CFO/threshold gate
+  // and single-step-approve a large PO). Fall back to any denormalized total we can find.
+  const fd = row.get('form_data');
+  const fdObj = fd && typeof fd === 'object' && !Array.isArray(fd) ? fd : {};
+  const candidates = [
+    row.get('grand_total'),
+    row.get('po_value'),
+    fdObj.grandTotal,
+    fdObj.grand_total,
+    fdObj.total,
+  ];
+  for (const c of candidates) {
+    const n = Number(c);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return 0;
 }
 
 async function writeLog(row, { action, fromStatus, toStatus, route, actor, note }) {

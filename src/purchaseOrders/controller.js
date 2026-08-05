@@ -23,6 +23,21 @@ async function syncProcurementRequestStatusFromPoFormData(formData, status) {
   }
 }
 
+/** H11: true if the PR linked via a PO's form_data.requestId still has a pending stock check. */
+async function linkedPrStockCheckPending(formData) {
+  try {
+    const raw = formData && typeof formData === 'object' ? (formData.requestId ?? formData.request_id) : null;
+    const id = parseInt(String(raw ?? '').replace(/\D/g, '') || '0', 10);
+    if (!Number.isFinite(id) || id <= 0) return false;
+    const pr = await ProcurementRequest.findByPk(id, { attributes: ['stock_check_status'] });
+    const scs = String((pr && pr.stock_check_status) || '').trim().toLowerCase();
+    return ['pending', 'requested', 'in progress'].includes(scs);
+  } catch (e) {
+    console.warn('[purchaseOrders] linkedPrStockCheckPending check failed:', e && e.message ? e.message : e);
+    return false; // fail-open: never block a legitimate release on a lookup error
+  }
+}
+
 // Some environments may not have Zoho columns migrated yet.
 // Keep read queries restricted to columns that always exist, so the PO APIs don't 500.
 const PO_SAFE_ATTRIBUTES = [
@@ -331,6 +346,22 @@ async function createPurchaseOrder(req, res) {
   try {
     const payload = bodyToPayload(req.body || {});
     if (!payload.order_id || !String(payload.order_id).trim()) return res.status(400).json({ error: 'orderId or poNumber is required' });
+    // C6: a PO cannot be created already 'Released' unless it carries approval_status 'approved'.
+    if (String(payload.status || '').trim().toLowerCase() === 'released') {
+      if (String(payload.approval_status || '').trim().toLowerCase() !== 'approved') {
+        return res.status(409).json({
+          error: 'PO_NOT_APPROVED',
+          message: 'Purchase order must be approved before it can be released.',
+        });
+      }
+      // H11: cannot create-as-released against a PR with a pending stock check.
+      if (await linkedPrStockCheckPending(payload.form_data)) {
+        return res.status(409).json({
+          error: 'STOCK_CHECK_PENDING',
+          message: 'The linked procurement request has an incomplete stock check — resolve it before releasing the PO.',
+        });
+      }
+    }
     // Some DB schemas may not include Zoho sync columns yet.
     // Limit what Postgres returns so INSERT ... RETURNING doesn't reference missing columns.
     const row = await PurchaseOrder.create(payload, { returning: PO_SAFE_ATTRIBUTES });
@@ -387,13 +418,67 @@ async function updatePurchaseOrder(req, res) {
       const out = await syncZohoAndFormatRow(row, body);
       return res.json(out);
     }
+    // C6: block release of an un-approved PO. approval_status must be 'approved' (the
+    // approval workflow is the only way in). Previously status could be set to 'Released'
+    // with no check and no audit row, bypassing the CFO/threshold matrix entirely.
+    const wasReleased = String(row.get('status') || '').trim().toLowerCase() === 'released';
+    const wantsRelease =
+      payload.status !== undefined && String(payload.status || '').trim().toLowerCase() === 'released';
+    if (wantsRelease && !wasReleased) {
+      const appr = String(row.get('approval_status') || '').trim().toLowerCase();
+      if (appr !== 'approved') {
+        return res.status(409).json({
+          error: 'PO_NOT_APPROVED',
+          message: 'Purchase order must be approved before it can be released.',
+        });
+      }
+      // H11: cannot release a PO whose linked PR still has a pending stock check. This gate
+      // previously lived only in the PR update path; releasing from the PO side bypassed it.
+      const blocked = await linkedPrStockCheckPending(row.get('form_data'));
+      if (blocked) {
+        return res.status(409).json({
+          error: 'STOCK_CHECK_PENDING',
+          message: 'The linked procurement request has an incomplete stock check — resolve it before releasing the PO.',
+        });
+      }
+    }
     await row.update(payload);
+    // Connecting date == expected date: when per-item connecting dates were edited, push them
+    // onto any existing active GRN rows for this PO so the Warehouse GRN tracker stays in sync.
+    if (
+      body.formData && typeof body.formData === 'object' && !Array.isArray(body.formData) &&
+      body.formData.connectingDateByItem && typeof body.formData.connectingDateByItem === 'object'
+    ) {
+      try {
+        const { syncGrnExpectedDatesForPo } = require('../grn/shipmentBatchController');
+        await syncGrnExpectedDatesForPo(id, row.get('form_data'));
+      } catch (e) {
+        console.warn('[purchaseOrders] syncGrnExpectedDatesForPo failed:', e && e.message ? e.message : e);
+      }
+    }
     const nextStatus = String(row.get('status') || '').trim().toLowerCase();
     if (nextStatus === 'released') {
       const fd = row.get('form_data');
       const merged =
         fd && typeof fd === 'object' && !Array.isArray(fd) ? fd : {};
       await syncProcurementRequestStatusFromPoFormData(merged, 'PO Released');
+    }
+    // C6: audit the release transition (approved → released) to po_approval_log.
+    if (nextStatus === 'released' && !wasReleased) {
+      try {
+        const PoApprovalLog = require('./poApprovalLog.model');
+        await PoApprovalLog.create({
+          purchase_order_id: id,
+          action: 'po_released',
+          from_status: 'approved',
+          to_status: 'released',
+          actor_name: (req.user && (req.user.name || req.user.email)) || null,
+          actor_role: (req.user && req.user.role) || null,
+          note: 'Released after approval.',
+        });
+      } catch (e) {
+        console.warn('[purchaseOrders] po_approval_log release write failed:', e && e.message ? e.message : e);
+      }
     }
     try {
       const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');

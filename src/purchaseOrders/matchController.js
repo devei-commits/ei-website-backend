@@ -288,14 +288,32 @@ async function recordFinalPayment(req, res) {
     const mode = PAYMENT_MODES.includes(modeRaw) ? modeRaw : 'other';
     const date = /^\d{4}-\d{2}-\d{2}$/.test(String(b.date || '')) ? String(b.date) : todayDateOnly();
 
-    const updated = await upsertTracking(id, tracking, {
-      final_paid_at: date,
-      final_paid_amount: Number.isFinite(amount) && amount > 0 ? amount : (state.invoice.invoiceAmount ?? null),
-      payment_transaction_no: b.transactionNo ? String(b.transactionNo).slice(0, 100) : null,
-      payment_mode: mode,
-      payment_transaction_date: date,
-    }).catch((err) => { if (isMissingColumnError(err)) return '__SCHEMA__'; throw err; });
-    if (updated === '__SCHEMA__') return schemaError(res);
+    // C7: the isPaid check above is a read-then-write and races under concurrency (two
+    // requests both see unpaid → double payment). The real guard is this ATOMIC update:
+    // only one request can flip final_paid_at from NULL. 0 rows affected ⇒ someone else
+    // already paid. Ensure the tracking row exists first, then guard on final_paid_at IS NULL.
+    await PoTracking.findOrCreate({ where: { purchase_order_id: id }, defaults: { purchase_order_id: id } })
+      .catch(() => {});
+    let affected;
+    try {
+      [affected] = await PoTracking.update(
+        {
+          final_paid_at: date,
+          final_paid_amount: Number.isFinite(amount) && amount > 0 ? amount : (state.invoice.invoiceAmount ?? null),
+          payment_transaction_no: b.transactionNo ? String(b.transactionNo).slice(0, 100) : null,
+          payment_mode: mode,
+          payment_transaction_date: date,
+        },
+        { where: { purchase_order_id: id, final_paid_at: null } }
+      );
+    } catch (err) {
+      if (isMissingColumnError(err)) return schemaError(res);
+      throw err;
+    }
+    if (!affected) {
+      return res.status(409).json({ error: 'Final payment already recorded.', code: 'ALREADY_PAID' });
+    }
+    const updated = await PoTracking.findOne({ where: { purchase_order_id: id } });
 
     await writeLog(id, { action: 'final_payment', toStatus: 'paid', actor: actorFromReq(req), note: b.transactionNo || mode, amount });
     return res.json(await buildMatchState(id, po, updated, grns));
@@ -378,35 +396,54 @@ async function sendToTreasury(req, res) {
     const amount = state.invoice.invoiceAmount ?? state.match.totals.receivedPayable;
     if (!(Number(amount) > 0)) return res.status(409).json({ error: 'No payable amount — capture the vendor invoice first.', code: 'NO_AMOUNT' });
 
-    const fd = po.get('form_data');
-    const vendorClientId = fd && typeof fd === 'object' ? (fd.vendorClientId ?? fd.vendor_client_id ?? null) : null;
-    const orderId = po.get('order_id') || `PO-${id}`;
-    const t = tracking ? (tracking.get ? tracking.get({ plain: true }) : tracking) : null;
-    const paymentTerms = po.get('payment_terms');
-    const dueDate = addDaysDateOnly(t?.grn_complete_at || todayDateOnly(), paymentTermDays(paymentTerms));
+    // C7: the sentToTreasury check above is a read-then-write and races (two requests both
+    // see "not sent" → duplicate vendor-payment outwards). Serialize per-PO with a txn-scoped
+    // advisory lock and RE-CHECK under the lock before creating the outward.
+    const dbi = PoTracking.sequelize;
+    const result = await dbi.transaction(async (tx) => {
+      await dbi.query('SELECT pg_advisory_xact_lock(hashtext(:k))', {
+        replacements: { k: `po_treasury:${id}` },
+        transaction: tx,
+      });
+      const fresh = await loadContext(id);
+      const freshState = await buildMatchState(id, fresh.po, fresh.tracking, fresh.grns);
+      if (freshState.sentToTreasury) {
+        return { already: true, code: freshState.treasury?.outwardCode };
+      }
+      const fPo = fresh.po;
+      const fFd = fPo.get('form_data');
+      const vendorClientId = fFd && typeof fFd === 'object' ? (fFd.vendorClientId ?? fFd.vendor_client_id ?? null) : null;
+      const orderId = fPo.get('order_id') || `PO-${id}`;
+      const tPlain = fresh.tracking ? (fresh.tracking.get ? fresh.tracking.get({ plain: true }) : fresh.tracking) : null;
+      const dueDate = addDaysDateOnly(tPlain?.grn_complete_at || todayDateOnly(), paymentTermDays(fPo.get('payment_terms')));
+      const fAmount = freshState.invoice.invoiceAmount ?? freshState.match.totals.receivedPayable;
+      const { payment, created } = await createOutwardFromSource(
+        {
+          sourceModule: 'procurement',
+          sourceSubtype: 'PO Vendor Payment',
+          sourceRefType: 'purchase_order',
+          sourceRefId: id,
+          sourceRefLabel: orderId,
+          payeeType: 'vendor',
+          payeeId: vendorClientId || null,
+          payeeName: fPo.get('vendor_name') || 'Vendor',
+          purpose: `Payment for ${orderId} (3-way match cleared)`,
+          amount: Number(fAmount),
+          dueDate,
+          autoSubmit: true,
+        },
+        req,
+      );
+      return { payment, created, amount: Number(fAmount) };
+    });
 
-    const { payment, created } = await createOutwardFromSource(
-      {
-        sourceModule: 'procurement',
-        sourceSubtype: 'PO Vendor Payment',
-        sourceRefType: 'purchase_order',
-        sourceRefId: id,
-        sourceRefLabel: orderId,
-        payeeType: 'vendor',
-        payeeId: vendorClientId || null,
-        payeeName: po.get('vendor_name') || 'Vendor',
-        purpose: `Payment for ${orderId} (3-way match cleared)`,
-        amount: Number(amount),
-        dueDate,
-        autoSubmit: true,
-      },
-      req,
-    );
-
-    const outwardCode = (payment.get ? payment.get({ plain: true }) : payment).outward_code;
-    await writeLog(id, { action: 'sent_to_treasury', toStatus: 'submitted', actor: actorFromReq(req), note: outwardCode, amount: Number(amount) });
+    if (result.already) {
+      return res.status(409).json({ error: `Already sent to Treasury (${result.code}).`, code: 'ALREADY_SENT' });
+    }
+    const outwardCode = (result.payment.get ? result.payment.get({ plain: true }) : result.payment).outward_code;
+    await writeLog(id, { action: 'sent_to_treasury', toStatus: 'submitted', actor: actorFromReq(req), note: outwardCode, amount: result.amount });
     const out = await buildMatchState(id, po, tracking, grns);
-    out.treasuryJustCreated = created;
+    out.treasuryJustCreated = result.created;
     return res.json(out);
   } catch (err) {
     console.error('sendToTreasury error', err);

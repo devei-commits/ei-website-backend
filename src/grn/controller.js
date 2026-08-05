@@ -2,106 +2,69 @@ const { softDeleteWhere, activeRowWhere } = require('../lib/softDelete');
 const { Op } = require('sequelize');
 const db = require('../../db');
 const GoodsReceivedNote = require('./models');
-// mrn_id was added to the GRN model, so every GRN SELECT includes it — ensure the column
-// exists (managed prod skips db.sync) before any read/write. Shared with the transfer bridge.
-const { ensureGrnMrnIdColumn } = require('./transferGrnFromMrn');
-
-let grnLocationZoneColumnEnsured = false;
-async function ensureGrnLocationZoneColumn() {
-  if (grnLocationZoneColumnEnsured) return;
-  grnLocationZoneColumnEnsured = true;
-  try {
-    const dialect = db.getDialect && db.getDialect();
-    if (dialect === 'postgres') {
-      await db.query(
-        'ALTER TABLE goods_received_notes ADD COLUMN IF NOT EXISTS location_zone VARCHAR(200)'
-      );
-    }
-  } catch (e) {
-    console.warn('[grn] ensure location_zone column skipped:', e && e.message ? e.message : e);
-  }
-}
-
-let grnReceiptSourceColumnEnsured = false;
-async function ensureGrnReceiptSourceColumn() {
-  if (grnReceiptSourceColumnEnsured) return;
-  grnReceiptSourceColumnEnsured = true;
-  try {
-    const dialect = db.getDialect && db.getDialect();
-    if (dialect === 'postgres') {
-      await db.query(
-        "ALTER TABLE goods_received_notes ADD COLUMN IF NOT EXISTS receipt_source VARCHAR(30) DEFAULT 'po'"
-      );
-      await db.query(`
-        UPDATE goods_received_notes
-        SET receipt_source = 'po'
-        WHERE receipt_source IS NULL OR TRIM(receipt_source) = ''
-      `);
-    }
-  } catch (e) {
-    console.warn('[grn] ensure receipt_source column skipped:', e && e.message ? e.message : e);
-  }
-}
-
-let grnSourceDocumentsColumnEnsured = false;
-async function ensureGrnSourceDocumentsColumn() {
-  if (grnSourceDocumentsColumnEnsured) return;
-  grnSourceDocumentsColumnEnsured = true;
-  try {
-    const dialect = db.getDialect && db.getDialect();
-    if (dialect === 'postgres') {
-      await db.query(
-        'ALTER TABLE goods_received_notes ADD COLUMN IF NOT EXISTS source_documents JSONB'
-      );
-    }
-  } catch (e) {
-    console.warn('[grn] ensure source_documents column skipped:', e && e.message ? e.message : e);
-  }
-}
-
-let grnQcSpecsColumnEnsured = false;
-async function ensureGrnQcSpecsColumn() {
-  if (grnQcSpecsColumnEnsured) return;
-  grnQcSpecsColumnEnsured = true;
-  try {
-    const dialect = db.getDialect && db.getDialect();
-    if (dialect === 'postgres') {
-      await db.query(
-        'ALTER TABLE goods_received_notes ADD COLUMN IF NOT EXISTS qc_specs JSONB'
-      );
-    }
-  } catch (e) {
-    console.warn('[grn] ensure qc_specs column skipped:', e && e.message ? e.message : e);
-  }
-}
-
-let warehouseInventoryZoneRackTextEnsured = false;
-/** Allow multiple rack/zone labels on one inventory row (merged list, not a single slot). */
-async function ensureWarehouseInventoryZoneRackTextColumns() {
-  if (warehouseInventoryZoneRackTextEnsured) return;
-  warehouseInventoryZoneRackTextEnsured = true;
-  try {
-    const dialect = db.getDialect && db.getDialect();
-    if (dialect === 'postgres') {
-      await db.query(`
-        ALTER TABLE warehouse_inventory
-          ALTER COLUMN zone TYPE TEXT,
-          ALTER COLUMN rack TYPE TEXT
-      `);
-    }
-  } catch (e) {
-    console.warn(
-      '[grn] ensure warehouse_inventory zone/rack TEXT columns skipped:',
-      e && e.message ? e.message : e
-    );
-  }
-}
 
 const { User } = require('../users/models');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const { Product } = require('../products/models');
 const PurchaseOrder = require('../purchaseOrders/models');
+const PoTracking = require('../poTracking/models');
+
+/**
+ * C8 — stamp the PO tracking timeline from a GRN status change. A GRN moving to
+ * 'Under GRN' / 'GRN Complete' advances po_tracking.under_grn_at / grn_complete_at so
+ * Treasury (payable-due backfill) and the lead-time/in-transit pipelines don't desync.
+ * Idempotent — only fills a null step, never overwrites an existing timestamp. Called
+ * right after the receive commits (best-effort, own connection) so a tracking hiccup can
+ * never abort the GRN receive. Sequelize findOrCreate handles the concurrent-create race.
+ */
+async function stampPoTrackingForGrn(grnRow, opts = {}) {
+  const transaction = opts.transaction;
+  const d = grnRow && grnRow.get ? grnRow.get({ plain: true }) : grnRow;
+  const poId = d && d.purchase_order_id != null ? Number(d.purchase_order_id) : null;
+  if (!poId) return;
+  const st = String(d.status || '').trim();
+  if (st !== 'Under GRN' && st !== 'GRN Complete') return;
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    const [track] = await PoTracking.findOrCreate({
+      where: { purchase_order_id: poId },
+      defaults: { purchase_order_id: poId },
+      ...(transaction ? { transaction } : {}),
+    });
+    const t = track.get ? track.get({ plain: true }) : track;
+    const patch = {};
+    if (!t.under_grn_at) patch.under_grn_at = today; // both statuses imply GRN has begun
+    if (st === 'GRN Complete' && !t.grn_complete_at) patch.grn_complete_at = today;
+    if (Object.keys(patch).length) {
+      await track.update(patch, transaction ? { transaction } : {});
+    }
+  } catch (e) {
+    // Non-fatal: never fail the GRN receive because tracking couldn't be stamped.
+    console.warn('[grn] stampPoTrackingForGrn skipped:', e && e.message ? e.message : e);
+  }
+}
+
+/**
+ * C3 — the gates a GRN must pass before it can be marked 'GRN Complete'. Returns a list
+ * of human-readable blockers ([] = completable). Shared by PUT /grn/:id (update) and
+ * PUT /grn/:id/stage (advanceGrnStage) so BOTH paths enforce the same rules — no path
+ * can complete a GRN while skipping QC/labels/location/assignee.
+ */
+function grnCompletionBlockers(plain) {
+  const p = plain || {};
+  const blockers = [];
+  if (String(p.qc_status || '').trim() !== 'Passed') blockers.push('QC status must be Passed');
+  if (!String(p.qc_by || '').trim()) blockers.push('QC by (inspector name) is required');
+  if (!String(p.assigned_to || '').trim()) blockers.push('Assigned To must be allocated');
+  const steps = Array.isArray(p.workflow_steps) ? p.workflow_steps : [];
+  const hasLabelStep = steps.includes('Label Generation');
+  const hasLabels = Array.isArray(p.generated_labels) && p.generated_labels.length > 0;
+  if (!hasLabelStep && !hasLabels) blockers.push('QR labels must be generated');
+  if (!String(p.location_prefix || '').trim()) blockers.push('Location prefix (rack code) is required');
+  if (!String(p.location_zone || '').trim()) blockers.push('Storage zone is required');
+  return blockers;
+}
 const WarehouseInventory = require('../warehouseInventory/models');
 const { mergeLocationTokens } = require('../warehouseInventory/locationTokensMerge');
 const { logLocationMovement } = require('../warehouseInventory/locationHistoryHelpers');
@@ -339,8 +302,6 @@ async function loadMastersForQc(lineItems, grnType) {
  */
 async function qcReference(req, res) {
   try {
-    await ensureGrnQcSpecsColumn();
-    await ensureGrnMrnIdColumn();
     const id = parseInt(String(req.params.id), 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await GoodsReceivedNote.findByPk(id);
@@ -760,11 +721,6 @@ function formatRow(r, enrichedLineItems) {
  */
 async function list(req, res) {
   try {
-    await ensureGrnLocationZoneColumn();
-    await ensureGrnQcSpecsColumn();
-    await ensureGrnReceiptSourceColumn();
-    await ensureGrnSourceDocumentsColumn();
-    await ensureGrnMrnIdColumn();
     const rows = await GoodsReceivedNote.findAll({
       where: activeRowWhere(),
       order: [['expected_date', 'DESC'], ['id', 'DESC']],
@@ -788,11 +744,6 @@ async function list(req, res) {
  */
 async function getById(req, res) {
   try {
-    await ensureGrnLocationZoneColumn();
-    await ensureGrnQcSpecsColumn();
-    await ensureGrnReceiptSourceColumn();
-    await ensureGrnSourceDocumentsColumn();
-    await ensureGrnMrnIdColumn();
     const id = parseInt(String(req.params.id), 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await GoodsReceivedNote.findByPk(id);
@@ -813,9 +764,6 @@ async function getById(req, res) {
  */
 async function create(req, res) {
   try {
-    await ensureGrnReceiptSourceColumn();
-    await ensureGrnSourceDocumentsColumn();
-    await ensureGrnMrnIdColumn();
     const body = req.body || {};
     const payload = {
       grn_no: body.grnNo || body.grn_no,
@@ -941,16 +889,28 @@ async function create(req, res) {
       }
     }
 
+    // H6: a GRN cannot be CREATED already 'GRN Complete' unless it passes the same
+    // completion gates update() enforces (QC Passed / qc_by / assigned_to / labels /
+    // location). Previously POST {status:'GRN Complete'} booked inventory bypassing them.
+    if (String(payload.status || '').trim() === 'GRN Complete') {
+      const blockers = grnCompletionBlockers(payload);
+      if (blockers.length > 0) {
+        return res.status(400).json({ error: `Cannot create GRN as Complete: ${blockers.join('; ')}.` });
+      }
+    }
+
     let row;
+    const grnSkipped = []; // H12: unresolved lines whose stock could not be booked
     await db.transaction(async (transaction) => {
       row = await GoodsReceivedNote.create(payload, { transaction });
       const st = String((row.get ? row.get('status') : row.status) || '').trim();
       if (st === 'GRN Complete') {
         await repairLineItemsMasterLinks([row], transaction);
         await row.reload({ transaction });
-        await applyGrnCompletionToInventory(row, { transaction });
+        await applyGrnCompletionToInventory(row, { transaction, skipped: grnSkipped });
       }
     });
+    await stampPoTrackingForGrn(row); // C8: advance po_tracking under_grn/complete
     try {
       const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
       await syncWarehouseInTransitAll();
@@ -961,7 +921,9 @@ async function create(req, res) {
     const { rmMap, pmMap, productMap } = await getMastersForLineItems([row]);
     const d = row.get ? row.get({ plain: true }) : row;
     const enriched = enrichLineItems(d.line_items || [], rmMap, pmMap, productMap, d.type);
-    res.status(201).json(formatRow(row, enriched));
+    const outCreate = formatRow(row, enriched);
+    if (grnSkipped.length) outCreate.unbookedLines = grnSkipped; // H12: surface dropped lines
+    res.status(201).json(outCreate);
   } catch (err) {
     console.error('[grn] create error:', err);
     res.status(500).json({ error: err.message || 'Failed to create GRN' });
@@ -999,11 +961,9 @@ async function applyGrnCompletionToInventory(grnRow, opts = {}) {
   const d = grnRow.get ? grnRow.get({ plain: true }) : grnRow;
   const lineItems = d.line_items || [];
   // #region agent log
-  fetch('http://host.docker.internal:7419/ingest/d5243865-7daa-4432-a736-94efa19612b4',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7da641'},body:JSON.stringify({sessionId:'7da641',runId:'apply-entry',hypothesisId:'H2',location:'grn/controller.js:applyGrnCompletionToInventory:entry',message:'applyGrnCompletionToInventory entry',data:{grnId:d.id,grnNo:d.grn_no||null,lineCount:lineItems.length,grnType:d.type||null,purchaseOrderId:d.purchase_order_id??null},timestamp:Date.now()})}).catch(()=>{});
   // #endregion
   if (lineItems.length === 0) {
     // #region agent log
-    fetch('http://host.docker.internal:7419/ingest/d5243865-7daa-4432-a736-94efa19612b4',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7da641'},body:JSON.stringify({sessionId:'7da641',runId:'apply-early',hypothesisId:'H1',location:'grn/controller.js:applyGrnCompletionToInventory:emptyLines',message:'early return: no line_items',data:{grnId:d.id,grnNo:d.grn_no||null},timestamp:Date.now()})}).catch(()=>{});
     // #endregion
     return;
   }
@@ -1245,7 +1205,10 @@ async function applyGrnCompletionToInventory(grnRow, opts = {}) {
         const kg = quantityToKg(rcvdQty, lineUnit, { itemType: 'PM', masterUom: meta.unit, sizeSpec: meta.size_spec });
         toAddByPm.set(pmId, (toAddByPm.get(pmId) || 0) + kg);
       } else {
-        console.warn('[grn] GRN Complete: line item code "%s" / name "%s" not found in RM/PM masters; skipping inventory update', code, line.item || '');
+        // H12: do NOT silently drop received stock. Record the unresolved line so the caller
+        // can surface it in the response; and log at error level (was a swallowed warn).
+        if (Array.isArray(opts.skipped)) opts.skipped.push({ code: code || null, name: line.item || null, rcvdQty });
+        console.error('[grn] GRN Complete: line item code "%s" / name "%s" not found in RM/PM masters — STOCK NOT BOOKED', code, line.item || '');
       }
     }
   }
@@ -1257,7 +1220,6 @@ async function applyGrnCompletionToInventory(grnRow, opts = {}) {
   });
 
   // #region agent log
-  fetch('http://host.docker.internal:7419/ingest/d5243865-7daa-4432-a736-94efa19612b4',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7da641'},body:JSON.stringify({sessionId:'7da641',runId:'apply-buckets',hypothesisId:'H2',location:'grn/controller.js:applyGrnCompletionToInventory:buckets',message:'bucket totals before WH writes',data:{grnId:d.id,toAddByRmCount:toAddByRm.size,toAddByPmCount:toAddByPm.size,toAddByProductCount:toAddByProduct.size,rmEntries:Array.from(toAddByRm.entries()),codesLen:codes.length,namesLen:names.length},timestamp:Date.now()})}).catch(()=>{});
   // #endregion
   if (toAddByRm.size === 0 && toAddByPm.size === 0 && toAddByProduct.size === 0) {
     console.warn('[grn] GRN Complete: nothing to add into warehouse_inventory (bucket maps empty)', {
@@ -1437,7 +1399,6 @@ async function applyGrnCompletionToInventory(grnRow, opts = {}) {
     type: d.type,
   });
   // #region agent log
-  fetch('http://host.docker.internal:7419/ingest/d5243865-7daa-4432-a736-94efa19612b4',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7da641'},body:JSON.stringify({sessionId:'7da641',runId:'apply-done',hypothesisId:'H6',location:'grn/controller.js:applyGrnCompletionToInventory:done',message:'applyGrnCompletionToInventory finished without throw',data:{grnId:d.id,grnNo:d.grn_no||null},timestamp:Date.now()})}).catch(()=>{});
   // #endregion
 }
 
@@ -1446,11 +1407,6 @@ async function applyGrnCompletionToInventory(grnRow, opts = {}) {
  */
 async function update(req, res) {
   try {
-    await ensureGrnLocationZoneColumn();
-    await ensureGrnQcSpecsColumn();
-    await ensureGrnReceiptSourceColumn();
-    await ensureGrnSourceDocumentsColumn();
-    await ensureGrnMrnIdColumn();
     const id = parseInt(String(req.params.id), 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await GoodsReceivedNote.findByPk(id);
@@ -1474,7 +1430,23 @@ async function update(req, res) {
     } else if (body.qc_status !== undefined) {
       updates.qc_status = body.qc_status;
     }
-    if (body.status !== undefined) updates.status = body.status;
+    if (body.status !== undefined) {
+      updates.status = body.status;
+      // Keep the canonical 6-stage axis in sync with the status Inbound writes (the confirm uses
+      // this status-only PUT, not /grn/:id/stage). Forward-only: never regress a GRN already past
+      // 'landed'. Without this, a Landed/Under-GRN row stayed stage='in_transit' and any consumer
+      // keyed on `stage` (e.g. GET /grn/tracker) mis-classified it.
+      const STAGE_ORDER = ['in_transit', 'landed', 'verified', 'quarantined', 'qc_tested', 'grn_completed'];
+      const st = String(body.status).trim();
+      const curStage = String(row.get('stage') || 'in_transit');
+      const curIdx = STAGE_ORDER.indexOf(curStage);
+      let targetStage = null;
+      if (st === 'GRN Complete') targetStage = 'grn_completed';
+      else if (st === 'Under GRN') targetStage = 'landed';
+      else if (st === 'In Transit') targetStage = 'in_transit';
+      const targetIdx = targetStage ? STAGE_ORDER.indexOf(targetStage) : -1;
+      if (targetIdx >= 0 && (curIdx < 0 || targetIdx > curIdx)) updates.stage = targetStage;
+    }
     if (body.lineItems !== undefined) updates.line_items = body.lineItems;
     if (body.line_items !== undefined) updates.line_items = body.line_items;
     if (body.workflowSteps !== undefined) updates.workflow_steps = body.workflowSteps;
@@ -1526,27 +1498,21 @@ async function update(req, res) {
     const nextWorkflowSteps = updates.workflow_steps !== undefined ? updates.workflow_steps : rowPlain.workflow_steps;
     const nextGeneratedLabels = rowPlain.generated_labels;
     if (nextStatus === 'GRN Complete') {
-      const blockers = [];
-      if (String(nextQcStatus || '').trim() !== 'Passed') blockers.push('QC status must be Passed');
-      if (!String(nextQcByRaw || '').trim()) blockers.push('QC by (inspector name) is required');
-      if (!String(nextAssignedToRaw || '').trim()) blockers.push('Assigned To must be allocated');
-      const hasLabelGenerationStep = Array.isArray(nextWorkflowSteps) && nextWorkflowSteps.includes('Label Generation');
-      const hasGeneratedLabels = Array.isArray(nextGeneratedLabels) && nextGeneratedLabels.length > 0;
-      if (!hasLabelGenerationStep && !hasGeneratedLabels) blockers.push('QR labels must be generated');
-      const nextLocPrefix =
-        updates.location_prefix !== undefined ? updates.location_prefix : rowPlain.location_prefix;
-      const nextLocZone =
-        updates.location_zone !== undefined ? updates.location_zone : rowPlain.location_zone;
-      if (!String(nextLocPrefix || '').trim()) blockers.push('Location prefix (rack code) is required');
-      if (!String(nextLocZone || '').trim()) blockers.push('Storage zone is required');
+      const blockers = grnCompletionBlockers({
+        qc_status: nextQcStatus,
+        qc_by: nextQcByRaw,
+        assigned_to: nextAssignedToRaw,
+        workflow_steps: nextWorkflowSteps,
+        generated_labels: nextGeneratedLabels,
+        location_prefix: updates.location_prefix !== undefined ? updates.location_prefix : rowPlain.location_prefix,
+        location_zone: updates.location_zone !== undefined ? updates.location_zone : rowPlain.location_zone,
+      });
       if (blockers.length > 0) {
         return res.status(400).json({ error: `Cannot mark GRN Complete: ${blockers.join('; ')}.` });
       }
     }
     const previousStatus = (row.get ? row.get({ plain: true }) : row).status;
-    // #region agent log
-    fetch('http://host.docker.internal:7419/ingest/d5243865-7daa-4432-a736-94efa19612b4',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7da641'},body:JSON.stringify({sessionId:'7da641',runId:'update-pre',hypothesisId:'H1',location:'grn/controller.js:update:beforeCommit',message:'GRN PUT before row.update',data:{grnId:id,previousStatus,updatesStatus:updates.status??null,willRunInventoryApply:updates.status==='GRN Complete'&&previousStatus!=='GRN Complete',lineItemsInUpdates:Array.isArray(updates.line_items)?updates.line_items.length:updates.line_items===undefined?'omit':'non-array'},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
+    const grnSkipped = []; // H12: unresolved lines whose stock could not be booked
     await db.transaction(async (transaction) => {
       await row.update(updates, { transaction });
       const refreshedInTx = await GoodsReceivedNote.findByPk(id, { transaction });
@@ -1577,20 +1543,12 @@ async function update(req, res) {
         await refreshedInTx.reload({ transaction });
         // #region agent log
         const _rplain = refreshedInTx.get ? refreshedInTx.get({ plain: true }) : refreshedInTx;
-        fetch('http://host.docker.internal:7419/ingest/d5243865-7daa-4432-a736-94efa19612b4',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7da641'},body:JSON.stringify({sessionId:'7da641',runId:'update-invoke',hypothesisId:'H4',location:'grn/controller.js:update:beforeApplyInventory',message:'about to applyGrnCompletionToInventory',data:{grnId:id,reloadLineCount:Array.isArray(_rplain.line_items)?_rplain.line_items.length:0,statusAfterUpdate:_rplain.status},timestamp:Date.now()})}).catch(()=>{});
         // #endregion
-        await applyGrnCompletionToInventory(refreshedInTx, { transaction });
-        // #region agent log
-        fetch('http://host.docker.internal:7419/ingest/d5243865-7daa-4432-a736-94efa19612b4',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7da641'},body:JSON.stringify({sessionId:'7da641',runId:'update-post-apply',hypothesisId:'H6',location:'grn/controller.js:update:afterApplyInventory',message:'applyGrnCompletionToInventory returned OK',data:{grnId:id},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
+        await applyGrnCompletionToInventory(refreshedInTx, { transaction, skipped: grnSkipped });
       }
     });
     const refreshed = await GoodsReceivedNote.findByPk(id);
-    if (updates.status === 'GRN Complete' && previousStatus === 'GRN Complete') {
-      // #region agent log
-      fetch('http://host.docker.internal:7419/ingest/d5243865-7daa-4432-a736-94efa19612b4',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7da641'},body:JSON.stringify({sessionId:'7da641',runId:'update-skip-inv',hypothesisId:'H1',location:'grn/controller.js:update:skipInventoryApply',message:'GRN Complete update but inventory apply skipped (not first transition)',data:{grnId:id,previousStatus,updatesStatus:updates.status},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
-    }
+    await stampPoTrackingForGrn(refreshed); // C8: advance po_tracking under_grn/complete
     try {
       const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
       await syncWarehouseInTransitAll();
@@ -1601,7 +1559,9 @@ async function update(req, res) {
     const { rmMap, pmMap, productMap } = await getMastersForLineItems([refreshed]);
     const d = refreshed.get ? refreshed.get({ plain: true }) : refreshed;
     const enriched = enrichLineItems(d.line_items || [], rmMap, pmMap, productMap, d.type);
-    res.json(formatRow(refreshed, enriched));
+    const outUpdate = formatRow(refreshed, enriched);
+    if (grnSkipped.length) outUpdate.unbookedLines = grnSkipped; // H12: surface dropped lines
+    res.json(outUpdate);
   } catch (err) {
     console.error('[grn] update error:', err);
     const status = err && err.status ? Number(err.status) : 500;
@@ -1644,7 +1604,6 @@ async function applyLabelGenerationToWarehouseInventory(
   locationPrefixRaw,
   opts = {}
 ) {
-  await ensureWarehouseInventoryZoneRackTextColumns();
 
   const codeU = String(selectedItemCode || '').trim().toUpperCase();
   let rackStr = String(toRack || '').trim() || String(locationPrefixRaw || '').trim() || null;
@@ -1787,8 +1746,6 @@ async function applyLabelGenerationToWarehouseInventory(
  */
 async function generateLabels(req, res) {
   try {
-    await ensureGrnLocationZoneColumn();
-    await ensureGrnMrnIdColumn();
     const id = parseInt(String(req.params.id), 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await GoodsReceivedNote.findByPk(id);
@@ -1980,4 +1937,4 @@ async function generateLabels(req, res) {
   }
 }
 
-module.exports = { list, getById, create, update, remove, assignableUsers, generateLabels, qcReference, applyGrnCompletionToInventory };
+module.exports = { list, getById, create, update, remove, assignableUsers, generateLabels, qcReference, applyGrnCompletionToInventory, grnCompletionBlockers, stampPoTrackingForGrn };

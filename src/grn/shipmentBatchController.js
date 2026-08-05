@@ -175,6 +175,131 @@ async function createShipmentBatch({ body, totalQty, lineCount, transaction }) {
   return sb;
 }
 
+function poLineQty(l) {
+  const q = Number(l && (l.quantity ?? l.qty ?? l.reqQty ?? l.quantity_requested));
+  return Number.isFinite(q) && q > 0 ? q : 0;
+}
+
+/** Match the frontend normItemKeyForLead: lowercase, trim, collapse internal whitespace. */
+function normConnKey(s) {
+  return String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/** Build a norm-keyed { code|name -> YYYY-MM-DD } map from a PO's form_data.connectingDateByItem. */
+function connectingMapFromFormData(formData) {
+  const fd = formData && typeof formData === 'object' && !Array.isArray(formData) ? formData : {};
+  const raw = fd.connectingDateByItem;
+  const map = {};
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const [k, v] of Object.entries(raw)) {
+      if (typeof v === 'string' && v.trim()) map[normConnKey(k)] = v.trim();
+    }
+  }
+  return map;
+}
+
+/**
+ * Connecting date == expected date. When a PO's per-item connecting dates are edited
+ * (form_data.connectingDateByItem), push each date onto the matching active GRN's
+ * expected_date so the Warehouse GRN tracker stays in sync. Matches a GRN to its line by
+ * item code, then name. No-op for lines with no override / no GRN yet.
+ * @returns {Promise<{updated:number}>}
+ */
+async function syncGrnExpectedDatesForPo(poId, formData) {
+  const id = Number(poId);
+  if (!Number.isFinite(id) || id <= 0) return { updated: 0 };
+  const map = connectingMapFromFormData(formData);
+  if (!Object.keys(map).length) return { updated: 0 };
+
+  const grns = await GoodsReceivedNote.findAll({
+    where: { purchase_order_id: id, lifecycle_status: 'active' },
+  });
+  let updated = 0;
+  for (const grn of grns) {
+    const li = Array.isArray(grn.get('line_items')) ? grn.get('line_items') : [];
+    // A GRN's expected_date = the LATEST connecting date across its matched lines
+    // (it isn't fully connected until every item on it lands).
+    let date = null;
+    for (const l of li) {
+      const d = map[normConnKey(l && l.itemCode)] ?? map[normConnKey(l && l.item)];
+      if (d && (!date || d > date)) date = d; // YYYY-MM-DD compares lexicographically
+    }
+    if (!date) continue;
+    if (String(grn.get('expected_date') || '') === date) continue;
+    grn.set('expected_date', date);
+    await grn.save();
+    updated += 1;
+  }
+  return { updated };
+}
+
+/**
+ * Auto-materialize In-Transit GRN rows for a PO whose shipment was just initiated
+ * (Procurement "Mark Shipped"). This is what makes the PO surface in Warehouse Inbound →
+ * "GRN by PO"; from there the warehouse owns the 6-stage GRN lifecycle.
+ *
+ * Idempotent by design: no-op when the PO already has ANY active GRN (e.g. the warehouse
+ * already ran Initiate Transit / a consolidated shipment), so it never double-creates.
+ * Creates one shipment batch + one GRN per PO line, keyed by the PO's RM/PM FKs so Planning
+ * counts them as In-Transit immediately.
+ *
+ * @returns {Promise<{created:number, skipped?:string, sbId?:number}>}
+ */
+async function autoCreateInTransitGrnForShippedPo(poId) {
+  const id = Number(poId);
+  if (!Number.isFinite(id) || id <= 0) return { created: 0, skipped: 'bad_id' };
+
+  const existing = await GoodsReceivedNote.findOne({
+    where: { purchase_order_id: id, lifecycle_status: 'active' },
+    attributes: ['id'],
+  });
+  if (existing) return { created: 0, skipped: 'grn_exists' };
+
+  const po = await PurchaseOrder.findByPk(id, {
+    attributes: ['id', 'order_id', 'vendor_name', 'expected_shipment_date', 'items', 'form_data'],
+  });
+  if (!po) return { created: 0, skipped: 'no_po' };
+
+  const items = Array.isArray(po.get('items')) ? po.get('items') : [];
+  const lines = items.filter(
+    (l) => l && (String(l.code || '').trim() || String(l.name || '').trim()),
+  );
+  if (!lines.length) return { created: 0, skipped: 'no_items' };
+
+  const poNo = po.get('order_id') || null;
+  const vendor = po.get('vendor_name') || null;
+  const poExpected = po.get('expected_shipment_date') || null;
+  // Connecting date == expected date: each GRN's expected_date is the line's connecting-date
+  // override when set, else the PO's expected shipment date.
+  const connMap = connectingMapFromFormData(po.get('form_data'));
+  const lineExpected = (l) =>
+    connMap[normConnKey(l.code)] ?? connMap[normConnKey(l.name)] ?? poExpected;
+
+  return db.transaction(async (t) => {
+    const totalQty = lines.reduce((s, l) => s + poLineQty(l), 0);
+    const sb = await createShipmentBatch({
+      body: { poId: id, poNo, vendor, vehicle: { expectedArrival: poExpected } },
+      totalQty,
+      lineCount: lines.length,
+      transaction: t,
+    });
+    for (const l of lines) {
+      await createGrnRow({
+        sb,
+        poId: id,
+        poNo,
+        vendor,
+        item: { code: l.code, name: l.name, type: l.type },
+        shippedQty: poLineQty(l),
+        expectedArrival: lineExpected(l),
+        poItems: lines,
+        transaction: t,
+      });
+    }
+    return { created: lines.length, sbId: sb.id };
+  });
+}
+
 /** POST /api/v1/grn/initiate-transit — §4A per-line (1 SB + 1 GRN). */
 async function initiateTransit(req, res) {
   const t = await db.transaction();
@@ -248,21 +373,70 @@ async function advanceGrnStage(req, res) {
     if (!STAGE_ORDER.includes(stage)) return res.status(400).json({ error: 'Invalid stage' });
     const grn = await GoodsReceivedNote.findByPk(id);
     if (!grn) return res.status(404).json({ error: 'GRN not found' });
-    const existingSteps = Array.isArray(grn.workflow_steps) ? grn.workflow_steps : [];
-    const actor = String((req.body || {}).actor || '').trim();
-    const steps = [...existingSteps, {
-      stage,
-      at: new Date().toISOString(),
-      ...(actor ? { actor } : {}),
-    }];
-    grn.stage = stage;
-    grn.status = stageToStatus(stage);
-    grn.workflow_steps = steps;
-    if (stage === 'grn_completed' && !grn.received_date) {
-      grn.received_date = new Date().toISOString().slice(0, 10);
+
+    const plain = grn.get ? grn.get({ plain: true }) : grn;
+    const prevStatus = String(plain.status || '').trim();
+
+    // C3: forward-only — a stage can advance or repeat, never regress below the current one.
+    const curStageIdx = STAGE_ORDER.indexOf(String(plain.stage || statusToStage(prevStatus)));
+    const nextStageIdx = STAGE_ORDER.indexOf(stage);
+    if (curStageIdx >= 0 && nextStageIdx < curStageIdx) {
+      return res.status(400).json({
+        error: `Cannot move GRN back from '${STAGE_ORDER[curStageIdx]}' to '${stage}'.`,
+      });
     }
-    await grn.save();
-    res.json(formatGrnLite(grn));
+
+    const actor = String((req.body || {}).actor || '').trim();
+    const steps = [
+      ...(Array.isArray(grn.workflow_steps) ? grn.workflow_steps : []),
+      { stage, at: new Date().toISOString(), ...(actor ? { actor } : {}) },
+    ];
+
+    const completing = stage === 'grn_completed' && prevStatus !== 'GRN Complete';
+    if (completing) {
+      // C3: this endpoint previously marked a GRN Complete WITHOUT booking inventory and
+      // WITHOUT the completion gates. Now it enforces the same gates as PUT /grn/:id and
+      // books stock through the one canonical inventory path (in a transaction).
+      const {
+        grnCompletionBlockers,
+        applyGrnCompletionToInventory,
+        stampPoTrackingForGrn,
+      } = require('./controller');
+      const blockers = grnCompletionBlockers(plain);
+      if (blockers.length > 0) {
+        return res.status(400).json({ error: `Cannot mark GRN Complete: ${blockers.join('; ')}.` });
+      }
+      await db.transaction(async (transaction) => {
+        grn.stage = stage;
+        grn.status = stageToStatus(stage);
+        grn.workflow_steps = steps;
+        if (!grn.received_date) grn.received_date = new Date().toISOString().slice(0, 10);
+        await grn.save({ transaction });
+        const refreshed = await GoodsReceivedNote.findByPk(id, { transaction });
+        await applyGrnCompletionToInventory(refreshed, { transaction });
+      });
+      await stampPoTrackingForGrn(await GoodsReceivedNote.findByPk(id));
+      try {
+        const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
+        await syncWarehouseInTransitAll();
+      } catch (e) {
+        console.warn('[grn] syncWarehouseInTransitAll after stage-complete failed:', e && e.message ? e.message : e);
+      }
+    } else {
+      grn.stage = stage;
+      grn.status = stageToStatus(stage);
+      grn.workflow_steps = steps;
+      if (stage === 'grn_completed' && !grn.received_date) {
+        grn.received_date = new Date().toISOString().slice(0, 10);
+      }
+      await grn.save();
+      // C8: a non-completing stage may move the GRN to 'Under GRN' — stamp po_tracking.
+      const { stampPoTrackingForGrn } = require('./controller');
+      await stampPoTrackingForGrn(grn);
+    }
+
+    const fresh = await GoodsReceivedNote.findByPk(id);
+    res.json(formatGrnLite(fresh));
   } catch (err) {
     console.error('advanceGrnStage error', err);
     res.status(500).json({ error: 'Failed to advance GRN stage' });
@@ -325,4 +499,4 @@ async function listGrnTracker(req, res) {
   }
 }
 
-module.exports = { initiateTransit, consolidatedShipment, getShipmentBatch, advanceGrnStage, listGrnTracker, STAGE_ORDER };
+module.exports = { initiateTransit, consolidatedShipment, getShipmentBatch, advanceGrnStage, listGrnTracker, autoCreateInTransitGrnForShippedPo, syncGrnExpectedDatesForPo, STAGE_ORDER };

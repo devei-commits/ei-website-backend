@@ -109,9 +109,20 @@ function computePoAmountFromItems(items) {
   let total = 0;
   for (const raw of items) {
     const ln = raw || {};
-    const qty = Number(ln.quantity ?? ln.qty ?? 0) || 0;
-    const rate = Number(ln.rate ?? ln.pricePerUnit ?? ln.unitPrice ?? 0) || 0;
-    const taxPct = Number(ln.tax ?? ln.gstPercent ?? 0) || 0;
+    // H10: prefer an explicit per-line total when the line carries one (PO item shapes vary),
+    // else compute from qty×rate(+tax) across all the key aliases used across the codebase.
+    const explicit = Number(
+      ln.lineTotal ?? ln.line_total ?? ln.totalValue ?? ln.total_value ?? ln.amount ?? ln.total ?? NaN
+    );
+    if (Number.isFinite(explicit) && explicit > 0) {
+      total += explicit;
+      continue;
+    }
+    const qty = Number(ln.quantity ?? ln.qty ?? ln.quantity_requested ?? ln.qtyOrdered ?? 0) || 0;
+    const rate = Number(
+      ln.rate ?? ln.pricePerUnit ?? ln.price_per_unit ?? ln.unitPrice ?? ln.unit_price ?? ln.price ?? 0
+    ) || 0;
+    const taxPct = Number(ln.tax ?? ln.gstPercent ?? ln.gst_percent ?? ln.gst ?? 0) || 0;
     const sub = qty * rate;
     total += sub + sub * (taxPct / 100);
   }

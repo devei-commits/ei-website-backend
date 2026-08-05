@@ -53,18 +53,11 @@ const dotenv = require('dotenv');
 const cors = require('cors');
 dotenv.config();
 
-require('./src/leadTime/leadTimeStatModel'); // §10 lead-time stats cache — table auto-syncs
-const { ensureLeadTimeStatsTable } = require('./src/leadTime/ensureLeadTimeStatsTable');
-const { ensurePurchaseOrderWorkflowColumns } = require('./src/purchaseOrders/ensurePurchaseOrderWorkflowColumns');
-const { ensureProcurementRequestColumns } = require('./src/procurementRequests/ensureProcurementRequestColumns');
-const { ensureQuotationAskColumns } = require('./src/planningQuotationAsks/ensureQuotationAskColumns');
-const { ensureGrnMrnIdColumn } = require('./src/grn/transferGrnFromMrn');
-const { ensureWarehousePacksTable } = require('./src/warehousePacks/ensureWarehousePacksTable');
-const { ensureQualitySpecRulesTable } = require('./src/qualitySpecRules/ensureQualitySpecRulesTable');
-const { ensureTechnicalSpecRulesTable } = require('./src/technicalSpecRules/ensureTechnicalSpecRulesTable');
-const { ensureBomIsKitColumn } = require('./src/bom/ensureBomIsKitColumn');
-const { ensureProductionBatchColumns } = require('./src/production/ensureProductionBatchColumns');
-const { ensureUniversalSwapColumns } = require('./src/universalSwap/ensureUniversalSwapColumns');
+require('./src/leadTime/leadTimeStatModel'); // §10 lead-time stats cache
+// Schema is patch-driven: all prior `ensure*` column/table patches are already applied to
+// the live DB and have been removed. The only remaining boot schema step is a one-time
+// cleanup of the duplicate UNIQUE constraints that db.sync({alter}) accumulated.
+const { dropDuplicateConstraints } = require('./src/db/dropDuplicateConstraints');
 const warehousePacksRouters = require('./src/warehousePacks/routers');
 require('./src/customizationPackaging/models');
 const customizationPackagingAdminRouter = require('./src/customizationPackaging/routers');
@@ -254,39 +247,16 @@ if (process.env.NODE_ENV !== 'test') {
             if (skipDbBootstrap) {
                 console.log('[startup] SKIP_DB_BOOTSTRAP=true — skipping sync and seeders (read/serve only).');
             } else if (!isManagedProductionDatabase()) {
-                if (shouldRunSyncAlter()) {
-                    await db.sync({ alter: true });
-                }
+                // Schema is patch-driven now (no db.sync alter; prior ensure* patches removed —
+                // all already applied to the live DB). Data seeders + the one-time dup-constraint
+                // cleanup remain.
                 await ensureCustomizationPackagingPresets();
                 await seedQuotationDefaults();
                 await ensureTreasuryDefaults();
-                await ensureLeadTimeStatsTable();
-                await ensurePurchaseOrderWorkflowColumns();
-                await ensureProcurementRequestColumns();
-                await ensureQuotationAskColumns();
-                await ensureGrnMrnIdColumn();
-                await ensureWarehousePacksTable();
-                await ensureQualitySpecRulesTable();
-                await ensureTechnicalSpecRulesTable();
-                await ensureBomIsKitColumn();
-                await ensureProductionBatchColumns();
-                await ensureUniversalSwapColumns();
+                await dropDuplicateConstraints();
             } else {
                 await ensureTreasuryDefaults();
-                // Managed prod skips db.sync — ensure the §10 lead-time cache table, PO approval/
-                // exception/RTV + po_tracking columns (Sub-flow E/F/I), and the newer procurement_request
-                // columns exist here too, else those read/action paths 409 or 500 on 42703.
-                await ensureLeadTimeStatsTable();
-                await ensurePurchaseOrderWorkflowColumns();
-                await ensureProcurementRequestColumns();
-                await ensureQuotationAskColumns();
-                await ensureGrnMrnIdColumn();
-                await ensureWarehousePacksTable();
-                await ensureQualitySpecRulesTable();
-                await ensureTechnicalSpecRulesTable();
-                await ensureBomIsKitColumn();
-                await ensureProductionBatchColumns();
-                await ensureUniversalSwapColumns();
+                await dropDuplicateConstraints();
             }
             app.listen(port, '0.0.0.0', () => {
                 console.log(`Server is running on port ${port}`);

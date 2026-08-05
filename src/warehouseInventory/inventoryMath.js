@@ -27,9 +27,11 @@ function computeStockInHand(wh, ml1, ml2) {
  */
 async function recalculateInventoryForItem(warehouseInventoryId, opts = {}) {
   const transaction = opts.transaction;
+  // Row-lock the aggregate row while recomputing so concurrent GRN/MRN writes on the
+  // same item serialize instead of racing (lost-update fix). Lock only inside a txn.
   const inv = await WarehouseInventory.findByPk(
     warehouseInventoryId,
-    transaction ? { transaction } : {}
+    transaction ? { transaction, lock: true } : {}
   );
   if (!inv) return null;
 
@@ -105,9 +107,11 @@ async function applyDeltaToRack(warehouseInventoryId, rackId, deltaQty, opts = {
     throw new Error(`Rack not found for id=${rackId}`);
   }
 
+  // Row-lock the rack-item so a concurrent delta on the same rack can't read a stale
+  // qty_wh and overwrite our increment (classic lost update on two concurrent GRNs).
   let rackItem = await WarehouseRackItem.findOne({
     where: { rack_id: rackId, warehouse_inventory_id: warehouseInventoryId },
-    ...(transaction ? { transaction } : {}),
+    ...(transaction ? { transaction, lock: true } : {}),
   });
 
   if (!rackItem) {

@@ -4,7 +4,6 @@
 const { Op } = require('sequelize');
 const db = require('../../db');
 const WarehousePack = require('./models');
-const { ensureWarehousePacksTable } = require('./ensureWarehousePacksTable');
 
 const SPLIT_EPSILON = 1e-6;
 
@@ -98,7 +97,6 @@ function intOrNull(v) {
  */
 async function listAvailable(req, res) {
   try {
-    await ensureWarehousePacksTable();
     const rm = intOrNull(req.query.rawMaterialId);
     const pm = intOrNull(req.query.packMaterialId);
     const pr = intOrNull(req.query.productId);
@@ -158,7 +156,6 @@ async function listAvailable(req, res) {
  */
 async function materializeRackStock(req, res) {
   try {
-    await ensureWarehousePacksTable();
     const body = req.body || {};
     const rm = intOrNull(body.rawMaterialId);
     const pm = intOrNull(body.packMaterialId);
@@ -244,7 +241,6 @@ async function materializeRackStock(req, res) {
  */
 async function splitPack(req, res) {
   try {
-    await ensureWarehousePacksTable();
     const id = intOrNull(req.params.id);
     if (id == null) return res.status(400).json({ error: 'Invalid pack id' });
     const qtys = Array.isArray(req.body && req.body.qtys)
