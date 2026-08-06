@@ -529,6 +529,14 @@ async function syncWarehouseReserved(affectedRmIds, affectedPmIds) {
 }
 
 /**
+ * Master switch for AUTOMATIC planning reservations (BOM-confirm / batch-rebuild). Turned OFF:
+ * planning stock is reserved only manually via the Batches RM/PM Status popups. Flip to true to
+ * restore the old auto-reserve behavior. Manual reservations (is_manual, planning_batch_id) are
+ * unaffected either way.
+ */
+const AUTO_PLANNING_RESERVATION_ENABLED = false;
+
+/**
  * Rebuild reserved_batch_items for this planning row from current planning_batches BOM/size.
  * This keeps warehouse reserved quantities in sync with "planned qty" after batch generation/edits.
  */
@@ -542,8 +550,17 @@ async function refreshReservationsFromPlanningBatches(planningExtractedId, planR
   });
   const batchPlain = batches.map((b) => (b.get ? b.get({ plain: true }) : b));
 
+  // Auto rows only: NEVER touch manual per-batch reservations (is_manual=true, planning_batch_id set)
+  // — "manual wins". A manual row has production_batch_id null too, so it would match the old WHERE.
+  const autoRowsWhere = {
+    planning_extracted_id: planningExtractedId,
+    production_batch_id: null,
+    fulfillment_order_item_id: null,
+    planning_batch_id: null,
+    is_manual: { [Op.not]: true },
+  };
   const oldRows = await ReservedBatchItem.findAll({
-    where: { planning_extracted_id: planningExtractedId, production_batch_id: null, fulfillment_order_item_id: null },
+    where: autoRowsWhere,
     attributes: ['raw_material_id', 'pack_material_id'],
   });
   const affectedRmIds = new Set();
@@ -553,9 +570,19 @@ async function refreshReservationsFromPlanningBatches(planningExtractedId, planR
     if (r.pack_material_id != null) affectedPmIds.add(Number(r.pack_material_id));
   }
 
-  await ReservedBatchItem.destroy({
-    where: { planning_extracted_id: planningExtractedId, production_batch_id: null, fulfillment_order_item_id: null },
+  await ReservedBatchItem.destroy({ where: autoRowsWhere });
+
+  // Manual per-batch reservations to exclude from the auto aggregate (already covered by their
+  // own manual rows) — keyed `${planning_batch_id}:${kind}:${materialId}`.
+  const manualRows = await ReservedBatchItem.findAll({
+    where: { planning_extracted_id: planningExtractedId, planning_batch_id: { [Op.ne]: null }, is_manual: true },
+    attributes: ['planning_batch_id', 'raw_material_id', 'pack_material_id'],
   });
+  const manualSkip = new Set();
+  for (const r of manualRows) {
+    if (r.raw_material_id != null) manualSkip.add(`${Number(r.planning_batch_id)}:rm:${Number(r.raw_material_id)}`);
+    if (r.pack_material_id != null) manualSkip.add(`${Number(r.planning_batch_id)}:pm:${Number(r.pack_material_id)}`);
+  }
 
   const rms = await RawMaterial.findAll({ attributes: ['id', 'code', 'name'] });
   const pms = await PackMaterial.findAll({ attributes: ['id', 'code', 'description'] });
@@ -576,7 +603,19 @@ async function refreshReservationsFromPlanningBatches(planningExtractedId, planR
   const plannedPm = new Map();
   if (batchPlain.length > 0) {
     for (const bp of batchPlain) {
-      accumulatePlannedBatchIntoQtyMaps(bp, planPlain, rmByCode, rmByName, pmByCode, pmByName, plannedRm, plannedPm);
+      // Accumulate this batch on its own so we can drop lines the user reserved manually,
+      // then merge the remainder into the PI-level auto totals.
+      const batchRm = new Map();
+      const batchPm = new Map();
+      accumulatePlannedBatchIntoQtyMaps(bp, planPlain, rmByCode, rmByName, pmByCode, pmByName, batchRm, batchPm);
+      for (const [id, q] of batchRm) {
+        if (manualSkip.has(`${Number(bp.id)}:rm:${Number(id)}`)) continue;
+        plannedRm.set(id, (plannedRm.get(id) || 0) + q);
+      }
+      for (const [id, q] of batchPm) {
+        if (manualSkip.has(`${Number(bp.id)}:pm:${Number(id)}`)) continue;
+        plannedPm.set(id, (plannedPm.get(id) || 0) + q);
+      }
     }
   } else {
     // Fresh release-to-planning: before any batch split exists, use PI-level material snapshot.
@@ -614,27 +653,33 @@ async function refreshReservationsFromPlanningBatches(planningExtractedId, planR
     }
   }
 
-  for (const [rmId, qty] of plannedRm.entries()) {
-    if (!(Number(qty) > RESERVE_EPS_KG)) continue;
-    await ReservedBatchItem.create({
-      planning_extracted_id: planningExtractedId,
-      raw_material_id: rmId,
-      pack_material_id: null,
-      quantity_reserved: qty,
-      unit: 'KG',
-    });
-    affectedRmIds.add(Number(rmId));
-  }
-  for (const [pmId, qty] of plannedPm.entries()) {
-    if (!(Number(qty) > RESERVE_EPS_PCS)) continue;
-    await ReservedBatchItem.create({
-      planning_extracted_id: planningExtractedId,
-      raw_material_id: null,
-      pack_material_id: pmId,
-      quantity_reserved: qty,
-      unit: 'PCS',
-    });
-    affectedPmIds.add(Number(pmId));
+  // AUTO RESERVATION DISABLED: the app no longer auto-reserves planning stock — reservations are
+  // made only by hand from the Batches RM/PM Status popups (planning_batch_id + is_manual rows).
+  // We still ran the cleanup above (destroying legacy auto rows) and resync below, so any pre-existing
+  // auto reservations drain out and warehouse_inventory.reserved reflects manual + production only.
+  if (AUTO_PLANNING_RESERVATION_ENABLED) {
+    for (const [rmId, qty] of plannedRm.entries()) {
+      if (!(Number(qty) > RESERVE_EPS_KG)) continue;
+      await ReservedBatchItem.create({
+        planning_extracted_id: planningExtractedId,
+        raw_material_id: rmId,
+        pack_material_id: null,
+        quantity_reserved: qty,
+        unit: 'KG',
+      });
+      affectedRmIds.add(Number(rmId));
+    }
+    for (const [pmId, qty] of plannedPm.entries()) {
+      if (!(Number(qty) > RESERVE_EPS_PCS)) continue;
+      await ReservedBatchItem.create({
+        planning_extracted_id: planningExtractedId,
+        raw_material_id: null,
+        pack_material_id: pmId,
+        quantity_reserved: qty,
+        unit: 'PCS',
+      });
+      affectedPmIds.add(Number(pmId));
+    }
   }
   await syncWarehouseReserved([...affectedRmIds], [...affectedPmIds]);
 }
@@ -643,6 +688,8 @@ async function refreshReservationsFromPlanningBatches(planningExtractedId, planR
  * Reserve stock for a planning extracted row when BOM is confirmed.
  * Uses raw_materials and packaging_materials on the row (with quantities); resolves RM/PM by id or code.
  */
+// NOTE: reserveStockForPlanningExtracted is currently UNWIRED (no caller in the app) — the only
+// live auto path was refreshReservationsFromPlanningBatches, now gated by AUTO_PLANNING_RESERVATION_ENABLED.
 async function reserveStockForPlanningExtracted(planningExtractedId, planRow) {
   const plain = planRow.get ? planRow.get({ plain: true }) : planRow;
   const rawMaterials = Array.isArray(plain.raw_materials) ? plain.raw_materials : [];
@@ -871,44 +918,30 @@ async function syncPlanningExtractedFromSalesOrders() {
     for (const item of items) {
       let productId = item.product_id || item.productId;
       // Preferred fallback for Excel-imported SO lines: resolve by SKU.
+      // Case/whitespace-insensitive exact match: lower(btrim(column)) = lower(trimmed input).
+      // Excel/Zoho-exported SKUs & names routinely differ only by case or stray spaces — a strict
+      // equality match dropped those lines, so the SO never became a PI.
+      const ciEq = (column, value) =>
+        db.where(db.fn('lower', db.fn('btrim', db.col(column))), String(value).trim().toLowerCase());
+      const resolveProductIdBy = async (column, value) => {
+        const v = String(value ?? '').trim();
+        if (!v) return null;
+        const p = await Product.findOne({ where: ciEq(column, v), attributes: ['product_id'] });
+        if (!p) return null;
+        const plain = p.get ? p.get({ plain: true }) : p;
+        return plain.product_id;
+      };
+      // Preferred fallback for Excel-imported SO lines: resolve by SKU.
       if (!productId && item.sku) {
-        const sku = String(item.sku).trim();
-        if (sku) {
-          const prodBySku = await Product.findOne({
-            where: { zoho_sku_code: sku },
-            attributes: ['product_id'],
-          });
-          if (prodBySku) {
-            const plainProd = prodBySku.get ? prodBySku.get({ plain: true }) : prodBySku;
-            productId = plainProd.product_id;
-          }
-        }
+        productId = await resolveProductIdBy('zoho_sku_code', item.sku);
       }
-      // Fallback: resolve by product_code / productCode when product_id missing
+      // Fallback: resolve by product_code / productCode when product_id missing.
       if (!productId && (item.product_code || item.productCode)) {
-        const code = item.product_code || item.productCode;
-        const prodByCode = await Product.findOne({
-          where: { product_code: code },
-          attributes: ['product_id'],
-        });
-        if (prodByCode) {
-          const plainProd = prodByCode.get ? prodByCode.get({ plain: true }) : prodByCode;
-          productId = plainProd.product_id;
-        }
+        productId = await resolveProductIdBy('product_code', item.product_code || item.productCode);
       }
       // Last fallback: resolve by product display name from imported line.
       if (!productId && (item.productName || item.name)) {
-        const productName = String(item.productName || item.name).trim();
-        if (productName) {
-          const prodByName = await Product.findOne({
-            where: { product_name: productName },
-            attributes: ['product_id'],
-          });
-          if (prodByName) {
-            const plainProd = prodByName.get ? prodByName.get({ plain: true }) : prodByName;
-            productId = plainProd.product_id;
-          }
-        }
+        productId = await resolveProductIdBy('product_name', item.productName || item.name);
       }
       if (!productId) continue;
 
@@ -3367,6 +3400,106 @@ async function getItemsInvolvedByPlanningId(req, res) {
   }
 }
 
+// ── Planning "Batches" RM/PM popup: per-batch manual reserve / un-reserve ──────────────────
+function reserveHttpError(res, err, fallback) {
+  const code = err && err.statusCode ? err.statusCode : 500;
+  if (code !== 500) {
+    return res.status(code).json({ error: err.message, ...(err.reserveShortages ? { shortages: err.reserveShortages } : {}) });
+  }
+  console.error(fallback, err);
+  return res.status(500).json({ error: fallback });
+}
+
+/** POST /planning-extracted/batches/:planningBatchId/reserve-lines  { kind:'rm'|'pm', codes?:string[] } */
+async function reservePlanningBatchLinesHandler(req, res) {
+  try {
+    const planningBatchId = parseInt(req.params.planningBatchId, 10);
+    if (Number.isNaN(planningBatchId)) return res.status(400).json({ error: 'Invalid planning batch id' });
+    const kind = String((req.body && req.body.kind) || '').toLowerCase() === 'pm' ? 'pm' : 'rm';
+    const codes = Array.isArray(req.body && req.body.codes) ? req.body.codes : null;
+    const { reservePlanningBatchLines } = require('./planningBatchLineReserve');
+    const result = await reservePlanningBatchLines(planningBatchId, kind, codes);
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    return reserveHttpError(res, err, 'Failed to reserve planning batch lines');
+  }
+}
+
+/** POST /planning-extracted/batches/:planningBatchId/unreserve-lines  { kind:'rm'|'pm', codes:string[] } */
+async function unreservePlanningBatchLinesHandler(req, res) {
+  try {
+    const planningBatchId = parseInt(req.params.planningBatchId, 10);
+    if (Number.isNaN(planningBatchId)) return res.status(400).json({ error: 'Invalid planning batch id' });
+    const kind = String((req.body && req.body.kind) || '').toLowerCase() === 'pm' ? 'pm' : 'rm';
+    const codes = Array.isArray(req.body && req.body.codes) ? req.body.codes : null;
+    const { unreservePlanningBatchLines } = require('./planningBatchLineReserve');
+    const result = await unreservePlanningBatchLines(planningBatchId, kind, codes);
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    return reserveHttpError(res, err, 'Failed to un-reserve planning batch lines');
+  }
+}
+
+/**
+ * GET /planning-extracted/batches/reserved-counts → { [planningBatchId]: { rm, pm } }
+ * Distinct manually-reserved RM/PM item counts per planning batch (drives the RM/PM Status cells).
+ */
+async function getPlanningBatchesReservedCountsHandler(req, res) {
+  try {
+    const SELECT = db.QueryTypes ? db.QueryTypes.SELECT : require('sequelize').QueryTypes.SELECT;
+    // Not-yet-sent batches: reservations keyed by planning_batch_id (manual).
+    const planRows = await db.query(
+      `SELECT planning_batch_id AS pbid,
+              COUNT(DISTINCT raw_material_id) FILTER (WHERE raw_material_id IS NOT NULL) AS rm,
+              COUNT(DISTINCT pack_material_id) FILTER (WHERE pack_material_id IS NOT NULL) AS pm
+         FROM reserved_batch_items
+        WHERE planning_batch_id IS NOT NULL
+          AND is_manual = true
+          AND (lifecycle_status = 'active' OR lifecycle_status IS NULL)
+          AND deleted_at IS NULL
+        GROUP BY planning_batch_id`,
+      { type: SELECT },
+    );
+    // Sent batches: reservations handed off to the production batch — map back via planning_batch_id.
+    const prodRows = await db.query(
+      `SELECT pb.planning_batch_id AS pbid,
+              COUNT(DISTINCT rbi.raw_material_id) FILTER (WHERE rbi.raw_material_id IS NOT NULL) AS rm,
+              COUNT(DISTINCT rbi.pack_material_id) FILTER (WHERE rbi.pack_material_id IS NOT NULL) AS pm
+         FROM reserved_batch_items rbi
+         JOIN production_batches pb ON pb.id = rbi.production_batch_id
+        WHERE rbi.production_batch_id IS NOT NULL
+          AND pb.planning_batch_id IS NOT NULL
+          AND (rbi.lifecycle_status = 'active' OR rbi.lifecycle_status IS NULL)
+          AND rbi.deleted_at IS NULL
+        GROUP BY pb.planning_batch_id`,
+      { type: SELECT },
+    );
+    const out = {};
+    for (const r of [...planRows, ...prodRows]) {
+      const key = String(r.pbid);
+      const prev = out[key] || { rm: 0, pm: 0 };
+      out[key] = { rm: prev.rm + (Number(r.rm) || 0), pm: prev.pm + (Number(r.pm) || 0) };
+    }
+    return res.json(out);
+  } catch (err) {
+    console.error('getPlanningBatchesReservedCounts error', err);
+    return res.status(500).json({ error: 'Failed to load reserved counts' });
+  }
+}
+
+/** GET /planning-extracted/batches/:planningBatchId/reservation-coverage → { rm, pm } */
+async function getPlanningBatchCoverageHandler(req, res) {
+  try {
+    const planningBatchId = parseInt(req.params.planningBatchId, 10);
+    if (Number.isNaN(planningBatchId)) return res.status(400).json({ error: 'Invalid planning batch id' });
+    const { computePlanningBatchCoverage } = require('./planningBatchLineReserve');
+    const coverage = await computePlanningBatchCoverage(planningBatchId);
+    return res.json(coverage);
+  } catch (err) {
+    return reserveHttpError(res, err, 'Failed to load planning batch reservation coverage');
+  }
+}
+
 module.exports = {
   syncPlanningExtractedFromSalesOrders,
   listPlanningExtracted,
@@ -3391,4 +3524,9 @@ module.exports = {
   syncWarehouseReserved,
   reserveStockForPlanningExtracted,
   releaseStockForPlanningExtracted,
+  accumulatePlannedBatchIntoQtyMaps,
+  reservePlanningBatchLinesHandler,
+  unreservePlanningBatchLinesHandler,
+  getPlanningBatchCoverageHandler,
+  getPlanningBatchesReservedCountsHandler,
 };

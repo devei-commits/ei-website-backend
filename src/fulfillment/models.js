@@ -297,6 +297,17 @@ ReservedBatchItem.init(
       references: { model: 'planning_extracted', key: 'id' },
       onDelete: 'CASCADE',
     },
+    // Ties a reservation to ONE specific planning batch (Planning "Batches" RM/PM popup
+    // reserve/un-reserve). Null for the PI-level auto rows and for production/SO reservations.
+    planning_batch_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: 'planning_batches', key: 'id' },
+      onDelete: 'CASCADE',
+    },
+    // True when a user reserved/un-reserved this line by hand — the PI-level auto rebuild
+    // (refreshReservationsFromPlanningBatches) leaves these rows untouched ("manual wins").
+    is_manual: { type: DataTypes.BOOLEAN, allowNull: true, defaultValue: false },
     raw_material_id: {
       type: DataTypes.INTEGER,
       allowNull: true,

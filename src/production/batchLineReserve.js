@@ -35,14 +35,11 @@ async function sumReservedQtyOtherBatches(productionBatchId, kind, materialId) {
   const bid = Number(productionBatchId);
   const mid = Number(materialId);
   if (!Number.isFinite(bid) || bid <= 0 || !Number.isFinite(mid) || mid <= 0) return 0;
-  const where = {
-    production_batch_id: { [Op.ne]: bid },
-    ...(kind === 'rm'
-      ? { raw_material_id: mid, pack_material_id: null }
-      : { pack_material_id: mid, raw_material_id: null }),
-  };
-  const sum = await ReservedBatchItem.sum('quantity_reserved', { where });
-  return sum != null ? Number(sum) : 0;
+  // Shared pool: everyone else's reservation = total for the material − this production batch's own.
+  // Counts Planning-batch and SO reservations too (the old query silently ignored them because a
+  // NULL production_batch_id fails `!= bid`), so Production no longer over-allocates Planning-held stock.
+  const { sumReservedOther } = require('../lib/reservedStockPool');
+  return sumReservedOther(kind, mid, { productionBatchId: bid });
 }
 
 async function assertExclusiveBatchReserveAvailability(batchId, rmQuantities, pmQuantities) {

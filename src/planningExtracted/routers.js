@@ -18,6 +18,10 @@ const {
   updateBatch,
   getItemsInvolved,
   getItemsInvolvedByPlanningId,
+  reservePlanningBatchLinesHandler,
+  unreservePlanningBatchLinesHandler,
+  getPlanningBatchCoverageHandler,
+  getPlanningBatchesReservedCountsHandler,
 } = require('./controller');
 const { createCacheReadMiddleware } = require('../cache/cacheReadMiddleware');
 
@@ -28,6 +32,11 @@ const cachePlanningExtractedList = createCacheReadMiddleware({ namespace: 'plann
 router.get('/', guard, cachePlanningExtractedList, listPlanningExtracted);
 router.get('/batches/all', guard, listAllBatches);
 router.get('/sent-summary', guard, getSentBatchSummary);
+// Per-planning-batch manual reserve / un-reserve (RM/PM Status popups).
+router.get('/batches/reserved-counts', guard, getPlanningBatchesReservedCountsHandler);
+router.get('/batches/:planningBatchId/reservation-coverage', guard, getPlanningBatchCoverageHandler);
+router.post('/batches/:planningBatchId/reserve-lines', guard, reservePlanningBatchLinesHandler);
+router.post('/batches/:planningBatchId/unreserve-lines', guard, unreservePlanningBatchLinesHandler);
 const cachePlanningExtractedOne = createCacheReadMiddleware({ namespace: 'planning-extracted', ttlSeconds: 300 });
 const cachePlanningItemsInvolved = createCacheReadMiddleware({ namespace: 'planning-extracted', ttlSeconds: 120 });
 

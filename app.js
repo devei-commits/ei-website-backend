@@ -58,6 +58,7 @@ require('./src/leadTime/leadTimeStatModel'); // §10 lead-time stats cache
 // the live DB and have been removed. The only remaining boot schema step is a one-time
 // cleanup of the duplicate UNIQUE constraints that db.sync({alter}) accumulated.
 const { dropDuplicateConstraints } = require('./src/db/dropDuplicateConstraints');
+const { ensureReservedBatchItemPlanningColumns } = require('./src/db/ensureReservedBatchItemPlanningColumns');
 const warehousePacksRouters = require('./src/warehousePacks/routers');
 require('./src/customizationPackaging/models');
 const customizationPackagingAdminRouter = require('./src/customizationPackaging/routers');
@@ -254,9 +255,11 @@ if (process.env.NODE_ENV !== 'test') {
                 await seedQuotationDefaults();
                 await ensureTreasuryDefaults();
                 await dropDuplicateConstraints();
+                await ensureReservedBatchItemPlanningColumns();
             } else {
                 await ensureTreasuryDefaults();
                 await dropDuplicateConstraints();
+                await ensureReservedBatchItemPlanningColumns();
             }
             app.listen(port, '0.0.0.0', () => {
                 console.log(`Server is running on port ${port}`);

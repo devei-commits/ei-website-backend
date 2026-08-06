@@ -612,6 +612,26 @@ async function syncBatchesFromPlanning(req, res) {
       }
     }
 
+    // Hand off manual Planning reservations to their production batch: a reservation made in the
+    // Planning RM/PM popup (keyed planning_batch_id, is_manual) becomes a Production-batch
+    // reservation once that batch is sent, so Production owns it. Re-keying keeps the same qty, so
+    // warehouse_inventory.reserved is unchanged. Idempotent (planning_batch_id cleared after move).
+    try {
+      const linkedForHandoff = await ProductionBatch.findAll({
+        where: { planning_batch_id: { [Op.ne]: null } },
+        attributes: ['id', 'planning_batch_id'],
+      });
+      for (const pb of linkedForHandoff) {
+        const d = pb.get ? pb.get({ plain: true }) : pb;
+        await ReservedBatchItem.update(
+          { production_batch_id: d.id, planning_batch_id: null },
+          { where: { planning_batch_id: d.planning_batch_id, production_batch_id: null, is_manual: true } },
+        );
+      }
+    } catch (e) {
+      console.warn('[production] planning→production reservation handoff failed:', e && e.message ? e.message : e);
+    }
+
     res.json({ success: true, created, repaired, scheduleSeeded });
   } catch (err) {
     console.error('syncBatchesFromPlanning error', err);
@@ -3686,6 +3706,8 @@ module.exports = {
   applyRmReservedToInventory,
   applyPmReservedToInventory,
   applyBprFgReadyToInventory,
+  /** Exported so Planning's per-batch reserve can delegate to the production batch once sent. */
+  getBomLinesForBatch,
   /** @internal exported for integration tests */
   applyDispensingDeltaToWarehouseInventory,
 };
