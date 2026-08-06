@@ -822,7 +822,35 @@ async function syncPlanningExtractedFromSalesOrders() {
     // Draft / Cancelled SOs must not appear in Planning. Skip creation and soft-delete any planning
     // rows created while the SO was live (this runs on every list read, so it self-heals on status change).
     if (isPlanningExcludedSoStatus(so.status)) {
+      // Capture the planning rows BEFORE they are soft-deleted so their stock holds can be released.
+      // reserved_batch_items cascades on hard delete only; these rows are merely soft-deleted, so
+      // without an explicit release the reservation outlives its owner and locks warehouse stock
+      // forever — the cancelled SO disappears from Planning while its material stays reserved.
+      const planRowsToRelease = await PlanningExtracted.findAll({
+        where: { sales_order_id: so.id },
+        attributes: ['id'],
+      });
+      const planIdsToRelease = planRowsToRelease.map((p) => (p.get ? p.get('id') : p.id));
+
       await softDeleteWhere(PlanningExtracted, { sales_order_id: so.id });
+
+      // Only touch plans that actually hold stock: this runs on every Planning list read, and
+      // releaseStockForPlanningExtracted triggers a full in-transit resync, so a blanket call per
+      // excluded SO would be very expensive. In steady state this grouped query returns nothing.
+      if (planIdsToRelease.length > 0) {
+        const heldRows = await ReservedBatchItem.findAll({
+          where: { planning_extracted_id: { [Op.in]: planIdsToRelease } },
+          attributes: ['planning_extracted_id'],
+          group: ['planning_extracted_id'],
+        });
+        for (const heldRow of heldRows) {
+          const heldPlanId = heldRow.get ? heldRow.get('planning_extracted_id') : heldRow.planning_extracted_id;
+          await releaseStockForPlanningExtracted(heldPlanId);
+          console.warn(
+            `[planningExtracted] SO ${so.order_id || so.id} ${so.status} — released reserved stock for planning row ${heldPlanId}.`
+          );
+        }
+      }
       // A terminally-cancelled SO must carry no batches: permanently delete every planning_batches row
       // for its planning rows (approved behaviour: delete all regardless of production-sent state). This
       // also drops the SO's requirement out of Items Involved (getItemsInvolved excludes soft-deleted PIs).

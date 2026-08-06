@@ -510,7 +510,11 @@ async function syncBatchesFromPlanning(req, res) {
 
         const pbPlain = planningBatch.get ? planningBatch.get({ plain: true }) : planningBatch;
         const sizeKg = pbPlain.size_kg != null ? Number(pbPlain.size_kg) : null;
-        const orderQty = parseInt(String(plan.order_qty_display || '0').replace(/\D/g, ''), 10) || 0;
+        // Keep the decimal point: stripping every non-digit turns "154.3999999999996 units" into
+        // 1543999999999996, which overflows order_qty (INTEGER) and aborts the whole sync loop.
+        const orderQty = Math.max(0, Math.round(
+          parseFloat(String(plan.order_qty_display || '0').replace(/[^\d.]/g, '')) || 0
+        ));
         const batchCount = Number(plan.batch_count) || Number(plan.batches_required) || 1;
 
         const existing = await ProductionBatch.findAll({
