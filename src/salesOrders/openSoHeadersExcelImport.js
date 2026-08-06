@@ -1412,7 +1412,6 @@ async function executeOpenSoHeadersImportRows(importRows, opts = {}) {
     try {
       let payload = { ...entry.payload };
       await enrichPayloadWithClient(payload, createdBy);
-      payload.items = await enrichPayloadItemsWithProductIds(payload.items);
 
       const isFlatImport = payload.form_data?.source === 'excel_sales_order';
 
@@ -1459,6 +1458,10 @@ async function executeOpenSoHeadersImportRows(importRows, opts = {}) {
       if (Array.isArray(importedItems) && importedItems.length > 0) {
         payload.items = importedItems;
       }
+      // Attach product_id to the FINAL line items (after the legacy "Open SO Lines" merge above).
+      // Previously enrichment ran before this merge on an empty array, so legacy-format SOs persisted
+      // items with no product_id → planning extraction couldn't resolve them → SO never became a PI.
+      payload.items = await enrichPayloadItemsWithProductIds(payload.items);
 
       if (existing) {
         const prevFd = existing.get('form_data');
@@ -1479,39 +1482,23 @@ async function executeOpenSoHeadersImportRows(importRows, opts = {}) {
               ? existing.items
               : [];
 
-        if (isFlatImport) {
-          const updatePayload = {
-            customer_name: payload.customer_name ?? existing.customer_name,
-            order_date: payload.order_date ?? existing.order_date,
-            expected_shipment_date:
-              payload.expected_shipment_date ?? existing.expected_shipment_date,
-            reference: payload.reference ?? existing.reference,
-            payment_terms: payload.payment_terms ?? existing.payment_terms,
-            status: payload.status ?? existing.status,
-            order_status: mergedOs,
-            form_data: mergedFd,
-            items: mergedItems,
-            created_by: existing.created_by || createdBy,
-          };
-          await updateSalesOrderWithPlanningRebuild(existing, updatePayload);
-          payload.items = mergedItems;
-          await upsertFulfillmentFromSalesOrderPayload(existing, payload, { replaceItems: true });
-        } else {
-          await existing.update({
-            customer_name: payload.customer_name ?? existing.customer_name,
-            order_date: payload.order_date ?? existing.order_date,
-            expected_shipment_date:
-              payload.expected_shipment_date ?? existing.expected_shipment_date,
-            reference: payload.reference ?? existing.reference,
-            payment_terms: payload.payment_terms ?? existing.payment_terms,
-            status: payload.status ?? existing.status,
-            order_status: mergedOs,
-            form_data: mergedFd,
-            items: mergedItems,
-          });
-          payload.items = mergedItems;
-          await upsertFulfillmentFromSalesOrderPayload(existing, payload);
-        }
+        // Rebuild planning on update for BOTH formats so re-imports keep the PI list in sync.
+        const updatePayload = {
+          customer_name: payload.customer_name ?? existing.customer_name,
+          order_date: payload.order_date ?? existing.order_date,
+          expected_shipment_date:
+            payload.expected_shipment_date ?? existing.expected_shipment_date,
+          reference: payload.reference ?? existing.reference,
+          payment_terms: payload.payment_terms ?? existing.payment_terms,
+          status: payload.status ?? existing.status,
+          order_status: mergedOs,
+          form_data: mergedFd,
+          items: mergedItems,
+          created_by: existing.created_by || createdBy,
+        };
+        await updateSalesOrderWithPlanningRebuild(existing, updatePayload);
+        payload.items = mergedItems;
+        await upsertFulfillmentFromSalesOrderPayload(existing, payload, { replaceItems: isFlatImport });
 
         summary.updated += 1;
         if (details) {
@@ -1539,9 +1526,10 @@ async function executeOpenSoHeadersImportRows(importRows, opts = {}) {
       }
 
       await applyDefaultExpectedShipmentDate(payload);
-      const row = isFlatImport
-        ? await persistSalesOrderWithPlanning(payload)
-        : await SalesOrder.create(payload);
+      // Both formats create planning rows on import (the legacy path used a bare SalesOrder.create,
+      // so legacy-imported SOs never became PIs until a later read-time self-heal — and only if the
+      // fuzzy product match happened to work).
+      const row = await persistSalesOrderWithPlanning(payload);
       await upsertFulfillmentFromSalesOrderPayload(row, payload, {
         replaceItems: isFlatImport,
       });
