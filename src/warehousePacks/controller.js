@@ -61,9 +61,42 @@ function itemFkColumn(rm, pm, pr) {
   return { col: 'product_id', val: pr };
 }
 
-/** Loose rack stock for an item (zone/rack/qty) — the fallback when no packs are tracked yet. */
-async function loadRackStock(rm, pm, pr) {
+/**
+ * Resolve a zone token to the locations it means. Callers pass whatever they hold: a location code
+ * (`LOC-ML1`, what production_batches.scheduled_mu_zone stores) or the display label (`ML1`, what
+ * warehouse_packs.zone stores). Without this, filtering by the batch's MU zone silently matched
+ * nothing and the picker offered stock from every site.
+ *
+ * @returns {Promise<{locationIds:number[], labels:string[]}|null>} null when no filter was asked for
+ */
+async function resolveZoneFilter(zoneToken) {
+  const z = String(zoneToken || '').trim();
+  if (!z) return null;
+  const [rows] = await db.query(
+    `SELECT id, COALESCE(zone_label, name) AS label
+       FROM warehouse_locations
+      WHERE UPPER(code) = UPPER(:z)
+         OR UPPER(COALESCE(zone_label, '')) = UPPER(:z)
+         OR UPPER(COALESCE(name, '')) = UPPER(:z)`,
+    { replacements: { z } },
+  );
+  const list = Array.isArray(rows) ? rows : [];
+  // Unknown token → match on the literal so we filter to nothing rather than falling open.
+  if (list.length === 0) return { locationIds: [], labels: [z] };
+  return {
+    locationIds: list.map((r) => Number(r.id)),
+    labels: [...new Set(list.map((r) => r.label).filter(Boolean))],
+  };
+}
+
+/**
+ * Loose rack stock for an item (zone/rack/qty) — the fallback when no packs are tracked yet.
+ * `zoneFilter` (from resolveZoneFilter) restricts to one site; omit it for all locations.
+ */
+async function loadRackStock(rm, pm, pr, zoneFilter = null) {
   const { col, val } = itemFkColumn(rm, pm, pr);
+  // A zone was requested but resolved to no known location → nothing is pickable there.
+  if (zoneFilter && zoneFilter.locationIds.length === 0) return [];
   const [rows] = await db.query(
     `SELECT wri.rack_id AS rack_id,
             wr.code AS rack_code,
@@ -77,9 +110,10 @@ async function loadRackStock(rm, pm, pr) {
       WHERE wi.${col} = :val
         AND wri.qty_wh > 0
         AND (wri.deleted_at IS NULL)
+        ${zoneFilter ? 'AND wr.location_id IN (:locationIds)' : ''}
       GROUP BY wri.rack_id, wr.code, wl.zone_label, wl.name, wi.wh_unit
       ORDER BY qty DESC`,
-    { replacements: { val } },
+    { replacements: zoneFilter ? { val, locationIds: zoneFilter.locationIds } : { val } },
   );
   return Array.isArray(rows) ? rows : [];
 }
@@ -107,8 +141,9 @@ async function listAvailable(req, res) {
     if (rm != null) where.raw_material_id = rm;
     if (pm != null) where.pack_material_id = pm;
     if (pr != null) where.product_id = pr;
-    const zone = req.query.zone != null ? String(req.query.zone).trim() : '';
-    if (zone) where.zone = zone;
+    // Accepts a location code (LOC-ML1) or its label (ML1) — packs store the label, batches the code.
+    const zoneFilter = await resolveZoneFilter(req.query.zone);
+    if (zoneFilter) where.zone = { [Op.in]: zoneFilter.labels };
     // Only packs with positive remaining qty are pickable.
     where.qty = { [Op.gt]: 0 };
     // Only real GRN-received packs are shown as packs. Interim packs materialized from loose
@@ -128,7 +163,7 @@ async function listAvailable(req, res) {
 
     // Show tracked packs, plus any loose rack stock NOT already covered by packs (netted per
     // rack so nothing double-counts and nothing gets hidden when only part of a rack is packed).
-    const stock = await loadRackStock(rm, pm, pr);
+    const stock = await loadRackStock(rm, pm, pr, zoneFilter);
     const packQtyByRack = new Map();
     for (const p of rows) {
       const rc = String(p.get('rack') || '').trim();

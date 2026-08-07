@@ -7,6 +7,7 @@ const {
   listTeam,
   listBatches, getBatchById, createBatch, createRworkBatch, splitBatchForVessel, updateBatch, deleteBatch, getBatchBom, getBatchMtrReserved, getBatchDispensingMuStock, syncBatchesFromPlanning,
   listReservedItems, reserveBatchLines, unreserveBatchLines, getBatchReservationCoverage,
+  devSeedDispensingTray,
   qaApproveBatchDoc,
   ipqaVerifyBatchGate,
   productionConfirmBatchGate,
@@ -88,6 +89,9 @@ router.post('/batches/:id/qa-approve', qualityApproveGuard, qaApproveBatchDoc);
 // IPQA pre-production gate: quality user marks verifications; production lead ticks their confirmations.
 router.post('/batches/:id/ipqa-verify', qualityApproveGuard, ipqaVerifyBatchGate);
 router.post('/batches/:id/production-confirm', ...guard, requireBatchGranularEdit, productionConfirmBatchGate);
+// TEMPORARY dev tooling: put a batch straight onto the dispensing tray to exercise the steps that
+// follow it. Seeds a MOCK tray — no stock is consumed. Remove with devDispensingSeed.js.
+router.post('/batches/:id/dev-seed-dispensing', productionWriteGuard, devSeedDispensingTray);
 router.post('/batches/:id/reserve-lines', productionWriteGuard, reserveBatchLines);
 router.post('/batches/:id/unreserve-lines', productionWriteGuard, unreserveBatchLines);
 router.get('/batches/:id/dispensing-mu-stock', productionReadGuard, getBatchDispensingMuStock);

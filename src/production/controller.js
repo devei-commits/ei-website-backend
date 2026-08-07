@@ -1472,6 +1472,13 @@ async function applyPmReservedToInventory(batchRow, options = {}) {
       actionType: 'BPR_RESERVED',
     });
   }
+
+  // The batch's whole PM requirement is now reserved, so record it. Only the explicit "Reserve PM"
+  // action used to set this flag, which left batches reserved through this bulk path reading as
+  // "PM: —" and still offering Reserve PM long after the material had been dispensed.
+  if (!batchRow.get('pm_reserved')) {
+    await batchRow.update({ pm_reserved: true });
+  }
 }
 
 const MTR_CANCELLED_STATUSES = new Set(['cancelled', 'rejected', 'canceled']);
@@ -1780,7 +1787,15 @@ function formatDispensingMuZoneShortageMessage(shortages, scheduledMuZone) {
     if (s.reason === 'no_inventory_row') {
       return `${label}: no warehouse inventory row`;
     }
-    return `${label}: need ${need} at ${zone} (${bucket}), only ${at} available — complete MTR to this site first`;
+    // "Complete an MTR" only helps when the warehouse actually holds some. When nothing exists
+    // anywhere, an MTR has nothing to move — the material has to be received first.
+    const inWarehouse = Number(s.whStock);
+    const remedy = Number.isFinite(inWarehouse)
+      ? (inWarehouse > 0
+        ? `MTR ${Math.min(need - at, inWarehouse)} from the warehouse (${inWarehouse} there) to this site`
+        : 'no stock in the warehouse either — receive it (GRN) before dispensing')
+      : 'complete MTR to this site first';
+    return `${label}: need ${need} at ${zone} (${bucket}), only ${at} available — ${remedy}`;
   });
   const more = shortages.length > 8 ? ` (+${shortages.length - 8} more)` : '';
   return `Dispensing blocked — stock must be at the batch manufacturing site.${lines.length ? ` ${lines.join('; ')}` : ''}${more}`;
@@ -2040,6 +2055,7 @@ async function applyDispensingDeltaToWarehouseInventory({
             shortage: Math.max(0, Number(delta) - Number(atMuBefore)),
             muZone,
             muLabel,
+            whStock: whStock,
           }],
           muZone
         )
@@ -2072,6 +2088,7 @@ async function applyDispensingDeltaToWarehouseInventory({
           shortage: ml2Remainder,
           muZone,
           muLabel,
+          whStock: whStock,
         }], muZone));
         err.statusCode = 400;
         throw err;
@@ -2090,6 +2107,7 @@ async function applyDispensingDeltaToWarehouseInventory({
           shortage: ml1Remainder,
           muZone,
           muLabel,
+          whStock: whStock,
         }], muZone));
         err.statusCode = 400;
         throw err;
@@ -2116,6 +2134,30 @@ async function applyDispensingDeltaToWarehouseInventory({
     ml2_stock: newMl2,
     stock_in_hand: newStockInHand,
   });
+
+  // Bring the rack rows along. Without this the bucket columns drop but warehouse_rack_items keeps
+  // the consumed quantity, so the pick-from-rack picker still offers material that is gone, and any
+  // rack-driven recalculation resurrects it. Capped at what the racks hold, so it cannot
+  // double-decrement; non-fatal because a rack bookkeeping failure must not void a real dispense.
+  try {
+    const { syncRackStockForDispenseDelta } = require('./dispensingRackSync');
+    const rackSync = await syncRackStockForDispenseDelta({
+      warehouseInventoryId: plainWh.id,
+      muZone,
+      delta,
+    });
+    if (Math.abs(rackSync.shortfall || 0) > 1e-6) {
+      console.warn(DISPENDING_MU_ERR_TAG, 'applyDispensingDelta: rack rows short of the dispensed qty', {
+        whInventoryId: plainWh.id, code, delta, ...rackSync,
+      });
+    } else {
+      console.log(DISPENDING_MU_ERR_TAG, 'applyDispensingDelta: rack rows synced', {
+        whInventoryId: plainWh.id, code, delta, applied: rackSync.applied,
+      });
+    }
+  } catch (e) {
+    console.warn(DISPENDING_MU_ERR_TAG, 'applyDispensingDelta: rack sync failed', e && e.message ? e.message : e);
+  }
 
   // Reserved qty for this production batch (reserved_batch_items) must drop as material is dispensed
   // so warehouse_inventory.reserved stays aligned with stock actually still held for the batch.
@@ -3649,6 +3691,33 @@ async function reserveBatchLines(req, res) {
   }
 }
 
+/**
+ * POST /api/v1/production/batches/:id/dev-seed-dispensing
+ * TEMPORARY: put a batch straight onto the dispensing tray so downstream steps can be tested.
+ * Writes mock tray lines — consumes no stock.
+ */
+async function devSeedDispensingTray(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const { seedDispensingTray } = require('./devDispensingSeed');
+    const body = req.body || {};
+    const result = await seedDispensingTray(id, {
+      kind: body.kind,
+      fill: body.fill,
+      force: body.force === true,
+      muZone: body.muZone,
+    });
+    const batch = await ProductionBatch.findByPk(id);
+    return res.json({ success: true, data: batch ? formatBatch(batch) : null, seed: result });
+  } catch (err) {
+    const code = err && err.statusCode ? err.statusCode : 500;
+    if (code !== 500) return res.status(code).json({ error: err.message });
+    console.error('devSeedDispensingTray error:', err);
+    return res.status(500).json({ error: 'Failed to seed dispensing tray' });
+  }
+}
+
 async function unreserveBatchLines(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
@@ -3693,6 +3762,8 @@ module.exports = {
   listTeam,
   listBatches, getBatchById, createBatch, createRworkBatch, splitBatchForVessel, updateBatch, deleteBatch, getBatchBom, getBatchMtrReserved, getBatchDispensingMuStock, syncBatchesFromPlanning,
   listReservedItems, reserveBatchLines, unreserveBatchLines, getBatchReservationCoverage,
+  // TEMPORARY dev tooling — remove with src/production/devDispensingSeed.js.
+  devSeedDispensingTray,
   qaApproveBatchDoc,
   ipqaVerifyBatchGate,
   productionConfirmBatchGate,

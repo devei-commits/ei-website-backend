@@ -570,4 +570,8 @@ module.exports = {
   getReservedByCodeForBatch,
   getReservedAndClaimedByCodeForBatch,
   syncBatchReserveFlags,
+  // BOM → per-material required qty. Exported so the dev tray seeder produces figures identical
+  // to what reservation uses (same rounding, same qty_per_unit / pct_w_w handling).
+  buildRmQuantitiesMap,
+  buildPmQuantitiesMap,
 };
