@@ -26,13 +26,14 @@ function sihFromPlain(plainWh) {
 }
 
 /** Stock-in-hand for a material (kind = 'rm'|'pm'). */
-async function warehouseSihForMaterial(kind, materialId) {
+async function warehouseSihForMaterial(kind, materialId, { transaction } = {}) {
   const mid = Number(materialId);
   if (!Number.isFinite(mid) || mid <= 0) return 0;
   const wh = await WarehouseInventory.findOne({
     where: kind === 'rm'
       ? { item_type: 'RM', raw_material_id: mid }
       : { item_type: 'PM', pack_material_id: mid },
+    ...(transaction ? { transaction } : {}),
   });
   return sihFromPlain(wh && wh.get ? wh.get({ plain: true }) : wh);
 }

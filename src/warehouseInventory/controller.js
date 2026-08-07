@@ -214,6 +214,38 @@ async function getUnderGrnQuantityByItem() {
 }
 
 /** PO quantity = sum of quantities from all purchase_orders.items by raw_material_id / pack_material_id. Returns Map<itemKey, number>. */
+/**
+ * Earliest per-line "connecting date" (expected arrival) per material key, from non-cancelled POs.
+ * Lets Production scheduling show WHEN PO-covered materials will land (instead of an unknown pipeline).
+ * Returns Map<'rm-<id>'|'pm-<id>', 'YYYY-MM-DD'>.
+ */
+async function getPoConnectingDateByItem() {
+  const map = new Map();
+  try {
+    const pos = await PurchaseOrder.findAll({ attributes: ['id', 'status', 'items'] });
+    for (const po of pos) {
+      const d = po.get ? po.get({ plain: true }) : po;
+      const status = String(d.status || '').trim().toLowerCase();
+      if (status === 'cancelled' || status === 'canceled') continue;
+      const items = Array.isArray(d.items) ? d.items : [];
+      for (const line of items) {
+        const cd = line.connectingDate || line.connecting_date || null;
+        if (!cd) continue;
+        let key = null;
+        if (line.raw_material_id != null) key = `rm-${line.raw_material_id}`;
+        else if (line.pack_material_id != null) key = `pm-${line.pack_material_id}`;
+        if (!key) continue;
+        const iso = String(cd).slice(0, 10);
+        const prev = map.get(key);
+        if (!prev || iso < prev) map.set(key, iso); // keep the earliest expected arrival
+      }
+    }
+  } catch (err) {
+    console.warn('[warehouse-inventory] getPoConnectingDateByItem error:', err.message);
+  }
+  return map;
+}
+
 async function getPoQuantityByItem() {
   const map = new Map();
   const poQtyDebug = process.env.EI_DEBUG_WAREHOUSE_PO_QTY === '1';
@@ -826,11 +858,12 @@ async function listPayload() {
   const productMap = new Map(products.map((p) => [p.product_id, p.get ? p.get({ plain: true }) : p]));
   const rmGroupMap = buildMemberToGroupsMap(groups.filter((g) => g.type === 'RM'));
   const pmGroupMap = buildMemberToGroupsMap(groups.filter((g) => g.type === 'PM'));
-  const [inTransitByItem, poQtyByItem, underGrnByItem, grnReceivedKgByItem] = await Promise.all([
+  const [inTransitByItem, poQtyByItem, underGrnByItem, grnReceivedKgByItem, poConnectingByItem] = await Promise.all([
     getInTransitBreakdown(),
     getPoQuantityByItem(),
     getUnderGrnQuantityByItem(),
     getCompletedGrnReceivedKgByKey(),
+    getPoConnectingDateByItem(),
   ]);
   const rows = [];
   for (const w of whRows) {
@@ -887,6 +920,7 @@ async function listPayload() {
         inTransitBreakdown,
         // Open PO exposure: gross PO lines minus GRN Complete received, Under GRN, and in-transit pipeline.
         poQuantity: Math.max(0, poQtyRaw - grnReceivedKg - underGrnQty - inTransitQty),
+        poConnectingDate: poConnectingByItem.get(itemKey) || null,
         reorderPt,
         avgMo: toNum(wh.avg_mo),
         status,
@@ -932,6 +966,7 @@ async function listPayload() {
         underGrn: underGrnQty,
         inTransitBreakdown,
         poQuantity: Math.max(0, poQtyRaw - grnReceivedKg - underGrnQty - inTransitQty),
+        poConnectingDate: poConnectingByItem.get(itemKey) || null,
         reorderPt,
         avgMo: toNum(wh.avg_mo),
         status,

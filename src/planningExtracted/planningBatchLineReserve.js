@@ -126,8 +126,14 @@ async function reservePlanningBatchLines(planningBatchId, kind, codes) {
     const { reserveProductionBatchLines } = require('../production/batchLineReserve');
     const { getBomLinesForBatch } = require('../production/controller');
     const bomMeta = await getBomLinesForBatch(prod.get ? prod.get({ plain: true }) : prod);
-    await reserveProductionBatchLines(prod, k, codes, bomMeta);
-    return { reserved: [], delegatedToProduction: true };
+    const prodResult = await reserveProductionBatchLines(prod, k, codes, bomMeta);
+    // Surface the same {reserved, pending} contract the non-delegated path returns, so callers
+    // (and the popup) can report a partly-backed reservation identically either way.
+    return {
+      reserved: [],
+      pending: Array.isArray(prodResult?.pendingReservations) ? prodResult.pendingReservations : [],
+      delegatedToProduction: true,
+    };
   }
   if (isPlanningBatchSent(planPlain, bp.sequence)) {
     throw httpError('This batch is sent to production but its production batch is not ready yet — try again shortly.', 409);
@@ -139,25 +145,7 @@ async function reservePlanningBatchLines(planningBatchId, kind, codes) {
   const targetIds = targetMaterialIds(k, planned, codesFilter, maps);
   if (targetIds.size === 0) throw httpError('No materials to reserve for the selected lines.', 400);
 
-  // Guard: every requested line must fit the free pool (SIH − reserved by everyone else).
-  const shortages = [];
   const unit = k === 'rm' ? 'KG' : 'PCS';
-  for (const matId of targetIds) {
-    const need = roundPlanningMaterialQty(Number(planned.get(matId)) || 0);
-    if (need <= EPS) continue;
-    const { sih, other, free } = await freeForBatch(k, matId, { planningBatchId: Number(planningBatchId) });
-    if (need > free + EPS) {
-      shortages.push({ type: k.toUpperCase(), code: codeFor(k, matId, maps) || `${k.toUpperCase()}#${matId}`, unit, need, free, otherReserved: other, sih });
-    }
-  }
-  if (shortages.length > 0) {
-    const summary = shortages.slice(0, 4)
-      .map((s) => `${s.code} (need ${s.need} ${s.unit}, free ${s.free} ${s.unit})`).join('; ');
-    const more = shortages.length > 4 ? ` (+${shortages.length - 4} more)` : '';
-    const err = httpError(`Cannot reserve — stock is already allocated elsewhere. ${summary}${more}`, 409);
-    err.reserveShortages = shortages;
-    throw err;
-  }
 
   const existing = await ReservedBatchItem.findAll({
     where: k === 'rm'
@@ -174,35 +162,52 @@ async function reservePlanningBatchLines(planningBatchId, kind, codes) {
   const affectedRm = new Set();
   const affectedPm = new Set();
   const reserved = [];
+  const pending = [];
   for (const matId of targetIds) {
-    const qty = roundPlanningMaterialQty(Number(planned.get(matId)) || 0);
-    if (qty <= EPS) continue;
+    const need = roundPlanningMaterialQty(Number(planned.get(matId)) || 0);
+    if (need <= EPS) continue;
     const row = existingByMat.get(matId);
+    const cur = row ? Number(plainOf(row).quantity_reserved) || 0 : 0;
+
+    // Reserve as much as the facility can actually back right now; the rest stays PENDING on the
+    // same row (quantity_requested − quantity_reserved) and is filled automatically by
+    // pendingReservationAllocator as soon as the material lands. Shortage is no longer a blocker:
+    // the claim on the material is recorded either way, and FIFO decides who gets arriving stock.
+    const { free } = await freeForBatch(k, matId, { planningBatchId: Number(planningBatchId) });
+    const backed = roundPlanningMaterialQty(Math.max(cur, Math.min(need, Math.max(0, free))));
+    const shortBy = roundPlanningMaterialQty(Math.max(0, need - backed));
+
     if (row) {
-      const cur = Number(plainOf(row).quantity_reserved) || 0;
-      if (!materialQtyGte(cur, qty)) {
-        await row.update({ quantity_reserved: qty, is_manual: true });
-      } else if (!plainOf(row).is_manual) {
-        await row.update({ is_manual: true });
-      }
+      const p = plainOf(row);
+      const curRequested = Number(p.quantity_requested);
+      const requested = Number.isFinite(curRequested) ? Math.max(curRequested, need) : need;
+      const updates = { quantity_requested: requested };
+      if (!materialQtyGte(cur, backed)) updates.quantity_reserved = backed;
+      if (!p.is_manual) updates.is_manual = true;
+      await row.update(updates);
     } else {
       await ReservedBatchItem.create({
         planning_batch_id: Number(planningBatchId),
         planning_extracted_id: Number(bp.planning_extracted_id),
         raw_material_id: k === 'rm' ? matId : null,
         pack_material_id: k === 'pm' ? matId : null,
-        quantity_reserved: qty,
+        quantity_reserved: backed,
+        quantity_requested: need,
         unit,
         is_manual: true,
       });
     }
     if (k === 'rm') affectedRm.add(matId); else affectedPm.add(matId);
-    reserved.push({ code: codeFor(k, matId, maps), materialId: matId, quantity: qty, unit });
+    const code = codeFor(k, matId, maps);
+    reserved.push({ code, materialId: matId, quantity: backed, requested: need, pending: shortBy, unit });
+    if (shortBy > EPS) {
+      pending.push({ type: k.toUpperCase(), code: code || `${k.toUpperCase()}#${matId}`, materialId: matId, requested: need, reserved: backed, pending: shortBy, unit });
+    }
   }
 
   const { syncWarehouseReserved } = require('./controller');
   await syncWarehouseReserved([...affectedRm], [...affectedPm]);
-  return { reserved };
+  return { reserved, pending };
 }
 
 /**
@@ -270,33 +275,52 @@ async function computePlanningBatchCoverage(planningBatchId) {
   const rows = await ReservedBatchItem.findAll({ where: reservedWhere });
   const reservedRm = new Map();
   const reservedPm = new Map();
+  // Claimed = what the batch asked for (incl. the not-yet-arrived part). Reserved = stock-backed.
+  const claimedRm = new Map();
+  const claimedPm = new Map();
   for (const r of rows) {
     const p = plainOf(r);
     const qty = Number(p.quantity_reserved) || 0;
-    if (p.raw_material_id != null) reservedRm.set(Number(p.raw_material_id), (reservedRm.get(Number(p.raw_material_id)) || 0) + qty);
-    else if (p.pack_material_id != null) reservedPm.set(Number(p.pack_material_id), (reservedPm.get(Number(p.pack_material_id)) || 0) + qty);
+    const req = Number(p.quantity_requested);
+    const claimed = Number.isFinite(req) ? Math.max(req, 0) : qty;
+    if (p.raw_material_id != null) {
+      const mid = Number(p.raw_material_id);
+      reservedRm.set(mid, (reservedRm.get(mid) || 0) + qty);
+      claimedRm.set(mid, (claimedRm.get(mid) || 0) + claimed);
+    } else if (p.pack_material_id != null) {
+      const mid = Number(p.pack_material_id);
+      reservedPm.set(mid, (reservedPm.get(mid) || 0) + qty);
+      claimedPm.set(mid, (claimedPm.get(mid) || 0) + claimed);
+    }
   }
 
-  const build = (planned, reservedMap, kind, unit) => {
+  const build = (planned, reservedMap, claimedMap, kind, unit) => {
     const lines = [];
     for (const [matId, req] of planned) {
       const required = roundPlanningMaterialQty(Number(req) || 0);
       const reserved = Number(reservedMap.get(matId) || 0);
+      const claimed = Number(claimedMap.get(matId) || 0);
+      // Awaiting arrival: claimed but not yet stock-backed. Auto-fills on GRN.
+      const pending = roundPlanningMaterialQty(Math.max(0, claimed - reserved));
       lines.push({
         code: codeFor(kind, matId, maps),
         materialId: matId,
         required,
         reserved,
+        claimed,
+        pending,
         unit,
         fullyReserved: materialQtyGte(reserved, required),
+        // The line is fully CLAIMED even while short — the shortfall is queued against arrivals.
+        fullyClaimed: materialQtyGte(claimed, required),
       });
     }
     return lines;
   };
 
   return {
-    rm: build(plannedRm, reservedRm, 'rm', 'KG'),
-    pm: build(plannedPm, reservedPm, 'pm', 'PCS'),
+    rm: build(plannedRm, reservedRm, claimedRm, 'rm', 'KG'),
+    pm: build(plannedPm, reservedPm, claimedPm, 'pm', 'PCS'),
   };
 }
 

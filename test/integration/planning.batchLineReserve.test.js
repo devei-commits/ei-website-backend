@@ -74,7 +74,7 @@ describe('planning per-batch line reserve', () => {
 
     await WarehouseInventory.create({ item_type: 'RM', raw_material_id: rmId, wh_stock: 100, stock_in_hand: 100, reserved: 0 });
     await WarehouseInventory.create({ item_type: 'PM', pack_material_id: pmId, wh_stock: 50, stock_in_hand: 50, reserved: 0 });
-    // Tight RM: only 4 KG free but the line needs 10 → reserve must 409.
+    // Tight RM: only 4 KG free but the line needs 10 → 4 reserved now, 6 pending until stock lands.
     await WarehouseInventory.create({ item_type: 'RM', raw_material_id: rmTightId, wh_stock: 4, stock_in_hand: 4, reserved: 0 });
   });
 
@@ -103,11 +103,42 @@ describe('planning per-batch line reserve', () => {
     expect(Number(wh.reserved)).toBe(20);
   });
 
-  test('reserve fails with 409 when free pool is insufficient (tight RM)', async () => {
+  test('short stock reserves what exists and queues the remainder as pending (tight RM)', async () => {
     if (!dbAvailable) return;
-    await expect(reservePlanningBatchLines(batchId, 'rm', ['RM-PBLR-TIGHT'])).rejects.toMatchObject({ statusCode: 409 });
+    // Requirement is 10, free stock is 4 → reserve 4 now, keep 6 pending against incoming stock.
+    const res = await reservePlanningBatchLines(batchId, 'rm', ['RM-PBLR-TIGHT']);
+    expect(res.pending).toHaveLength(1);
+    expect(res.pending[0]).toMatchObject({ code: 'RM-PBLR-TIGHT', requested: 10, reserved: 4, pending: 6 });
+
     const rows = await ReservedBatchItem.findAll({ where: { planning_batch_id: batchId, raw_material_id: rmTightId } });
-    expect(rows.length).toBe(0);
+    expect(rows.length).toBe(1);
+    expect(Number(rows[0].quantity_reserved)).toBe(4);    // stock-backed only
+    expect(Number(rows[0].quantity_requested)).toBe(10);  // the full claim
+
+    // reserved never exceeds what is physically on the shelf
+    const wh = await WarehouseInventory.findOne({ where: { item_type: 'RM', raw_material_id: rmTightId } });
+    expect(Number(wh.reserved)).toBe(4);
+    expect(Number(wh.reserved)).toBeLessThanOrEqual(Number(wh.stock_in_hand));
+  });
+
+  test('the pending remainder is allocated automatically once stock arrives', async () => {
+    if (!dbAvailable) return;
+    const { allocatePendingReservations } = require('../../src/lib/pendingReservationAllocator');
+
+    // Nothing new on the shelf yet → allocator must be a no-op.
+    const noop = await allocatePendingReservations({ rmIds: [rmTightId] });
+    expect(noop.totalAllocated).toBe(0);
+
+    // 6 KG lands (what a GRN completion does), then the allocator fills the pending claim.
+    const wh = await WarehouseInventory.findOne({ where: { item_type: 'RM', raw_material_id: rmTightId } });
+    await wh.update({ wh_stock: 10, stock_in_hand: 10 });
+    const res = await allocatePendingReservations({ rmIds: [rmTightId] });
+    expect(res.totalAllocated).toBe(6);
+
+    const rows = await ReservedBatchItem.findAll({ where: { planning_batch_id: batchId, raw_material_id: rmTightId } });
+    expect(Number(rows[0].quantity_reserved)).toBe(10); // fully backed now
+    await wh.reload();
+    expect(Number(wh.reserved)).toBe(10);
   });
 
   test('coverage reports required vs reserved per line', async () => {

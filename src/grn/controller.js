@@ -1391,6 +1391,29 @@ async function applyGrnCompletionToInventory(grnRow, opts = {}) {
     console.warn('[grn] applyGrnPacksToInventory failed:', e && e.message ? e.message : e);
   }
 
+  // "Reserve now, allocate on arrival": batches are allowed to reserve material the facility did
+  // not have yet. The material has just landed, so hand the newly free stock to those pending
+  // reservations FIFO (oldest claim first) — same transaction, so reserved never outruns SIH.
+  // Non-fatal: an allocation failure must not roll back the receipt itself.
+  try {
+    const { allocatePendingReservations } = require('../lib/pendingReservationAllocator');
+    const alloc = await allocatePendingReservations(
+      { rmIds: [...toAddByRm.keys()], pmIds: [...toAddByPm.keys()] },
+      { transaction },
+    );
+    if (alloc.totalAllocated > 0) {
+      console.log('[grn] allocated arriving stock to pending reservations', {
+        grnId: d.id,
+        grnNo: d.grn_no,
+        materialsAllocated: alloc.materialsAllocated,
+        totalAllocated: alloc.totalAllocated,
+        batchFlags: alloc.batchFlags,
+      });
+    }
+  } catch (e) {
+    console.warn('[grn] allocatePendingReservations failed:', e && e.message ? e.message : e);
+  }
+
   console.log('[grn] GRN Complete inventory apply END', {
     grnId: d.id,
     grnNo: d.grn_no,

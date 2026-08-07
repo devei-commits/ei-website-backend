@@ -320,7 +320,13 @@ ReservedBatchItem.init(
       references: { model: 'pack_materials', key: 'id' },
       onDelete: 'CASCADE',
     },
+    // Stock-backed portion of the reservation — what warehouse_inventory.reserved sums, and what
+    // `available = SIH − reserved` nets out. Never exceeds free stock.
     quantity_reserved: { type: DataTypes.DECIMAL(28, 16), allowNull: false, defaultValue: 0 },
+    // Full demand the batch asked for. When stock is short, a reservation is still created with
+    // quantity_requested = demand and quantity_reserved = whatever stock could back it; the gap
+    // (pending) is filled FIFO by src/lib/pendingReservationAllocator.js as material arrives.
+    quantity_requested: { type: DataTypes.DECIMAL(28, 16), allowNull: true },
     unit: { type: DataTypes.STRING(20), allowNull: true, defaultValue: 'KG' },
     so_no: { type: DataTypes.STRING(50), allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },

@@ -1131,70 +1131,50 @@ function warehouseSihFromPlain(plainWh) {
 }
 
 /**
- * Block reserve when other batches already hold RBI — free stock = SIH − other batches' reserved.
- * This batch's own prior RBI rows are rebuilt on force/idempotent paths before this runs.
+ * Split each requested line into the part stock can back NOW and the part that stays pending.
+ *
+ * Free stock = SIH − other batches' reserved (this batch's own prior RBI rows are rebuilt on
+ * force/idempotent paths before this runs). A shortage no longer blocks the reserve: the batch's
+ * full claim is recorded in `quantity_requested`, only the backed part goes into
+ * `quantity_reserved`, and src/lib/pendingReservationAllocator.js closes the gap FIFO once the
+ * material actually arrives in the facility.
+ *
+ * @returns {Promise<Map<number, {backed:number, pending:number, need:number, free:number}>>}
  */
-async function assertExclusiveBatchReserveAvailability(batchId, rmQuantities, pmQuantities) {
-  const shortages = [];
-
-  for (const [rmId, { quantity, code, unit }] of rmQuantities) {
+async function splitReserveAgainstFreeStock(batchId, kind, quantities) {
+  const out = new Map();
+  for (const [matId, { quantity }] of quantities) {
     const need = Number(quantity) || 0;
-    if (need <= 0) continue;
-    const wh = await WarehouseInventory.findOne({ where: { item_type: 'RM', raw_material_id: rmId } });
+    if (need <= 0) {
+      out.set(matId, { backed: 0, pending: 0, need: 0, free: 0 });
+      continue;
+    }
+    const wh = await WarehouseInventory.findOne({
+      where: kind === 'rm'
+        ? { item_type: 'RM', raw_material_id: matId }
+        : { item_type: 'PM', pack_material_id: matId },
+    });
     const plain = wh?.get ? wh.get({ plain: true }) : wh;
     const sih = warehouseSihFromPlain(plain);
-    const otherReserved = await sumReservedQtyOtherBatches(batchId, 'rm', rmId);
+    const otherReserved = await sumReservedQtyOtherBatches(batchId, kind, matId);
     const free = Math.max(0, sih - otherReserved);
-    if (need > free + 1e-6) {
-      shortages.push({
-        type: 'RM',
-        code: code || `RM#${rmId}`,
-        unit: unit || 'KG',
-        need,
-        free,
-        otherBatchesReserved: otherReserved,
-        sih,
-      });
-    }
+    const backed = roundPlanningMaterialQty(Math.min(need, free));
+    out.set(matId, { backed, pending: roundPlanningMaterialQty(Math.max(0, need - backed)), need, free });
   }
+  return out;
+}
 
-  for (const [pmId, { quantity, code, unit }] of pmQuantities) {
-    const need = Number(quantity) || 0;
-    if (need <= 0) continue;
-    const wh = await WarehouseInventory.findOne({ where: { item_type: 'PM', pack_material_id: pmId } });
-    const plain = wh?.get ? wh.get({ plain: true }) : wh;
-    const sih = warehouseSihFromPlain(plain);
-    const otherReserved = await sumReservedQtyOtherBatches(batchId, 'pm', pmId);
-    const free = Math.max(0, sih - otherReserved);
-    if (need > free + 1e-6) {
-      shortages.push({
-        type: 'PM',
-        code: code || `PM#${pmId}`,
-        unit: unit || 'PCS',
-        need,
-        free,
-        otherBatchesReserved: otherReserved,
-        sih,
-      });
-    }
+/** Log lines that were claimed but not yet stock-backed, so the shortfall is visible in the logs. */
+function logPendingReserveLines(context, kind, quantities, split) {
+  const pendingLines = [];
+  for (const [matId, meta] of quantities) {
+    const s = split.get(matId);
+    if (!s || s.pending <= 1e-6) continue;
+    pendingLines.push(`${meta.code || `${kind.toUpperCase()}#${matId}`} pending ${s.pending} ${meta.unit || ''}`.trim());
   }
-
-  if (shortages.length === 0) return;
-
-  const summary = shortages
-    .slice(0, 4)
-    .map(
-      (s) =>
-        `${s.code} (need ${s.need} ${s.unit}, free ${s.free} ${s.unit} after ${s.otherBatchesReserved} ${s.unit} reserved by other batches)`,
-    )
-    .join('; ');
-  const more = shortages.length > 4 ? ` (+${shortages.length - 4} more)` : '';
-  const err = new Error(
-    `Cannot reserve — stock is already allocated to other production batches. ${summary}${more}`,
-  );
-  err.statusCode = 409;
-  err.reserveShortages = shortages;
-  throw err;
+  if (pendingLines.length > 0) {
+    console.log('[production] reserved with pending (awaiting arrival):', context, pendingLines.join('; '));
+  }
 }
 
 /** Completed outbound MTR (WH→MU) qty for this BMR — caps batch-exclusive dispensing at MU. */
@@ -1295,13 +1275,15 @@ async function applyRmReservedToInventory(batchRow, options = {}) {
   }
   const affectedRmIds = new Set(rmQuantities.keys());
   if (affectedRmIds.size === 0) return;
-  await assertExclusiveBatchReserveAvailability(d.id, rmQuantities, new Map());
+  const rmSplit = await splitReserveAgainstFreeStock(d.id, 'rm', rmQuantities);
+  logPendingReserveLines({ bmr_no: d.bmr_no }, 'rm', rmQuantities, rmSplit);
   for (const [rmId, { quantity, unit }] of rmQuantities) {
     await ReservedBatchItem.create({
       production_batch_id: d.id,
       raw_material_id: rmId,
       pack_material_id: null,
-      quantity_reserved: roundPlanningMaterialQty(quantity),
+      quantity_reserved: rmSplit.get(rmId)?.backed ?? 0,
+      quantity_requested: roundPlanningMaterialQty(quantity),
       unit,
     });
   }
@@ -1446,13 +1428,15 @@ async function applyPmReservedToInventory(batchRow, options = {}) {
       missingPmCodes,
     });
   }
-  await assertExclusiveBatchReserveAvailability(d.id, new Map(), pmQuantities);
+  const pmSplit = await splitReserveAgainstFreeStock(d.id, 'pm', pmQuantities);
+  logPendingReserveLines({ bpr_no: d.bpr_no, bmr_no: d.bmr_no }, 'pm', pmQuantities, pmSplit);
   for (const [pmId, { quantity, unit }] of pmQuantities) {
     await ReservedBatchItem.create({
       production_batch_id: d.id,
       raw_material_id: null,
       pack_material_id: pmId,
-      quantity_reserved: roundPlanningMaterialQty(quantity),
+      quantity_reserved: pmSplit.get(pmId)?.backed ?? 0,
+      quantity_requested: roundPlanningMaterialQty(quantity),
       unit,
     });
   }
@@ -3646,9 +3630,15 @@ async function reserveBatchLines(req, res) {
       return res.status(400).json({ error: PACKAGING_GATE_MESSAGE });
     }
     const bomMeta = await getBomLinesForBatch(batchPlainRow);
-    await reserveProductionBatchLines(batch, kind, codes, bomMeta);
+    const reserveResult = await reserveProductionBatchLines(batch, kind, codes, bomMeta);
     await batch.reload();
-    res.json({ success: true, data: formatBatch(batch), coverage: await computeBatchMaterialCoverage(batch.get({ plain: true }), kind, bomMeta) });
+    res.json({
+      success: true,
+      data: formatBatch(batch),
+      coverage: await computeBatchMaterialCoverage(batch.get({ plain: true }), kind, bomMeta),
+      // Lines claimed but not yet stock-backed — filled automatically (FIFO) when material arrives.
+      pendingReservations: reserveResult?.pendingReservations ?? [],
+    });
   } catch (err) {
     console.error('reserveBatchLines error:', err);
     if (err?.statusCode === 409) {
