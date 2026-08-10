@@ -53,6 +53,25 @@ async function buildTrayLines(batchPlain, bomMeta, kind, { fill }) {
 
   const qtyKindUnit = kind === 'rm' ? 'KG' : 'PCS';
   const stampedAt = new Date().toISOString();
+
+  // Resolve display names up-front — the tray renders `inci || name || code`, so a line without
+  // them shows a bare code and the operator cannot tell what the material actually is.
+  const RawMaterial = require('../rawMaterials/models');
+  const PackMaterial = require('../packMaterials/models');
+  const ids = [...quantities.keys()];
+  const masters = new Map();
+  if (ids.length > 0) {
+    const rows = kind === 'rm'
+      ? await RawMaterial.findAll({ where: { id: ids }, attributes: ['id', 'name', 'inci'] })
+      : await PackMaterial.findAll({ where: { id: ids }, attributes: ['id', 'description'] });
+    for (const r of rows) {
+      const p = r.get ? r.get({ plain: true }) : r;
+      masters.set(Number(p.id), kind === 'rm'
+        ? { name: p.name || '', inci: p.inci || '' }
+        : { name: p.description || '', inci: '' });
+    }
+  }
+
   const lines = [];
   let slot = 0;
   for (const [materialId, meta] of quantities) {
@@ -60,8 +79,11 @@ async function buildTrayLines(batchPlain, bomMeta, kind, { fill }) {
     if (required <= 0) continue;
     slot += 1;
     const dispensed = fill === 'full' ? required : 0;
+    const master = masters.get(Number(materialId)) || { name: '', inci: '' };
     lines.push({
       code: meta.code,
+      name: master.name,
+      ...(master.inci ? { inci: master.inci } : {}),
       required,
       dispensed,
       done: fill === 'full',

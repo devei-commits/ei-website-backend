@@ -24,7 +24,14 @@ async function stampPoTrackingForGrn(grnRow, opts = {}) {
   const poId = d && d.purchase_order_id != null ? Number(d.purchase_order_id) : null;
   if (!poId) return;
   const st = String(d.status || '').trim();
-  if (st !== 'Under GRN' && st !== 'GRN Complete') return;
+  const grnStarted = st === 'Under GRN' || st === 'GRN Complete';
+  // Procurement no longer sets Delivered by hand — the PO side stops at Shipped and the warehouse
+  // owns everything after it. The GRN physically landing IS the delivery, so stamp it from here or
+  // the PO timeline would stall at Shipped forever.
+  const STAGE_SEQ = ['in_transit', 'landed', 'verified', 'quarantined', 'qc_tested', 'grn_completed'];
+  const stageIdx = STAGE_SEQ.indexOf(String(d.stage || '').trim());
+  const hasLanded = stageIdx >= STAGE_SEQ.indexOf('landed') || grnStarted;
+  if (!hasLanded) return;
   const today = new Date().toISOString().slice(0, 10);
   try {
     const [track] = await PoTracking.findOrCreate({
@@ -34,7 +41,9 @@ async function stampPoTrackingForGrn(grnRow, opts = {}) {
     });
     const t = track.get ? track.get({ plain: true }) : track;
     const patch = {};
-    if (!t.under_grn_at) patch.under_grn_at = today; // both statuses imply GRN has begun
+    if (!t.delivered_at) patch.delivered_at = today;
+    // Guarded now that this runs from 'landed' too, where the GRN itself has not begun yet.
+    if (grnStarted && !t.under_grn_at) patch.under_grn_at = today;
     if (st === 'GRN Complete' && !t.grn_complete_at) patch.grn_complete_at = today;
     if (Object.keys(patch).length) {
       await track.update(patch, transaction ? { transaction } : {});
