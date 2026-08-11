@@ -118,6 +118,90 @@ async function loadRackStock(rm, pm, pr, zoneFilter = null) {
   return Array.isArray(rows) ? rows : [];
 }
 
+/**
+ * Stock the bucket columns hold that no rack row accounts for.
+ *
+ * warehouse_inventory carries the authoritative quantity per bucket (WH / ML1 / ML2); rack rows say
+ * *where* inside a bucket it sits. A manual stock edit, an inventory import, or an MTR that could
+ * not resolve a rack all raise the bucket without creating a rack row — the Inventory panel calls
+ * this "not yet assigned to manufacturing racks".
+ *
+ * Rack-only lookups then showed nothing, so material that is genuinely at the site was unpickable.
+ * These synthetic rows expose that remainder so it can be picked; they carry no rackId, which is
+ * accurate — nobody has said which rack it is on.
+ */
+async function loadUnassignedBucketStock(rm, pm, pr, zoneFilter) {
+  const { col, val } = itemFkColumn(rm, pm, pr);
+
+  const [[agg] = []] = await db.query(
+    `SELECT COALESCE(SUM(wh_stock), 0) AS wh,
+            COALESCE(SUM(ml1_stock), 0) AS ml1,
+            COALESCE(SUM(ml2_stock), 0) AS ml2,
+            MAX(wh_unit) AS unit
+       FROM warehouse_inventory WHERE ${col} = :val`,
+    { replacements: { val } },
+  );
+  if (!agg) return [];
+
+  // Rack quantities already accounted for, split the same way recalculateInventoryForItem splits them.
+  const [rackRows] = await db.query(
+    `SELECT wl.location_type,
+            UPPER(COALESCE(wl.code, '') || ' ' || COALESCE(wl.name, '')) AS blob,
+            SUM(wri.qty_wh) AS qty
+       FROM warehouse_rack_items wri
+       JOIN warehouse_inventory wi ON wi.id = wri.warehouse_inventory_id
+       JOIN warehouse_racks wr ON wr.id = wri.rack_id
+       JOIN warehouse_locations wl ON wl.id = wr.location_id
+      WHERE wi.${col} = :val AND wri.qty_wh > 0 AND wri.deleted_at IS NULL
+      GROUP BY wl.location_type, wl.code, wl.name`,
+    { replacements: { val } },
+  );
+  const onRacks = { wh: 0, ml1: 0, ml2: 0 };
+  for (const r of Array.isArray(rackRows) ? rackRows : []) {
+    const qty = Number(r.qty) || 0;
+    if (String(r.location_type || '').toLowerCase() !== 'production') onRacks.wh += qty;
+    else if (String(r.blob || '').includes('ML2')) onRacks.ml2 += qty;
+    else onRacks.ml1 += qty;
+  }
+
+  // The production zones the ML1/ML2 buckets correspond to, so the rows carry a real zone label.
+  const [zones] = await db.query(
+    `SELECT id, code, COALESCE(zone_label, name) AS label,
+            UPPER(COALESCE(code, '') || ' ' || COALESCE(name, '')) AS blob
+       FROM warehouse_locations WHERE location_type = 'production'`,
+  );
+  const zoneFor = (bucket) => (Array.isArray(zones) ? zones : []).find((z) => (
+    bucket === 'ml2' ? String(z.blob || '').includes('ML2') : !String(z.blob || '').includes('ML2')
+  )) || null;
+
+  const unit = agg.unit || null;
+  const out = [];
+  for (const bucket of ['ml1', 'ml2']) {
+    const loose = Number(agg[bucket] || 0) - onRacks[bucket];
+    if (loose <= 1e-6) continue;
+    const zone = zoneFor(bucket);
+    if (zoneFilter && (!zone || !zoneFilter.locationIds.includes(Number(zone.id)))) continue;
+    out.push({
+      kind: 'stock',
+      key: `stock-unassigned-${bucket}`,
+      packId: null,
+      rackId: null,
+      id: null,
+      packagingNo: null,
+      zone: zone ? zone.label : bucket.toUpperCase(),
+      rack: null,
+      unassigned: true,
+      vendorBatch: null,
+      mfgDate: null,
+      expDate: null,
+      qty: Number(loose.toFixed(6)),
+      unit,
+      status: 'available',
+    });
+  }
+  return out;
+}
+
 function intOrNull(v) {
   if (v == null || String(v).trim() === '') return null;
   const n = parseInt(String(v), 10);
@@ -175,6 +259,9 @@ async function listAvailable(req, res) {
       const loose = Number(r.qty || 0) - used;
       if (loose > 1e-6) entries.push(stockEntry({ ...r, qty: loose }));
     }
+    // Bucket stock that no rack row accounts for (manual edits, imports, unresolved MTRs) — real
+    // stock at the site that would otherwise be invisible to a rack-only lookup.
+    entries.push(...await loadUnassignedBucketStock(rm, pm, pr, zoneFilter));
     return res.json(entries);
   } catch (err) {
     console.error('[warehouse-packs] listAvailable error', err);
@@ -224,8 +311,16 @@ async function materializeRackStock(req, res) {
       { replacements: { rackId, val } },
     );
     const bucketQty = bucket ? Number(bucket.qty) || 0 : 0;
+    // Match on zone AND rack: rack codes like "DEFAULT" exist in every zone, so matching the code
+    // alone subtracted packs sitting at OTHER sites from this rack's loose total.
     const existingPacks = (await WarehousePack.sum('qty', {
-      where: { status: 'available', lifecycle_status: 'active', [col]: val, rack: rack.rack_code },
+      where: {
+        status: 'available',
+        lifecycle_status: 'active',
+        [col]: val,
+        rack: rack.rack_code,
+        ...(rack.zone_name ? { zone: rack.zone_name } : {}),
+      },
     })) || 0;
     const loose = bucketQty - Number(existingPacks);
     if (loose <= 1e-6) {

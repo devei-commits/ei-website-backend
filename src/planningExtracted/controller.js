@@ -1412,7 +1412,15 @@ async function listAllBatches(req, res) {
           { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'] },
         ],
       }],
-      order: [[{ model: PlanningExtracted, as: 'planningExtracted' }, 'due_date', 'ASC'], ['sequence', 'ASC']],
+      // due_date/sequence alone is ambiguous across planning rows — every planning row has a "B1",
+      // and batches routinely share a due date, so Postgres was free to return tied rows in any
+      // order (and did, differently between calls). `id` DESC breaks every tie deterministically
+      // and puts the newest batch first within a group.
+      order: [
+        [{ model: PlanningExtracted, as: 'planningExtracted' }, 'due_date', 'ASC'],
+        ['sequence', 'ASC'],
+        ['id', 'DESC'],
+      ],
     });
     const prodBmrByPlanningBatchId = await loadProductionBmrStatusByPlanningBatchIds(
       rows.map((r) => {
