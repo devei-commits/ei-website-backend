@@ -2070,6 +2070,11 @@ const deleteProduct = async (req, res) => {
             code: 'PR_DELETE_FK_CONSTRAINT',
           });
         }
+        // Deliberate refusals (e.g. the soft delete matched no row) carry their own status — a 500
+        // would read as a server fault for what is really "this delete did not apply".
+        if (err && err.statusCode) {
+          return res.status(err.statusCode).json({ error: err.message });
+        }
         res.status(500).json({
           error: err?.message || 'Failed to delete product',
           name: err?.name,

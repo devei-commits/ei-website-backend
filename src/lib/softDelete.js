@@ -100,6 +100,36 @@ async function softDeleteWhere(Model, where, opts = {}) {
 }
 
 /**
+ * Soft delete rows whose `lifecycle_status` is a WORKFLOW value rather than an archival flag.
+ *
+ * `softDeleteWhere` matches `lifecycle_status = 'active'`. That is correct for models where the
+ * column means "archived or not", but products (and any model like them) use it for a registration
+ * workflow — Draft / Under Review / Under Approval / Active. None of those equal `'active'`, so the
+ * UPDATE matched zero rows and the delete silently no-opped while still returning success.
+ *
+ * This variant matches everything that is not already deleted, mirroring the read filter
+ * (`productActiveWhere`) so delete and read agree on what "exists" means.
+ *
+ * @param {import('sequelize').ModelStatic<any>} Model
+ * @param {import('sequelize').WhereOptions} where
+ * @param {{ transaction?: import('sequelize').Transaction }} [opts]
+ * @returns {Promise<number>} affected row count
+ */
+async function softDeleteWhereAnyLifecycle(Model, where, opts = {}) {
+  assertHasSoftDeleteColumns(Model);
+  const notDeleted = {
+    deleted_at: { [Op.is]: null },
+    lifecycle_status: { [Op.ne]: LIFECYCLE_DELETED },
+  };
+  const scoped = hasWhereClauses(where) ? { [Op.and]: [where, notDeleted] } : notDeleted;
+  const [count] = await Model.update(softDeletePayload(Model), {
+    where: scoped,
+    transaction: opts.transaction,
+  });
+  return count;
+}
+
+/**
  * Load one row by primary key if not soft-deleted.
  * @param {import('sequelize').ModelStatic<any>} Model
  * @param {string|number} pk
@@ -127,5 +157,6 @@ module.exports = {
   activeOnlyWhere,
   softDeleteInstance,
   softDeleteWhere,
+  softDeleteWhereAnyLifecycle,
   findActiveByPk,
 };

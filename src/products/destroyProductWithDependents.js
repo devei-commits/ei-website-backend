@@ -3,7 +3,7 @@
  * Default API delete is soft-delete; full PR reset uses hardDeleteProductWithDependents.
  */
 const { Op } = require('sequelize');
-const { softDeleteWhere, softDeleteInstance } = require('../lib/softDelete');
+const { softDeleteWhere, softDeleteWhereAnyLifecycle, softDeleteInstance } = require('../lib/softDelete');
 
 /** @param {import('sequelize').ModelStatic<any>} Model */
 function unscopedModel(Model) {
@@ -115,7 +115,18 @@ async function softDeleteProductWithDependents(productId, transaction) {
 
   await softDeleteWhere(BOM, { product_id: pid }, { transaction });
 
-  await softDeleteWhere(Product, { product_id: pid }, { transaction });
+  // Products carry a WORKFLOW lifecycle_status (Draft / Under Review / Under Approval / Active),
+  // never the literal 'active' that softDeleteWhere matches on — so that variant updated zero
+  // rows and the delete silently succeeded without deleting anything.
+  const deleted = await softDeleteWhereAnyLifecycle(Product, { product_id: pid }, { transaction });
+  if (deleted === 0) {
+    // The caller already verified the product exists, so zero here means the write was filtered
+    // out — fail loudly rather than report a delete that did not happen.
+    const err = new Error(`Product ${pid} could not be soft-deleted (already deleted or filtered out).`);
+    err.statusCode = 409;
+    throw err;
+  }
+  return deleted;
 }
 
 /** @deprecated use softDeleteProductWithDependents */
