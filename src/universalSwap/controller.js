@@ -5,6 +5,7 @@ const ItemGroup = require('../itemGroups/models');
 const BOM = require('../bom/models');
 const { Product } = require('../products/models');
 const { applySwapRatioToPct } = require('../lib/swapRatio');
+const { applySwapToPlanning } = require('./applySwapToPlanning');
 
 function toIntList(val) {
   if (val == null) return [];
@@ -171,7 +172,7 @@ function parseSwapBody(body = {}) {
  * Execute the swap against item_groups (member_ids) + PR BOM rm_lines (ratio). Pure DB effects — no
  * history row. Returns { updatedGroupsCount, updatedBomsCount }.
  */
-async function applySwapEffects({ fromRawMaterialId, toRawMaterialId, swapRatio, numericGroupIds, numericBomIds, fromPlain, toPlain }) {
+async function applySwapEffects({ fromRawMaterialId, toRawMaterialId, swapRatio, numericGroupIds, numericBomIds, fromPlain, toPlain }, { transaction } = {}) {
   const fromCode = fromPlain.code || '';
   const toCode = toPlain.code || '';
   const toInci = toPlain.inci || toPlain.name || toCode;
@@ -190,6 +191,7 @@ async function applySwapEffects({ fromRawMaterialId, toRawMaterialId, swapRatio,
 
   // Apply ratio swap only to selected PR BOMs that contain the from-ingredient.
   let updatedBomsCount = 0;
+  const touchedProductIds = new Set();
   const prBoms = numericBomIds.length > 0
     ? await BOM.findAll({ where: { id: numericBomIds, product_id: { [Op.ne]: null } } })
     : [];
@@ -204,7 +206,16 @@ async function applySwapEffects({ fromRawMaterialId, toRawMaterialId, swapRatio,
       }
       const pct = Number(line.pct_w_w ?? line.pctWw ?? line.pct ?? 0);
       if (pct <= 0) {
-        newRmLines.push(line);
+        // A 0% line still names a material. Skipping it left the OLD ingredient sitting in the BOM
+        // after an approved swap (visible in the BOM editor as "WATER … 0% w/w"), and any later
+        // percentage typed against it would have re-introduced the swapped-out material.
+        // There is nothing to split, so carry the identity across and keep the percentage at 0.
+        changed = true;
+        const zeroLine = { ...line, inci_name: toInci, rm_code: toCode, pct_w_w: 0 };
+        if (toRawMaterialId != null) zeroLine.raw_material_id = toRawMaterialId;
+        if ('zoho_sku_code' in zeroLine) zeroLine.zoho_sku_code = toPlain.zoho_sku_code || toCode;
+        if ('code' in zeroLine) zeroLine.code = toCode;
+        newRmLines.push(zeroLine);
         continue;
       }
       changed = true;
@@ -223,9 +234,29 @@ async function applySwapEffects({ fromRawMaterialId, toRawMaterialId, swapRatio,
     if (changed) {
       await bom.update({ rm_lines: newRmLines });
       updatedBomsCount++;
+      if (bom.product_id != null) touchedProductIds.add(Number(bom.product_id));
     }
   }
-  return { updatedGroupsCount, updatedBomsCount };
+
+  // Planning keeps its own copies of the formula (planning_extracted.raw_materials and each
+  // planning_batches.rm_lines). Updating only the master BOM left every existing plan and batch
+  // still naming the swapped-out material, which is what the Plan Batches BOM editor reads.
+  const planning = await applySwapToPlanning({
+    productIds: [...touchedProductIds],
+    fromRawMaterialId,
+    toRawMaterialId,
+    swapRatio,
+    fromPlain,
+    toPlain,
+  }, { transaction });
+
+  return {
+    updatedGroupsCount,
+    updatedBomsCount,
+    updatedPlanningRows: planning.planningRows,
+    updatedPlanningBatches: planning.batches,
+    skippedSentBatches: planning.skippedSentBatches,
+  };
 }
 
 /**
