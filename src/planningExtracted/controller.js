@@ -3204,15 +3204,28 @@ async function getItemsInvolvedByPlanningId(req, res) {
           })
         : Promise.resolve([]),
       pmIds.length ? PackMaterial.findAll({ where: { id: pmIds }, attributes: ['id', 'code', 'description'] }) : Promise.resolve([]),
-      PurchaseOrder.findAll({ attributes: ['id', 'items'] }),
+      // status / approval_status / exception_status / form_data are what decide whether a PO is
+      // committed, dead, or a draft, and which PR it fulfils. Fetching only id+items left every
+      // one of those undefined, so committed POs were classified as drafts and cancelled ones
+      // still counted toward supply.
+      PurchaseOrder.findAll({
+        attributes: ['id', 'order_id', 'items', 'reference', 'form_data', 'status', 'approval_status', 'exception_status'],
+      }),
       getGrnInTransitQtyByKey(),
       getPoPipelineInTransitQtyByKey(),
       getCompletedGrnReceivedKgByKey(),
     ]);
     const rmMetaById = buildRmMetaMap(rmsList);
 
+    // PO Qty is the COMMITTED order book. Summing every PO regardless of status counted drafts
+    // (which already sit under "Planned") and cancelled/rejected orders as supply, inflating
+    // coverage twice over for the same quantity.
+    const { isCommittedPurchaseOrder: isCommittedPo, isDeadPurchaseOrder: isDeadPo } =
+      require('../lib/itemsInvolvedStageFlow');
     const poQtyMapKg = new Map();
     for (const po of allPos) {
+      const poPlain = po.get ? po.get({ plain: true }) : po;
+      if (isDeadPo(poPlain) || !isCommittedPo(poPlain)) continue;
       const items = Array.isArray(po.items) ? po.items : [];
       for (const line of items) {
         let key = null;
@@ -3242,6 +3255,24 @@ async function getItemsInvolvedByPlanningId(req, res) {
       const totalReceived = Number(grnReceivedKg.get(key) ?? 0) || 0;
       return Math.max(0, totalOnPO - totalInTransit - totalReceived);
     };
+
+    // "Planned" on Items Involved is a SUPPLY term (spec §6.3: supply = SIH + Reserved + Planned +
+    // PO + In Transit + Under GRN) meaning procurement already queued — an unlinked PR or a draft PO
+    // from Release to Planning. This endpoint used to send the qty allocated to BATCHES instead,
+    // which is demand, not supply. For a fully-batched SO that made supply >= required for every
+    // line, so a line with zero stock reported "No shortage", Release to Planning was withheld, and
+    // no PO could ever be raised for a real shortage.
+    const {
+      buildGlobalPoMaps: buildGlobalPoMapsForPe,
+      buildUnlinkedPrMap: buildUnlinkedPrMapForPe,
+    } = require('../lib/itemsInvolvedStageFlow');
+    const prsForFlow = await ProcurementRequest.findAll({
+      attributes: ['id', 'planning_extracted_id', 'status', 'items'],
+    });
+    const { draftByKey } = buildGlobalPoMapsForPe(allPos, rmMetaById);
+    const unlinkedPrByKey = buildUnlinkedPrMapForPe(prsForFlow, allPos, rmMetaById);
+    const queuedProcurementQty = (key) =>
+      (Number(draftByKey.get(key) ?? 0) || 0) + (Number(unlinkedPrByKey.get(key) ?? 0) || 0);
 
     const sihByRm = new Map();
     const reservedByRm = new Map();
@@ -3324,7 +3355,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
       const plannedInBatches = plannedRmFromBatches.get(rid) || 0;
       const bomGrossRequiredKg = fullOrderQty;
       const unallocatedToBatches = Math.max(0, fullOrderQty - plannedInBatches);
-      const plannedQty = plannedInBatches;
+      const plannedQty = queuedProcurementQty(`rm-${rid}`);
       const info = rmInfo.get(rid) || {};
       const name = req.name || info.name || `RM ${rid}`;
       const code = req.code || info.code || `RM-${rid}`;
@@ -3381,7 +3412,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
       const plannedInBatchesPm = plannedPmFromBatches.get(pid) || 0;
       const bomGrossRequiredPm = fullOrderQtyPm;
       const unallocatedToBatchesPm = Math.max(0, fullOrderQtyPm - plannedInBatchesPm);
-      const plannedQty = plannedInBatchesPm;
+      const plannedQty = queuedProcurementQty(`pm-${pid}`);
       const info = pmInfo.get(pid) || {};
       const name = req.name || info.name || `PM ${pid}`;
       const code = req.code || info.code || `PM-${pid}`;
