@@ -1,7 +1,7 @@
 /**
  * Pure merge logic for quality spec rule rows — no DB access.
  * More-specific rows override less-specific rows sharing the same parameter name:
- * sub-sub-category > sub-category > category ("common").
+ * item > sub-sub-category > sub-category > category ("common").
  */
 
 function normalizeSubCategory(raw) {
@@ -21,10 +21,16 @@ function layerQualitySpecRuleRows(baseRows, overrideRows) {
   return [...keptBase, ...override];
 }
 
-/** commonRows -> subRows -> (optional) subSubRows, each overriding the last by parameter name. */
-function mergeQualitySpecRuleRows(commonRows, subRows, subSubRows) {
-  const merged = layerQualitySpecRuleRows(commonRows, subRows);
-  return subSubRows == null ? merged : layerQualitySpecRuleRows(merged, subSubRows);
+/**
+ * commonRows -> subRows -> (optional) subSubRows -> (optional) itemRows, each overriding the last
+ * by parameter name. An item rule is the last word: it is written against one specific item, so it
+ * beats every category-ladder rule that reaches that item.
+ */
+function mergeQualitySpecRuleRows(commonRows, subRows, subSubRows, itemRows) {
+  let merged = layerQualitySpecRuleRows(commonRows, subRows);
+  if (subSubRows != null) merged = layerQualitySpecRuleRows(merged, subSubRows);
+  if (itemRows != null) merged = layerQualitySpecRuleRows(merged, itemRows);
+  return merged;
 }
 
 module.exports = { normalizeSubCategory, mergeQualitySpecRuleRows, layerQualitySpecRuleRows };

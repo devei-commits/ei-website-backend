@@ -272,8 +272,26 @@ function resolveRmQualitySpecCategoryFromRow(row) {
   return { category: functionalCategory, subCategory: functionalSub, subSubCategory: functionalSubSub };
 }
 
+/**
+ * The same row expressed in the MASTERS' vocabulary — the category / sub-category / sub-sub the
+ * item form itself shows ('RAW MATERIALS' → 'SURFACTANTS' → 'ANIONIC').
+ *
+ * Rules can now be written against this vocabulary instead of the legacy functional one
+ * ("Surfactant"), which appeared nowhere in the master form. Both ladders are resolved so rules
+ * written either way reach the item and no existing rule is orphaned.
+ */
+function resolveRmMasterScopeFromRow(row) {
+  const cats = resolveRmEditCategories(row);
+  return {
+    category: trim(cats.subCategory),
+    subCategory: trim(cats.optionalRmSubCategory),
+    subSubCategory: trim(cats.optionalRmSubSubCategory),
+  };
+}
+
 module.exports = {
   resolveRmEditCategories,
   resolveRmQualitySpecFunctionalContext,
   resolveRmQualitySpecCategoryFromRow,
+  resolveRmMasterScopeFromRow,
 };

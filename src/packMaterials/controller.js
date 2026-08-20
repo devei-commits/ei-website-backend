@@ -43,8 +43,9 @@ const {
 const { createMasterApprovalStatusHistoryHandler } = require('../lib/masterApprovalStatusHistory');
 const { PM_QUALITY_SPEC_EDIT_KEYS, payloadHasQualitySpecEdits } = require('../qualitySpecRules/itemLock');
 const { resolveEntityQualitySpecs } = require('../qualitySpecRules/resolveForItem');
+const { layerQualitySpecRuleRows } = require('../qualitySpecRules/resolver');
 const { resolveEntityTechnicalSpecs } = require('../technicalSpecRules/resolveForItem');
-const { resolvePmQualitySpecCategoryFromRow } = require('../qualitySpecRules/pmCategoryResolve');
+const { resolvePmQualitySpecCategoryFromRow, resolvePmMasterScopeFromRow } = require('../qualitySpecRules/pmCategoryResolve');
 
 /** All PM stock is counted in pieces (aligned with planning, production, warehouse). */
 function canonicalPmUnit() {
@@ -240,11 +241,17 @@ async function formatPackMaterialFull(row) {
   const locked = d.quality_specs_locked === true;
   const fd = d.form_data != null && typeof d.form_data === 'object' && !Array.isArray(d.form_data) ? d.form_data : {};
 
-  const { category } = resolvePmQualitySpecCategoryFromRow({ group: d.group, material: d.material, form_data: fd });
+  const { category, subCategory } = resolvePmQualitySpecCategoryFromRow({ group: d.group, material: d.material, form_data: fd });
 
   let form_data = d.form_data ?? null;
   if (!locked) {
-    const { commonRows } = await resolveEntityQualitySpecs('PM', category, '');
+    // Category rows come back as `commonRows`; `subRows` carries the sub-category rule with any
+    // item-level rule already layered on top. PM shows one table, so they are merged here.
+    const resolved = await resolveEntityQualitySpecs(
+      'PM', category, subCategory, '', d.code,
+      resolvePmMasterScopeFromRow({ group: d.group, material: d.material, form_data: fd }),
+    );
+    const commonRows = layerQualitySpecRuleRows(resolved.commonRows, resolved.subRows);
     form_data = { ...fd, pmQualitySpecRows: commonRows };
   }
 

@@ -1429,9 +1429,9 @@ const getProductDetail = async (req, res) => {
       const prSubCategory = resolvePrQualitySpecSubCategory(prCategory, parsedNotes.pr_sub_category || '');
       const subSpecPath = resolvePrSubSpecPath(prCategory, prSubCategory);
       const [bulk, final, dispatch] = await Promise.all([
-        resolvePrEntityQualitySpecs('PR_BULK_CLEARANCE', prCategory, prSubCategory, subSpecPath),
-        resolvePrEntityQualitySpecs('PR_FINAL_CLEARANCE', prCategory, prSubCategory, subSpecPath),
-        resolvePrEntityQualitySpecs('PR_DISPATCH_SPECS', prCategory, prSubCategory, subSpecPath),
+        resolvePrEntityQualitySpecs('PR_BULK_CLEARANCE', prCategory, prSubCategory, subSpecPath, plain.product_code),
+        resolvePrEntityQualitySpecs('PR_FINAL_CLEARANCE', prCategory, prSubCategory, subSpecPath, plain.product_code),
+        resolvePrEntityQualitySpecs('PR_DISPATCH_SPECS', prCategory, prSubCategory, subSpecPath, plain.product_code),
       ]);
       pr_quality_spec_rows_by_section = {
         bulkClearance: bulk.commonRows,

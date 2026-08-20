@@ -1,3 +1,4 @@
+const { applyQualitySpecRulesToQcMasters } = require('./qcSpecRuleEnrichment');
 const { softDeleteWhere, activeRowWhere } = require('../lib/softDelete');
 const { Op } = require('sequelize');
 const db = require('../../db');
@@ -261,7 +262,9 @@ async function loadMastersForQc(lineItems, grnType) {
             ...(rmCodeList.length ? [{ zoho_sku_code: { [Op.in]: rmCodeList } }] : []),
           ],
         },
-        attributes: ['id', 'code', 'name', 'inci', 'zoho_sku_code', 'form_data'],
+        // category/group/quality_specs_locked drive the spec-rule resolution below, so that a GRN
+        // shows the quality parameters a rule defines even when the item was never opened and saved.
+        attributes: ['id', 'code', 'name', 'inci', 'zoho_sku_code', 'form_data', 'category', 'group', 'quality_specs_locked'],
       })
       : [],
     pmIds.size || pmCodeList.length
@@ -273,7 +276,7 @@ async function loadMastersForQc(lineItems, grnType) {
             ...(pmCodeList.length ? [{ zoho_sku_code: { [Op.in]: pmCodeList } }] : []),
           ],
         },
-        attributes: ['id', 'code', 'description', 'zoho_sku_code', 'form_data'],
+        attributes: ['id', 'code', 'description', 'zoho_sku_code', 'form_data', 'group', 'material', 'quality_specs_locked'],
       })
       : [],
   ]);
@@ -319,6 +322,9 @@ async function qcReference(req, res) {
     const d = row.get ? row.get({ plain: true }) : row;
     const lineItems = d.line_items || [];
     const masters = await loadMastersForQc(lineItems, d.type);
+    // Fill in quality rows that live in Quality Spec Rules rather than on the item row itself,
+    // so a rule added for a category / sub-category / item shows up in this GRN's QC screen.
+    await applyQualitySpecRulesToQcMasters(masters);
     const qcSpecs = buildGrnQcSpecPayload(lineItems, d.type, d.qc_specs, masters);
     const derivedStatus = deriveGrnQcStatusFromSpecs(qcSpecs);
     res.json({ qcSpecs, derivedQcStatus: derivedStatus });

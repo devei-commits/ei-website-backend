@@ -67,12 +67,40 @@ const {
   isPlanningBatchEditableByProduction,
   planningBatchEditLockReason,
   validateUpdateOnlyBatchPayload,
+  assertSentBatchSizesUnchanged,
+  assertBatchPlanWithinOrder,
 } = require('./planningBatchEditLock');
 
 /** Whether `sent_batch_indices` includes this 0-based batch index (coerces string/number from JSON). */
 function isBatchIndexSent(sentRaw, batchIndex0) {
   const sent = Array.isArray(sentRaw) ? sentRaw : [];
   return sent.some((x) => Number(x) === Number(batchIndex0));
+}
+
+/**
+ * What fraction of the order's material requirement has actually been released to production.
+ *
+ * Items Involved is a batch-driven view: it answers "what do the batches on the floor need?", and the
+ * Release-to-Planning batch split already lists released batches only. The headline requirement was
+ * the whole order regardless, so a 200 KG order with one released 100 kg batch reported 1,000 pcs of
+ * bottle against a batch that needs 500 — the modal's own split (55.43 kg) contradicted its header
+ * (110.86 kg).
+ *
+ * Scaling by released kg keeps every unit/kit/sub-BOM conversion in the confirmed snapshot intact
+ * rather than re-deriving requirements from batch BOM lines.
+ *
+ * Nothing released yet -> 1 (the order itself is the demand; this is the pre-release planning view,
+ * and it is what this endpoint has always returned). Buffer batches deliberately push the fraction
+ * above 1: over-production really does consume more material than the order.
+ */
+function releasedRequirementFraction(planPlain, planBatchesSent) {
+  const totalKg = parseFloat(String(planPlain?.total_kg_display ?? '0').replace(/[^\d.]/g, '')) || 0;
+  if (!(totalKg > 0)) return 1;
+  const sent = Array.isArray(planBatchesSent) ? planBatchesSent : [];
+  if (sent.length === 0) return 1;
+  const sentKg = sent.reduce((sum, b) => sum + (Number(b?.size_kg) || 0), 0);
+  if (!(sentKg > 0)) return 1;
+  return sentKg / totalKg;
 }
 
 /**
@@ -1189,6 +1217,25 @@ async function updatePlanningExtracted(req, res) {
     const nowBomConfirmedAt = row.get ? row.get('bom_confirmed_at') : row.bom_confirmed_at;
     const nowBomSg = row.get ? row.get('bom_specific_gravity') : row.bom_specific_gravity;
 
+    // custom_batches is the denormalized mirror of planning_batches, and the Plan Batches screen
+    // writes it *before* saving the rows themselves. Apply the same over-order ceiling here, or a
+    // plan the batch endpoint rejects would still have left an inflated size list on the PI —
+    // which is what every downstream reader (batch modal, SLA units) hydrates from.
+    if (body.customBatches !== undefined || body.custom_batches !== undefined) {
+      try {
+        assertBatchPlanWithinOrder(
+          row.get ? row.get('custom_batches') : row.custom_batches,
+          row.get ? row.get('total_kg_display') : row.total_kg_display,
+          row.get ? row.get('buffer_batch_indices') : row.buffer_batch_indices
+        );
+      } catch (guardErr) {
+        if (guardErr.status) {
+          return res.status(guardErr.status).json({ error: guardErr.message, code: guardErr.code });
+        }
+        throw guardErr;
+      }
+    }
+
     await row.save();
 
     // When BOM is confirmed, ensure each rm_lines[].specific_gravity is set for vessel-volume math.
@@ -1569,6 +1616,24 @@ async function createOrUpdateBatches(req, res) {
       body.updateOnlyBatchId != null ? parseInt(body.updateOnlyBatchId, 10) : null;
     const bomCopy = await getBomCopyForPlanning(id);
     const existing = await PlanningBatch.findAll({ where: { planning_extracted_id: id }, order: [['sequence', 'ASC']] });
+
+    // Two invariants the bulk save previously had no opinion on, and which together let a 200 KG
+    // order end up with a 400 kg plan whose already-released batch had been resized under it:
+    //   1. a batch that is already sent to production is fixed at the size its BMR was cut for;
+    //   2. the plan as a whole cannot allocate more than the order, buffer batches excepted.
+    try {
+      const sentRaw = planRow.get ? planRow.get('sent_batch_indices') : planRow.sent_batch_indices;
+      const bufferRaw = planRow.get ? planRow.get('buffer_batch_indices') : planRow.buffer_batch_indices;
+      const totalKgDisplay = planRow.get ? planRow.get('total_kg_display') : planRow.total_kg_display;
+      assertSentBatchSizesUnchanged(batches, existing, sentRaw);
+      assertBatchPlanWithinOrder(batches, totalKgDisplay, bufferRaw);
+    } catch (guardErr) {
+      if (guardErr.status) {
+        return res.status(guardErr.status).json({ error: guardErr.message, code: guardErr.code });
+      }
+      throw guardErr;
+    }
+
     if (updateOnlyBatchId != null && !Number.isNaN(updateOnlyBatchId)) {
       try {
         validateUpdateOnlyBatchPayload(batches, existing, updateOnlyBatchId);
@@ -2460,6 +2525,9 @@ async function getItemsInvolved(req, res) {
       const planBatchesRaw = batchesByPlanId.get(planId) || [];
       const planBatchesPlain = planBatchesRaw.map((batchRow) => (batchRow.get ? batchRow.get({ plain: true }) : batchRow));
       const planBatchesSent = filterPlanningBatchesSentToProduction(plain, planBatchesPlain);
+      // Requirement follows what has been RELEASED, matching the Batches column and the
+      // Release-to-Planning batch split. See releasedRequirementFraction.
+      const releasedFraction = releasedRequirementFraction(plain, planBatchesSent);
 
       // Kit batches store PR-reference lines. Preload each referenced sub-PR's BOM once so the
       // batch-accounting below can expand kit lines into the real sub-materials (else kit items
@@ -2482,7 +2550,7 @@ async function getItemsInvolved(req, res) {
         // Batch-driven Items Involved: only surface a material that at least one of this PI's batches
         // (planned OR sent) actually references. A PI with no batches contributes no items.
         if (countPlanningBatchesTouchingRm(planBatchesPlain, id, rmByCode, rmByName, subBomMap) === 0) continue;
-        const gross = (fullRm.get(id) || 0);
+        const gross = (fullRm.get(id) || 0) * releasedFraction;
         const rem = Math.max(0, gross - (plannedRm.get(id) || 0));
         if (!(gross > 0) && !includeZeroRequired) continue;
         const unit = rmUnitById.get(id) || 'KG';
@@ -2509,16 +2577,18 @@ async function getItemsInvolved(req, res) {
         if (planId && !agg.planningExtractedIds.includes(planId)) agg.planningExtractedIds.push(planId);
         if (name) agg.name = name;
         if (code) agg.code = code;
-        // Count ALL batches (incl. drafts) that use this material — matches the surfacing guard above,
-        // so a row driven by a draft batch shows its real batch count instead of a misleading 0.
-        agg.batchCount += countPlanningBatchesTouchingRm(planBatchesPlain, id, rmByCode, rmByName, subBomMap);
+        // Count only batches RELEASED to production. A draft planning row is a plan, not a batch:
+        // counting it reported a single released batch as "2", disagreeing with the Batches tab and
+        // with the drill-down list. The surfacing guard above deliberately stays unfiltered, so a
+        // material used only by a draft batch still gets a row — it just shows 0 released batches.
+        agg.batchCount += countPlanningBatchesTouchingRm(planBatchesSent, id, rmByCode, rmByName, subBomMap);
       }
 
       const allPmIdsForPlan = new Set([...fullPm.keys(), ...plannedPm.keys()]);
       for (const id of allPmIdsForPlan) {
         // Batch-driven: skip PMs that no batch of this PI references.
         if (countPlanningBatchesTouchingPm(planBatchesPlain, id, pmByCode, pmByName, plain, subBomMap) === 0) continue;
-        const gross = (fullPm.get(id) || 0);
+        const gross = (fullPm.get(id) || 0) * releasedFraction;
         const rem = Math.max(0, gross - (plannedPm.get(id) || 0));
         if (!(gross > 0) && !includeZeroRequired) continue;
         const unit = pmUnitById.get(id) || 'PCS';
@@ -2545,8 +2615,11 @@ async function getItemsInvolved(req, res) {
         if (planId && !agg.planningExtractedIds.includes(planId)) agg.planningExtractedIds.push(planId);
         if (name) agg.name = name;
         if (code) agg.code = code;
-        // Count ALL batches (incl. drafts) that use this material — matches the surfacing guard above.
-        agg.batchCount += countPlanningBatchesTouchingPm(planBatchesPlain, id, pmByCode, pmByName, plain, subBomMap);
+        // Count only batches RELEASED to production. A draft planning row is a plan, not a batch:
+        // counting it reported a single released batch as "2", disagreeing with the Batches tab and
+        // with the drill-down list. The surfacing guard above deliberately stays unfiltered, so a
+        // material used only by a draft batch still gets a row — it just shows 0 released batches.
+        agg.batchCount += countPlanningBatchesTouchingPm(planBatchesSent, id, pmByCode, pmByName, plain, subBomMap);
       }
     }
 
@@ -3091,6 +3164,8 @@ async function getItemsInvolvedByPlanningId(req, res) {
     const planBatchesList = await PlanningBatch.findAll({ where: { planning_extracted_id: id }, order: [['sequence', 'ASC']] });
     const planBatchesPlain = planBatchesList.map((b) => (b.get ? b.get({ plain: true }) : b));
     const planBatchesSent = filterPlanningBatchesSentToProduction(plain, planBatchesPlain);
+    // Requirement follows what has been RELEASED. See releasedRequirementFraction.
+    const releasedFraction = releasedRequirementFraction(plain, planBatchesSent);
     // Kit batches store PR-reference lines — preload sub-PR BOMs so batch accounting can expand them.
     const subBomMap = new Map();
     for (const bp of planBatchesPlain) {
@@ -3351,7 +3426,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
       const whUnit = whUnitByRm.get(rid);
       const sihKg = warehouseNativeQtyToKg(sihNative, whUnit, rmMeta);
       const inTransitKg = warehouseNativeQtyToKg(inTransitNative, whUnit, rmMeta);
-      const fullOrderQty = req.quantity || 0;
+      const fullOrderQty = (req.quantity || 0) * releasedFraction;
       const plannedInBatches = plannedRmFromBatches.get(rid) || 0;
       const bomGrossRequiredKg = fullOrderQty;
       const unallocatedToBatches = Math.max(0, fullOrderQty - plannedInBatches);
@@ -3388,8 +3463,11 @@ async function getItemsInvolvedByPlanningId(req, res) {
         plannedQty,
         poQty: netOpenPoQtyKg(`rm-${rid}`),
         inTransit: inTransitKg,
-        // Count ALL batches (incl. drafts) that use this material — matches the surfacing guard.
-        batchCount: countPlanningBatchesTouchingRm(planBatchesPlain, rid, rmByCodeMap, rmByNameMap, subBomMap),
+        // Count only batches RELEASED to production. A draft planning row is a plan, not a batch:
+        // counting it reported a single released batch as "2", disagreeing with the Batches tab and
+        // with the drill-down list. The surfacing guard above deliberately stays unfiltered, so a
+        // material used only by a draft batch still gets a row — it just shows 0 released batches.
+        batchCount: countPlanningBatchesTouchingRm(planBatchesSent, rid, rmByCodeMap, rmByNameMap, subBomMap),
       };
       out.push(
         finalizeItemsInvolvedRmRow(rmRowKg, rmMeta, {
@@ -3408,7 +3486,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
       const reserved = reservedByPm.get(pid) ?? 0;
       const sih = Math.max(0, stockInHand - reserved);
       const inTransit = inTransitByPm.get(pid) ?? 0;
-      const fullOrderQtyPm = req.quantity || 0;
+      const fullOrderQtyPm = (req.quantity || 0) * releasedFraction;
       const plannedInBatchesPm = plannedPmFromBatches.get(pid) || 0;
       const bomGrossRequiredPm = fullOrderQtyPm;
       const unallocatedToBatchesPm = Math.max(0, fullOrderQtyPm - plannedInBatchesPm);
@@ -3442,8 +3520,11 @@ async function getItemsInvolvedByPlanningId(req, res) {
         plannedQty,
         poQty: netOpenPoQtyKg(`pm-${pid}`),
         inTransit,
-        // Count ALL batches (incl. drafts) that use this material — matches the surfacing guard.
-        batchCount: countPlanningBatchesTouchingPm(planBatchesPlain, pid, pmByCodeMap, pmByNameMap, plain, subBomMap),
+        // Count only batches RELEASED to production. A draft planning row is a plan, not a batch:
+        // counting it reported a single released batch as "2", disagreeing with the Batches tab and
+        // with the drill-down list. The surfacing guard above deliberately stays unfiltered, so a
+        // material used only by a draft batch still gets a row — it just shows 0 released batches.
+        batchCount: countPlanningBatchesTouchingPm(planBatchesSent, pid, pmByCodeMap, pmByNameMap, plain, subBomMap),
       });
     }
 
@@ -3568,6 +3649,7 @@ async function getPlanningBatchCoverageHandler(req, res) {
 }
 
 module.exports = {
+  releasedRequirementFraction,
   syncPlanningExtractedFromSalesOrders,
   listPlanningExtracted,
   getPlanningExtractedById,

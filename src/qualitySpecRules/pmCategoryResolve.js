@@ -95,10 +95,30 @@ function normalizeUnifiedPmSubCategory(skuSlug, raw) {
   return '';
 }
 
+/**
+ * Every PM SKU series maps to exactly one functional quality category. This is the fallback when an
+ * item's detail sub-category is missing or is a label the item-type map doesn't know.
+ *
+ * Without it, `pmUnifiedToLegacyQualityCategory` returned the raw master value as though it were a
+ * category — which put 74% of pack materials into phantom categories ("Labels", "Packaging -
+ * Primary", "Other Components", "Shrink Sleeves") that the Spec Rules screen never offers and no
+ * rule can target. `ppm` is deliberately absent: it spans both Primary Pack and Closures & Pumps,
+ * so a ppm item with an unrecognised type stays unresolved rather than being guessed into one.
+ */
+const PM_SLUG_TO_LEGACY_QUALITY_CATEGORY = {
+  'spm-labels': 'Secondary Pack',
+  'spm-monocarton': 'Secondary Pack',
+  'spm-other': 'Secondary Pack',
+  'tpm-tertiary': 'Tertiary Pack',
+  'tpm-ancillary': 'Ancillary',
+};
+
 function pmUnifiedToLegacyQualityCategory(skuSlug, unifiedSub) {
   const sub = normalizeUnifiedPmSubCategory(skuSlug, unifiedSub) || unifiedSub;
-  const k = normKey(sub);
-  return PM_UNIFIED_TO_LEGACY_QUALITY_CATEGORY[k] ?? unifiedSub;
+  const byItemType = PM_UNIFIED_TO_LEGACY_QUALITY_CATEGORY[normKey(sub)];
+  if (byItemType) return byItemType;
+  // Fall back to the SKU series rather than echoing the raw master text back as a category.
+  return PM_SLUG_TO_LEGACY_QUALITY_CATEGORY[skuSlug] ?? '';
 }
 
 function normalizePmSkuCategoryForSelect(raw) {
@@ -144,17 +164,62 @@ function resolvePmEditCategories(record) {
 function resolvePmQualitySpecFunctionalCategory(ctx) {
   const sku = normalizePmSkuCategoryForSelect(ctx.pmSkuCategory || '') || 'ppm';
   const unifiedSub = normalizePmDetailSubCategoryKey(ctx.optionalPmSubCategory) || trim(ctx.optionalPmSubCategory);
-  return pmUnifiedToLegacyQualityCategory(sku, unifiedSub) || '';
+  const category = pmUnifiedToLegacyQualityCategory(sku, unifiedSub);
+  if (category) return category;
+  // A ppm item whose type is unknown could be either Primary Pack or Closures & Pumps. Primary Pack
+  // is the series default (closures are the minority and are all named in the item-type map).
+  return sku === 'ppm' ? 'Primary Pack' : '';
 }
 
-/** End-to-end: a saved PM row's { group, material, form_data } → the quality-spec rule's category (sub-category intentionally omitted). */
+/**
+ * End-to-end: a saved PM row's { group, material, form_data } → the quality-spec rule scope.
+ *
+ * `subCategory` is the item type the master itself records (BOTTLES, CAPS, SHEET FORM, …) — the
+ * same vocabulary `PM_SLUG_TO_SUBCATEGORY_OPTIONS` defines and the master form stores. Earlier this
+ * was hard-coded to '' because no mapping existed onto the HTML-seeded labels ("Bottle (PET/HDPE)");
+ * using the item types directly needs no such mapping, so PM sub-category rules can now resolve.
+ * It stays '' when the type is unknown, which just means only the category rule applies.
+ */
 function resolvePmQualitySpecCategoryFromRow(row) {
   const cats = resolvePmEditCategories(row);
   const category = resolvePmQualitySpecFunctionalCategory(cats);
-  return { category, subCategory: '' };
+  // Prefer the canonical item type; otherwise keep the value the master actually stores.
+  // Much of the PM data is imported and carries its own vocabulary ("Labels",
+  // "Self-Adhesive Labels") rather than the schema's SHEET FORM / ROLL FORM. Blanking those made
+  // the sub-category shown on the master un-targetable by any rule — which is exactly what a user
+  // hits when they read "Labels" on the item and cannot find it in the rules screen. Keeping the
+  // raw value means a rule written against what the master displays resolves to that item.
+  const subCategory = normalizePmDetailSubCategoryKey(cats.optionalPmSubCategory) || trim(cats.optionalPmSubCategory);
+  return { category, subCategory };
+}
+
+/** PM SKU slug → the category LABEL the master form shows. Mirrors PM_SLUG_TO_CATEGORY_LABEL. */
+const PM_SLUG_TO_CATEGORY_LABEL = {
+  ppm: 'PPM — Primary (4XXXXX)',
+  'spm-labels': 'SPM — Labels (5LXXXXX)',
+  'spm-monocarton': 'SPM — Monocartons (5MXXXXX)',
+  'spm-other': 'SPM — Other Secondary (5OXXXXX)',
+  'tpm-tertiary': 'TPM — Tertiary (6TXXXXX)',
+  'tpm-ancillary': 'TPM — Ancillary (6AXXXXX)',
+};
+
+/**
+ * The same row in the MASTERS' vocabulary — the SKU series label and item type the PM form shows
+ * ('SPM — Labels (5LXXXXX)' → 'SHEET FORM'). Resolved alongside the legacy functional scope so a
+ * rule written in either vocabulary reaches the item.
+ */
+function resolvePmMasterScopeFromRow(row) {
+  const cats = resolvePmEditCategories(row);
+  const slug = normalizePmSkuCategoryForSelect(cats.pmSkuCategory || '') || 'ppm';
+  return {
+    category: PM_SLUG_TO_CATEGORY_LABEL[slug] || '',
+    subCategory: normalizePmDetailSubCategoryKey(cats.optionalPmSubCategory) || trim(cats.optionalPmSubCategory),
+    subSubCategory: '',
+  };
 }
 
 module.exports = {
+  resolvePmMasterScopeFromRow,
   resolvePmEditCategories,
   resolvePmQualitySpecFunctionalCategory,
   resolvePmQualitySpecCategoryFromRow,

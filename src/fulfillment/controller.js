@@ -1007,6 +1007,22 @@ async function updateOrder(req, res) {
       // Canonical stored form on sales_orders.status is Capitalized (and canceled → Cancelled).
       nextSalesOrderStatus = key === 'canceled' ? 'Cancelled' : key.charAt(0).toUpperCase() + key.slice(1);
       row.set('commercial_status', SO_STATUS_TO_COMMERCIAL[key]);
+
+      // Cancelling freezes the row: cancelOrder() sets so_status='cancelled' AND
+      // manual_status_override=true so nothing recomputes over it. Nothing cleared that on the way
+      // back, so moving an SO out of Cancelled updated sales_orders.status while `formatOrder` kept
+      // returning the frozen 'cancelled' — the status looked unchanged in every fulfillment view.
+      // Un-freezing lets so_status recompute from the batch splits again.
+      const leavingCancelled =
+        key !== 'cancelled' && key !== 'canceled' &&
+        (String(row.get('so_status') || '').toLowerCase() === 'cancelled' ||
+          row.get('manual_status_override') === true);
+      if (leavingCancelled) {
+        row.set('manual_status_override', false);
+        // 'closed' is its own deliberate freeze (closeOrder), so it keeps an explicit status.
+        row.set('so_status', key === 'closed' ? 'closed' : 'planned');
+        if (key === 'closed') row.set('manual_status_override', true);
+      }
     }
 
     if (hasItemsPayload) {

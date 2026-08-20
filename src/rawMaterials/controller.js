@@ -45,8 +45,9 @@ const {
 const { createMasterApprovalStatusHistoryHandler } = require('../lib/masterApprovalStatusHistory');
 const { RM_QUALITY_SPEC_EDIT_KEYS, payloadHasQualitySpecEdits } = require('../qualitySpecRules/itemLock');
 const { resolveEntityQualitySpecs } = require('../qualitySpecRules/resolveForItem');
+const { layerQualitySpecRuleRows } = require('../qualitySpecRules/resolver');
 const { resolveEntityTechnicalSpecs } = require('../technicalSpecRules/resolveForItem');
-const { resolveRmQualitySpecCategoryFromRow } = require('../qualitySpecRules/rmCategoryResolve');
+const { resolveRmQualitySpecCategoryFromRow, resolveRmMasterScopeFromRow } = require('../qualitySpecRules/rmCategoryResolve');
 /** List-view only (no form_data). */
 function formatRawMaterial(row) {
   if (!row) return null;
@@ -101,11 +102,20 @@ async function formatRawMaterialFull(row) {
 
   let form_data = d.form_data ?? null;
   if (!locked) {
-    const { commonRows, subRows } = await resolveEntityQualitySpecs('RM', category, subCategory, subSubCategory);
+    // The item's own code is passed so a rule written against just this RM layers on top of
+    // whatever its category resolved to (see quality_spec_rules.item_code).
+    // Master-vocabulary scope passed alongside the legacy one so a rule written against what the
+    // item form shows ('RAW MATERIALS' / 'SURFACTANTS') reaches this item too.
+    const { commonRows, subRows } = await resolveEntityQualitySpecs(
+      'RM', category, subCategory, subSubCategory, d.code,
+      resolveRmMasterScopeFromRow({ category: d.category, group: d.group, form_data: fd }),
+    );
     const pathKey = category && subCategory ? `${category}::${subCategory}` : null;
     form_data = {
       ...fd,
-      rmQualitySpecRows: commonRows,
+      // Without a sub-category there is no path to hang `subRows` on, and they now carry
+      // item-level overrides — so they fold into the common table rather than being dropped.
+      rmQualitySpecRows: pathKey ? commonRows : layerQualitySpecRuleRows(commonRows, subRows),
       rmQualitySubSpecRowsByPath: pathKey ? { [pathKey]: subRows } : {},
     };
   }

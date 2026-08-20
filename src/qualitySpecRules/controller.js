@@ -23,6 +23,9 @@ function formatQualitySpecRule(row) {
     category: d.category,
     subCategory: d.sub_category || '',
     subSubCategory: d.sub_sub_category || '',
+    itemCode: d.item_code || '',
+    /** Which rung of the ladder this rule sits on — drives the scope badge on the rules screen. */
+    scope: d.item_code ? 'item' : d.sub_sub_category ? 'sub_sub_category' : d.sub_category ? 'sub_category' : 'category',
     rows: Array.isArray(d.rows) ? d.rows : [],
     createdAt: d.created_at,
     updatedAt: d.updated_at,
@@ -50,9 +53,14 @@ async function listQualitySpecRules(req, res) {
     if (req.query.subSubCategory != null || req.query.sub_sub_category != null) {
       where.sub_sub_category = normalizeSubCategory(req.query.subSubCategory ?? req.query.sub_sub_category);
     }
+    // itemCode is a scope of its own, so it is filterable independently of the category ladder:
+    // `?itemCode=1001150` finds that item's rule wherever its category currently points.
+    if (req.query.itemCode != null || req.query.item_code != null) {
+      where.item_code = normalizeSubCategory(req.query.itemCode ?? req.query.item_code);
+    }
     const rows = await QualitySpecRule.findAll({
       where,
-      order: [['category', 'ASC'], ['sub_category', 'ASC'], ['sub_sub_category', 'ASC']],
+      order: [['category', 'ASC'], ['sub_category', 'ASC'], ['sub_sub_category', 'ASC'], ['item_code', 'ASC']],
     });
     res.json(rows.map(formatQualitySpecRule));
   } catch (err) {
@@ -72,42 +80,51 @@ async function resolveQualitySpecRules(req, res) {
     if (!VALID_ENTITY_TYPES.has(entityType)) {
       return res.status(400).json({ error: 'entityType must be one of RM, PM, PR' });
     }
+    const itemCode = normalizeSubCategory(req.query.itemCode ?? req.query.item_code);
     const category = normalizeCategory(req.query.category);
-    if (!category) {
-      return res.status(400).json({ error: 'category is required' });
+    if (!category && !itemCode) {
+      return res.status(400).json({ error: 'category is required (or itemCode for an item-level rule)' });
     }
     const subCategory = normalizeSubCategory(req.query.subCategory ?? req.query.sub_category);
     const subSubCategory = normalizeSubCategory(req.query.subSubCategory ?? req.query.sub_sub_category);
 
-    const [commonRule, subRule, subSubRule] = await Promise.all([
-      QualitySpecRule.findOne({
-        where: { entity_type: entityType, category, sub_category: '', sub_sub_category: '' },
-      }),
-      subCategory
+    const [commonRule, subRule, subSubRule, itemRule] = await Promise.all([
+      category
+        ? QualitySpecRule.findOne({
+            where: { entity_type: entityType, category, sub_category: '', sub_sub_category: '' },
+          })
+        : null,
+      category && subCategory
         ? QualitySpecRule.findOne({
             where: { entity_type: entityType, category, sub_category: subCategory, sub_sub_category: '' },
           })
         : null,
-      subCategory && subSubCategory
+      category && subCategory && subSubCategory
         ? QualitySpecRule.findOne({
             where: { entity_type: entityType, category, sub_category: subCategory, sub_sub_category: subSubCategory },
           })
+        : null,
+      itemCode
+        ? QualitySpecRule.findOne({ where: { entity_type: entityType, item_code: itemCode } })
         : null,
     ]);
 
     const commonRows = commonRule ? formatQualitySpecRule(commonRule).rows : [];
     const subRows = subRule ? formatQualitySpecRule(subRule).rows : [];
     const subSubRows = subSubRule ? formatQualitySpecRule(subSubRule).rows : [];
+    const itemRows = itemRule ? formatQualitySpecRule(itemRule).rows : [];
 
     res.json({
       entityType,
       category,
       subCategory,
       subSubCategory,
+      itemCode,
       commonRows,
       subRows,
       subSubRows,
-      rows: mergeQualitySpecRuleRows(commonRows, subRows, subSubRows),
+      itemRows,
+      rows: mergeQualitySpecRuleRows(commonRows, subRows, subSubRows, itemRows),
     });
   } catch (err) {
     console.error('resolveQualitySpecRules error', err);
@@ -116,8 +133,9 @@ async function resolveQualitySpecRules(req, res) {
 }
 
 /**
- * PUT /api/v1/quality-spec-rules — upsert a rule by (entityType, category, subCategory, subSubCategory).
- * Body: { entityType, category, subCategory?, subSubCategory?, rows: [...] }
+ * PUT /api/v1/quality-spec-rules — upsert a rule.
+ * Keyed by (entityType, itemCode) for an item rule, else (entityType, category, subCategory, subSubCategory).
+ * Body: { entityType, category?, subCategory?, subSubCategory?, itemCode?, rows: [...] }
  */
 async function upsertQualitySpecRule(req, res) {
   try {
@@ -126,9 +144,12 @@ async function upsertQualitySpecRule(req, res) {
     if (!VALID_ENTITY_TYPES.has(entityType)) {
       return res.status(400).json({ error: 'entityType must be one of RM, PM, PR' });
     }
+    const itemCode = normalizeSubCategory(b.itemCode ?? b.item_code);
     const category = normalizeCategory(b.category);
-    if (!category) {
-      return res.status(400).json({ error: 'category is required' });
+    // An item rule is keyed by the item, so it does not need a category. Requiring one would break
+    // the moment the item is recategorised, leaving an orphaned rule that no longer resolves.
+    if (!category && !itemCode) {
+      return res.status(400).json({ error: 'category is required (or itemCode for an item-level rule)' });
     }
     const subCategory = normalizeSubCategory(b.subCategory ?? b.sub_category);
     const subSubCategory = normalizeSubCategory(b.subSubCategory ?? b.sub_sub_category);
@@ -137,11 +158,20 @@ async function upsertQualitySpecRule(req, res) {
     }
     const rows = Array.isArray(b.rows) ? b.rows : [];
 
+    // Item rules are identified by (entityType, itemCode) alone — matching how they are resolved —
+    // so re-saving after the item moves category updates the same rule instead of orphaning it.
+    const where = itemCode
+      ? { entity_type: entityType, item_code: itemCode }
+      : { entity_type: entityType, category, sub_category: subCategory, sub_sub_category: subSubCategory, item_code: '' };
+
     const [row] = await QualitySpecRule.findOrCreate({
-      where: { entity_type: entityType, category, sub_category: subCategory, sub_sub_category: subSubCategory },
-      defaults: { rows },
+      where,
+      defaults: { rows, category: category || '', sub_category: subCategory, sub_sub_category: subSubCategory },
     });
-    await row.update({ rows });
+    // Keep the category columns current for item rules so the rules screen can still group them.
+    await row.update(
+      itemCode ? { rows, category: category || row.category || '', sub_category: subCategory, sub_sub_category: subSubCategory } : { rows },
+    );
     res.json(formatQualitySpecRule(row));
   } catch (err) {
     console.error('upsertQualitySpecRule error', err);
@@ -164,7 +194,67 @@ async function deleteQualitySpecRule(req, res) {
   }
 }
 
+/**
+ * GET /api/v1/quality-spec-rules/pm-scopes — the category / sub-category scopes that PACK MATERIALS
+ * actually resolve to, with how many items sit in each.
+ *
+ * The rules screen previously offered only the static schema vocabulary, so a scope the master
+ * displays but the schema never defined ("Labels", "Self-Adhesive Labels" — legacy imported values)
+ * could not be picked, and a rule written for it would not have matched anyway. Deriving the option
+ * list from the items themselves guarantees every offered scope reaches at least one item, and that
+ * everything a user sees on a master is offered here.
+ */
+async function listPmRuleScopes(req, res) {
+  try {
+    const entityType = normalizeEntityType(req.query.entityType ?? req.query.entity_type) || 'PM';
+    const isRm = entityType === 'RM';
+    const Model = isRm ? require('../rawMaterials/models') : require('../packMaterials/models');
+    // Resolve in the MASTERS' vocabulary — the same one the rules screen now offers. Using the
+    // legacy functional resolver here made the two disagree: the dropdown listed "RAW MATERIALS"
+    // while the count claimed 944 items had no category, because almost nothing resolves to a
+    // legacy category.
+    const resolve = isRm
+      ? (plain) => {
+          const { resolveRmMasterScopeFromRow } = require('./rmCategoryResolve');
+          return resolveRmMasterScopeFromRow({
+            category: plain.category,
+            group: plain.group,
+            form_data: plain.form_data,
+          });
+        }
+      : (plain) => {
+          const { resolvePmMasterScopeFromRow } = require('./pmCategoryResolve');
+          return resolvePmMasterScopeFromRow(plain);
+        };
+    const attributes = isRm
+      ? ['code', 'category', 'group', 'form_data']
+      : ['code', 'group', 'material', 'form_data'];
+    const rows = await Model.findAll({ attributes });
+    const byScope = new Map();
+    // Items that resolve to no category at all cannot be reached by ANY category rule — only an
+    // item-scoped rule reaches them. Counted separately so the UI can say so instead of hiding it.
+    let uncategorised = 0;
+    for (const row of rows) {
+      const plain = row.get ? row.get({ plain: true }) : row;
+      const { category, subCategory } = resolve(plain);
+      if (!category) { uncategorised += 1; continue; }
+      const key = `${category}\u0000${subCategory || ''}`;
+      const hit = byScope.get(key) || { category, subCategory: subCategory || '', itemCount: 0 };
+      hit.itemCount += 1;
+      byScope.set(key, hit);
+    }
+    const scopes = [...byScope.values()].sort(
+      (a, b) => a.category.localeCompare(b.category) || a.subCategory.localeCompare(b.subCategory),
+    );
+    res.json({ scopes, uncategorisedItemCount: uncategorised, totalItemCount: rows.length });
+  } catch (err) {
+    console.error('listPmRuleScopes error', err);
+    res.status(500).json({ error: err.message || 'Failed to list PM rule scopes' });
+  }
+}
+
 module.exports = {
+  listPmRuleScopes,
   listQualitySpecRules,
   resolveQualitySpecRules,
   upsertQualitySpecRule,
