@@ -1,4 +1,5 @@
 const { Op } = require('sequelize');
+const { buildConnectingDatesByMaterialKey } = require('../lib/poConnectingDates');
 const db = require('../../db');
 const PlanningExtracted = require('./models');
 const PlanningBomOverride = require('./planningBomOverrideModel');
@@ -486,6 +487,7 @@ function formatRow(row) {
     totalKg: d.total_kg_display || '',
     orderDate: d.order_date || '',
     dueDate: dueDateResolved,
+    committedDate: d.committed_date || '',
     daysLeft: daysLeftDisplay(dueDateResolved),
     batchSize: d.batch_size_display || '',
     batchesRequired: d.batches_required ?? 0,
@@ -1168,6 +1170,7 @@ async function updatePlanningExtracted(req, res) {
     const body = req.body || {};
     const camelToSnake = {
       orderQty: 'order_qty_display', totalKg: 'total_kg_display', orderDate: 'order_date', dueDate: 'due_date',
+      committedDate: 'committed_date',
       batchSize: 'batch_size_display', batchesRequired: 'batches_required', bomStatus: 'bom_status', approvedBy: 'approved_by',
       rawMaterials: 'raw_materials', packagingMaterials: 'packaging_materials', color: 'color',
       batchCount: 'batch_count', batchSizeKg: 'batch_size_kg', plannedStartDate: 'planned_start_date',
@@ -1178,7 +1181,7 @@ async function updatePlanningExtracted(req, res) {
       bufferBatchIndices: 'buffer_batch_indices',
     };
     const allowed = [
-      'order_qty_display', 'total_kg_display', 'order_date', 'due_date',
+      'order_qty_display', 'total_kg_display', 'order_date', 'due_date', 'committed_date',
       'batch_size_display', 'batches_required', 'bom_status', 'approved_by',
       'raw_materials', 'packaging_materials', 'color',
       'batch_count', 'batch_size_kg', 'planned_start_date', 'production_line', 'bom_confirmed_at',
@@ -1453,7 +1456,7 @@ async function listAllBatches(req, res) {
         model: PlanningExtracted,
         as: 'planningExtracted',
         required: true,
-        attributes: ['id', 'sales_order_id', 'product_id', 'order_qty_display', 'total_kg_display', 'due_date', 'bom_status', 'sent_batch_indices', 'custom_batches'],
+        attributes: ['id', 'sales_order_id', 'product_id', 'order_qty_display', 'total_kg_display', 'due_date', 'committed_date', 'bom_status', 'sent_batch_indices', 'custom_batches'],
         include: [
           { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'order_date'] },
           { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'] },
@@ -1503,6 +1506,7 @@ async function listAllBatches(req, res) {
         totalKg: plan.total_kg_display || '',
         orderDate: plan.salesOrder?.order_date || plan.order_date || '',
         dueDate: plan.due_date || '',
+        committedDate: plan.committed_date || '',
         bomStatus: plan.bom_status || '',
         rmLines: d.rm_lines || [],
         pmLines: d.pm_lines || [],
@@ -2003,6 +2007,75 @@ async function createSplitPlanningBatch(planningExtractedId, sourcePlanningBatch
   const nextSpNum = spNums.length === 0 ? 1 : Math.max(...spNums) + 1;
   const spSuffix = String(nextSpNum).padStart(2, '0');
   const batchCode = `PE-${id}-sp-${spSuffix}`;
+
+  let rmLines = [];
+  let pmLines = [];
+  if (sourcePlanningBatchId != null) {
+    const srcPb = await PlanningBatch.findByPk(sourcePlanningBatchId, { attributes: ['rm_lines', 'pm_lines', 'size_kg'] });
+    const srcPlain = srcPb && srcPb.get ? srcPb.get({ plain: true }) : srcPb;
+    const srcRm = Array.isArray(srcPlain?.rm_lines) ? srcPlain.rm_lines : [];
+    const srcPm = Array.isArray(srcPlain?.pm_lines) ? srcPlain.pm_lines : [];
+    const srcSize = Number(srcPlain?.size_kg) || sizeKg;
+    const scale = srcSize > 0 ? sizeKg / srcSize : 1;
+    const { scalePlanningJsonLines } = require('../production/vesselSplitMath');
+    rmLines = scalePlanningJsonLines(srcRm, scale);
+    pmLines = scalePlanningJsonLines(srcPm, scale);
+  }
+  if (rmLines.length === 0 && pmLines.length === 0) {
+    const bomCopy = await getBomCopyForPlanning(id);
+    rmLines = bomCopy.rmLines || [];
+    pmLines = bomCopy.pmLines || [];
+  }
+
+  const batch = await PlanningBatch.create({
+    planning_extracted_id: id,
+    sequence: nextSeq,
+    batch_code: batchCode,
+    size_kg: sizeKg,
+    rm_lines: rmLines,
+    pm_lines: pmLines,
+  });
+
+  const plan = await PlanningExtracted.findByPk(id, { attributes: ['id', 'sent_batch_indices'] });
+  if (plan) {
+    const sentRaw = plan.get ? plan.get('sent_batch_indices') : plan.sent_batch_indices;
+    const sent = Array.isArray(sentRaw) ? sentRaw : [];
+    const indexToAdd = nextSeq - 1;
+    if (!sent.includes(indexToAdd)) {
+      const nextSent = [...sent, indexToAdd].sort((a, b) => a - b);
+      await plan.update({ sent_batch_indices: nextSent });
+    }
+  }
+  const batchCnt = await PlanningBatch.count({ where: { planning_extracted_id: id } });
+  await PlanningExtracted.update({ batch_count: batchCnt }, { where: { id } });
+
+  return batch;
+}
+
+/**
+ * Create one REMAINDER planning_batch when a production user right-sizes a batch (shrinks its
+ * size), spinning the difference off as a normal, sequential batch — B{n+1} — rather than a
+ * vessel-capacity "-sp-NN" split. Same BOM-scaling approach as createSplitPlanningBatch (proportional
+ * from the source batch's already-confirmed lines, not a fresh copy from product master, so any
+ * per-batch RM/PM overrides the planner made survive the split), but named/sequenced like every
+ * other planner-facing batch so it reads as "Batch 2", not an internal capacity artifact.
+ *
+ * Always appended at the current max sequence + 1 — mid-sequence insertion would desync
+ * sent_batch_indices / custom_batches / ProductionBatch.batch_index for every later batch (see
+ * addOneBatchFromMaster for the same invariant).
+ */
+async function createRemainderPlanningBatch(planningExtractedId, sourcePlanningBatchId, remainderKg) {
+  const id = planningExtractedId;
+  const sizeKg = Number(remainderKg);
+  if (!Number.isFinite(sizeKg) || sizeKg <= 0) return null;
+
+  const existing = await PlanningBatch.findAll({
+    where: { planning_extracted_id: id },
+    attributes: ['sequence'],
+    order: [['sequence', 'DESC']],
+  });
+  const nextSeq = existing.length === 0 ? 1 : (existing[0].sequence || 0) + 1;
+  const batchCode = `PE-${id}-B${nextSeq}`;
 
   let rmLines = [];
   let pmLines = [];
@@ -2667,6 +2740,14 @@ async function getItemsInvolved(req, res) {
       getCompletedGrnReceivedKgByKey(),
     ]);
     const rmMetaById = buildRmMetaMap(rmsList);
+    // Per-item expected arrival dates, one entry per covering PO — see lib/poConnectingDates.
+    const {
+      isCommittedPurchaseOrder: isCommittedPoAll,
+      isDeadPurchaseOrder: isDeadPoAll,
+    } = require('../lib/itemsInvolvedStageFlow');
+    const connectingDatesByKeyAll = buildConnectingDatesByMaterialKey(allPos, {
+      isCommitted: (p) => !isDeadPoAll(p) && isCommittedPoAll(p),
+    });
     // GRN lists behind the In-Transit / Under-GRN cells (click-through popups).
     const [inTransitBreakdownByKey, underGrnBreakdownByKey] = await Promise.all([
       getGrnInTransitBreakdownByKey(),
@@ -2860,6 +2941,7 @@ async function getItemsInvolved(req, res) {
         unallocatedToBatches: Number(agg.unallocatedToBatches) || 0,
         unit: agg.unit,
         batchCount: agg.batchCount ?? 0,
+        connectingDates: connectingDatesByKeyAll.get(`rm-${id}`) ?? [],
         sih: sihKg,
         surplusShortage: sihKg + inTransitKg - agg.totalRequired,
         coverage: coverageDenom,
@@ -2928,6 +3010,7 @@ async function getItemsInvolved(req, res) {
         unallocatedToBatches: Number(agg.unallocatedToBatches) || 0,
         unit: agg.unit,
         batchCount: agg.batchCount ?? 0,
+        connectingDates: connectingDatesByKeyAll.get(`pm-${id}`) ?? [],
         sih,
         surplusShortage,
         coverage: coverageDenomPm,
@@ -3297,6 +3380,10 @@ async function getItemsInvolvedByPlanningId(req, res) {
     // coverage twice over for the same quantity.
     const { isCommittedPurchaseOrder: isCommittedPo, isDeadPurchaseOrder: isDeadPo } =
       require('../lib/itemsInvolvedStageFlow');
+    // Per-item expected arrival dates, one entry per covering PO — see lib/poConnectingDates.
+    const connectingDatesByKey = buildConnectingDatesByMaterialKey(allPos, {
+      isCommitted: (p) => !isDeadPo(p) && isCommittedPo(p),
+    });
     const poQtyMapKg = new Map();
     for (const po of allPos) {
       const poPlain = po.get ? po.get({ plain: true }) : po;
@@ -3462,6 +3549,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
         scopedReserved: scopedReservedByRm.get(rid) ?? 0,
         plannedQty,
         poQty: netOpenPoQtyKg(`rm-${rid}`),
+        connectingDates: connectingDatesByKey.get(`rm-${rid}`) ?? [],
         inTransit: inTransitKg,
         // Count only batches RELEASED to production. A draft planning row is a plan, not a batch:
         // counting it reported a single released batch as "2", disagreeing with the Batches tab and
@@ -3519,6 +3607,7 @@ async function getItemsInvolvedByPlanningId(req, res) {
         scopedReserved: scopedReservedByPm.get(pid) ?? 0,
         plannedQty,
         poQty: netOpenPoQtyKg(`pm-${pid}`),
+        connectingDates: connectingDatesByKey.get(`pm-${pid}`) ?? [],
         inTransit,
         // Count only batches RELEASED to production. A draft planning row is a plan, not a batch:
         // counting it reported a single released batch as "2", disagreeing with the Batches tab and
@@ -3670,6 +3759,7 @@ module.exports = {
   getBomCopyForPlanning,
   createRworkPlanningBatch,
   createSplitPlanningBatch,
+  createRemainderPlanningBatch,
   syncWarehouseReserved,
   reserveStockForPlanningExtracted,
   releaseStockForPlanningExtracted,

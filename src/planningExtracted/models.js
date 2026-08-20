@@ -18,6 +18,10 @@ PlanningExtracted.init(
     total_kg_display: { type: DataTypes.STRING(100), allowNull: true },
     order_date: { type: DataTypes.DATEONLY, allowNull: true },
     due_date: { type: DataTypes.DATEONLY, allowNull: true },
+    // Planner-set target date, distinct from due_date (which is copied from the SO's expected
+    // shipment date at creation and never edited). Planners set this once they know their real
+    // production schedule, so it can diverge from the customer-facing due date.
+    committed_date: { type: DataTypes.DATEONLY, allowNull: true },
     batch_size_display: { type: DataTypes.STRING(100), allowNull: true },
     batches_required: { type: DataTypes.INTEGER, allowNull: true },
     bom_status: { type: DataTypes.STRING(80), allowNull: true },

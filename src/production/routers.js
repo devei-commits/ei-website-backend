@@ -5,7 +5,7 @@ const { createCacheReadMiddleware } = require('../cache/cacheReadMiddleware');
 const {
   listEquipment, getEquipmentById, createEquipment, updateEquipment, deleteEquipment,
   listTeam,
-  listBatches, getBatchById, createBatch, createRworkBatch, splitBatchForVessel, updateBatch, deleteBatch, getBatchBom, getBatchMtrReserved, getBatchDispensingMuStock, syncBatchesFromPlanning,
+  listBatches, getBatchById, createBatch, createRworkBatch, splitBatchForVessel, splitBatchByRemainder, updateBatch, deleteBatch, getBatchBom, getBatchMtrReserved, getBatchDispensingMuStock, syncBatchesFromPlanning,
   listReservedItems, reserveBatchLines, unreserveBatchLines, getBatchReservationCoverage,
   devSeedDispensingTray,
   qaApproveBatchDoc,
@@ -82,6 +82,7 @@ router.get('/batches', productionReadGuard, cacheProduction, listBatches);
 router.post('/batches/sync-from-planning', productionWriteGuard, syncBatchesFromPlanning);
 router.post('/batches/create-rework', productionWriteGuard, createRworkBatch);
 router.post('/batches/split-for-vessel', productionWriteGuard, splitBatchForVessel);
+router.post('/batches/:id/split-remainder', productionWriteGuard, splitBatchByRemainder);
 router.get('/batches/:id/bom', productionReadGuard, cacheProduction, getBatchBom);
 router.get('/batches/:id/mtr-reserved', productionReadGuard, getBatchMtrReserved);
 router.get('/batches/:id/reservation-coverage', productionReadGuard, getBatchReservationCoverage);

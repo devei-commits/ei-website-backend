@@ -13,7 +13,7 @@ const { syncWarehouseReserved } = require('../planningExtracted/controller');
 const { logReservedChange, logLocationMovement } = require('../warehouseInventory/locationHistoryHelpers');
 const PlanningExtracted = require('../planningExtracted/models');
 const PlanningBatch = require('../planningExtracted/planningBatchModel');
-const { createRworkPlanningBatch, createSplitPlanningBatch } = require('../planningExtracted/controller');
+const { createRworkPlanningBatch, createSplitPlanningBatch, createRemainderPlanningBatch } = require('../planningExtracted/controller');
 const SalesOrder = require('../salesOrders/models');
 const ProcurementRequest = require('../procurementRequests/models');
 const { hasGranularAccess } = require('../middleware/security');
@@ -880,6 +880,143 @@ async function splitBatchForVessel(req, res) {
   } catch (err) {
     console.error('splitBatchForVessel error:', err);
     res.status(500).json({ error: err.message || 'Failed to split batch for vessel capacity' });
+  }
+}
+
+/**
+ * POST /batches/:id/split-remainder — reduce a batch's own size and spin the difference off as a
+ * new, ordinary sequential batch (B{n+1}) with its own fresh BMR/BPR, in both Planning and
+ * Production. Triggered from Production's Edit Batch modal when the size is edited down.
+ *
+ * Deliberately NOT the same code path as splitBatchForVessel: that one is a capacity workaround
+ * mid-schedule and names its sibling "-sp-NN" (an internal artifact of the base batch). This is a
+ * planner right-sizing an order allocation — the remainder is a first-class batch a planner would
+ * recognize, so it gets a normal batch_code/BMR/BPR/batch_no, exactly like a batch Planning created
+ * directly via "add batch". The two intentionally stay separate functions/endpoints so their
+ * naming and log trails never get confused with each other.
+ *
+ * What is guaranteed NOT to change on the ORIGINAL batch: its reservations, dispensing progress,
+ * and any procurement requests already raised against it. Nothing here touches
+ * reserved_batch_items or procurement_requests — only production_batches.batch_size/order_qty and
+ * the linked planning_batches row are written. Already-procured/released Items Involved stay
+ * exactly as they were; the new sibling starts completely unreserved and is new demand requiring
+ * its own procurement, which is correct — it did not exist before this call.
+ */
+async function splitBatchByRemainder(req, res) {
+  try {
+    const baseBatchId = parseInt(req.params.id, 10);
+    const newSizeKg = req.body.newSizeKg != null ? Number(req.body.newSizeKg) : null;
+    const reason = typeof req.body.reason === 'string' ? req.body.reason.trim() : '';
+    if (Number.isNaN(baseBatchId)) {
+      return res.status(400).json({ error: 'Invalid batch id' });
+    }
+    if (!Number.isFinite(newSizeKg) || newSizeKg <= 0) {
+      return res.status(400).json({ error: 'newSizeKg must be a positive number' });
+    }
+
+    const base = await ProductionBatch.findByPk(baseBatchId);
+    if (!base) return res.status(404).json({ error: 'Batch not found' });
+    const basePlain = base.get ? base.get({ plain: true }) : base;
+
+    const eligibilityErr = assertBatchEligibleForVesselSplit(basePlain);
+    if (eligibilityErr) return res.status(400).json({ error: eligibilityErr });
+    if (!basePlain.planning_batch_id) {
+      return res.status(400).json({ error: 'Batch must be linked to planning (has no planning_batch_id)' });
+    }
+    if (hasDispensingProgress(basePlain.dispensing_rm, basePlain.dispensing_pm)) {
+      return res.status(400).json({ error: 'Cannot split after dispensing has started on this batch.' });
+    }
+
+    const oldSize = Number(basePlain.batch_size) || 0;
+    if (oldSize <= 0) return res.status(400).json({ error: 'Batch has no batch_size to split' });
+    const keep = Math.round(newSizeKg);
+    const remainder = Math.round((oldSize - keep) * 1000) / 1000;
+    if (keep >= oldSize) {
+      return res.status(400).json({ error: 'newSizeKg must be less than the current batch size' });
+    }
+    if (remainder < MIN_REMAINDER_KG) {
+      return res.status(400).json({ error: `Remainder must be at least ${MIN_REMAINDER_KG} KG` });
+    }
+
+    const pb = await PlanningBatch.findByPk(basePlain.planning_batch_id);
+    if (!pb) return res.status(404).json({ error: 'Planning batch not found' });
+    const planId = pb.planning_extracted_id;
+
+    const keepScale = keep / oldSize;
+    const remainderScale = remainder / oldSize;
+    const oldOrderQty = Number(basePlain.order_qty) || 0;
+    const remainderOrderQty = oldOrderQty > 0 ? Math.max(0, Math.round(oldOrderQty * remainderScale)) : 0;
+    const keepOrderQty = oldOrderQty > 0 ? Math.max(0, oldOrderQty - remainderOrderQty) : oldOrderQty;
+    const nextTotalBatches = (Number(basePlain.total_batches) || 1) + 1;
+
+    const remarksNote = reason
+      ? `Batch split: ${reason}`
+      : `Batch split: ${keep} KG kept · ${remainder} KG moved to new batch`;
+
+    // 1) Shrink the original batch (Production + linked Planning row + its BOM, proportionally).
+    base.batch_size = keep;
+    if (oldOrderQty > 0) base.order_qty = keepOrderQty;
+    base.total_batches = nextTotalBatches;
+    if (Array.isArray(basePlain.dispensing_rm)) {
+      base.dispensing_rm = scaleDispensingJsonLines(basePlain.dispensing_rm, keepScale);
+    }
+    if (Array.isArray(basePlain.dispensing_pm)) {
+      base.dispensing_pm = scaleDispensingJsonLines(basePlain.dispensing_pm, keepScale);
+    }
+    const existingRemarks = String(basePlain.remarks || '').trim();
+    base.remarks = existingRemarks ? `${existingRemarks} · ${remarksNote}` : remarksNote;
+    await recomputeBatchVolume(base);
+    await base.save();
+    await syncPlanningBatchFromProductionBatchSize(base.get({ plain: true }));
+
+    // 2) New sibling planning batch — sequential B{n+1}, BOM scaled from the ORIGINAL (pre-shrink)
+    //    lines so the two halves sum back to the whole rather than compounding rounding.
+    const newPb = await createRemainderPlanningBatch(planId, basePlain.planning_batch_id, remainder);
+    if (!newPb) {
+      return res.status(500).json({ error: 'Failed to create the new planning batch' });
+    }
+    const newPbPlain = newPb.get ? newPb.get({ plain: true }) : newPb;
+
+    // 3) New sibling production batch — a fresh, independent BMR/BPR pair (not a "-sp-NN" suffix
+    //    of the base), matching exactly how a batch Planning sends normally shows up in Production
+    //    (syncBatchesFromPlanning). Starts fully unscheduled/unreserved — no scheduled_mu_zone,
+    //    dispensing, or reservation state is copied from the base.
+    const year = new Date().getFullYear();
+    const { bmrNo, bprNo } = await getNextBMRBPRSequence(year);
+    const splitRow = await ProductionBatch.create({
+      bmr_no: bmrNo,
+      bpr_no: bprNo,
+      product_name: basePlain.product_name || 'Unknown',
+      sku: basePlain.sku || '',
+      so_no: basePlain.so_no || '',
+      order_qty: remainderOrderQty || basePlain.order_qty || 0,
+      batch_size: remainder,
+      batch_no: `B-${String(newPbPlain.sequence ?? nextTotalBatches).padStart(2, '0')}`,
+      batch_index: newPbPlain.sequence ?? nextTotalBatches,
+      total_batches: nextTotalBatches,
+      planning_batch_id: newPb.id,
+      bmr_status: 'draft',
+      bpr_status: 'draft',
+      color: basePlain.color || null,
+      process_type: basePlain.process_type || null,
+      homogenizer: basePlain.homogenizer ?? false,
+      filling_type: basePlain.filling_type || null,
+      compatible_vessels: basePlain.compatible_vessels || null,
+      compatible_fill_lines: basePlain.compatible_fill_lines || null,
+      compatible_pack_lines: basePlain.compatible_pack_lines || null,
+      remarks: remarksNote,
+    });
+    await recomputeBatchVolume(splitRow);
+    await splitRow.save();
+
+    const visibility = await getBatchVisibility(req);
+    return res.status(201).json({
+      original: formatBatch(base, visibility),
+      split: formatBatch(splitRow, visibility),
+    });
+  } catch (err) {
+    console.error('splitBatchByRemainder error:', err);
+    res.status(500).json({ error: err.message || 'Failed to split batch' });
   }
 }
 
@@ -3760,7 +3897,7 @@ async function getBatchReservationCoverage(req, res) {
 module.exports = {
   listEquipment, getEquipmentById, createEquipment, updateEquipment, deleteEquipment,
   listTeam,
-  listBatches, getBatchById, createBatch, createRworkBatch, splitBatchForVessel, updateBatch, deleteBatch, getBatchBom, getBatchMtrReserved, getBatchDispensingMuStock, syncBatchesFromPlanning,
+  listBatches, getBatchById, createBatch, createRworkBatch, splitBatchForVessel, splitBatchByRemainder, updateBatch, deleteBatch, getBatchBom, getBatchMtrReserved, getBatchDispensingMuStock, syncBatchesFromPlanning,
   listReservedItems, reserveBatchLines, unreserveBatchLines, getBatchReservationCoverage,
   // TEMPORARY dev tooling — remove with src/production/devDispensingSeed.js.
   devSeedDispensingTray,

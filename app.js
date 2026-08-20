@@ -61,6 +61,7 @@ const { dropDuplicateConstraints } = require('./src/db/dropDuplicateConstraints'
 const { ensureReservedBatchItemPlanningColumns } = require('./src/db/ensureReservedBatchItemPlanningColumns');
 const { ensureReservedBatchItemRequestedColumn } = require('./src/db/ensureReservedBatchItemRequestedColumn');
 const { ensureQualitySpecRuleItemScope } = require('./src/db/ensureQualitySpecRuleItemScope');
+const { ensurePlanningExtractedCommittedDateColumn } = require('./src/db/ensurePlanningExtractedCommittedDateColumn');
 const warehousePacksRouters = require('./src/warehousePacks/routers');
 require('./src/customizationPackaging/models');
 const customizationPackagingAdminRouter = require('./src/customizationPackaging/routers');
@@ -260,12 +261,14 @@ if (process.env.NODE_ENV !== 'test') {
                 await ensureReservedBatchItemPlanningColumns();
                 await ensureReservedBatchItemRequestedColumn();
                 await ensureQualitySpecRuleItemScope();
+                await ensurePlanningExtractedCommittedDateColumn();
             } else {
                 await ensureTreasuryDefaults();
                 await dropDuplicateConstraints();
                 await ensureReservedBatchItemPlanningColumns();
                 await ensureReservedBatchItemRequestedColumn();
                 await ensureQualitySpecRuleItemScope();
+                await ensurePlanningExtractedCommittedDateColumn();
             }
             app.listen(port, '0.0.0.0', () => {
                 console.log(`Server is running on port ${port}`);

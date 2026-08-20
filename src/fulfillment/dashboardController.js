@@ -21,6 +21,7 @@ const { ProductionBatch } = require('../production/models');
 const { Product } = require('../products/models');
 const VendorClient = require('../vendorClient/models');
 const SalesOrder = require('../salesOrders/models');
+const PlanningExtracted = require('../planningExtracted/models');
 const { buildActiveClientWhere } = require('../vendorClient/clientMasterQuery');
 const { activeRowWhere } = require('../lib/softDelete');
 
@@ -366,6 +367,25 @@ async function listSalesOrdersDashboard(req, res) {
       });
     }
 
+    // --- Committed date: planner-set target, lives on planning_extracted (one row per SO×product).
+    // A SO with multiple products can have multiple committed dates set independently; mirror the
+    // "first line is the representative line" convention used for productDisplay below and take the
+    // earliest row's (lowest id) value, same as orderStatusById above keys strictly by SO. ---
+    const committedDateBySalesOrderId = new Map();
+    if (salesOrderIds.length) {
+      const planRows = await PlanningExtracted.findAll({
+        where: { sales_order_id: { [Op.in]: salesOrderIds }, committed_date: { [Op.ne]: null } },
+        attributes: ['id', 'sales_order_id', 'committed_date'],
+        order: [['id', 'ASC']],
+      });
+      planRows.forEach((r) => {
+        const d = r.get({ plain: true });
+        if (!committedDateBySalesOrderId.has(d.sales_order_id)) {
+          committedDateBySalesOrderId.set(d.sales_order_id, d.committed_date);
+        }
+      });
+    }
+
     // --- Fetch items + splits in bulk (2 queries) ---
     const [items, splits] = await Promise.all([
       FulfillmentOrderItem.findAll({
@@ -492,6 +512,7 @@ async function listSalesOrdersDashboard(req, res) {
         soNo: o.so_no,
         soDate: o.order_date,
         dueDate: o.due_date,
+        committedDate: committedDateBySalesOrderId.get(o.sales_order_id) || null,
         priority: o.priority,
         soStatus: o.so_status,
         commercialStatus: o.commercial_status || 'received',
