@@ -73,6 +73,20 @@ describe('PO exception computeState gating', () => {
     expect(s.canCancel).toBe(true);
   });
 
+  test('legacy Released PO with no tracking row and no approval_status → can still amend', () => {
+    // Older POs can carry status 'Released' without ever having a po_tracking row (or one
+    // whose po_released_at was never stamped) and without approval_status set, since both
+    // predate that data being captured. status === 'Released' alone must still be honored,
+    // since the release gate itself already required approval at the time it happened.
+    const s = computeState(
+      poStub({ id: 1, status: 'Released', items: smallItems, approval_status: null, exception_status: null, amendment_count: 0 }),
+      trkStub(null),
+    );
+    expect(s.canAmend).toBe(true);
+    expect(s.canHold).toBe(true);
+    expect(s.canCancel).toBe(true);
+  });
+
   test('completed PO: no hold / cancel / amend', () => {
     const s = computeState(
       poStub({ id: 1, status: 'Completed', items: smallItems, approval_status: 'approved', exception_status: null, amendment_count: 0 }),

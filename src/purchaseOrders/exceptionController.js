@@ -102,7 +102,13 @@ function computeState(po, tracking) {
     canResume: isOnHold,
     canCancel: !isCancelled && !isCompleted && !grnComplete,
     requiresCfoToCancel: amount > REGULAR_CFO_THRESHOLD,
-    canAmend: !isOnHold && !isCancelled && !isCompleted && !shipped && !grnComplete && (approval === 'approved' || sent),
+    // A PO can only ever reach status 'Released' after approval_status was already 'approved'
+    // (enforced at release time in both createPurchaseOrder and updatePurchaseOrder), so
+    // poStatus === 'released' is itself proof of a passed approval gate — needed as a fallback
+    // here because older/legacy POs can carry status 'Released' without a tracking row (or one
+    // whose po_released_at was never stamped), which previously made them permanently
+    // un-amendable even though they are plainly live, issued purchase orders.
+    canAmend: !isOnHold && !isCancelled && !isCompleted && !shipped && !grnComplete && (approval === 'approved' || sent || poStatus === 'released'),
   };
 }
 
