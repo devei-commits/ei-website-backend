@@ -705,6 +705,8 @@ async function listBooksCollectionPage(resource, arrayKey, options = {}) {
   });
   if (options.filterBy) qs.set('filter_by', String(options.filterBy));
   if (options.sortColumn) qs.set('sort_column', String(options.sortColumn));
+  // Zoho's generic full-text search, same param listItemsPage already uses for items.
+  if (options.searchText) qs.set('search_text', String(options.searchText));
 
   const url = `${getBooksBaseUrl()}/${seg}?${qs.toString()}`;
   const op = `listBooksCollectionPage(${seg})`;

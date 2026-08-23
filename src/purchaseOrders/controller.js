@@ -398,7 +398,22 @@ async function updatePurchaseOrder(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
-    const row = await PurchaseOrder.findByPk(id, { attributes: PO_SAFE_ATTRIBUTES });
+    // Must be read with the approval columns: the release gate below inspects `approval_status`,
+    // and PO_SAFE_ATTRIBUTES does not select it — so `row.get('approval_status')` came back
+    // undefined and every release was refused with PO_NOT_APPROVED regardless of the real value.
+    // Same three-step fallback getPurchaseOrderById uses, for schemas without those columns.
+    let row = null;
+    try {
+      row = await PurchaseOrder.findByPk(id, { attributes: PO_READ_ATTRIBUTES });
+    } catch (err) {
+      if (!isMissingColumnError(err)) throw err;
+      try {
+        row = await PurchaseOrder.findByPk(id, { attributes: PO_SYNC_ATTRIBUTES });
+      } catch (err2) {
+        if (!isMissingColumnError(err2)) throw err2;
+        row = await PurchaseOrder.findByPk(id, { attributes: PO_SAFE_ATTRIBUTES });
+      }
+    }
     if (!row) return res.status(404).json({ error: 'Purchase order not found' });
     const body = req.body || {};
     const payload = bodyToUpdatePayload(body);

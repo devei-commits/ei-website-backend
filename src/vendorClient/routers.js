@@ -6,6 +6,8 @@ const {
   getVendorClientById,
   getNextCode,
   syncZohoVendorDraft,
+  importZohoVendors,
+  importZohoVendor,
   createVendorClient,
   updateVendorClient,
   deleteVendorClient,
@@ -39,6 +41,8 @@ router.post(
 
 router.get('/next-code', requireVendorClient, getNextCode);
 router.post('/sync-zoho', requireVendorClient, syncZohoVendorDraft);
+router.post('/import-zoho-vendors', requireVendorClient, importZohoVendors);
+router.post('/import-zoho-vendor', requireVendorClient, importZohoVendor);
 router.get('/:id', requireVendorClient, getVendorClientById);
 router.post('/', requireVendorClient, createVendorClient);
 router.put('/:id', requireVendorClient, updateVendorClient);

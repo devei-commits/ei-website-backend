@@ -297,6 +297,65 @@ async function syncZohoVendorDraft(req, res) {
   }
 }
 
+/**
+ * POST /vendor-clients/import-zoho-vendors — bulk-pull every vendor contact from Zoho Books and
+ * upsert into vendor_clients (type='vendor'), keyed by zoho_id first, then email. Matches
+ * scripts/zoho-pull-vendors-to-vendor-clients.js (same shared upsert logic), exposed here as an
+ * on-demand "Import from Zoho" action instead of a CLI-only script.
+ */
+async function importZohoVendors(req, res) {
+  try {
+    // Deliberately not gated behind zohoEnv.booksEnabled/syncVendorContacts — those flags govern
+    // the automatic push-sync integration (e.g. syncing a new vendor draft out to Zoho). This is a
+    // manual, on-demand pull the other direction, and should work even when auto-sync is off. If
+    // Zoho credentials genuinely aren't configured, getAccessToken() below fails with its own
+    // specific error instead of a blanket "disabled" one.
+    const { pullZohoVendorsIntoVendorClients } = require('./zohoVendorPull');
+    const q = req.query || {};
+    const dryRun = String(q.dryRun ?? '').trim().toLowerCase() === 'true';
+    const limit = q.limit != null && String(q.limit).trim() !== '' ? parseInt(String(q.limit), 10) : undefined;
+    const maxPages = q.maxPages != null && String(q.maxPages).trim() !== '' ? parseInt(String(q.maxPages), 10) : undefined;
+    const summary = await pullZohoVendorsIntoVendorClients({
+      dryRun,
+      filterBy: q.filterBy,
+      maxPages: Number.isFinite(maxPages) ? maxPages : undefined,
+      limit: Number.isFinite(limit) ? limit : undefined,
+    });
+    res.json({ dryRun, ...summary });
+  } catch (err) {
+    console.error('importZohoVendors error', err);
+    const msg = err && err.message ? String(err.message) : 'Zoho vendor import failed';
+    const code = err.statusCode && Number.isFinite(err.statusCode) ? err.statusCode : 502;
+    res.status(code >= 400 ? code : 502).json({ error: msg });
+  }
+}
+
+/**
+ * POST /vendor-clients/import-zoho-vendor — import exactly one vendor from Zoho, by Zoho contact
+ * ID (exact) or by a name search. Alternative to importZohoVendors' full pull, for adding/refreshing
+ * a single vendor on demand. A name search matching more than one contact returns the candidates
+ * instead of guessing — the client re-calls with the chosen zohoId.
+ */
+async function importZohoVendor(req, res) {
+  try {
+    // See importZohoVendors — same reasoning, not gated behind the auto-sync flags.
+    const { importOneZohoVendor } = require('./zohoVendorPull');
+    const body = req.body || {};
+    const zohoId = body.zohoId != null ? String(body.zohoId).trim() : '';
+    const search = body.search != null ? String(body.search).trim() : '';
+    if (!zohoId && !search) {
+      return res.status(400).json({ error: 'Provide either zohoId or search (vendor name).' });
+    }
+    const result = await importOneZohoVendor({ zohoId: zohoId || undefined, search: search || undefined });
+    res.json(result);
+  } catch (err) {
+    console.error('importZohoVendor error', err);
+    const msg = err && err.message ? String(err.message) : 'Zoho vendor import failed';
+    const code = err.statusCode && Number.isFinite(err.statusCode) ? err.statusCode : 502;
+    res.status(code >= 400 ? code : 502).json({ error: msg });
+  }
+}
+
 async function getNextCode(req, res) {
   try {
     const type = (req.query.type || '').toLowerCase() === 'client' ? 'client' : 'vendor';
@@ -610,6 +669,8 @@ module.exports = {
   getVendorClientById,
   getNextCode,
   syncZohoVendorDraft,
+  importZohoVendors,
+  importZohoVendor,
   createVendorClient,
   updateVendorClient,
   deleteVendorClient,
