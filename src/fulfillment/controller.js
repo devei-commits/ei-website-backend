@@ -1,4 +1,5 @@
 const { Op } = require('sequelize');
+const db = require('../../db');
 const { softDeleteInstance, softDeleteWhere, activeRowWhere, productActiveWhere } = require('../lib/softDelete');
 const { normalizeMasterApprovalStatus } = require('../lib/masterApprovalStatus');
 const { FulfillmentOrder, FulfillmentOrderItem, FulfillmentBatchSplit, Transporter, FulfillmentInvoice, ReservedBatchItem, BatchStageLog } = require('./models');
@@ -572,6 +573,65 @@ async function listOrders(req, res) {
   }
 }
 
+/**
+ * Resolves each formatted order item to its matching planning_extracted row, using the same
+ * sku → zoho_sku_code/product_code, then product_name matching used when planning_extracted
+ * rows are first created from SO lines (see createOrder above). This lets an item-level comment
+ * added from Fulfillment be found from Planning's PIs Extracted view, which already keys its
+ * rows by planning_extracted.id — no new table or fulfillment_order_items column needed.
+ */
+async function attachPlanningLinkageToItems(items, salesOrderId) {
+  if (!salesOrderId || !items.length) {
+    return items.map((it) => ({ ...it, planningExtractedId: null, commentCount: 0 }));
+  }
+  const PlanningExtracted = require('../planningExtracted/models');
+  const { FulfillmentComment } = require('./models');
+
+  const planningRows = await PlanningExtracted.findAll({
+    where: { sales_order_id: salesOrderId },
+    attributes: ['id'],
+    include: [{ model: Product, as: 'product', attributes: ['product_code', 'zoho_sku_code', 'product_name'], required: false }],
+  });
+  const byCode = new Map();
+  const byName = new Map();
+  for (const plan of planningRows) {
+    const p = plan.get ? plan.get({ plain: true }) : plan;
+    const prod = p.product;
+    if (!prod) continue;
+    if (prod.zoho_sku_code) byCode.set(String(prod.zoho_sku_code).trim().toLowerCase(), p.id);
+    if (prod.product_code) byCode.set(String(prod.product_code).trim().toLowerCase(), p.id);
+    if (prod.product_name) byName.set(String(prod.product_name).trim().toLowerCase(), p.id);
+  }
+
+  const planningExtractedIdByItemId = new Map();
+  for (const it of items) {
+    const skuKey = String(it.sku || '').trim().toLowerCase();
+    const nameKey = String(it.productName || '').trim().toLowerCase();
+    const planningExtractedId = (skuKey && byCode.get(skuKey)) || (nameKey && byName.get(nameKey)) || null;
+    planningExtractedIdByItemId.set(it.id, planningExtractedId);
+  }
+
+  const planningIds = [...new Set([...planningExtractedIdByItemId.values()].filter(Boolean))];
+  const commentCounts = planningIds.length
+    ? await FulfillmentComment.findAll({
+        where: { entity_type: 'item', entity_id: { [Op.in]: planningIds }, lifecycle_status: 'active' },
+        attributes: ['entity_id', [db.fn('COUNT', db.col('id')), 'cnt']],
+        group: ['entity_id'],
+        raw: true,
+      })
+    : [];
+  const countByPlanningId = new Map(commentCounts.map((r) => [r.entity_id, parseInt(r.cnt, 10) || 0]));
+
+  return items.map((it) => {
+    const planningExtractedId = planningExtractedIdByItemId.get(it.id) ?? null;
+    return {
+      ...it,
+      planningExtractedId,
+      commentCount: planningExtractedId ? (countByPlanningId.get(planningExtractedId) || 0) : 0,
+    };
+  });
+}
+
 async function getOrderById(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
@@ -590,7 +650,9 @@ async function getOrderById(req, res) {
       const so = await SalesOrder.findByPk(d.sales_order_id, { attributes: ['status'] });
       orderStatus = so ? (so.get('status') || null) : null;
     }
-    res.json(formatOrder(row, batchMap, { orderStatus }));
+    const formatted = formatOrder(row, batchMap, { orderStatus });
+    formatted.items = await attachPlanningLinkageToItems(formatted.items, d.sales_order_id);
+    res.json(formatted);
   } catch (err) {
     console.error('getOrderById error:', err);
     res.status(500).json({ error: 'Failed to fetch fulfillment order' });

@@ -394,9 +394,15 @@ class FulfillmentComment extends Model {}
 FulfillmentComment.init(
   {
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
-    /** 'so' or 'batch' */
+    /** 'so', 'batch', or 'item' */
     entity_type: { type: DataTypes.STRING(10), allowNull: false },
-    /** ID of the SO (fulfillment_orders.id) or batch split (fulfillment_batch_splits.id). */
+    /**
+     * ID of the SO (fulfillment_orders.id), batch split (fulfillment_batch_splits.id), or —
+     * for entity_type 'item' — the planning_extracted.id for that SO+product line. Item-level
+     * comments are keyed by planning_extracted.id (not fulfillment_order_items.id) so the same
+     * comment thread is reachable from both Fulfillment (via a resolved planningExtractedId per
+     * order item) and Planning's PIs Extracted view (which already keys its rows by that id).
+     */
     entity_id: { type: DataTypes.INTEGER, allowNull: false },
     by_user_id: { type: DataTypes.INTEGER, allowNull: true },
     by_user_name: { type: DataTypes.STRING(200), allowNull: true },

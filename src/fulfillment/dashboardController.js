@@ -38,6 +38,9 @@ async function tryInvalidateCache() {
    CONSTANTS & HELPERS
 ───────────────────────────────────────────────────────────────────────────── */
 
+/** Threads a comment can be attached to. 'rm'/'pm' are per-material and shared across screens. */
+const COMMENT_ENTITY_TYPES = ['so', 'batch', 'item', 'rm', 'pm'];
+
 /** In-memory global SLA defaults (days). Used when no sla_template row exists. */
 const SLA_DEFAULTS = { picking: 2, invoiced: 1, shipped: 3, delivered: 1 };
 
@@ -960,8 +963,12 @@ async function listBatchesDashboard(req, res) {
 async function listComments(req, res) {
   try {
     const { entityType, entityId } = req.params;
-    if (!['so', 'batch'].includes(entityType)) {
-      return res.status(400).json({ error: 'entityType must be "so" or "batch"' });
+    // 'rm' / 'pm' are MATERIAL threads, keyed by raw_materials.id / pack_materials.id. They are
+    // deliberately not scoped to a planning row or SO: a material's notes ("vendor ships short",
+    // "needs re-test on arrival") apply wherever it appears, so the same thread is reachable from
+    // Planning's PIs Extracted and from Items Involved.
+    if (!COMMENT_ENTITY_TYPES.includes(entityType)) {
+      return res.status(400).json({ error: `entityType must be one of ${COMMENT_ENTITY_TYPES.join(', ')}` });
     }
     const id = parseInt(entityId, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid entityId' });
@@ -1032,8 +1039,12 @@ async function listComments(req, res) {
 async function addComment(req, res) {
   try {
     const { entityType, entityId } = req.params;
-    if (!['so', 'batch'].includes(entityType)) {
-      return res.status(400).json({ error: 'entityType must be "so" or "batch"' });
+    // 'rm' / 'pm' are MATERIAL threads, keyed by raw_materials.id / pack_materials.id. They are
+    // deliberately not scoped to a planning row or SO: a material's notes ("vendor ships short",
+    // "needs re-test on arrival") apply wherever it appears, so the same thread is reachable from
+    // Planning's PIs Extracted and from Items Involved.
+    if (!COMMENT_ENTITY_TYPES.includes(entityType)) {
+      return res.status(400).json({ error: `entityType must be one of ${COMMENT_ENTITY_TYPES.join(', ')}` });
     }
     const id = parseInt(entityId, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid entityId' });
@@ -1367,7 +1378,46 @@ async function deleteTransporter(req, res) {
    EXPORTS (functions + stage log helpers consumed by controller.js)
 ───────────────────────────────────────────────────────────────────────────── */
 
+/**
+ * GET /api/v1/fulfillment/comment-counts?entityType=rm&ids=1,2,3
+ * → { counts: { "1": 2, "3": 1 } }  (ids with no comments are omitted)
+ *
+ * One request for a whole set of threads. The comments panel shows up to ~30 material chips at
+ * once; asking per chip would mean 30 round-trips just to know which ones have anything to read.
+ */
+async function listCommentCounts(req, res) {
+  try {
+    const entityType = String(req.query.entityType ?? '').trim();
+    if (!COMMENT_ENTITY_TYPES.includes(entityType)) {
+      return res.status(400).json({ error: `entityType must be one of ${COMMENT_ENTITY_TYPES.join(', ')}` });
+    }
+    const ids = String(req.query.ids ?? '')
+      .split(',')
+      .map((v) => parseInt(String(v).trim(), 10))
+      .filter((n) => Number.isInteger(n) && n > 0);
+    if (ids.length === 0) return res.json({ counts: {} });
+    // Bounded so a malformed query cannot ask for an unbounded IN list.
+    const capped = ids.slice(0, 500);
+    const rows = await FulfillmentComment.findAll({
+      where: { entity_type: entityType, entity_id: { [Op.in]: capped }, lifecycle_status: 'active' },
+      attributes: ['entity_id', [db.fn('COUNT', db.col('id')), 'cnt']],
+      group: ['entity_id'],
+      raw: true,
+    });
+    const counts = {};
+    rows.forEach((r) => {
+      const n = parseInt(r.cnt, 10) || 0;
+      if (n > 0) counts[String(r.entity_id)] = n;
+    });
+    res.json({ counts });
+  } catch (err) {
+    console.error('listCommentCounts error:', err);
+    res.status(500).json({ error: 'Failed to fetch comment counts' });
+  }
+}
+
 module.exports = {
+  listCommentCounts,
   // Dashboard views
   listSalesOrdersDashboard,
   listBatchesDashboard,

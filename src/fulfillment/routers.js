@@ -14,7 +14,8 @@ const {
 const {
   listSalesOrdersDashboard,
   listBatchesDashboard,
-  listComments, addComment, resolveComment,
+  listComments,
+  listCommentCounts, addComment, resolveComment,
   getSlaTemplate, upsertSlaTemplate,
   updateCommercialStatus,
   createTransporter, updateTransporter, deleteTransporter,
@@ -29,6 +30,7 @@ router.get('/sales-orders-dashboard', guard, listSalesOrdersDashboard);
 router.get('/batches-dashboard', guard, listBatchesDashboard);
 
 // ── Comments & History ──
+router.get('/comment-counts', guard, listCommentCounts);
 router.get('/comments/:entityType/:entityId', guard, listComments);
 router.post('/comments/:entityType/:entityId', guard, addComment);
 router.patch('/comments/:commentId/resolve', guard, resolveComment);

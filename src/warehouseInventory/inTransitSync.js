@@ -760,7 +760,12 @@ async function syncWarehouseInTransitAll() {
     ),
   ];
   const { normRmPrimaryUom, parseSpecificGravity, kgToRmPrimaryQty } = require('../lib/rmUnitConversion');
-  const { RawMaterial } = require('../rawMaterials/models');
+  // `rawMaterials/models` exports the model DIRECTLY (module.exports = RawMaterial), so destructuring
+  // a named `RawMaterial` off it yielded undefined and this whole sync threw
+  // "Cannot read properties of undefined (reading 'findAll')" on every run. The error was caught and
+  // logged as a warning, so warehouse_inventory.in_transit silently stayed at 0 — which is why
+  // genuinely in-transit stock showed nowhere on Items Involved. The file already imports it
+  // correctly at the top; this local re-require is redundant and is removed.
   const rmMeta = new Map();
   if (rmIds.length) {
     const rows = await RawMaterial.findAll({
