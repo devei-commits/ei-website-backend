@@ -716,6 +716,8 @@ function formatRow(r, enrichedLineItems) {
     invoiceNo: d.invoice_no || null,
     invoiceAmount: d.invoice_amount != null ? Number(d.invoice_amount) : null,
     grnDate: d.grn_date || null,
+    /** When the GRN record itself was created — always present, unlike grn_date. */
+    createdAt: d.created_at || null,
     noOfBoxes: d.no_of_boxes != null ? Number(d.no_of_boxes) : null,
     unitsPerBox: d.units_per_box != null ? Number(d.units_per_box) : null,
     lastBoxUnits: d.last_box_units != null ? Number(d.last_box_units) : null,

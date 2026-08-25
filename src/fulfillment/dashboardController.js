@@ -24,6 +24,8 @@ const SalesOrder = require('../salesOrders/models');
 const PlanningExtracted = require('../planningExtracted/models');
 const { buildActiveClientWhere } = require('../vendorClient/clientMasterQuery');
 const { activeRowWhere } = require('../lib/softDelete');
+const { buildPendingBatchRows } = require('./pendingBatchRows');
+const { kgPerUnitForPlanning, batchUnitsFromKg, coveragePctFromUnits } = require('./batchPlannedUnits');
 
 async function tryInvalidateCache() {
   try {
@@ -604,10 +606,45 @@ async function listBatchesDashboard(req, res) {
     if (due_after) orderWhere.due_date = { ...(orderWhere.due_date || {}), [Op.gte]: due_after };
     if (client_id) orderWhere.vendor_client_id = parseInt(client_id, 10);
 
-    // search by so_no or customer_name
+    // Search by so_no / customer_name, plus product (name/code/sku) and batch number (BMR/BPR) —
+    // the search box's placeholder promises "batch no, SO no, product", but this only matched
+    // so_no/customer_name, so a product-code or batch-number search silently returned nothing even
+    // though the row existed. Mirrors listSalesOrdersDashboard's product-match resolution above.
     if (search) {
       const s = `%${search}%`;
-      orderWhere[Op.or] = [{ so_no: { [Op.iLike]: s } }, { customer_name: { [Op.iLike]: s } }];
+      const itemMatches = await FulfillmentOrderItem.findAll({
+        where: activeRowWhere({
+          [Op.or]: [
+            { product_name: { [Op.iLike]: s } },
+            { product_code: { [Op.iLike]: s } },
+            { sku: { [Op.iLike]: s } },
+          ],
+        }),
+        attributes: ['fulfillment_order_id'],
+        group: ['fulfillment_order_id'],
+      });
+      const itemOrderIds = [...new Set(
+        itemMatches.map((r) => Number(r.get('fulfillment_order_id'))).filter((n) => Number.isFinite(n))
+      )];
+      const splitMatches = await FulfillmentBatchSplit.findAll({
+        where: {
+          [Op.or]: [
+            { bmr_no: { [Op.iLike]: s } },
+            { bpr_no: { [Op.iLike]: s } },
+          ],
+        },
+        attributes: ['fulfillment_order_id'],
+        group: ['fulfillment_order_id'],
+      });
+      const splitOrderIds = [...new Set(
+        splitMatches.map((r) => Number(r.get('fulfillment_order_id'))).filter((n) => Number.isFinite(n))
+      )];
+      orderWhere[Op.or] = [
+        { so_no: { [Op.iLike]: s } },
+        { customer_name: { [Op.iLike]: s } },
+        ...(itemOrderIds.length ? [{ id: { [Op.in]: itemOrderIds } }] : []),
+        ...(splitOrderIds.length ? [{ id: { [Op.in]: splitOrderIds } }] : []),
+      ];
     }
 
     // --- Fetch qualifying order IDs ---
@@ -667,8 +704,8 @@ async function listBatchesDashboard(req, res) {
       }],
     });
 
-    if (!splitRows.length) return res.json({ total: totalCount, page: pageNum, pageSize: limit, rows: [] });
-
+    // NOTE: no early return on an empty split list — an order can have items with no batch yet,
+    // and those are exactly the "batch creation pending" rows appended at the end.
     const splitIds = splitRows.map((s) => s.id);
     const splitOrderIds = [...new Set(splitRows.map((s) => s.fulfillment_order_id))];
     const splitItemIds = [...new Set(splitRows.map((s) => s.fulfillment_order_item_id))];
@@ -683,7 +720,9 @@ async function listBatchesDashboard(req, res) {
       prodBatchIds.length
         ? ProductionBatch.findAll({
             where: { id: { [Op.in]: prodBatchIds } },
-            attributes: ['id', 'batch_no', 'bpr_no', 'bpr_status', 'bmr_status', 'so_no', 'fg_yield', 'fill_yield'],
+            // planning_batch_id links a split back to the planning row, which is the only place the
+            // KG-per-unit ratio lives — needed to show batch size in units.
+            attributes: ['id', 'batch_no', 'bpr_no', 'bpr_status', 'bmr_status', 'so_no', 'fg_yield', 'fill_yield', 'planning_batch_id'],
           })
         : Promise.resolve([]),
       FulfillmentComment.findAll({
@@ -706,6 +745,39 @@ async function listBatchesDashboard(req, res) {
 
     const commentCountMap = {};
     commentCounts.forEach((r) => { commentCountMap[r.entity_id] = parseInt(r.cnt, 10) || 0; });
+
+    // --- KG per unit, per production batch ---
+    // planned_qty is a batch size in KG while ordered_qty is in units; the planning row carries the
+    // ratio that makes them comparable.
+    const planningBatchIds = [...new Set(prodBatchRows.map((pb) => pb.planning_batch_id).filter(Boolean))];
+    const kgPerUnitByProdBatchId = new Map();
+    if (planningBatchIds.length) {
+      const PlanningBatch = require('../planningExtracted/planningBatchModel');
+      const planBatches = await PlanningBatch.findAll({
+        where: { id: { [Op.in]: planningBatchIds } },
+        attributes: ['id', 'planning_extracted_id'],
+      });
+      const peIds = [...new Set(planBatches.map((b) => b.planning_extracted_id).filter(Boolean))];
+      const pes = peIds.length
+        ? await PlanningExtracted.findAll({
+            where: { id: { [Op.in]: peIds } },
+            attributes: ['id', 'order_qty_display', 'total_kg_display'],
+          })
+        : [];
+      const ratioByPeId = new Map();
+      pes.forEach((pe) => {
+        const d = pe.get({ plain: true });
+        ratioByPeId.set(d.id, kgPerUnitForPlanning(d));
+      });
+      const peByPlanBatchId = new Map();
+      planBatches.forEach((b) => { peByPlanBatchId.set(b.id, b.planning_extracted_id); });
+      prodBatchRows.forEach((pb) => {
+        const d = pb.get ? pb.get({ plain: true }) : pb;
+        const peId = peByPlanBatchId.get(d.planning_batch_id);
+        const ratio = peId != null ? ratioByPeId.get(peId) : 0;
+        if (ratio > 0) kgPerUnitByProdBatchId.set(d.id, ratio);
+      });
+    }
 
     // Client codes
     const clientIds = [...new Set(Object.values(orderMap).map((o) => o.vendor_client_id).filter(Boolean))];
@@ -800,9 +872,13 @@ async function listBatchesDashboard(req, res) {
           bprNo: s.bpr_no || '',
           bmrNo: s.bmr_no || '',
           plannedQty: Number(s.planned_qty) || 0,
-          coveragePct: (item.ordered_qty > 0 && s.planned_qty > 0)
-            ? Math.round((Number(s.planned_qty) / Number(item.ordered_qty)) * 100)
-            : 0,
+          // Batch size expressed in the order's own units, so it can be read against ordered qty.
+          // null when the ratio is unknown — the UI then falls back rather than showing kg as units.
+          plannedUnits: batchUnitsFromKg(s.planned_qty, kgPerUnitByProdBatchId.get(s.production_batch_id) || 0),
+          coveragePct: coveragePctFromUnits(
+            batchUnitsFromKg(s.planned_qty, kgPerUnitByProdBatchId.get(s.production_batch_id) || 0),
+            item.ordered_qty,
+          ),
           stage: displayStage,
           stageLabel: STAGE_LABEL[displayStage] || displayStage,
           fgLocation: s.fg_location || null,
@@ -832,7 +908,41 @@ async function listBatchesDashboard(req, res) {
       });
     }
 
-    res.json({ total: totalCount, page: pageNum, pageSize: limit, rows });
+    // --- Order lines with no batch yet: "batch creation pending" ---
+    // Skipped when a stage filter is active: a line with no batch is in no stage, so including it
+    // would contradict the filter. Product filter still applies via matchingItemIds.
+    let pendingRows = [];
+    if (!stage) {
+      const pendingItemWhere = { fulfillment_order_id: { [Op.in]: [...orderIdSet] } };
+      if (matchingItemIds) pendingItemWhere.id = { [Op.in]: matchingItemIds };
+      const candidateItems = await FulfillmentOrderItem.findAll({
+        where: pendingItemWhere,
+        attributes: ['id', 'fulfillment_order_id', 'sku', 'product_code', 'product_name', 'pack', 'ordered_qty', 'unit_price'],
+      });
+      const candidateIds = candidateItems.map((it) => it.id);
+      // Ask the DB which of these already have a split — `splitRows` is only the current page, so
+      // it cannot answer that on its own.
+      const splitsForCandidates = candidateIds.length
+        ? await FulfillmentBatchSplit.findAll({
+            where: { fulfillment_order_item_id: { [Op.in]: candidateIds } },
+            attributes: ['fulfillment_order_item_id'],
+          })
+        : [];
+      const itemIdsWithSplits = new Set(splitsForCandidates.map((r) => r.fulfillment_order_item_id));
+      pendingRows = buildPendingBatchRows({
+        items: candidateItems,
+        itemIdsWithSplits,
+        orderMap,
+        clientsById,
+      });
+    }
+
+    res.json({
+      total: totalCount + pendingRows.length,
+      page: pageNum,
+      pageSize: limit,
+      rows: [...rows, ...pendingRows],
+    });
   } catch (err) {
     console.error('listBatchesDashboard error:', err);
     res.status(500).json({ error: 'Failed to fetch batches dashboard' });

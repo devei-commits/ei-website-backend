@@ -1510,6 +1510,7 @@ async function listAllBatches(req, res) {
         bomStatus: plan.bom_status || '',
         rmLines: d.rm_lines || [],
         pmLines: d.pm_lines || [],
+        bomConfirmedAt: d.bom_confirmed_at != null ? serializeInstantIndia(d.bom_confirmed_at) : null,
         productionBmrStatus,
         editable,
       };
@@ -1762,6 +1763,7 @@ function formatBatchRow(r, prodBmrByPlanningBatchId) {
     sizeKg: d.size_kg != null ? Number(d.size_kg) : null,
     rmLines: d.rm_lines || [],
     pmLines: d.pm_lines || [],
+    bomConfirmedAt: d.bom_confirmed_at != null ? serializeInstantIndia(d.bom_confirmed_at) : null,
     productionBmrStatus,
     editable,
   };
@@ -1875,6 +1877,7 @@ async function addOneBatchFromMaster(req, res) {
     }
     const nextSeq = existing.length === 0 ? 1 : (Number(existing[0].sequence) || 0) + 1;
     const batchCode = `PE-${id}-B${nextSeq}`;
+    const isBuffer = req.body?.isBuffer === true;
 
     const plainPlan = planRow.get ? planRow.get({ plain: true }) : planRow;
     const totalKgPlan = parseFloat(String(plainPlan.total_kg_display || '0').replace(/[^\d.]/g, '')) || 0;
@@ -1883,9 +1886,24 @@ async function addOneBatchFromMaster(req, res) {
       return s + (Number(sk) || 0);
     }, 0);
     const remainingKg = Math.max(0, totalKgPlan - sumAllocatedKg);
+    // A buffer batch is deliberate over-production ABOVE the SO qty, so it must not be capped to (or
+    // blocked by) what's remaining under the order total — that cap only applies to a normal batch.
     let newSizeKg = defaultSizeKg;
-    if (totalKgPlan > 0) {
+    if (!isBuffer && totalKgPlan > 0) {
       newSizeKg = remainingKg > 0 ? Math.min(remainingKg, defaultSizeKg) : 0;
+    }
+    // A batch created at 0 kg (order already fully allocated by existing batches) is not a real,
+    // plannable batch — it just sat there as an empty placeholder until someone tried to size and
+    // send it, which then raced the sent-batch-size lock (see performSendBatchFromPlanModal on the
+    // frontend). Refuse it here instead of creating dead weight the user has to clean up.
+    if (newSizeKg <= 0) {
+      return res.status(400).json({
+        error:
+          totalKgPlan > 0
+            ? 'This order is already fully allocated to existing batches — there is nothing left to plan in a new batch.'
+            : 'Could not determine a batch size greater than 0 kg for this order.',
+        code: 'BATCH_SIZE_MUST_BE_POSITIVE',
+      });
     }
 
     let rmLines = [];
@@ -2160,8 +2178,12 @@ async function updateBatch(req, res) {
       throw lockErr;
     }
     const body = req.body || {};
+    // Editing the formula invalidates the sign-off for THIS batch — the confirmation refers to the
+    // lines as they were checked, so it must be re-done rather than silently carried over.
+    const bomEdited = Array.isArray(body.rmLines) || Array.isArray(body.pmLines);
     if (Array.isArray(body.rmLines)) batch.rm_lines = normalizeRmLines(body.rmLines);
     if (Array.isArray(body.pmLines)) batch.pm_lines = normalizePmLines(body.pmLines);
+    if (bomEdited && body.bomConfirmedAt === undefined) batch.bom_confirmed_at = null;
     if (body.sizeKg !== undefined) {
       const n = Number(body.sizeKg);
       batch.size_kg = Number.isFinite(n) && n >= 0 ? n : null;
@@ -2527,20 +2549,24 @@ async function getItemsInvolved(req, res) {
 
     const rmByCode = new Map();
     const rmByName = new Map();
+    const rmById = new Map();
     if (rmCodes.size > 0) {
       const rmsList = await RawMaterial.findAll({ where: { code: { [Op.in]: [...rmCodes] } }, attributes: ['id', 'code', 'name'] });
       for (const r of rmsList) {
         rmByCode.set(r.code, r);
+        rmById.set(Number(r.id), r);
         const key = String(r.name || '').trim().toLowerCase();
         if (key) rmByName.set(key, r);
       }
     }
     const pmByCode = new Map();
     const pmByName = new Map();
+    const pmById = new Map();
     if (pmCodes.size > 0) {
       const pmsList = await PackMaterial.findAll({ where: { code: { [Op.in]: [...pmCodes] } }, attributes: ['id', 'code', 'description'] });
       for (const p of pmsList) {
         pmByCode.set(p.code, p);
+        pmById.set(Number(p.id), p);
         const key = String(p.description || '').trim().toLowerCase();
         if (key) pmByName.set(key, p);
       }
@@ -2618,12 +2644,63 @@ async function getItemsInvolved(req, res) {
         accumulatePlannedBatchIntoQtyMaps(bp, plain, rmByCode, rmByName, pmByCode, pmByName, plannedRm, plannedPm, subBomMap);
       }
 
-      const allRmIdsForPlan = new Set([...fullRm.keys(), ...plannedRm.keys()]);
+      // Batch-driven Total Req: once batches exist, sum EACH batch's own saved rm_lines/pm_lines
+      // (sent AND draft) instead of one PI-level BOM snapshot × releasedFraction. Different batches
+      // on the same PI can carry different confirmed formulas — a per-batch Swap only edits that
+      // batch's own rm_lines, so a single snapshot can only ever reflect one of them and silently
+      // zeroes out whatever material another batch actually uses instead (see PE-3685: B-01 uses
+      // Raspberry Seed Oil, B-02 was swapped to Acai Berry Extract — the snapshot could show only
+      // one). Before any batch exists there is nothing to sum, so the PI-level snapshot × released
+      // fraction below is still used for that pending state.
+      const hasBatchesForPlan = planBatchesPlain.length > 0;
+      const batchGrossRm = new Map();
+      const batchGrossPm = new Map();
+      if (hasBatchesForPlan) {
+        for (const bp of planBatchesPlain) {
+          accumulatePlannedBatchIntoQtyMaps(bp, plain, rmByCode, rmByName, pmByCode, pmByName, batchGrossRm, batchGrossPm, subBomMap);
+        }
+      }
+
+      // Backfill display name/code/unit for materials that only appear in a batch's own BOM copy
+      // (e.g. swapped in for one batch) — the PI-level snapshot alone would leave them nameless.
+      for (const bp of planBatchesPlain) {
+        if (isKitRmLines(bp.rm_lines)) continue;
+        for (const line of Array.isArray(bp.rm_lines) ? bp.rm_lines : []) {
+          const id = resolveRmIdFromPlanningLine(line, rmByCode, rmByName);
+          if (id == null || Number.isNaN(id)) continue;
+          const master = rmById.get(id);
+          if (!rmNameById.has(id)) {
+            const name = String(line.name || line.inci_name || master?.name || '').trim();
+            if (name) rmNameById.set(id, name);
+          }
+          if (!rmCodeById.has(id)) {
+            const code = String(line.rm_code || line.code || master?.code || '').trim();
+            if (code) rmCodeById.set(id, code);
+          }
+          if (!rmUnitById.has(id)) rmUnitById.set(id, 'KG');
+        }
+        for (const line of Array.isArray(bp.pm_lines) ? bp.pm_lines : []) {
+          const id = resolvePmIdFromPlanningLine(line, pmByCode, pmByName);
+          if (id == null || Number.isNaN(id)) continue;
+          const master = pmById.get(id);
+          if (!pmNameById.has(id)) {
+            const name = String(line.description || line.name || master?.description || '').trim();
+            if (name) pmNameById.set(id, name);
+          }
+          if (!pmCodeById.has(id)) {
+            const code = String(line.pm_code || line.code || master?.code || '').trim();
+            if (code) pmCodeById.set(id, code);
+          }
+          if (!pmUnitById.has(id)) pmUnitById.set(id, 'PCS');
+        }
+      }
+
+      const allRmIdsForPlan = new Set([...fullRm.keys(), ...plannedRm.keys(), ...batchGrossRm.keys()]);
       for (const id of allRmIdsForPlan) {
         // Batch-driven Items Involved: only surface a material that at least one of this PI's batches
         // (planned OR sent) actually references. A PI with no batches contributes no items.
         if (countPlanningBatchesTouchingRm(planBatchesPlain, id, rmByCode, rmByName, subBomMap) === 0) continue;
-        const gross = (fullRm.get(id) || 0) * releasedFraction;
+        const gross = hasBatchesForPlan ? (batchGrossRm.get(id) || 0) : (fullRm.get(id) || 0) * releasedFraction;
         const rem = Math.max(0, gross - (plannedRm.get(id) || 0));
         if (!(gross > 0) && !includeZeroRequired) continue;
         const unit = rmUnitById.get(id) || 'KG';
@@ -2657,11 +2734,11 @@ async function getItemsInvolved(req, res) {
         agg.batchCount += countPlanningBatchesTouchingRm(planBatchesSent, id, rmByCode, rmByName, subBomMap);
       }
 
-      const allPmIdsForPlan = new Set([...fullPm.keys(), ...plannedPm.keys()]);
+      const allPmIdsForPlan = new Set([...fullPm.keys(), ...plannedPm.keys(), ...batchGrossPm.keys()]);
       for (const id of allPmIdsForPlan) {
         // Batch-driven: skip PMs that no batch of this PI references.
         if (countPlanningBatchesTouchingPm(planBatchesPlain, id, pmByCode, pmByName, plain, subBomMap) === 0) continue;
-        const gross = (fullPm.get(id) || 0) * releasedFraction;
+        const gross = hasBatchesForPlan ? (batchGrossPm.get(id) || 0) : (fullPm.get(id) || 0) * releasedFraction;
         const rem = Math.max(0, gross - (plannedPm.get(id) || 0));
         if (!(gross > 0) && !includeZeroRequired) continue;
         const unit = pmUnitById.get(id) || 'PCS';
@@ -3737,7 +3814,50 @@ async function getPlanningBatchCoverageHandler(req, res) {
   }
 }
 
+/**
+ * POST /:id/batches/:batchId/confirm-bom — sign off THIS batch's BOM copy.
+ *
+ * Confirmation is per batch: each planning batch holds its own rm_lines/pm_lines, which can be
+ * edited independently, so a second batch on the same planning row starts unconfirmed and has to be
+ * checked on its own rather than inheriting batch 1's sign-off.
+ *
+ * Body: { confirmed?: boolean } — pass false to withdraw a confirmation (e.g. after editing the BOM).
+ */
+async function confirmBatchBom(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const batchId = parseInt(req.params.batchId, 10);
+    if (Number.isNaN(id) || Number.isNaN(batchId)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+    const row = await PlanningBatch.findOne({ where: { id: batchId, planning_extracted_id: id } });
+    if (!row) return res.status(404).json({ error: 'Planning batch not found' });
+
+    const confirmed = req.body?.confirmed !== false;
+    if (confirmed) {
+      // A batch with no BOM copy has nothing to confirm — signing it off would let an empty
+      // formula reach production.
+      const rm = Array.isArray(row.get('rm_lines')) ? row.get('rm_lines') : [];
+      const pm = Array.isArray(row.get('pm_lines')) ? row.get('pm_lines') : [];
+      if (rm.length === 0 && pm.length === 0) {
+        return res.status(400).json({
+          error: 'BATCH_BOM_EMPTY',
+          message: 'This batch has no BOM lines to confirm.',
+        });
+      }
+    }
+    await row.update({ bom_confirmed_at: confirmed ? backendNow() : null });
+
+    const prodBmrByPlanningBatchId = await loadProductionBmrStatusByPlanningBatchIds([batchId]);
+    res.json(formatBatchRow(row, prodBmrByPlanningBatchId));
+  } catch (err) {
+    console.error('confirmBatchBom error', err);
+    res.status(500).json({ error: err.message || 'Failed to confirm batch BOM' });
+  }
+}
+
 module.exports = {
+  confirmBatchBom,
   releasedRequirementFraction,
   syncPlanningExtractedFromSalesOrders,
   listPlanningExtracted,

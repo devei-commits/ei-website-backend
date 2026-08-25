@@ -61,6 +61,7 @@ const { dropDuplicateConstraints } = require('./src/db/dropDuplicateConstraints'
 const { ensureReservedBatchItemPlanningColumns } = require('./src/db/ensureReservedBatchItemPlanningColumns');
 const { ensureReservedBatchItemRequestedColumn } = require('./src/db/ensureReservedBatchItemRequestedColumn');
 const { ensureQualitySpecRuleItemScope } = require('./src/db/ensureQualitySpecRuleItemScope');
+const { ensurePlanningBatchBomConfirmedColumn } = require('./src/db/ensurePlanningBatchBomConfirmedColumn');
 const { ensurePlanningExtractedCommittedDateColumn } = require('./src/db/ensurePlanningExtractedCommittedDateColumn');
 const warehousePacksRouters = require('./src/warehousePacks/routers');
 require('./src/customizationPackaging/models');
@@ -261,6 +262,7 @@ if (process.env.NODE_ENV !== 'test') {
                 await ensureReservedBatchItemPlanningColumns();
                 await ensureReservedBatchItemRequestedColumn();
                 await ensureQualitySpecRuleItemScope();
+                await ensurePlanningBatchBomConfirmedColumn();
                 await ensurePlanningExtractedCommittedDateColumn();
             } else {
                 await ensureTreasuryDefaults();
@@ -268,6 +270,7 @@ if (process.env.NODE_ENV !== 'test') {
                 await ensureReservedBatchItemPlanningColumns();
                 await ensureReservedBatchItemRequestedColumn();
                 await ensureQualitySpecRuleItemScope();
+                await ensurePlanningBatchBomConfirmedColumn();
                 await ensurePlanningExtractedCommittedDateColumn();
             }
             app.listen(port, '0.0.0.0', () => {

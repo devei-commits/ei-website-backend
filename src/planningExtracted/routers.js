@@ -13,6 +13,7 @@ const {
   getBatchById,
   deleteBatch,
   createOrUpdateBatches,
+  confirmBatchBom,
   addOneBatchFromMaster,
   addRworkBatch,
   updateBatch,
@@ -49,6 +50,7 @@ router.post('/:id/batches', guard, createOrUpdateBatches);
 router.post('/:id/batches/add-one', guard, addOneBatchFromMaster);
 router.post('/:id/batches/add-rework', guard, addRworkBatch);
 router.get('/:id/batches/:batchId', guard, getBatchById);
+router.post('/:id/batches/:batchId/confirm-bom', guard, confirmBatchBom);
 router.put('/:id/batches/:batchId', guard, updateBatch);
 router.delete('/:id/batches/:batchId', guard, deleteBatch);
 router.get('/:id', guard, cachePlanningExtractedOne, getPlanningExtractedById);

@@ -24,6 +24,12 @@ PlanningBatch.init(
     size_kg: { type: DataTypes.DECIMAL(14, 2), allowNull: true },
     rm_lines: { type: DataTypes.JSON, allowNull: true },
     pm_lines: { type: DataTypes.JSON, allowNull: true },
+    /**
+     * When this batch's own BOM copy was confirmed. Confirmation is per batch because each batch
+     * carries its own rm_lines/pm_lines and they can diverge — a new batch starts unconfirmed even
+     * if an earlier batch on the same planning row was signed off.
+     */
+    bom_confirmed_at: { type: DataTypes.DATE, allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
     deleted_at: { type: DataTypes.DATE, allowNull: true },
