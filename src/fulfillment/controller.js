@@ -234,6 +234,9 @@ function formatItem(d, batchMap = {}) {
     rate: d.rate != null ? Number(d.rate) : 0,
     unitPrice: d.unit_price != null ? Number(d.unit_price) : 0,
     mrp: d.mrp_price != null ? Number(d.mrp_price) : null,
+    // Per-line tax entered on the SO — no platform-side hardcoded GST is applied anywhere downstream.
+    taxPct: d.tax_pct != null ? Number(d.tax_pct) : 0,
+    taxAmount: d.tax_amount != null ? Number(d.tax_amount) : 0,
     batchSplits: (d.batchSplits || []).map((s) => formatSplit(s, batchMap)),
   };
 }
@@ -742,8 +745,12 @@ async function createOrder(req, res) {
 
     const createdByName = req.user ? (req.user.fullName || req.user.email) : null;
 
+    // SO value is the final payable total: line subtotals + each line's own tax amount (as entered
+    // on the SO). No flat/hardcoded GST% is ever added here.
     const soValue = (items || []).reduce((sum, item) => {
-      return sum + (item.orderedQty || 0) * (item.unitPrice || 0);
+      const lineSubtotal = (item.orderedQty || 0) * (item.unitPrice || 0);
+      const lineTax = Number(item.taxAmount) || 0;
+      return sum + lineSubtotal + lineTax;
     }, 0);
 
     // Create or link a SalesOrder record
@@ -881,6 +888,8 @@ async function createOrder(req, res) {
           rate: item.unitPrice || 0,
           unit_price: item.unitPrice || 0,
           mrp_price: (item.mrp != null && Number(item.mrp) > 0) ? Number(item.mrp) : null,
+          tax_pct: Number(item.taxPct) || 0,
+          tax_amount: Number(item.taxAmount) || 0,
         });
 
         const splits = item.batchSplits || [{ plannedQty: item.orderedQty }];
@@ -1100,6 +1109,9 @@ async function updateOrder(req, res) {
           // MRP is stored separately on the SO line (from the product master, then editable).
           // It was being dropped here, so edits reset to null on save.
           mrp: item.mrp != null && item.mrp !== '' ? Number(item.mrp) : null,
+          // Per-line tax entered on the SO — no platform-side default/hardcoded GST%.
+          taxPct: Number(item.taxPct) || 0,
+          taxAmount: Number(item.taxAmount) || 0,
         }))
         .filter((item) => item.orderedQty > 0 && item.unitPrice > 0);
 
@@ -1130,6 +1142,8 @@ async function updateOrder(req, res) {
           rate: item.unitPrice,
           unit_price: item.unitPrice,
           mrp_price: (item.mrp != null && Number(item.mrp) > 0) ? Number(item.mrp) : null,
+          tax_pct: item.taxPct || 0,
+          tax_amount: item.taxAmount || 0,
         });
 
         await FulfillmentBatchSplit.create({
@@ -1145,7 +1159,11 @@ async function updateOrder(req, res) {
         });
       }
 
-      const nextSoValue = nextItems.reduce((sum, item) => sum + item.orderedQty * item.unitPrice, 0);
+      // Final payable total: line subtotals + each line's own tax amount. No flat/hardcoded GST% added.
+      const nextSoValue = nextItems.reduce(
+        (sum, item) => sum + item.orderedQty * item.unitPrice + (item.taxAmount || 0),
+        0
+      );
       row.set('so_value', nextSoValue);
       if (rowPlain.sales_order_id) {
         await SalesOrder.update(

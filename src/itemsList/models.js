@@ -73,6 +73,8 @@ ItemListTier.init(
     price_per_unit: { type: DataTypes.DECIMAL(14, 2), allowNull: false },
     valid_till: { type: DataTypes.DATEONLY, allowNull: true },
     note: { type: DataTypes.STRING(500), allowNull: true },
+    /** planning_quotation_asks.id that produced this tier via Record Quote — null for tiers entered directly in Items List. Lets reopening that ask clean up the pricing it generated. */
+    source_ask_id: { type: DataTypes.INTEGER, allowNull: true },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
     deleted_at: { type: DataTypes.DATE, allowNull: true },

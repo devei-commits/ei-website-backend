@@ -4,6 +4,31 @@ const SalesOrder = require('../salesOrders/models');
 const { Product } = require('../products/models');
 const { roundPlanningMaterialQty } = require('../planningExtracted/orderKgMath');
 const { askMergeKey } = require('./mergeKey');
+const { ItemListTier, ItemListVendorRate } = require('../itemsList/models');
+const { softDeleteWhere, activeRowWhere } = require('../lib/softDelete');
+
+/**
+ * Reopening a recorded quote (status -> 'pending') should also clear the price-list pricing
+ * that Record Quote wrote from it, so the vendor's next quote is entered clean rather than
+ * silently keeping stale MOQ bands. Tiers are matched by `source_ask_id`; a vendor rate that
+ * ends up with no remaining active tiers (i.e. this ask was the only thing that ever priced it)
+ * is removed too, rather than left behind with stale default_rate/default_moq.
+ */
+async function cleanupPriceListForReopenedAsk(askId) {
+  const tiers = await ItemListTier.findAll({
+    where: activeRowWhere({ source_ask_id: askId }),
+    attributes: ['id', 'item_list_vendor_rate_id'],
+  });
+  if (!tiers.length) return;
+  const rateIds = [...new Set(tiers.map((t) => t.item_list_vendor_rate_id))];
+  await softDeleteWhere(ItemListTier, { source_ask_id: askId });
+  for (const rateId of rateIds) {
+    const remaining = await ItemListTier.count({ where: activeRowWhere({ item_list_vendor_rate_id: rateId }) });
+    if (remaining === 0) {
+      await softDeleteWhere(ItemListVendorRate, { id: rateId });
+    }
+  }
+}
 
 const peIncludePlanning = {
   model: PlanningExtracted,
@@ -229,6 +254,7 @@ async function updatePlanningQuotationAsk(req, res) {
 
     const body = req.body || {};
     const updates = {};
+    let reopened = false;
 
     if (body.status !== undefined) {
       const st = String(body.status).trim().toLowerCase();
@@ -240,6 +266,7 @@ async function updatePlanningQuotationAsk(req, res) {
         updates.fulfilled_at = new Date();
       } else if (st === 'pending') {
         updates.fulfilled_at = null;
+        reopened = row.status === 'fulfilled' || row.status === 'cancelled';
       }
     }
 
@@ -292,6 +319,9 @@ async function updatePlanningQuotationAsk(req, res) {
     }
 
     await row.update(updates);
+    if (reopened) {
+      await cleanupPriceListForReopenedAsk(id);
+    }
     const reloaded = await PlanningQuotationAsk.findByPk(id, { include: [peIncludePlanning] });
     res.json(formatAsk(reloaded));
   } catch (err) {

@@ -613,11 +613,12 @@ async function createTier(req, res) {
     if (Number.isNaN(rateId)) return res.status(400).json({ error: 'Invalid rateId' });
     const rate = await ItemListVendorRate.findByPk(rateId);
     if (!rate) return res.status(404).json({ error: 'Rate not found' });
-    const { moq_min, moq_max, price_per_unit, valid_till, note } = req.body;
+    const { moq_min, moq_max, price_per_unit, valid_till, note, source_ask_id } = req.body;
     const moqMin = moq_min != null ? parseMoqQuantity(moq_min) : null;
     if (moqMin == null) return res.status(400).json({ error: 'moq_min required' });
     const price = price_per_unit != null ? parseFloat(price_per_unit) : null;
     if (price == null || Number.isNaN(price)) return res.status(400).json({ error: 'price_per_unit required' });
+    const sourceAskId = source_ask_id != null ? parseInt(source_ask_id, 10) : null;
     const row = await ItemListTier.create({
       item_list_vendor_rate_id: rateId,
       moq_min: moqMin,
@@ -625,8 +626,9 @@ async function createTier(req, res) {
       price_per_unit: price,
       valid_till: valid_till || null,
       note: note || null,
+      source_ask_id: Number.isFinite(sourceAskId) ? sourceAskId : null,
     });
-    res.status(201).json({ id: row.id, moq_min: row.moq_min, moq_max: row.moq_max, price_per_unit: toNum(row.price_per_unit), valid_till: row.valid_till, note: row.note });
+    res.status(201).json({ id: row.id, moq_min: row.moq_min, moq_max: row.moq_max, price_per_unit: toNum(row.price_per_unit), valid_till: row.valid_till, note: row.note, source_ask_id: row.source_ask_id });
   } catch (err) {
     console.error('createTier error', err);
     res.status(500).json({ error: 'Failed to create tier' });
@@ -639,7 +641,7 @@ async function updateTier(req, res) {
     if (Number.isNaN(tierId)) return res.status(400).json({ error: 'Invalid tierId' });
     const row = await ItemListTier.findByPk(tierId);
     if (!row) return res.status(404).json({ error: 'Tier not found' });
-    const { moq_min, moq_max, price_per_unit, valid_till, note } = req.body;
+    const { moq_min, moq_max, price_per_unit, valid_till, note, source_ask_id } = req.body;
     if (moq_min !== undefined) {
       const parsed = parseMoqQuantity(moq_min);
       if (parsed == null) return res.status(400).json({ error: 'moq_min required' });
@@ -649,8 +651,12 @@ async function updateTier(req, res) {
     if (price_per_unit !== undefined) row.price_per_unit = parseFloat(price_per_unit);
     if (valid_till !== undefined) row.valid_till = valid_till || null;
     if (note !== undefined) row.note = note || null;
+    if (source_ask_id !== undefined) {
+      const sourceAskId = source_ask_id != null ? parseInt(source_ask_id, 10) : null;
+      row.source_ask_id = Number.isFinite(sourceAskId) ? sourceAskId : null;
+    }
     await row.save();
-    res.json({ id: row.id, moq_min: row.moq_min, moq_max: row.moq_max, price_per_unit: toNum(row.price_per_unit), valid_till: row.valid_till, note: row.note });
+    res.json({ id: row.id, moq_min: row.moq_min, moq_max: row.moq_max, price_per_unit: toNum(row.price_per_unit), valid_till: row.valid_till, note: row.note, source_ask_id: row.source_ask_id });
   } catch (err) {
     console.error('updateTier error', err);
     res.status(500).json({ error: 'Failed to update tier' });

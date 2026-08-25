@@ -100,6 +100,10 @@ FulfillmentOrderItem.init(
     rate: { type: DataTypes.DECIMAL(12, 2), allowNull: true, defaultValue: 0 },
     unit_price: { type: DataTypes.DECIMAL(12, 2), allowNull: true, defaultValue: 0 },
     mrp_price: { type: DataTypes.DECIMAL(12, 2), allowNull: true, defaultValue: null },
+    /** Per-line tax rate entered on the SO — never a hardcoded platform default (see tax_amount). */
+    tax_pct: { type: DataTypes.DECIMAL(5, 2), allowNull: true, defaultValue: 0 },
+    /** Per-line tax amount in ₹ for the full ordered_qty × unit_price, kept in sync with tax_pct by the client. */
+    tax_amount: { type: DataTypes.DECIMAL(12, 2), allowNull: true, defaultValue: 0 },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
     deleted_at: { type: DataTypes.DATE, allowNull: true },
