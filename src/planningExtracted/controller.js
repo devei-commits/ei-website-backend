@@ -47,7 +47,7 @@ const {
   addDaysToIndiaDateOnly,
   daysLeftFromDueDateIndia,
 } = require('../lib/indiaTime');
-const { softDeleteWhere } = require('../lib/softDelete');
+const { softDeleteWhere, activeRowWhere } = require('../lib/softDelete');
 const { ProductionBatch } = require('../production/models');
 
 /** SO statuses that must NOT surface in Planning → PIS Extracted (case-insensitive). */
@@ -2237,6 +2237,42 @@ async function updateBatch(req, res) {
  * deleted planning batch is also soft-deleted (mirrors the Production module's own delete), so it drops
  * off the Production side too.
  */
+/** BMR/BPR stages that mean "no real work has happened yet" — safe to remove along with the plan. */
+const BMR_SAFE_TO_REMOVE_STATUSES = ['draft', 'batch_confirmed'];
+const BPR_SAFE_TO_REMOVE_STATUSES = ['draft', 'pm_reserved'];
+
+/**
+ * Refuse to cascade-delete a production batch that already has real work against it — RM/PM
+ * reserved onward, any dispensing recorded, or FG already produced on one of its fulfillment
+ * splits. Mirrors the safety line used by the one-time Planning/Production reconcile: batches
+ * past draft/batch_confirmed (or with dispensing data / fg_qty) are never silently removed.
+ * @returns {Promise<{bmrNo: string, reason: string}|null>} the first unsafe batch found, or null.
+ */
+async function findUnsafeProductionBatchForRemoval(planningBatchId) {
+  const { FulfillmentBatchSplit } = require('../fulfillment/models');
+  const rows = await ProductionBatch.findAll({ where: activeRowWhere({ planning_batch_id: planningBatchId }) });
+  for (const row of rows) {
+    const p = row.get ? row.get({ plain: true }) : row;
+    if (!BMR_SAFE_TO_REMOVE_STATUSES.includes(p.bmr_status)) {
+      return { bmrNo: p.bmr_no, reason: `its BMR is already at "${p.bmr_status}"` };
+    }
+    if (!BPR_SAFE_TO_REMOVE_STATUSES.includes(p.bpr_status)) {
+      return { bmrNo: p.bmr_no, reason: `its BPR is already at "${p.bpr_status}"` };
+    }
+    const hasDispensing = (data) => data && typeof data === 'object' && Object.keys(data).length > 0;
+    if (hasDispensing(p.dispensing_rm) || hasDispensing(p.dispensing_pm)) {
+      return { bmrNo: p.bmr_no, reason: 'material has already been dispensed against it' };
+    }
+    const fgSplit = await FulfillmentBatchSplit.findOne({
+      where: activeRowWhere({ production_batch_id: p.id, fg_qty: { [Op.gt]: 0 } }),
+    });
+    if (fgSplit) {
+      return { bmrNo: p.bmr_no, reason: 'it has already produced finished goods' };
+    }
+  }
+  return null;
+}
+
 async function deleteBatch(req, res) {
   try {
     const planningId = parseInt(req.params.id, 10);
@@ -2248,6 +2284,13 @@ async function deleteBatch(req, res) {
     if (!planRow) return res.status(404).json({ error: 'Planning extracted not found' });
     const batch = await PlanningBatch.findOne({ where: { id: batchId, planning_extracted_id: planningId } });
     if (!batch) return res.status(404).json({ error: 'Batch not found' });
+
+    const unsafe = await findUnsafeProductionBatchForRemoval(batchId);
+    if (unsafe) {
+      return res.status(409).json({
+        error: `Cannot delete this batch — its production batch ${unsafe.bmrNo} cannot be auto-removed because ${unsafe.reason}. Handle it in Production first.`,
+      });
+    }
 
     const removedSeq = Number(batch.get ? batch.get('sequence') : batch.sequence) || 0;
     const removedIndex = removedSeq - 1; // 0-based index used by sent/buffer arrays
