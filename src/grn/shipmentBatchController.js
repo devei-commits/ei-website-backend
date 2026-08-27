@@ -11,6 +11,7 @@ const ShipmentBatch = require('./shipmentBatch.model');
 const PurchaseOrder = require('../purchaseOrders/models');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
+const { normalizePurchaseOrderLineItem } = require('./controller');
 
 const STAGE_ORDER = ['in_transit', 'landed', 'verified', 'quarantined', 'qc_tested', 'grn_completed'];
 
@@ -28,32 +29,38 @@ async function loadPoItems(poId, transaction) {
   }
 }
 
-/** Copy the RM/PM FK + unit from the matching PO line (by code, then name). */
-function findPoLineMaterial(poItems, item) {
+/**
+ * Find the PO line matching a shipment item, by code then name. PO rows store their code/name
+ * under itemCode/itemName (not code/name) — normalizePurchaseOrderLineItem (shared with the
+ * plain GRN-create path in ./controller) is the single place that knows every field alias, so
+ * both this and findPoLineOrderedQty go through it rather than re-deriving the aliases here.
+ */
+function findMatchingPoLine(poItems, item) {
   const items = Array.isArray(poItems) ? poItems : [];
   const code = normCode(item && item.code);
   const name = String((item && item.name) || '').trim().toLowerCase();
+  const normalized = items.map(normalizePurchaseOrderLineItem);
   let m = null;
-  if (code) m = items.find((l) => normCode(l.code) === code);
-  if (!m && name) m = items.find((l) => String(l.name || '').trim().toLowerCase() === name);
+  if (code) m = normalized.find((l) => normCode(l.code) === code);
+  if (!m && name) m = normalized.find((l) => l.name.trim().toLowerCase() === name);
+  return m || null;
+}
+
+/** Copy the RM/PM FK + unit from the matching PO line (by code, then name). */
+function findPoLineMaterial(poItems, item) {
+  const m = findMatchingPoLine(poItems, item);
   if (!m) return null;
   const rm = m.raw_material_id != null ? Number(m.raw_material_id) : null;
   const pm = m.pack_material_id != null ? Number(m.pack_material_id) : null;
   if (rm == null && pm == null) return null;
-  return { raw_material_id: rm, pack_material_id: pm, unit: m.unit ?? m.uom ?? m.UOM ?? null };
+  return { raw_material_id: rm, pack_material_id: pm, unit: m.unit || null };
 }
 
 /** Ordered quantity from the matching PO line (by code, then name) — the true "PO Qty". */
 function findPoLineOrderedQty(poItems, item) {
-  const items = Array.isArray(poItems) ? poItems : [];
-  const code = normCode(item && item.code);
-  const name = String((item && item.name) || '').trim().toLowerCase();
-  let m = null;
-  if (code) m = items.find((l) => normCode(l.code) === code);
-  if (!m && name) m = items.find((l) => String(l.name || '').trim().toLowerCase() === name);
+  const m = findMatchingPoLine(poItems, item);
   if (!m) return null;
-  const q = Number(m.quantity ?? m.qty ?? m.reqQty);
-  return Number.isFinite(q) && q > 0 ? q : null;
+  return m.qty > 0 ? m.qty : null;
 }
 
 /** Fallback: resolve the FK from the RM/PM master by code when the PO line carries none. */
@@ -260,10 +267,12 @@ async function autoCreateInTransitGrnForShippedPo(poId) {
   });
   if (!po) return { created: 0, skipped: 'no_po' };
 
+  // PO rows store their code/name under itemCode/itemName — normalize before matching so this
+  // doesn't silently no-op the way findPoLineMaterial/findPoLineOrderedQty used to (see there).
   const items = Array.isArray(po.get('items')) ? po.get('items') : [];
-  const lines = items.filter(
-    (l) => l && (String(l.code || '').trim() || String(l.name || '').trim()),
-  );
+  const lines = items
+    .map(normalizePurchaseOrderLineItem)
+    .filter((l) => l.code.trim() || l.name.trim());
   if (!lines.length) return { created: 0, skipped: 'no_items' };
 
   const poNo = po.get('order_id') || null;
@@ -274,6 +283,7 @@ async function autoCreateInTransitGrnForShippedPo(poId) {
   const connMap = connectingMapFromFormData(po.get('form_data'));
   const lineExpected = (l) =>
     connMap[normConnKey(l.code)] ?? connMap[normConnKey(l.name)] ?? poExpected;
+  const lineType = (l) => (l.pack_material_id != null ? 'PM' : l.raw_material_id != null ? 'RM' : undefined);
 
   return db.transaction(async (t) => {
     const totalQty = lines.reduce((s, l) => s + poLineQty(l), 0);
@@ -289,7 +299,7 @@ async function autoCreateInTransitGrnForShippedPo(poId) {
         poId: id,
         poNo,
         vendor,
-        item: { code: l.code, name: l.name, type: l.type },
+        item: { code: l.code, name: l.name, type: lineType(l) },
         shippedQty: poLineQty(l),
         expectedArrival: lineExpected(l),
         poItems: lines,
@@ -499,4 +509,35 @@ async function listGrnTracker(req, res) {
   }
 }
 
-module.exports = { initiateTransit, consolidatedShipment, getShipmentBatch, advanceGrnStage, listGrnTracker, autoCreateInTransitGrnForShippedPo, syncGrnExpectedDatesForPo, STAGE_ORDER };
+/**
+ * GET /api/v1/grn/shipment-history/:poId — every shipment batch (truck) raised against a PO,
+ * newest first, each with its vehicle/driver/transporter/invoice details and child GRN lines
+ * (item + qty shipped + current stage). Powers the "previous shipments" panel shown when
+ * raising a new Initiate Transit / Consolidated Shipment so warehouse/procurement can see what
+ * already went out on this PO before picking what goes on the next truck.
+ */
+async function listShipmentHistoryForPo(req, res) {
+  try {
+    const poId = parseInt(req.params.poId, 10);
+    if (Number.isNaN(poId)) return res.status(400).json({ error: 'Invalid poId' });
+    const batches = await ShipmentBatch.findAll({
+      where: { purchase_order_id: poId, lifecycle_status: 'active' },
+      include: [{ model: GoodsReceivedNote, as: 'grns', required: false }],
+      order: [['created_at', 'DESC']],
+    });
+    const rows = batches.map((sb) => {
+      const d = sb.get({ plain: true });
+      return {
+        ...formatSb(sb),
+        createdAt: d.created_at,
+        grns: (d.grns || []).map((g) => formatGrnLite(g)),
+      };
+    });
+    res.json(rows);
+  } catch (err) {
+    console.error('listShipmentHistoryForPo error', err);
+    res.status(500).json({ error: 'Failed to fetch shipment history' });
+  }
+}
+
+module.exports = { initiateTransit, consolidatedShipment, getShipmentBatch, advanceGrnStage, listGrnTracker, listShipmentHistoryForPo, autoCreateInTransitGrnForShippedPo, syncGrnExpectedDatesForPo, STAGE_ORDER };

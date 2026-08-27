@@ -1977,4 +1977,4 @@ async function generateLabels(req, res) {
   }
 }
 
-module.exports = { list, getById, create, update, remove, assignableUsers, generateLabels, qcReference, applyGrnCompletionToInventory, grnCompletionBlockers, stampPoTrackingForGrn };
+module.exports = { list, getById, create, update, remove, assignableUsers, generateLabels, qcReference, applyGrnCompletionToInventory, grnCompletionBlockers, stampPoTrackingForGrn, normalizePurchaseOrderLineItem };

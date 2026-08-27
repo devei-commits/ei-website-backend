@@ -40,6 +40,7 @@ const {
   resumePo,
   cancelPo,
   amendPo,
+  revertPoToDraft,
 } = require('./exceptionController');
 const {
   getGrnExceptionState,
@@ -79,6 +80,7 @@ router.post('/:id/exception/hold', guard, holdPo);
 router.post('/:id/exception/resume', guard, resumePo);
 router.post('/:id/exception/cancel', guard, cancelPo);
 router.post('/:id/exception/amend', guard, amendPo);
+router.post('/:id/exception/revert-draft', guard, revertPoToDraft);
 // GRN-stage exceptions (Short-supply short-close · QC-fail RTV) — read GRN read-only.
 router.get('/:id/grn-exception', guard, getGrnExceptionState);
 router.post('/:id/grn-exception/short-close', guard, notBlocked, shortClosePo);

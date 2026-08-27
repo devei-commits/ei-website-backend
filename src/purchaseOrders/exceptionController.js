@@ -6,6 +6,9 @@
  *   CANCEL  before GRN complete → exception_status='cancelled' + status='Cancelled'
  *           · CFO gate when amount > ₹5L · reopens the linked PR (Planning re-plans)
  *   AMEND   post-approval, pre-dispatch → resets approval + vendor loop, status→Draft
+ *   REVERT-TO-DRAFT  in-workflow but pre-approval (under review / under approval / rejected /
+ *           changes requested) → resets approval_status to 'not_submitted', no reason required,
+ *           no amendment_count bump. purchase_orders.status is already 'Draft' at this stage.
  *
  * exception_status is a separate axis from status/approval_status so hold/cancel
  * never clobber workflow state. Vendor-reject lives in the vendor loop already.
@@ -109,6 +112,18 @@ function computeState(po, tracking) {
     // whose po_released_at was never stamped), which previously made them permanently
     // un-amendable even though they are plainly live, issued purchase orders.
     canAmend: !isOnHold && !isCancelled && !isCompleted && !shipped && !grnComplete && (approval === 'approved' || sent || poStatus === 'released'),
+    // Lighter sibling of Amend: covers the gap Amend deliberately leaves open. purchase_orders.status
+    // stays 'Draft' for the entire pre-release approval pipeline (submit/forward/approve/reject all
+    // only touch approval_status) — so "back to Draft" for an in-flight PO really means resetting
+    // approval_status to 'not_submitted', not the (already-Draft) status column. Available once a PO
+    // has actually entered the workflow (under review / under approval / rejected / changes
+    // requested); a PO that was never submitted has nothing to revert. Once a PO qualifies for
+    // Amend (approved/sent/released), that is the (audited, reasoned) path back to Draft instead.
+    canRevertToDraft:
+      !isOnHold && !isCancelled && !isCompleted && !shipped && !grnComplete &&
+      Boolean(approval) && approval !== 'not_submitted' &&
+      !(approval === 'approved' || sent || poStatus === 'released'),
+    // ^ approval ∈ {under_review, under_approval, rejected, changes_requested}
   };
 }
 
@@ -275,11 +290,70 @@ async function amendPo(req, res) {
   }
 }
 
+/**
+ * POST /purchase-orders/:id/exception/revert-draft  { reason? }
+ * Lighter sibling of Amend for POs that never reached approval — no reason required, no
+ * amendment_count bump, but the same approval + vendor-loop reset so it re-flows cleanly.
+ */
+async function revertPoToDraft(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const { po, tracking, notFound, schemaMissing } = await loadCtx(id);
+    if (schemaMissing) return schemaError(res);
+    if (notFound) return res.status(404).json({ error: 'Purchase order not found' });
+    const state = computeState(po, tracking);
+    if (state.cancelled) return res.status(409).json({ error: 'PO is cancelled.', code: 'PO_CANCELLED' });
+    if (state.onHold) return res.status(409).json({ error: 'Resume the PO before reverting to Draft.', code: 'PO_ON_HOLD' });
+    if (!state.canRevertToDraft) {
+      return res.status(409).json({
+        error: state.approvalStatus === 'not_submitted' || !state.approvalStatus
+          ? 'PO is already at Draft — nothing to revert.'
+          : 'PO cannot be reverted to Draft at its current stage — use Amend once it is approved/sent.',
+        code: 'CANNOT_REVERT_TO_DRAFT',
+      });
+    }
+    const reason = req.body && req.body.reason ? String(req.body.reason) : null;
+
+    const actor = actorFromReq(req);
+    // Same approval reset as Amend so the PO re-flows review → approve → send — but no
+    // amendment_count bump, since this never left the pre-approval editing stage.
+    try {
+      await po.update({
+        status: 'Draft',
+        // 'not_submitted' — not 'changes_requested' like Amend — since this PO was never approved:
+        // there is nothing a reviewer asked to change, it is simply back to square one for editing.
+        approval_status: 'not_submitted',
+        approved_at: null,
+      });
+    } catch (err) { if (isMissingColumnError(err)) return schemaError(res); throw err; }
+    // Reset the vendor loop too, in case it was sent before this earlier-stage revert (e.g. a
+    // rejected PO that had already gone out) so it must be re-sent and re-acknowledged.
+    if (tracking) {
+      try {
+        await tracking.update({
+          po_released_at: null, po_released_note: null, sent_channel: null, ack_sla_due_at: null,
+          vendor_confirmed_at: null, vendor_confirmed_note: null, vendor_rejected_at: null, vendor_rejected_note: null,
+        });
+      } catch (e) {
+        if (!isMissingColumnError(e)) console.warn('[poException] revert-to-draft tracking reset failed:', e && e.message ? e.message : e);
+      }
+    }
+    await syncRequestStatus(po, 'PO Draft');
+    await writeLog(id, { action: 'po_reverted_to_draft', fromStatus: state.approvalStatus, toStatus: 'not_submitted', actor, note: reason });
+    return res.json(computeState(po, tracking));
+  } catch (err) {
+    console.error('revertPoToDraft error', err);
+    return res.status(500).json({ error: 'Failed to revert PO to Draft' });
+  }
+}
+
 module.exports = {
   getExceptionState,
   holdPo,
   resumePo,
   cancelPo,
   amendPo,
+  revertPoToDraft,
   computeState, // exported for unit tests
 };

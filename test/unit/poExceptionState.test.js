@@ -73,6 +73,68 @@ describe('PO exception computeState gating', () => {
     expect(s.canCancel).toBe(true);
   });
 
+  // purchase_orders.status stays 'Draft' for the entire pre-release pipeline (submit / forward /
+  // approve / reject only ever touch approval_status) — so every revert-to-draft case below uses
+  // status: 'Draft' throughout, exactly like a real in-flight PO.
+
+  test('under review, not yet approved → can revert to Draft (fills the gap Amend leaves)', () => {
+    const s = computeState(
+      poStub({ id: 1, status: 'Draft', items: smallItems, approval_status: 'under_review', exception_status: null, amendment_count: 0 }),
+      trkStub(null),
+    );
+    expect(s.canAmend).toBe(false);
+    expect(s.canRevertToDraft).toBe(true);
+  });
+
+  test('rejected → can revert to Draft', () => {
+    const s = computeState(
+      poStub({ id: 1, status: 'Draft', items: smallItems, approval_status: 'rejected', exception_status: null, amendment_count: 0 }),
+      trkStub(null),
+    );
+    expect(s.canRevertToDraft).toBe(true);
+  });
+
+  test('changes requested → can revert to Draft', () => {
+    const s = computeState(
+      poStub({ id: 1, status: 'Draft', items: smallItems, approval_status: 'changes_requested', exception_status: null, amendment_count: 0 }),
+      trkStub(null),
+    );
+    expect(s.canRevertToDraft).toBe(true);
+  });
+
+  test('not yet submitted (never entered workflow) → cannot revert to Draft (already there)', () => {
+    const s = computeState(
+      poStub({ id: 1, status: 'Draft', items: smallItems, approval_status: 'not_submitted', exception_status: null, amendment_count: 0 }),
+      trkStub(null),
+    );
+    expect(s.canRevertToDraft).toBe(false);
+  });
+
+  test('approved / sent / released → cannot revert to Draft, use Amend instead', () => {
+    const s = computeState(
+      poStub({ id: 1, status: 'Released', items: smallItems, approval_status: 'approved', exception_status: null, amendment_count: 0 }),
+      trkStub({ po_released_at: '2026-07-10' }),
+    );
+    expect(s.canAmend).toBe(true);
+    expect(s.canRevertToDraft).toBe(false);
+  });
+
+  test('on hold / GRN complete / shipped → cannot revert to Draft', () => {
+    const onHold = computeState(
+      poStub({ id: 1, status: 'Draft', items: smallItems, approval_status: 'under_review', exception_status: 'on_hold', amendment_count: 0 }),
+      trkStub(null),
+    );
+    expect(onHold.canRevertToDraft).toBe(false);
+
+    // Sent-and-shipped implies it was approved and released already — Amend's territory, not this.
+    const shipped = computeState(
+      poStub({ id: 1, status: 'In Transit', items: smallItems, approval_status: 'approved', exception_status: null, amendment_count: 0 }),
+      trkStub({ po_released_at: '2026-07-10', shipped_at: '2026-07-12' }),
+    );
+    expect(shipped.canRevertToDraft).toBe(false);
+    expect(shipped.canAmend).toBe(false); // shipped is past Amend's window too
+  });
+
   test('legacy Released PO with no tracking row and no approval_status → can still amend', () => {
     // Older POs can carry status 'Released' without ever having a po_tracking row (or one
     // whose po_released_at was never stamped) and without approval_status set, since both

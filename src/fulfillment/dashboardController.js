@@ -38,8 +38,15 @@ async function tryInvalidateCache() {
    CONSTANTS & HELPERS
 ───────────────────────────────────────────────────────────────────────────── */
 
-/** Threads a comment can be attached to. 'rm'/'pm' are per-material and shared across screens. */
-const COMMENT_ENTITY_TYPES = ['so', 'batch', 'item', 'rm', 'pm'];
+/**
+ * Threads a comment can be attached to.
+ *
+ * 'rm'/'pm' are per-MATERIAL and deliberately shared across screens: a note left on a material from
+ * a purchase order is the same thread Planning reads in Items Involved and PIs Extracted, so
+ * procurement and planning are talking in one place rather than two.
+ * 'po' is keyed by purchase_orders.id.
+ */
+const COMMENT_ENTITY_TYPES = ['so', 'batch', 'item', 'rm', 'pm', 'po'];
 
 /** In-memory global SLA defaults (days). Used when no sla_template row exists. */
 const SLA_DEFAULTS = { picking: 2, invoiced: 1, shipped: 3, delivered: 1 };
