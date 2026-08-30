@@ -286,6 +286,14 @@ async function listSalesOrdersDashboard(req, res) {
     // --- Build fulfillment_orders WHERE clause ---
     const where = activeRowWhere();
 
+    // Cancelled sale orders are never shown on this dashboard — unconditionally, not only when no
+    // status filter is passed (the "Cancelled" option has been removed from the UI filter too). A
+    // cancellation always sets both of these together (cancelOrder() and Edit SO → Update SO Status
+    // via SO_STATUS_TO_COMMERCIAL both write 'cancelled' to each), so this needs no join to
+    // sales_orders.status.
+    where.commercial_status = { [Op.or]: [{ [Op.ne]: 'cancelled' }, { [Op.is]: null }] };
+    where.so_status = { [Op.or]: [{ [Op.ne]: 'cancelled' }, { [Op.is]: null }] };
+
     if (date_from || date_to) {
       where.order_date = {};
       if (date_from) where.order_date[Op.gte] = date_from;
@@ -612,6 +620,13 @@ async function listBatchesDashboard(req, res) {
 
     // --- Build order WHERE for join ---
     const orderWhere = activeRowWhere();
+    // Cancelled sale orders are excluded here too (same rule as listSalesOrdersDashboard) — without
+    // it, a cancelled SO's batches kept showing as live rows on Products & Batches (with their stale
+    // BMR/BPR still attached) even after Planning had already hard-deleted its planning_batches and
+    // soft-deleted the linked production_batches, since that self-healing sync — see
+    // syncPlanningExtractedFromSalesOrders — has no way to reach into fulfillment_batch_splits.
+    orderWhere.commercial_status = { [Op.or]: [{ [Op.ne]: 'cancelled' }, { [Op.is]: null }] };
+    orderWhere.so_status = { [Op.or]: [{ [Op.ne]: 'cancelled' }, { [Op.is]: null }] };
     if (due_before) orderWhere.due_date = { ...(orderWhere.due_date || {}), [Op.lte]: due_before };
     if (due_after) orderWhere.due_date = { ...(orderWhere.due_date || {}), [Op.gte]: due_after };
     if (client_id) orderWhere.vendor_client_id = parseInt(client_id, 10);

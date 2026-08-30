@@ -1094,6 +1094,23 @@ async function updateOrder(req, res) {
         row.set('so_status', key === 'closed' ? 'closed' : 'planned');
         if (key === 'closed') row.set('manual_status_override', true);
       }
+
+      // Same block as the dedicated /:id/cancel endpoint (findConfirmedProductionBatchBlockingCancel,
+      // below) — Edit SO → Update SO Status is a second path to 'Cancelled' and must not bypass it.
+      if (nextSalesOrderStatus === 'Cancelled') {
+        const blocking = await findConfirmedProductionBatchBlockingCancel(rowPlain.sales_order_id);
+        if (blocking) {
+          const label = blocking.productName
+            ? `${blocking.productName} (${blocking.batchCode || 'batch'})`
+            : (blocking.batchCode || 'A batch on this order');
+          return res.status(409).json({
+            error: `Cannot cancel this sale order — ${label} has already been confirmed by Production`
+              + `${blocking.bmrNo ? ` (${blocking.bmrNo})` : ''}. It can no longer be cancelled from here.`,
+            code: 'SO_HAS_CONFIRMED_PRODUCTION_BATCH',
+            blockedBatch: blocking,
+          });
+        }
+      }
     }
 
     if (hasItemsPayload) {
@@ -1278,12 +1295,77 @@ async function deleteOrder(req, res) {
  * PATCH /:id/cancel — cancel a sales order regardless of status/approvals.
  * Freezes status (manual_status_override) so split recompute can't revive it.
  */
+/**
+ * A SO can carry several product/PR lines, each with its own batches. If ANY line's batch has
+ * already been confirmed by Production (`bmr_status` advanced past 'draft'), the whole SO is
+ * blocked from cancellation — cancelling hard-deletes planning batches and soft-deletes production
+ * batches under them (see below), which would silently orphan real work already underway on the
+ * floor. Returns the first blocking batch found (product name + batch code + BMR no), or null.
+ */
+async function findConfirmedProductionBatchBlockingCancel(salesOrderId) {
+  if (!salesOrderId) return null;
+  const PlanningExtracted = require('../planningExtracted/models');
+  const PlanningBatch = require('../planningExtracted/planningBatchModel');
+  const { isPlanningBatchEditableByProduction } = require('../planningExtracted/planningBatchEditLock');
+
+  const planningRows = await PlanningExtracted.findAll({
+    where: { sales_order_id: salesOrderId },
+    attributes: ['id'],
+    include: [{ model: Product, as: 'product', attributes: ['product_name'] }],
+  });
+  const productNameByPlanId = new Map();
+  planningRows.forEach((r) => {
+    const d = r.get ? r.get({ plain: true }) : r;
+    productNameByPlanId.set(d.id, d.product?.product_name || null);
+  });
+  const planIds = [...productNameByPlanId.keys()];
+  if (planIds.length === 0) return null;
+
+  const planningBatchRows = await PlanningBatch.findAll({
+    where: { planning_extracted_id: { [Op.in]: planIds } },
+    attributes: ['id', 'batch_code', 'planning_extracted_id'],
+  });
+  const batchMetaById = new Map();
+  planningBatchRows.forEach((b) => {
+    const d = b.get ? b.get({ plain: true }) : b;
+    batchMetaById.set(d.id, { batchCode: d.batch_code, productName: productNameByPlanId.get(d.planning_extracted_id) });
+  });
+  const batchIds = [...batchMetaById.keys()];
+  if (batchIds.length === 0) return null;
+
+  const prodRows = await ProductionBatch.findAll({
+    where: { planning_batch_id: { [Op.in]: batchIds } },
+    attributes: ['planning_batch_id', 'bmr_status', 'bmr_no'],
+  });
+  for (const row of prodRows) {
+    const d = row.get ? row.get({ plain: true }) : row;
+    if (isPlanningBatchEditableByProduction(d.bmr_status)) continue;
+    const meta = batchMetaById.get(d.planning_batch_id) || {};
+    return { ...meta, bmrNo: d.bmr_no || null, bmrStatus: d.bmr_status || null };
+  }
+  return null;
+}
+
 async function cancelOrder(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await FulfillmentOrder.findOne({ where: activeRowWhere({ id }) });
     if (!row) return res.status(404).json({ error: 'Fulfillment order not found' });
+
+    const blocking = await findConfirmedProductionBatchBlockingCancel(row.get('sales_order_id'));
+    if (blocking) {
+      const label = blocking.productName
+        ? `${blocking.productName} (${blocking.batchCode || 'batch'})`
+        : (blocking.batchCode || 'A batch on this order');
+      return res.status(409).json({
+        error: `Cannot cancel this sale order — ${label} has already been confirmed by Production`
+          + `${blocking.bmrNo ? ` (${blocking.bmrNo})` : ''}. It can no longer be cancelled from here.`,
+        code: 'SO_HAS_CONFIRMED_PRODUCTION_BATCH',
+        blockedBatch: blocking,
+      });
+    }
+
     const reason = String(req.body?.reason || '').trim();
     const prevNotes = row.get('notes') || '';
     await row.update({
