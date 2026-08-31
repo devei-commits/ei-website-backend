@@ -19,6 +19,7 @@
     "clean-data": "node cleanData.js --yes",
     "reset-order-lifecycle": "node scripts/reset-order-lifecycle.js",
     "reset-order-lifecycle:yes": "node scripts/reset-order-lifecycle.js --yes",
+    "reset-inventory-stock": " node scripts/reset-inventory-stock.js",
     "delete-vendor-clients": "node scripts/delete-all-vendor-clients.js",
     "delete-vendor-clients:yes": "node scripts/delete-all-vendor-clients.js --yes",
     "zoho:import:items": "node scripts/zoho-pull-items-to-products.js",

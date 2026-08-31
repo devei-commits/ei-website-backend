@@ -26,6 +26,7 @@ const { buildActiveClientWhere } = require('../vendorClient/clientMasterQuery');
 const { activeRowWhere } = require('../lib/softDelete');
 const { buildPendingBatchRows } = require('./pendingBatchRows');
 const { kgPerUnitForPlanning, batchUnitsFromKg, coveragePctFromUnits } = require('./batchPlannedUnits');
+const { loadProductionBatchesBySoNo, syncOrderSplitsFromProduction } = require('./batchSplitSync');
 
 async function tryInvalidateCache() {
   try {
@@ -407,16 +408,53 @@ async function listSalesOrdersDashboard(req, res) {
     }
 
     // --- Fetch items + splits in bulk (2 queries) ---
-    const [items, splits] = await Promise.all([
+    const splitAttrs = ['id', 'fulfillment_order_id', 'fulfillment_order_item_id', 'production_batch_id', 'bpr_no', 'ff_status', 'fg_qty', 'picked_qty'];
+    const [items, splits0] = await Promise.all([
       FulfillmentOrderItem.findAll({
         where: { fulfillment_order_id: { [Op.in]: orderIds } },
         attributes: ['id', 'fulfillment_order_id', 'sku', 'product_code', 'product_name', 'pack', 'ordered_qty', 'unit_price'],
       }),
       FulfillmentBatchSplit.findAll({
         where: { fulfillment_order_id: { [Op.in]: orderIds } },
-        attributes: ['id', 'fulfillment_order_id', 'fulfillment_order_item_id', 'production_batch_id', 'bpr_no', 'ff_status', 'fg_qty', 'picked_qty'],
+        attributes: splitAttrs,
       }),
     ]);
+    let splits = splits0;
+
+    // --- Keep fulfillment_batch_splits in sync with Production before computing batch stage —
+    // mirrors the sync that listOrders()/getOrderById() run, so a batch created in Planning/
+    // Production shows up here immediately instead of only after someone opens the SO detail
+    // modal or the Planning Batches tab (whichever endpoint happens to run the sync first). ---
+    {
+      const itemsByOrderForSync = {};
+      items.forEach((it) => {
+        const d = it.get({ plain: true });
+        if (!itemsByOrderForSync[d.fulfillment_order_id]) itemsByOrderForSync[d.fulfillment_order_id] = [];
+        itemsByOrderForSync[d.fulfillment_order_id].push(d);
+      });
+      const splitsByItemIdForSync = {};
+      splits.forEach((s) => {
+        const d = s.get({ plain: true });
+        if (!splitsByItemIdForSync[d.fulfillment_order_item_id]) splitsByItemIdForSync[d.fulfillment_order_item_id] = [];
+        splitsByItemIdForSync[d.fulfillment_order_item_id].push(d);
+      });
+      const batchesBySoNo = await loadProductionBatchesBySoNo(orderRows.map((r) => r.so_no));
+      let mutated = false;
+      for (const order of orderRows) {
+        const orderItems = itemsByOrderForSync[order.id] || [];
+        if (!orderItems.length) continue;
+        const itemsWithSplits = orderItems.map((it) => ({ ...it, batchSplits: splitsByItemIdForSync[it.id] || [] }));
+        if (await syncOrderSplitsFromProduction({ id: order.id, so_no: order.so_no, items: itemsWithSplits }, batchesBySoNo)) {
+          mutated = true;
+        }
+      }
+      if (mutated) {
+        splits = await FulfillmentBatchSplit.findAll({
+          where: { fulfillment_order_id: { [Op.in]: orderIds } },
+          attributes: splitAttrs,
+        });
+      }
+    }
 
     // --- Fetch production batches for batch pills + reliable FG unit yield ---
     const prodBatchIds = [...new Set(splits.map((s) => s.production_batch_id).filter(Boolean))];

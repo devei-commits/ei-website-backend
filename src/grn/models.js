@@ -45,6 +45,10 @@ GoodsReceivedNote.init(
     expiry: { type: DataTypes.DATEONLY, allowNull: true },
     mfg_batch: { type: DataTypes.STRING(100), allowNull: true },
     generated_labels: { type: DataTypes.JSON, allowNull: true },
+    /** Pack labels (one per Packaging List row) as actually printed at "Generate Labels" (step 5) —
+     * [{ packagingNo, qrPayload, qrImageDataUrl, fields: [{label, value}] }]. Frozen at generation
+     * time so a later reprint always matches what's physically on the packs. */
+    generated_pack_labels: { type: DataTypes.JSON, allowNull: true },
     /** po | transfer | return — where the inbound GRN was initiated. */
     receipt_source: { type: DataTypes.STRING(30), allowNull: true, defaultValue: 'po' },
     /** Source MRN (material_request_notes) when this GRN was auto-created from a completed transfer. */

@@ -3,6 +3,7 @@ const { softDeleteWhere, activeRowWhere } = require('../lib/softDelete');
 const { Op } = require('sequelize');
 const db = require('../../db');
 const GoodsReceivedNote = require('./models');
+const VendorBatchSequence = require('./vendorBatchSequence.model');
 
 const { User } = require('../users/models');
 const RawMaterial = require('../rawMaterials/models');
@@ -312,6 +313,96 @@ async function loadMastersForQc(lineItems, grnType) {
 /**
  * GET /api/v1/grn/:id/qc-reference — master quality specs merged with saved GRN QC results.
  */
+const VENDOR_BATCH_NO_PREFIX = 'B126';
+
+/**
+ * Atomically allocate `count` sequential B126-##### vendor batch numbers — guaranteed unique
+ * across every GRN batch ever created, even when two warehouse staff create GRNs at the same
+ * moment. A Postgres advisory lock scoped to the transaction serializes concurrent callers
+ * (same pattern as allocateNextPrProductCode in src/products/controller.js), then the single
+ * counter row (src/grn/vendorBatchSequence.model.js) is read and bumped by `count`.
+ * @param {number} count
+ * @param {import('sequelize').Transaction} transaction
+ * @returns {Promise<string[]>}
+ */
+async function allocateNextVendorBatchNos(count, transaction) {
+  const sequelize = GoodsReceivedNote.sequelize;
+  const dialect = sequelize.getDialect && sequelize.getDialect();
+  if (dialect === 'postgres') {
+    await sequelize.query('SELECT pg_advisory_xact_lock(98273503, 4)', { transaction });
+  }
+  const [row] = await VendorBatchSequence.findOrCreate({
+    where: { prefix: VENDOR_BATCH_NO_PREFIX },
+    defaults: { prefix: VENDOR_BATCH_NO_PREFIX, last_value: 0 },
+    transaction,
+  });
+  const start = row.last_value;
+  await row.update({ last_value: start + count }, { transaction });
+  const codes = [];
+  for (let i = 1; i <= count; i += 1) {
+    codes.push(`${VENDOR_BATCH_NO_PREFIX}-${String(start + i).padStart(5, '0')}`);
+  }
+  return codes;
+}
+
+/** GET /api/v1/grn/next-vendor-batch-no?count=N — pre-fill codes for N new Batch Details rows. */
+async function nextVendorBatchNo(req, res) {
+  try {
+    const count = Math.min(200, Math.max(1, parseInt(req.query.count, 10) || 1));
+    const codes = await db.transaction((t) => allocateNextVendorBatchNos(count, t));
+    res.json({ codes });
+  } catch (err) {
+    console.error('[grn] nextVendorBatchNo error:', err);
+    res.status(500).json({ error: err.message || 'Failed to allocate vendor batch numbers' });
+  }
+}
+
+/**
+ * Client submits fully-rendered pack labels (QR data URL already rendered from the packaging no.,
+ * fields already formatted the same way the print view shows them) — this just validates the
+ * shape and freezes it. No server-side recomputation, so what gets persisted is byte-for-byte
+ * what was on screen when "Generate Labels" / "Print all N labels" was clicked.
+ */
+function normalizePackLabels(value) {
+  if (!Array.isArray(value)) return null;
+  const str = (v) => (v != null ? String(v).trim() : '');
+  const out = value.slice(0, 2000).map((row) => {
+    const r = row && typeof row === 'object' && !Array.isArray(row) ? row : {};
+    const fields = Array.isArray(r.fields)
+      ? r.fields
+          .slice(0, 20)
+          .filter((f) => f && typeof f === 'object')
+          .map((f) => ({ label: str(f.label), value: str(f.value) }))
+      : [];
+    return {
+      packagingNo: str(r.packagingNo),
+      qrPayload: str(r.qrPayload),
+      qrImageDataUrl: str(r.qrImageDataUrl),
+      fields,
+    };
+  }).filter((r) => r.packagingNo);
+  return out;
+}
+
+/** POST /api/v1/grn/:id/pack-labels — persist the pack labels just generated/printed at step 5. */
+async function savePackLabels(req, res) {
+  try {
+    const id = parseInt(String(req.params.id), 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    const row = await GoodsReceivedNote.findByPk(id);
+    if (!row) return res.status(404).json({ error: 'GRN not found' });
+    const packLabels = normalizePackLabels(req.body && req.body.packLabels);
+    if (!packLabels || !packLabels.length) {
+      return res.status(400).json({ error: 'packLabels must be a non-empty array' });
+    }
+    await row.update({ generated_pack_labels: packLabels });
+    res.json({ packLabels });
+  } catch (err) {
+    console.error('[grn] savePackLabels error:', err);
+    res.status(500).json({ error: err.message || 'Failed to save pack labels' });
+  }
+}
+
 async function qcReference(req, res) {
   try {
     const id = parseInt(String(req.params.id), 10);
@@ -593,7 +684,7 @@ function normalizeGrnBatchesMeta(value) {
     out.rows = value.rows.slice(0, 200).map((r) => {
       const row = {};
       if (r && typeof r === 'object' && !Array.isArray(r)) {
-        for (const k of ['vendorBatchNo', 'mfgDate', 'expDate', 'coaFileName']) {
+        for (const k of ['systemBatchNo', 'vendorBatchNo', 'mfgDate', 'expDate', 'coaFileName']) {
           const s = str(r[k]);
           if (s) row[k] = s;
         }
@@ -727,6 +818,7 @@ function formatRow(r, enrichedLineItems) {
     expiry: d.expiry || null,
     mfgBatch: d.mfg_batch || null,
     generatedLabels: d.generated_labels || null,
+    generatedPackLabels: d.generated_pack_labels || null,
     receiptSource: resolveReceiptSourceFromRow(d),
     purchaseOrderId: d.purchase_order_id != null ? Number(d.purchase_order_id) : null,
     sourceDocuments: d.source_documents || null,
@@ -1977,4 +2069,4 @@ async function generateLabels(req, res) {
   }
 }
 
-module.exports = { list, getById, create, update, remove, assignableUsers, generateLabels, qcReference, applyGrnCompletionToInventory, grnCompletionBlockers, stampPoTrackingForGrn, normalizePurchaseOrderLineItem };
+module.exports = { list, getById, create, update, remove, assignableUsers, generateLabels, savePackLabels, qcReference, nextVendorBatchNo, applyGrnCompletionToInventory, grnCompletionBlockers, stampPoTrackingForGrn, normalizePurchaseOrderLineItem };

@@ -65,6 +65,8 @@ const { ensurePlanningBatchBomConfirmedColumn } = require('./src/db/ensurePlanni
 const { ensurePlanningExtractedCommittedDateColumn } = require('./src/db/ensurePlanningExtractedCommittedDateColumn');
 const { ensureItemListTierSourceAskColumn } = require('./src/db/ensureItemListTierSourceAskColumn');
 const { ensureFulfillmentOrderItemTaxColumns } = require('./src/db/ensureFulfillmentOrderItemTaxColumns');
+const { ensureVendorBatchSequenceTable } = require('./src/db/ensureVendorBatchSequenceTable');
+const { ensureGrnGeneratedPackLabelsColumn } = require('./src/db/ensureGrnGeneratedPackLabelsColumn');
 const warehousePacksRouters = require('./src/warehousePacks/routers');
 require('./src/customizationPackaging/models');
 const customizationPackagingAdminRouter = require('./src/customizationPackaging/routers');
@@ -268,6 +270,8 @@ if (process.env.NODE_ENV !== 'test') {
                 await ensurePlanningExtractedCommittedDateColumn();
                 await ensureItemListTierSourceAskColumn();
                 await ensureFulfillmentOrderItemTaxColumns();
+                await ensureVendorBatchSequenceTable();
+                await ensureGrnGeneratedPackLabelsColumn();
             } else {
                 await ensureTreasuryDefaults();
                 await dropDuplicateConstraints();
@@ -278,6 +282,8 @@ if (process.env.NODE_ENV !== 'test') {
                 await ensurePlanningExtractedCommittedDateColumn();
                 await ensureItemListTierSourceAskColumn();
                 await ensureFulfillmentOrderItemTaxColumns();
+                await ensureVendorBatchSequenceTable();
+                await ensureGrnGeneratedPackLabelsColumn();
             }
             app.listen(port, '0.0.0.0', () => {
                 console.log(`Server is running on port ${port}`);
