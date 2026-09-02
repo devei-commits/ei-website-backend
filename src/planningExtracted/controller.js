@@ -1446,6 +1446,86 @@ async function getConfirmedPiMaterialSnapshot(planPlain) {
 }
 
 /**
+ * Same fallback order as getBomCopyForPlanning (override → last batch BOM copy → product master
+ * BOM), but reads from maps built ONCE for the whole request instead of querying per PI.
+ *
+ * getItemsInvolved iterates every confirmed PI (can be hundreds), and used to call
+ * getBomCopyForPlanning per PI — up to 2-4 sequential DB round-trips each (override lookup, last-
+ * batch lookup, then a redundant PlanningExtracted re-fetch + BOM lookup for PIs with neither).
+ * With ~300 confirmed PIs that's 600-1200+ sequential round-trips, which is what made
+ * /items-involved take minutes. All three lookups are keyed by data already fetched in bulk by
+ * getItemsInvolved (planning_extracted_id / product_id), so they collapse into 2 extra bulk
+ * queries total — see the preload block in getItemsInvolved.
+ */
+function getBomCopyForPlanningFast(planPlain, { overridesByPlanId, batchesByPlanId, bomByProductId }) {
+  const planningExtractedId = planPlain.id;
+  const override = overridesByPlanId.get(planningExtractedId);
+  if (override && ((Array.isArray(override.rm_lines) && override.rm_lines.length > 0) || (Array.isArray(override.pm_lines) && override.pm_lines.length > 0))) {
+    const rmLines = normalizeRmLines(override.rm_lines || []);
+    return { rmLines, pmLines: normalizePmLines(override.pm_lines || []), isKit: isKitRmLines(rmLines) };
+  }
+
+  // batchesByPlanId groups PlanningBatch.findAll's result, which getItemsInvolved orders by
+  // [planning_extracted_id ASC, sequence ASC] — so the last entry per id is the same row
+  // `ORDER BY sequence DESC LIMIT 1` would return, without a separate query.
+  const planBatches = batchesByPlanId.get(planningExtractedId) || [];
+  const lastExistingBatch = planBatches.length > 0 ? planBatches[planBatches.length - 1] : null;
+  const lastBatchPlain = lastExistingBatch && lastExistingBatch.get ? lastExistingBatch.get({ plain: true }) : lastExistingBatch;
+  const lastRmLines = Array.isArray(lastBatchPlain?.rm_lines) ? lastBatchPlain.rm_lines : [];
+  const lastPmLines = Array.isArray(lastBatchPlain?.pm_lines) ? lastBatchPlain.pm_lines : [];
+  if (lastRmLines.length > 0 || lastPmLines.length > 0) {
+    const rmLines = normalizeRmLines(lastRmLines);
+    return { rmLines, pmLines: normalizePmLines(lastPmLines), isKit: isKitRmLines(rmLines) };
+  }
+
+  const productId = planPlain.product_id;
+  const bom = productId != null ? bomByProductId.get(productId) : null;
+  if (!bom) return { rmLines: [], pmLines: [], isKit: false };
+  const rmLines = normalizeRmLines(Array.isArray(bom.rm_lines) ? bom.rm_lines : []);
+  return {
+    rmLines,
+    pmLines: normalizePmLines(Array.isArray(bom.pm_lines) ? bom.pm_lines : []),
+    isKit: !!bom.is_kit || isKitRmLines(rmLines),
+  };
+}
+
+/** Fast/bulk-map counterpart to getConfirmedPiMaterialSnapshot — see getBomCopyForPlanningFast. */
+async function getConfirmedPiMaterialSnapshotFast(planPlain, bulkMaps) {
+  const rmsDefault = Array.isArray(planPlain.raw_materials) ? planPlain.raw_materials : [];
+  const pmsDefault = Array.isArray(planPlain.packaging_materials) ? planPlain.packaging_materials : [];
+  if (!planPlain.bom_confirmed_at) {
+    return { rawMaterials: rmsDefault, packagingMaterials: pmsDefault };
+  }
+  try {
+    const { rmLines, pmLines, isKit } = getBomCopyForPlanningFast(planPlain, bulkMaps);
+    const hasLines =
+      (Array.isArray(rmLines) && rmLines.length > 0) ||
+      (Array.isArray(pmLines) && pmLines.length > 0);
+    if (!hasLines) {
+      return { rawMaterials: rmsDefault, packagingMaterials: pmsDefault };
+    }
+    const orderQty = parseOrderQtyNum(planPlain.order_qty_display);
+    const totalKg = parseFloat(String(planPlain.total_kg_display || '0').replace(/[^\d.]/g, '')) || 0;
+    const batchSizeKg = Number(planPlain.batch_size_kg) || 500;
+    // Kit PR: expand sub-PR lines into their real RM + PM plus the kit's own pack material. Kits
+    // still hit the DB here (sub-BOM lookups) — that's real per-kit data, not the N+1 this fixes.
+    const snap = isKit
+      ? await expandKitBomToMaterials(rmLines, pmLines, orderQty)
+      : buildPlanningSnapshotFromBom(rmLines, pmLines, orderQty, totalKg, batchSizeKg);
+    return {
+      rawMaterials: snap.raw_materials,
+      packagingMaterials: snap.packaging_materials,
+    };
+  } catch (e) {
+    console.warn(
+      '[planning-extracted] getConfirmedPiMaterialSnapshotFast:',
+      e && e.message ? e.message : e
+    );
+    return { rawMaterials: rmsDefault, packagingMaterials: pmsDefault };
+  }
+}
+
+/**
  * GET /batches/all — list all planning_batches with planning extracted, product, SO (for Batches menu).
  * Each row includes sent: true if that batch's sequence is in the PI's sent_batch_indices.
  */
@@ -1456,7 +1536,14 @@ async function listAllBatches(req, res) {
         model: PlanningExtracted,
         as: 'planningExtracted',
         required: true,
-        attributes: ['id', 'sales_order_id', 'product_id', 'order_qty_display', 'total_kg_display', 'due_date', 'committed_date', 'bom_status', 'sent_batch_indices', 'custom_batches'],
+        // packaging_materials/raw_materials: the PI-level BOM snapshot, needed so the frontend can
+        // apply the same "batch's own rm_lines/pm_lines is empty → fall back to the PI-level snapshot"
+        // rule that countPlanningBatchesTouchingRm/Pm already applies server-side (items-involved
+        // batchCount). Without it here, a batch not yet BOM-confirmed at the per-batch level — the
+        // common case — silently disappears from every client-side "uses this item" list (the
+        // "Batches using <item>" modal, the Batches-tab coverage tint) even though the server-side
+        // badge counts it, so the two numbers disagree and the modal looks short.
+        attributes: ['id', 'sales_order_id', 'product_id', 'order_qty_display', 'total_kg_display', 'due_date', 'committed_date', 'bom_status', 'sent_batch_indices', 'custom_batches', 'packaging_materials', 'raw_materials'],
         include: [
           { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'order_date'] },
           { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'] },
@@ -1510,11 +1597,58 @@ async function listAllBatches(req, res) {
         bomStatus: plan.bom_status || '',
         rmLines: d.rm_lines || [],
         pmLines: d.pm_lines || [],
+        // PI-level packaging snapshot, for the same "batch's own pm_lines is empty → use the PI's
+        // whole-BOM packaging list instead" fallback countPlanningBatchesTouchingPm already applies
+        // server-side — see the attributes comment above.
+        piPackagingMaterials: Array.isArray(plan.packaging_materials) ? plan.packaging_materials : [],
         bomConfirmedAt: d.bom_confirmed_at != null ? serializeInstantIndia(d.bom_confirmed_at) : null,
         productionBmrStatus,
         editable,
       };
     });
+
+    // Opt-in only — existing callers (e.g. Production's rework-preview batch lookup by id, which
+    // needs the FULL list to find a specific batch regardless of page) keep getting the bare array
+    // when neither param is sent. Planning's Batches tab is the only caller that passes these.
+    const limitQ = req.query.limit;
+    const offsetQ = req.query.offset;
+    const wantsPagination = limitQ != null || offsetQ != null;
+    if (wantsPagination) {
+      const normalizeInt = (v) => {
+        const n = parseInt(String(v), 10);
+        return Number.isNaN(n) ? null : n;
+      };
+      const limit = limitQ != null ? normalizeInt(limitQ) : 25;
+      const offset = offsetQ != null ? normalizeInt(offsetQ) : 0;
+      if (limit == null || offset == null || limit <= 0 || offset < 0) {
+        return res.status(400).json({ error: 'Invalid pagination params (limit must be > 0, offset must be >= 0)' });
+      }
+
+      // Batches tab only ever shows released (sent) batches — see the matching client-side filter
+      // this replaces. Unsent rows are still plans, not batches (they belong in Items Involved's
+      // demand total instead), so dropping them here too is not a behaviour change for that tab.
+      const sentOnly = list.filter((row) => row.sent === true);
+
+      // Search runs over the full sent list before paging, so a match outside the currently loaded
+      // page is still found instead of the search silently coming up empty past page 1. Mirrors the
+      // fields Planning's client-side search already checks.
+      const q = String(req.query.search ?? '').trim().toLowerCase();
+      const searched = q
+        ? sentOnly.filter((r) =>
+            `${r.batchCode || ''} ${r.soNumber || ''} ${r.customerName || ''} ${r.productName || ''} ${r.productCode || ''}`
+              .toLowerCase()
+              .includes(q),
+          )
+        : sentOnly;
+
+      return res.json({
+        rows: searched.slice(offset, offset + limit),
+        total: searched.length,
+        limit,
+        offset,
+      });
+    }
+
     res.json(list);
   } catch (err) {
     console.error('listAllBatches error', err);
@@ -2590,6 +2724,35 @@ async function getItemsInvolved(req, res) {
       }
     }
 
+    // Bulk-preload every input getBomCopyForPlanningFast needs, once, instead of the 2-4 sequential
+    // DB round-trips per PI the old per-PI getBomCopyForPlanning call made (see that function for
+    // why). batchesByPlanId is already built above; only the override and product-BOM fallback
+    // tiers need their own bulk fetch here.
+    const confirmedIds = confirmed.map((r) => r.id);
+    const overridesByPlanId = new Map();
+    if (confirmedIds.length > 0) {
+      const overrideRows = await PlanningBomOverride.findAll({
+        where: { planning_extracted_id: { [Op.in]: confirmedIds } },
+      });
+      for (const o of overrideRows) {
+        const op = o.get ? o.get({ plain: true }) : o;
+        overridesByPlanId.set(op.planning_extracted_id, op);
+      }
+    }
+    const productIdsForBomFallback = [...new Set(confirmed.map((r) => r.product_id).filter((id) => id != null))];
+    const bomByProductId = new Map();
+    if (productIdsForBomFallback.length > 0) {
+      const bomRows = await BOM.findAll({
+        where: { product_id: { [Op.in]: productIdsForBomFallback } },
+        attributes: ['product_id', 'rm_lines', 'pm_lines', 'is_kit'],
+      });
+      for (const b of bomRows) {
+        const bp = b.get ? b.get({ plain: true }) : b;
+        bomByProductId.set(bp.product_id, bp);
+      }
+    }
+    const bulkBomMaps = { overridesByPlanId, batchesByPlanId, bomByProductId };
+
     const rmByCode = new Map();
     const rmByName = new Map();
     const rmById = new Map();
@@ -2634,7 +2797,7 @@ async function getItemsInvolved(req, res) {
       const pmNameById = new Map();
       const pmCodeById = new Map();
 
-      const { rawMaterials: rms, packagingMaterials: pms } = await getConfirmedPiMaterialSnapshot(plain);
+      const { rawMaterials: rms, packagingMaterials: pms } = await getConfirmedPiMaterialSnapshotFast(plain, bulkBomMaps);
       for (const r of rms) {
         const id = resolveRmIdFromMaterialSnapshotRow(r, fallbackRmByCode, fallbackRmByName);
         if (id == null || Number.isNaN(id)) continue;
@@ -3189,9 +3352,17 @@ async function getItemsInvolved(req, res) {
         return res.status(400).json({ error: 'Invalid pagination params (limit must be > 0, offset must be >= 0)' });
       }
 
+      // Search runs over the full (already-aggregated) `out` array before paging, so a paginated
+      // caller (Planning's Items Involved tab) can still find a match outside the currently loaded
+      // page instead of the search silently coming up empty for anything past page 1.
+      const q = String(req.query.search ?? '').trim().toLowerCase();
+      const searched = q
+        ? out.filter((r) => `${r.code || ''} ${r.name || ''}`.toLowerCase().includes(q))
+        : out;
+
       return res.json({
-        rows: out.slice(offset, offset + limit),
-        total: out.length,
+        rows: searched.slice(offset, offset + limit),
+        total: searched.length,
         limit,
         offset,
       });

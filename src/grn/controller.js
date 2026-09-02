@@ -1619,7 +1619,18 @@ async function update(req, res) {
     // "QC TESTED · PASS" — Assign Rack never appeared. Reject was unaffected: this gate only runs
     // when the target status is 'Passed'.
     const qcFastTrack = body.qcFastTrack === true || body.qc_fast_track === true;
-    if (String(nextQcStatus || '').trim() === 'Passed' && !qcFastTrack) {
+    // Gate on `updates.qc_status` (this call actually setting it), never on `nextQcStatus` (which
+    // falls back to the row's existing value). Checking nextQcStatus meant EVERY later PUT on a GRN
+    // that was already 'Passed' — Assign Rack, label generation, a plain save-draft, anything —
+    // re-ran full-checklist validation against the same still-blank qc_specs and 400ed with "N
+    // mandatory QC test(s) still need a measured result", even though qc_status wasn't being
+    // touched at all. A GRN whose qc_status is already 'Passed' was already validated (or
+    // fast-tracked) when it got there; re-validate only when THIS call is the one setting it.
+    if (
+      updates.qc_status !== undefined &&
+      String(updates.qc_status || '').trim() === 'Passed' &&
+      !qcFastTrack
+    ) {
       const qcValidation = validateQcSpecsForPassed(nextQcSpecs);
       if (!qcValidation.ok) {
         return res.status(400).json({ error: qcValidation.message });
