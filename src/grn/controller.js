@@ -1535,7 +1535,7 @@ async function applyGrnCompletionToInventory(grnRow, opts = {}) {
 }
 
 /**
- * PUT /api/v1/grn/:id — update GRN. Body: any of assigned_to, grn_date, received_date, qc_status, status, line_items, workflow_steps, invoice_no, invoice_amount.
+ * PUT /api/v1/grn/:id — update GRN. Body: any of assigned_to, grn_date, received_date, qc_status, status, line_items, workflow_steps, invoice_no, invoice_amount, qcFastTrack (bypasses the mandatory-QC-test validation when setting qc_status to 'Passed' — for QcQuickDecisionModal's fast-track approve, which has no reviewed checklist to validate).
  */
 async function update(req, res) {
   try {
@@ -1611,16 +1611,26 @@ async function update(req, res) {
     const nextStatus = updates.status !== undefined ? updates.status : rowPlain.status;
     let nextQcStatus = updates.qc_status !== undefined ? updates.qc_status : rowPlain.qc_status;
     const nextQcSpecs = updates.qc_specs !== undefined ? updates.qc_specs : rowPlain.qc_specs;
-    if (String(nextQcStatus || '').trim() === 'Passed') {
+    // QcQuickDecisionModal's "Approve QC" fast-track deliberately skips the full checklist, so
+    // there is nothing for validateQcSpecsForPassed to find reviewed — every mandatory test is
+    // still blank. Without this flag that PUT 400ed unconditionally (empty qc_specs → "No QC
+    // tests available"; the unreviewed reference checklist → "N mandatory QC test(s) still need
+    // a measured result"), qc_status silently never became 'Passed', and the row never reached
+    // "QC TESTED · PASS" — Assign Rack never appeared. Reject was unaffected: this gate only runs
+    // when the target status is 'Passed'.
+    const qcFastTrack = body.qcFastTrack === true || body.qc_fast_track === true;
+    if (String(nextQcStatus || '').trim() === 'Passed' && !qcFastTrack) {
       const qcValidation = validateQcSpecsForPassed(nextQcSpecs);
       if (!qcValidation.ok) {
         return res.status(400).json({ error: qcValidation.message });
       }
     }
     if (incomingQcSpecs && (body.qcStatus === 'Passed' || body.qc_status === 'Passed')) {
-      const qcValidation = validateQcSpecsForPassed(incomingQcSpecs);
-      if (!qcValidation.ok) {
-        return res.status(400).json({ error: qcValidation.message });
+      if (!qcFastTrack) {
+        const qcValidation = validateQcSpecsForPassed(incomingQcSpecs);
+        if (!qcValidation.ok) {
+          return res.status(400).json({ error: qcValidation.message });
+        }
       }
       updates.qc_status = 'Passed';
       nextQcStatus = 'Passed';

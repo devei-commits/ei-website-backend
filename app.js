@@ -53,11 +53,24 @@ const dotenv = require('dotenv');
 const cors = require('cors');
 dotenv.config();
 
-require('./src/leadTime/leadTimeStatModel'); // §10 lead-time stats cache
-// Schema is patch-driven: all prior `ensure*` column/table patches are already applied to
-// the live DB and have been removed. The only remaining boot schema step is a one-time
-// cleanup of the duplicate UNIQUE constraints that db.sync({alter}) accumulated.
+require('./src/leadTime/leadTimeStatModel'); // §10 lead-time stats cache — table auto-syncs
 const { dropDuplicateConstraints } = require('./src/db/dropDuplicateConstraints');
+// Schema is patch-driven: `ensure*` column/table patches below are idempotent
+// (ADD COLUMN/CREATE TABLE IF NOT EXISTS) and safe to run on every boot — required so a fresh
+// dev DB, a restored backup, or prod all converge on the same schema the models expect.
+// 2026-09-02: restored 10 of these after commit 2a7b90b deleted them assuming they'd already
+// been applied everywhere — that DB drifted (see mrn_id 42703 incident) and several never had
+// been applied. Keep adding entries here whenever a model gains a column; never delete one.
+const { ensureLeadTimeStatsTable } = require('./src/leadTime/ensureLeadTimeStatsTable');
+const { ensurePurchaseOrderWorkflowColumns } = require('./src/purchaseOrders/ensurePurchaseOrderWorkflowColumns');
+const { ensureProcurementRequestColumns } = require('./src/procurementRequests/ensureProcurementRequestColumns');
+const { ensureQuotationAskColumns } = require('./src/planningQuotationAsks/ensureQuotationAskColumns');
+const { ensureWarehousePacksTable } = require('./src/warehousePacks/ensureWarehousePacksTable');
+const { ensureQualitySpecRulesTable } = require('./src/qualitySpecRules/ensureQualitySpecRulesTable');
+const { ensureTechnicalSpecRulesTable } = require('./src/technicalSpecRules/ensureTechnicalSpecRulesTable');
+const { ensureBomIsKitColumn } = require('./src/bom/ensureBomIsKitColumn');
+const { ensureProductionBatchColumns } = require('./src/production/ensureProductionBatchColumns');
+const { ensureUniversalSwapColumns } = require('./src/universalSwap/ensureUniversalSwapColumns');
 const { ensureReservedBatchItemPlanningColumns } = require('./src/db/ensureReservedBatchItemPlanningColumns');
 const { ensureReservedBatchItemRequestedColumn } = require('./src/db/ensureReservedBatchItemRequestedColumn');
 const { ensureQualitySpecRuleItemScope } = require('./src/db/ensureQualitySpecRuleItemScope');
@@ -67,6 +80,7 @@ const { ensureItemListTierSourceAskColumn } = require('./src/db/ensureItemListTi
 const { ensureFulfillmentOrderItemTaxColumns } = require('./src/db/ensureFulfillmentOrderItemTaxColumns');
 const { ensureVendorBatchSequenceTable } = require('./src/db/ensureVendorBatchSequenceTable');
 const { ensureGrnGeneratedPackLabelsColumn } = require('./src/db/ensureGrnGeneratedPackLabelsColumn');
+const { ensureGrnMrnIdColumn } = require('./src/db/ensureGrnMrnIdColumn');
 const warehousePacksRouters = require('./src/warehousePacks/routers');
 require('./src/customizationPackaging/models');
 const customizationPackagingAdminRouter = require('./src/customizationPackaging/routers');
@@ -256,9 +270,8 @@ if (process.env.NODE_ENV !== 'test') {
             if (skipDbBootstrap) {
                 console.log('[startup] SKIP_DB_BOOTSTRAP=true — skipping sync and seeders (read/serve only).');
             } else if (!isManagedProductionDatabase()) {
-                // Schema is patch-driven now (no db.sync alter; prior ensure* patches removed —
-                // all already applied to the live DB). Data seeders + the one-time dup-constraint
-                // cleanup remain.
+                // Schema is patch-driven now (no db.sync alter). Every ensure* below is
+                // idempotent and re-run on each boot; see the require block above for why.
                 await ensureCustomizationPackagingPresets();
                 await seedQuotationDefaults();
                 await ensureTreasuryDefaults();
@@ -272,6 +285,17 @@ if (process.env.NODE_ENV !== 'test') {
                 await ensureFulfillmentOrderItemTaxColumns();
                 await ensureVendorBatchSequenceTable();
                 await ensureGrnGeneratedPackLabelsColumn();
+                await ensureGrnMrnIdColumn();
+                await ensureLeadTimeStatsTable();
+                await ensurePurchaseOrderWorkflowColumns();
+                await ensureProcurementRequestColumns();
+                await ensureQuotationAskColumns();
+                await ensureWarehousePacksTable();
+                await ensureQualitySpecRulesTable();
+                await ensureTechnicalSpecRulesTable();
+                await ensureBomIsKitColumn();
+                await ensureProductionBatchColumns();
+                await ensureUniversalSwapColumns();
             } else {
                 await ensureTreasuryDefaults();
                 await dropDuplicateConstraints();
@@ -284,6 +308,17 @@ if (process.env.NODE_ENV !== 'test') {
                 await ensureFulfillmentOrderItemTaxColumns();
                 await ensureVendorBatchSequenceTable();
                 await ensureGrnGeneratedPackLabelsColumn();
+                await ensureGrnMrnIdColumn();
+                await ensureLeadTimeStatsTable();
+                await ensurePurchaseOrderWorkflowColumns();
+                await ensureProcurementRequestColumns();
+                await ensureQuotationAskColumns();
+                await ensureWarehousePacksTable();
+                await ensureQualitySpecRulesTable();
+                await ensureTechnicalSpecRulesTable();
+                await ensureBomIsKitColumn();
+                await ensureProductionBatchColumns();
+                await ensureUniversalSwapColumns();
             }
             app.listen(port, '0.0.0.0', () => {
                 console.log(`Server is running on port ${port}`);
