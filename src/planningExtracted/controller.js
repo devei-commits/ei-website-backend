@@ -1843,6 +1843,7 @@ async function createOrUpdateBatches(req, res) {
           code: 'BATCH_COUNT_LOCKED',
         });
       }
+      const removedBatchIds = [];
       for (let i = batches.length; i < existing.length; i += 1) {
         const rowToRemove = existing[i];
         const removeId = rowToRemove.get ? rowToRemove.get('id') : rowToRemove.id;
@@ -1853,6 +1854,20 @@ async function createOrUpdateBatches(req, res) {
             return res.status(403).json({ error: lockErr.message, code: lockErr.code || 'BATCH_LOCKED_BY_PRODUCTION' });
           }
           throw lockErr;
+        }
+        removedBatchIds.push(removeId);
+      }
+      // Cascade to Production BEFORE the hard-delete severs planning_batch_id, same as deleteBatch()
+      // and the SO-cancellation paths — otherwise a trimmed batch here leaves its ProductionBatch row
+      // behind forever (nothing else ever removes one), orphaned and still counted as "in Production".
+      if (removedBatchIds.length > 0) {
+        const prodRemoved = await softDeleteWhere(ProductionBatch, {
+          planning_batch_id: { [Op.in]: removedBatchIds },
+        });
+        if (prodRemoved > 0) {
+          console.warn(
+            `[planning-extracted] PI ${id} batch count reduced — soft-deleted ${prodRemoved} production batch(es).`
+          );
         }
       }
       await PlanningBatch.destroy({
