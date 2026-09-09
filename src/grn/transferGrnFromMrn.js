@@ -50,13 +50,33 @@ async function createTransferGrnFromMrn(mrnPlain) {
   if (!mrnPlain || mrnPlain.id == null) return null;
   const mrnId = Number(mrnPlain.id);
 
-  // Idempotency — one transfer GRN per MRN.
+  // Idempotency — one transfer GRN per MRN. Called again on every later dispatched-state
+  // transition (In Transit -> Received at MU -> Completed), so re-sync the destination from the
+  // MRN each time rather than just returning the stale row: the bridge GRN is created at "In
+  // Transit", before the MU rack is usually known (only the zone was chosen at request time), so
+  // location_prefix started out empty. Once the MU rack becomes known on the MRN, pull it in here
+  // so Assign Rack on this GRN opens pre-filled instead of asking the receiver to re-pick it —
+  // but only while nobody has actually assigned a rack on the GRN yet, so this never clobbers a
+  // deliberate choice made directly on the GRN.
   const [existing] = await db.query(
     'SELECT id FROM goods_received_notes WHERE mrn_id = :mrnId AND deleted_at IS NULL LIMIT 1',
     { replacements: { mrnId } },
   );
   if (existing && existing[0] && existing[0].id) {
-    return GoodsReceivedNote.findByPk(existing[0].id);
+    const grn = await GoodsReceivedNote.findByPk(existing[0].id);
+    if (grn) {
+      const g = grn.get ? grn.get({ plain: true }) : grn;
+      const grnLocked = String(g.status || '').trim() === 'GRN Complete' || String(g.location_prefix || '').trim();
+      const mrnZone = mrnPlain.mu_receive_zone || null;
+      const mrnRack = mrnPlain.mu_receive_rack || null;
+      if (!grnLocked && (mrnZone || mrnRack) && (mrnZone !== g.location_zone || mrnRack !== g.location_prefix)) {
+        await grn.update({
+          location_zone: mrnZone || g.location_zone,
+          location_prefix: mrnRack || g.location_prefix,
+        });
+      }
+    }
+    return grn;
   }
 
   const lineItems = transferGrnLineItems(mrnPlain.line_items);

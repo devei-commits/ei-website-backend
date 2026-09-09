@@ -1122,11 +1122,28 @@ async function reduceReservedBatchAfterOutboundMtr(bmrNo, line, qty) {
 }
 
 /**
- * When an MRN from MTR is marked Completed, move stock WH ↔ MU via rack rows.
- * Warehouse rack qty decreases; manufacturing zone rack qty increases (ML1/ML2 derived on recalc).
+ * When an outbound transfer (MTR from Production, or an ad-hoc TRQ Request Transfer — no BMR) is
+ * marked Completed, move stock WH ↔ MU via rack rows.
+ *
+ * WH → MU (the normal outbound direction, `!isInbound`) no longer moves rack stock here at all —
+ * every outbound MTR/TRQ gets a bridge GRN the moment it hits "In Transit" (createTransferGrnFromMrn,
+ * called from update() below) so the goods can run through the GRN receipt wizard (Confirm → QC →
+ * Assign Rack → Complete). GRN completion (applyWhInboundStock) is now the *one* place that actually
+ * moves WH → MU stock; having both paths independently move the same physical shipment risked
+ * double-counting it (GRN-TR-2026-0256 / EI-MRN-2026-009 — MRN-side move manually corrected once,
+ * see history). This function still releases the batch's planning reservation for outbound lines
+ * (reduceReservedBatchAfterOutboundMtr) — that's a separate accounting concern, not a rack move.
+ *
+ * MU → WH (a return, `isInbound`) has no bridge GRN (createTransferGrnFromMrn only fires for
+ * `!is_inbound_from_mu`), so the rack move below remains the only mechanism for that direction.
+ *
+ * Was `plainMrn.source !== 'MTR' || !plainMrn.bmr_no` — every TRQ transfer (batchless by design,
+ * so bmr_no is always empty) failed BOTH conditions and this returned immediately, for either
+ * direction. reduceReservedBatchAfterOutboundMtr() below already no-ops safely on an empty bmrNo
+ * (there's no batch reservation for a batchless transfer to reduce).
  */
 async function applyMrnCompletionToInventory(plainMrn) {
-  if (plainMrn.source !== 'MTR' || !plainMrn.bmr_no) return;
+  if (!isOutboundTransferSource(plainMrn.source)) return;
   const lineItems = Array.isArray(plainMrn.line_items) ? plainMrn.line_items : [];
   const isInbound = !!plainMrn.is_inbound_from_mu;
   const muZone = plainMrn.mu_receive_zone || null;
@@ -1153,29 +1170,25 @@ async function applyMrnCompletionToInventory(plainMrn) {
     if (!whRow) continue;
     const plain = whRow.get ? whRow.get({ plain: true }) : whRow;
 
-    const whRackDest = await resolveInboundWarehouseRack(itemIds);
-    const prodRackDest = await resolveProductionRackForTransfer({
-      zoneCode: muZone,
-      rackCode: muRack,
-    });
-
-    if (whRackDest?.rackId && prodRackDest?.rackId) {
-      if (isInbound) {
+    let whRackDest = null;
+    let prodRackDest = null;
+    if (isInbound) {
+      whRackDest = await resolveInboundWarehouseRack(itemIds);
+      prodRackDest = await resolveProductionRackForTransfer({
+        zoneCode: muZone,
+        rackCode: muRack,
+      });
+      if (whRackDest?.rackId && prodRackDest?.rackId) {
         await applyDeltaToRack(plain.id, prodRackDest.rackId, -qty);
         await applyDeltaToRack(plain.id, whRackDest.rackId, qty);
       } else {
-        await applyDeltaToRack(plain.id, whRackDest.rackId, -qty);
-        await applyDeltaToRack(plain.id, prodRackDest.rackId, qty);
+        console.warn('[mrn][MTR] rack resolve incomplete — skipping rack move', {
+          mrnId: plainMrn.id,
+          whRackDest: !!whRackDest,
+          prodRackDest: !!prodRackDest,
+        });
       }
     } else {
-      console.warn('[mrn][MTR] rack resolve incomplete — skipping rack move', {
-        mrnId: plainMrn.id,
-        whRackDest: !!whRackDest,
-        prodRackDest: !!prodRackDest,
-      });
-    }
-
-    if (!isInbound) {
       const { rmId, pmId } = await reduceReservedBatchAfterOutboundMtr(plainMrn.bmr_no, line, qty);
       if (rmId != null) affectedRmIds.add(rmId);
       if (pmId != null) affectedPmIds.add(pmId);
@@ -1184,8 +1197,8 @@ async function applyMrnCompletionToInventory(plainMrn) {
     const refreshed = await WarehouseInventory.findByPk(plain.id);
     const after = refreshed?.get ? refreshed.get({ plain: true }) : refreshed;
 
-    console.log('[mrn][MTR] completed rack move', {
-      source: isInbound ? 'MU->WH' : 'WH->MU',
+    console.log('[mrn][MTR] completed', {
+      source: isInbound ? 'MU->WH rack move' : 'WH->MU reserve-only (GRN owns the rack move)',
       whInventoryId: plain.id,
       qty,
       whRack: whRackDest?.rackCode,
@@ -1201,9 +1214,13 @@ async function applyMrnCompletionToInventory(plainMrn) {
 }
 
 /**
- * When MRN is completed with MU receive zone/rack, log movement history (MRN_IN_MU) for each line.
+ * When an inbound-from-MU return MRN is completed with a WH receive zone/rack, log movement
+ * history (MRN_IN_MU) for each line. Outbound (WH -> MU) no longer logs here — its bridge GRN logs
+ * its own GRN_IN entry once Assign Rack actually places the stock, which is the real arrival record
+ * now that applyMrnCompletionToInventory() no longer moves outbound rack stock itself.
  */
 async function logMrnReceiveAtMuLocation(plainMrn) {
+  if (isOutboundTransferSource(plainMrn.source) && !plainMrn.is_inbound_from_mu) return;
   const lineItems = Array.isArray(plainMrn.line_items) ? plainMrn.line_items : [];
   const toZone = plainMrn.mu_receive_zone || null;
   const toRack = plainMrn.mu_receive_rack || null;
