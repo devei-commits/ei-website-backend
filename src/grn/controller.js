@@ -71,8 +71,26 @@ function grnCompletionBlockers(plain) {
   const steps = Array.isArray(p.workflow_steps) ? p.workflow_steps : [];
   const hasLabelStep = steps.includes('Label Generation');
   const hasLabels = Array.isArray(p.generated_labels) && p.generated_labels.length > 0;
-  if (!hasLabelStep && !hasLabels) blockers.push('QR labels must be generated');
-  if (!String(p.location_prefix || '').trim()) blockers.push('Location prefix (rack code) is required');
+  // Pack-based labels (current step-5 flow, one row per Packaging List row, saved via
+  // POST /grn/:id/pack-labels into generated_pack_labels) also satisfy this gate — not just
+  // the legacy per-box generated_labels/'Label Generation' step. Without this a GRN whose
+  // labels were genuinely generated and printed from the Packaging List (generated_pack_labels
+  // populated) still reported "QR labels must be generated" and could never complete.
+  const hasPackLabels = Array.isArray(p.generated_pack_labels) && p.generated_pack_labels.length > 0;
+  if (!hasLabelStep && !hasLabels && !hasPackLabels) blockers.push('QR labels must be generated');
+  const rackCode = String(p.location_prefix || '').trim();
+  if (!rackCode) {
+    blockers.push('Location prefix (rack code) is required');
+  } else if (!steps.includes('Rack Assigned') && rackCode.toUpperCase() === 'DEFAULT') {
+    // A rack code alone isn't proof Assign Rack actually ran — 'DEFAULT' is the auto-filled
+    // placeholder a GRN carries before racking, and without this check 'Complete GRN' could finish
+    // a GRN that was never really racked. Once status flipped to 'GRN Complete' the row had no way
+    // back to Assign Rack at all (GRN-2026-0259: Rack-DEFAULT, no 'Rack Assigned' stamp, no
+    // put-away photos, stuck showing only GRN Copy forever). Mirrors the frontend's
+    // isInboundGrnRacked, including its exception for a real, deliberately-named "DEFAULT" rack —
+    // once Assign Rack has actually run (the stamp is present) any rack code is accepted.
+    blockers.push('Rack must be assigned via Assign Rack, not left on the default placeholder');
+  }
   if (!String(p.location_zone || '').trim()) blockers.push('Storage zone is required');
   return blockers;
 }
@@ -395,8 +413,13 @@ async function savePackLabels(req, res) {
     if (!packLabels || !packLabels.length) {
       return res.status(400).json({ error: 'packLabels must be a non-empty array' });
     }
-    await row.update({ generated_pack_labels: packLabels });
-    res.json({ packLabels });
+    const d = row.get ? row.get({ plain: true }) : row;
+    const existingSteps = Array.isArray(d.workflow_steps) ? d.workflow_steps : [];
+    const workflowSteps = existingSteps.includes('Label Generation')
+      ? existingSteps
+      : [...existingSteps, 'Label Generation'];
+    await row.update({ generated_pack_labels: packLabels, workflow_steps: workflowSteps });
+    res.json({ packLabels, workflowSteps });
   } catch (err) {
     console.error('[grn] savePackLabels error:', err);
     res.status(500).json({ error: err.message || 'Failed to save pack labels' });
@@ -1650,6 +1673,15 @@ async function update(req, res) {
     const nextAssignedToRaw = updates.assigned_to !== undefined ? updates.assigned_to : rowPlain.assigned_to;
     const nextWorkflowSteps = updates.workflow_steps !== undefined ? updates.workflow_steps : rowPlain.workflow_steps;
     const nextGeneratedLabels = rowPlain.generated_labels;
+    // Same gap as generated_labels above, but for the pack-based label flow: this call site
+    // built the blockers object from scratch and never forwarded generated_pack_labels, so
+    // grnCompletionBlockers always saw it as undefined here even after the field itself
+    // learned to accept pack labels — the PUT /grn/:id "Accept -> Complete GRN" path kept
+    // reporting "QR labels must be generated" for a GRN whose pack labels were genuinely saved.
+    const nextGeneratedPackLabels =
+      updates.generated_pack_labels !== undefined
+        ? updates.generated_pack_labels
+        : rowPlain.generated_pack_labels;
     if (nextStatus === 'GRN Complete') {
       const blockers = grnCompletionBlockers({
         qc_status: nextQcStatus,
@@ -1657,6 +1689,7 @@ async function update(req, res) {
         assigned_to: nextAssignedToRaw,
         workflow_steps: nextWorkflowSteps,
         generated_labels: nextGeneratedLabels,
+        generated_pack_labels: nextGeneratedPackLabels,
         location_prefix: updates.location_prefix !== undefined ? updates.location_prefix : rowPlain.location_prefix,
         location_zone: updates.location_zone !== undefined ? updates.location_zone : rowPlain.location_zone,
       });
