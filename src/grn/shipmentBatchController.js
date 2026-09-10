@@ -12,6 +12,7 @@ const PurchaseOrder = require('../purchaseOrders/models');
 const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const { normalizePurchaseOrderLineItem } = require('./controller');
+const { maybeCompletePoOnFullReceipt } = require('../purchaseOrders/receiptCompletion');
 
 const STAGE_ORDER = ['in_transit', 'landed', 'verified', 'quarantined', 'qc_tested', 'grn_completed'];
 
@@ -426,6 +427,7 @@ async function advanceGrnStage(req, res) {
         await applyGrnCompletionToInventory(refreshed, { transaction });
       });
       await stampPoTrackingForGrn(await GoodsReceivedNote.findByPk(id));
+      await maybeCompletePoOnFullReceipt(plain.purchase_order_id);
       try {
         const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
         await syncWarehouseInTransitAll();

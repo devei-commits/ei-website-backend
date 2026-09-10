@@ -11,6 +11,7 @@ const PackMaterial = require('../packMaterials/models');
 const { Product } = require('../products/models');
 const PurchaseOrder = require('../purchaseOrders/models');
 const PoTracking = require('../poTracking/models');
+const { maybeCompletePoOnFullReceipt } = require('../purchaseOrders/receiptCompletion');
 
 /**
  * C8 — stamp the PO tracking timeline from a GRN status change. A GRN moving to
@@ -1043,6 +1044,7 @@ async function create(req, res) {
       }
     });
     await stampPoTrackingForGrn(row); // C8: advance po_tracking under_grn/complete
+    await maybeCompletePoOnFullReceipt(row.get ? row.get('purchase_order_id') : row.purchase_order_id);
     try {
       const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
       await syncWarehouseInTransitAll();
@@ -1735,6 +1737,7 @@ async function update(req, res) {
     });
     const refreshed = await GoodsReceivedNote.findByPk(id);
     await stampPoTrackingForGrn(refreshed); // C8: advance po_tracking under_grn/complete
+    await maybeCompletePoOnFullReceipt(refreshed.get ? refreshed.get('purchase_order_id') : refreshed.purchase_order_id);
     try {
       const { syncWarehouseInTransitAll } = require('../warehouseInventory/inTransitSync');
       await syncWarehouseInTransitAll();
