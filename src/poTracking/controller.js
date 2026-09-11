@@ -1,5 +1,9 @@
+const { Op } = require('sequelize');
 const PoTracking = require('./models');
 const PurchaseOrder = require('../purchaseOrders/models');
+
+/** Mirrors TRACKING_BATCH_MAX_IDS in services/poTracking.service.ts. */
+const TRACKING_BATCH_MAX_IDS = 500;
 
 // Some DB schemas may not have Zoho sync columns migrated yet.
 // PO-tracking endpoints only need the PO existence, so fetch a minimal column set.
@@ -104,6 +108,40 @@ async function getByPurchaseOrderId(req, res) {
 }
 
 /**
+ * GET /po-tracking/purchase-orders?ids=1,2,3
+ * Batch form of getByPurchaseOrderId — one query for many POs instead of N. This route did not
+ * exist at all until now: the frontend (services/poTracking.service.ts fetchPoTrackingBatch) has
+ * always called this exact path, but only the singular `/purchase-order/:purchaseOrderId` route was
+ * ever registered, so every request 404'd, the client swallowed the error and fell back to `{}`, and
+ * every "completed"/"handed off to warehouse" derivation that reads off this batch map (in
+ * pages/procurement/index.tsx) silently saw every PO as having no tracking at all — regardless of its
+ * real grn_complete_at/deliveredAt/etc. Read-only: unlike the single-PO route it does NOT create a
+ * blank tracking row for ids that don't have one (that would be up to `ids.length` inserts per call).
+ */
+async function getBatchByPurchaseOrderIds(req, res) {
+  try {
+    const raw = String(req.query.ids || '');
+    const ids = [...new Set(
+      raw.split(',')
+        .map((s) => parseInt(s.trim(), 10))
+        .filter((n) => Number.isFinite(n) && n > 0)
+    )].slice(0, TRACKING_BATCH_MAX_IDS);
+    if (ids.length === 0) return res.json({ tracking: {} });
+
+    const rows = await PoTracking.findAll({ where: { purchase_order_id: { [Op.in]: ids } } });
+    const tracking = {};
+    for (const row of rows) {
+      const formatted = formatTracking(row);
+      if (formatted) tracking[formatted.purchaseOrderId] = formatted;
+    }
+    res.json({ tracking });
+  } catch (err) {
+    console.error('getBatchByPurchaseOrderIds (po-tracking) error', err);
+    res.status(500).json({ error: 'Failed to get PO tracking batch' });
+  }
+}
+
+/**
  * PUT /po-tracking/purchase-order/:purchaseOrderId
  * Upsert tracking for the given purchase order.
  */
@@ -161,5 +199,6 @@ async function upsertByPurchaseOrderId(req, res) {
 
 module.exports = {
   getByPurchaseOrderId,
+  getBatchByPurchaseOrderIds,
   upsertByPurchaseOrderId,
 };
