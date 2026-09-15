@@ -22,7 +22,7 @@ const RawMaterial = require('../rawMaterials/models');
 const PackMaterial = require('../packMaterials/models');
 const { Product } = require('../products/models');
 const redis = require('../cache/redis');
-const { allocateUnallocatedToDefaultRack } = require('./allocateUnallocatedStock');
+const { reconcileRackStockToTarget } = require('./allocateUnallocatedStock');
 
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
 const MAX_DATA_ROWS = 50000;
@@ -478,8 +478,12 @@ async function executeSihBucketRows(rows, bucketKey, opts = {}) {
 
       await whRow.update(updates);
       await whRow.reload();
-      const alloc = await allocateUnallocatedToDefaultRack(whRow, bucketKey);
-      if (alloc.allocated > 0) summary.rack_allocated += 1;
+      // Was allocateUnallocatedToDefaultRack (top-up only) — a bucket import that LOWERS the
+      // number left racks stuck at their old, higher qty forever (nothing ever trimmed them),
+      // so pick/transfer screens kept offering stock this import just said isn't there anymore.
+      // reconcileRackStockToTarget handles both directions.
+      const alloc = await reconcileRackStockToTarget(whRow, bucketKey);
+      if (alloc.direction !== 'none') summary.rack_allocated += 1;
       const afterSnap = inventoryAuditSnapshot(whRow);
 
       await logLocationMovement({

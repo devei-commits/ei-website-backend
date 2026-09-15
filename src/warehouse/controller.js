@@ -5,6 +5,7 @@
 const { fn, col } = require('sequelize');
 const WarehouseInventory = require('../warehouseInventory/models');
 const { WarehouseLocation, WarehouseRack, WarehouseRackItem } = require('../warehouseLocations/models');
+const { activeRowWhere } = require('../lib/softDelete');
 const GoodsReceivedNote = require('../grn/models');
 const MaterialRequestNote = require('../mrn/models');
 const RawMaterial = require('../rawMaterials/models');
@@ -123,6 +124,7 @@ async function getOverview(req, res) {
         ],
       }),
       WarehouseRackItem.findAll({
+        where: activeRowWhere(),
         attributes: ['rack_id', [fn('COUNT', col('id')), 'cnt']],
         group: ['rack_id'],
         raw: true,

@@ -5,6 +5,7 @@
 const WarehouseInventory = require('./models');
 const { WarehouseRackItem, WarehouseRack, WarehouseLocation } = require('../warehouseLocations/models');
 const { inferMlBucketFromProductionZone } = require('../facilityAreas/defaultLocationService');
+const { activeRowWhere } = require('../lib/softDelete');
 const {
   materialQtyAdd,
   materialQtyFromDb,
@@ -36,7 +37,12 @@ async function recalculateInventoryForItem(warehouseInventoryId, opts = {}) {
   if (!inv) return null;
 
   const rows = await WarehouseRackItem.findAll({
-    where: { warehouse_inventory_id: warehouseInventoryId },
+    // WarehouseRackItem isn't Sequelize-paranoid — soft-deleted rows (deleted_at set,
+    // lifecycle_status='deleted') stay in the table and must be excluded explicitly, or a
+    // recompute after a rack item is removed double-counts it back into the aggregate the next
+    // time this runs (found live: a rack row soft-deleted weeks earlier got summed back into
+    // wh_stock the next time applyDeltaToRack touched this item, doubling it 3272 -> 6544).
+    where: activeRowWhere({ warehouse_inventory_id: warehouseInventoryId }),
     include: [
       {
         model: WarehouseRack,
@@ -109,8 +115,11 @@ async function applyDeltaToRack(warehouseInventoryId, rackId, deltaQty, opts = {
 
   // Row-lock the rack-item so a concurrent delta on the same rack can't read a stale
   // qty_wh and overwrite our increment (classic lost update on two concurrent GRNs).
+  // activeRowWhere: without it, a soft-deleted row for this exact rack+item (deleted_at set)
+  // would still match — updating it would resurrect it with a real qty while it stays flagged
+  // deleted_at/lifecycle_status='deleted', making it invisible to every other active-row query.
   let rackItem = await WarehouseRackItem.findOne({
-    where: { rack_id: rackId, warehouse_inventory_id: warehouseInventoryId },
+    where: activeRowWhere({ rack_id: rackId, warehouse_inventory_id: warehouseInventoryId }),
     ...(transaction ? { transaction, lock: true } : {}),
   });
 

@@ -14,6 +14,7 @@ const {
   masterWhUnit,
 } = require('../products/inventoryMasterLookup');
 const redis = require('../cache/redis');
+const { reconcileRackStockToTarget } = require('./allocateUnallocatedStock');
 
 const INVENTORY_SUMMARY_SHEET = 'inventory summary';
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
@@ -343,6 +344,13 @@ async function executeInventorySummaryRows(rows, opts = {}) {
       if (whUnit) updates.wh_unit = whUnit.slice(0, 20);
 
       await whRow.update(updates);
+      // This import sets wh_stock (and forces ml1/ml2 to 0) directly — without reconciling
+      // warehouse_rack_items, old rack rows keep whatever they said before the import forever,
+      // and pick/transfer screens (which read racks directly) go on offering stock the import
+      // just said isn't there. Same helper the SIH bucket import uses for the same reason.
+      await reconcileRackStockToTarget(whRow, 'warehouse');
+      await reconcileRackStockToTarget(whRow, 'ml1');
+      await reconcileRackStockToTarget(whRow, 'ml2');
       const afterSnap = inventoryAuditSnapshot(whRow);
 
       await logLocationMovement({
@@ -538,6 +546,9 @@ async function repairSihFromInventoryExcelImportHistory(opts = {}) {
           qc_status: deriveQcStatusAfterStock(targetQty, beforeSnap.reorder_pt, beforeSnap.qc_status),
         };
         await whRow.update(updates);
+        await reconcileRackStockToTarget(whRow, 'warehouse');
+        await reconcileRackStockToTarget(whRow, 'ml1');
+        await reconcileRackStockToTarget(whRow, 'ml2');
         const afterSnap = inventoryAuditSnapshot(whRow);
         await logLocationMovement({
           warehouseInventoryId: whRow.id,

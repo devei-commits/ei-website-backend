@@ -1109,6 +1109,11 @@ async function applyBprFgReadyToInventory(batchRow) {
 
       const newStockInHand = whStock + newMl1 + newMl2;
       await wh.update({ ml1_stock: newMl1, ml2_stock: newMl2, stock_in_hand: newStockInHand });
+      // Fallback path (primary dispensing already syncs racks via syncRackStockForDispenseDelta) —
+      // without this, rack rows keep the pre-consumption qty forever and the picker keeps offering it.
+      const { reconcileRackStockToTarget } = require('../warehouseInventory/allocateUnallocatedStock');
+      await reconcileRackStockToTarget(wh, 'ml1');
+      await reconcileRackStockToTarget(wh, 'ml2');
       console.log('[production] BPR fg_ready: reduced RM id=%s qty=%s -> mu_stock=%s', rm.id, qty, newMl1 + newMl2);
       const prevD = Number(line.dispensed) || 0;
       if (prevD !== qty) rmDispensingPersist = true;
@@ -1158,6 +1163,11 @@ async function applyBprFgReadyToInventory(batchRow) {
 
       const newStockInHand = whStock + newMl1 + newMl2;
       await wh.update({ ml1_stock: newMl1, ml2_stock: newMl2, stock_in_hand: newStockInHand });
+      // Fallback path (primary dispensing already syncs racks via syncRackStockForDispenseDelta) —
+      // without this, rack rows keep the pre-consumption qty forever and the picker keeps offering it.
+      const { reconcileRackStockToTarget } = require('../warehouseInventory/allocateUnallocatedStock');
+      await reconcileRackStockToTarget(wh, 'ml1');
+      await reconcileRackStockToTarget(wh, 'ml2');
       console.log('[production] BPR fg_ready: reduced PM id=%s qty=%s -> mu_stock=%s', pm.id, qty, newMl1 + newMl2);
       const prevD = Number(line.dispensed) || 0;
       if (prevD !== qty) pmDispensingPersist = true;
@@ -1204,6 +1214,10 @@ async function applyBprFgReadyToInventory(batchRow) {
         const ml1 = Number(wh.ml1_stock) || 0;
         const ml2 = Number(wh.ml2_stock) || 0;
         await whRow.update({ wh_stock: whStock, stock_in_hand: whStock + ml1 + ml2 });
+        // Top up a default WH rack for the new FG qty so racks (source of truth for the picker)
+        // don't fall behind the aggregate.
+        const { reconcileRackStockToTarget } = require('../warehouseInventory/allocateUnallocatedStock');
+        await reconcileRackStockToTarget(whRow, 'warehouse');
         console.log('[production] BPR fg_ready: added FG product_id=%d qty=%s -> wh_stock=%s', productId, producedQty, whStock);
       } else {
         await WarehouseInventory.create({

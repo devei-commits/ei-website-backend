@@ -14,6 +14,8 @@ const { Product } = require('../products/models');
 const ItemGroup = require('../itemGroups/models');
 const { WarehouseRackItem, WarehouseRack, WarehouseLocation } = require('../warehouseLocations/models');
 const { buildStockByLocationPayload, setWarehouseRackQuantities } = require('./rackStockHelpers');
+const { reconcileRackStockToTarget } = require('./allocateUnallocatedStock');
+const { activeRowWhere } = require('../lib/softDelete');
 const { Op } = require('sequelize');
 const GoodsReceivedNote = require('../grn/models');
 const PurchaseOrder = require('../purchaseOrders/models');
@@ -481,6 +483,14 @@ async function updateStock(req, res) {
     }
 
     await row.update(updates);
+    // A direct wh_stock/ml1_stock/ml2_stock edit (not routed through rack_quantities, which
+    // already syncs racks via setWarehouseRackQuantities) must also reconcile warehouse_rack_items
+    // to the new target — otherwise the aggregate moves but old rack rows keep their stale qty
+    // forever, and pick/transfer screens (which read racks directly, not the aggregate) go on
+    // offering stock that was just edited away. Same helper the SIH Excel import already uses.
+    if (hasWhStockInput) await reconcileRackStockToTarget(row, 'warehouse');
+    if (hasMl1StockInput) await reconcileRackStockToTarget(row, 'ml1');
+    if (hasMl2StockInput) await reconcileRackStockToTarget(row, 'ml2');
     const updatedRow = await WarehouseInventory.findByPk(id);
     const afterSnap = inventoryAuditSnapshot(updatedRow);
     const changed = {};
@@ -743,7 +753,7 @@ async function getRackLocations(req, res) {
       return res.status(404).json({ error: 'Warehouse inventory row not found' });
     }
     const items = await WarehouseRackItem.findAll({
-      where: { warehouse_inventory_id: id },
+      where: activeRowWhere({ warehouse_inventory_id: id }),
       include: [
         {
           model: WarehouseRack,

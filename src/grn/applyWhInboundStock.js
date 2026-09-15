@@ -7,6 +7,7 @@ const { mergeLocationTokens } = require('../warehouseInventory/locationTokensMer
 const { applyDeltaToRack, computeStockInHand } = require('../warehouseInventory/inventoryMath');
 const { resolveInboundWarehouseRack } = require('../facilityAreas/defaultLocationService');
 const { ensureWarehouseZoneAndRack } = require('../facilityAreas/ensureWarehouseCustomLocation');
+const { activeRowWhere } = require('../lib/softDelete');
 
 function toNum(x) {
   const n = Number(x);
@@ -58,7 +59,7 @@ async function applyWhInboundStock(whRow, qty, itemIds, opts = {}) {
 
   if (dest && dest.rackId) {
     const existingRacks = await WarehouseRackItem.findAll({
-      where: { warehouse_inventory_id: plain.id },
+      where: activeRowWhere({ warehouse_inventory_id: plain.id }),
       ...(transaction ? { transaction } : {}),
     });
     const orphanWh = toNum(plain.wh_stock);

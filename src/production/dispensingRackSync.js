@@ -24,6 +24,7 @@ const {
 const { WarehouseRackItem, WarehouseRack, WarehouseLocation } = require('../warehouseLocations/models');
 const { materialQtyFromDb, materialQtyToNum } = require('../utils/materialQtyCompare');
 const { roundPlanningMaterialQty } = require('../planningExtracted/orderKgMath');
+const { activeRowWhere } = require('../lib/softDelete');
 
 const EPS = 1e-6;
 
@@ -34,7 +35,7 @@ function plainOf(row) {
 /** Rack rows for this item that sit at the given MU bucket ('ml1' | 'ml2'), largest first. */
 async function productionRackRows(warehouseInventoryId, bucket, { transaction } = {}) {
   const rows = await WarehouseRackItem.findAll({
-    where: { warehouse_inventory_id: Number(warehouseInventoryId) },
+    where: activeRowWhere({ warehouse_inventory_id: Number(warehouseInventoryId) }),
     include: [{
       model: WarehouseRack,
       as: 'WarehouseRack',

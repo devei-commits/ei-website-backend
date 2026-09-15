@@ -12,6 +12,7 @@ const {
   isWarehouseLocationAllowedForItemType,
 } = require('./warehouseLocationByItemType');
 const { resolveWhUnit } = require('./whUnitDefaults');
+const { activeRowWhere } = require('../lib/softDelete');
 
 function toNum(x) {
   if (x == null) return 0;
@@ -42,7 +43,7 @@ async function buildStockByLocationPayload(warehouseInventoryId) {
   const plain = inv.get ? inv.get({ plain: true }) : inv;
 
   const rackItems = await WarehouseRackItem.findAll({
-    where: { warehouse_inventory_id: warehouseInventoryId },
+    where: activeRowWhere({ warehouse_inventory_id: warehouseInventoryId }),
     include: [
       {
         model: WarehouseRack,
@@ -182,7 +183,7 @@ async function syncZoneRackTextFromRackItems(warehouseInventoryId, { transaction
   if (!inv) return null;
 
   const items = await WarehouseRackItem.findAll({
-    where: { warehouse_inventory_id: warehouseInventoryId },
+    where: activeRowWhere({ warehouse_inventory_id: warehouseInventoryId }),
     include: [
       {
         model: WarehouseRack,
@@ -225,7 +226,7 @@ async function syncZoneRackTextFromRackItems(warehouseInventoryId, { transaction
 async function clearDisallowedWarehouseRackQty(warehouseInventoryId, itemType, opts = {}) {
   const transaction = opts.transaction;
   const items = await WarehouseRackItem.findAll({
-    where: { warehouse_inventory_id: warehouseInventoryId },
+    where: activeRowWhere({ warehouse_inventory_id: warehouseInventoryId }),
     include: [
       {
         model: WarehouseRack,
@@ -281,7 +282,7 @@ async function setWarehouseRackQuantities(warehouseInventoryId, entries, opts = 
     }
 
     let item = await WarehouseRackItem.findOne({
-      where: { rack_id: rackId, warehouse_inventory_id: warehouseInventoryId },
+      where: activeRowWhere({ rack_id: rackId, warehouse_inventory_id: warehouseInventoryId }),
       ...(transaction ? { transaction } : {}),
     });
 
