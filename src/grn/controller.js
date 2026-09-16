@@ -804,6 +804,51 @@ function normalizeSourceDocuments(raw) {
   return Object.keys(out).length > 0 ? out : {};
 }
 
+/** Drops the actual QR pixel data, keeping qrPayload (which callers parse for item_code) and counts. */
+function stripLabelImages(labels) {
+  if (!Array.isArray(labels)) return labels ?? null;
+  return labels.map((l) => {
+    const { qrImageDataUrl, ...rest } = l || {};
+    return { ...rest, hasImage: Boolean(qrImageDataUrl) };
+  });
+}
+
+/**
+ * List rows only need to know a document/photo was uploaded (fileName/ref/count), never the
+ * actual base64 payload — that's fetched in full on GET /grn/:id when a row is opened.
+ */
+function stripSourceDocumentMedia(raw) {
+  if (!raw || typeof raw !== 'object') return raw;
+  const out = { ...raw };
+  for (const key of ['waybill', 'bill', 'coa']) {
+    if (out[key] && typeof out[key] === 'object') {
+      const { url, ...rest } = out[key];
+      out[key] = { ...rest, hasFile: Boolean(url) };
+    }
+  }
+  if (out.receipt && typeof out.receipt === 'object') {
+    const { vehiclePhotos, documentPhotos, ...rest } = out.receipt;
+    out.receipt = {
+      ...rest,
+      vehiclePhotoCount: Array.isArray(vehiclePhotos) ? vehiclePhotos.length : 0,
+      documentPhotoCount: Array.isArray(documentPhotos) ? documentPhotos.length : 0,
+    };
+  }
+  return out;
+}
+
+/** GET /grn (list) formatting — same shape as formatRow but with media payloads stripped out. */
+function formatRowForList(r, enrichedLineItems) {
+  const full = formatRow(r, enrichedLineItems);
+  if (!full) return full;
+  return {
+    ...full,
+    generatedLabels: stripLabelImages(full.generatedLabels),
+    generatedPackLabels: stripLabelImages(full.generatedPackLabels),
+    sourceDocuments: stripSourceDocumentMedia(full.sourceDocuments),
+  };
+}
+
 function formatRow(r, enrichedLineItems) {
   if (!r) return null;
   const d = r.get ? r.get({ plain: true }) : r;
@@ -863,7 +908,7 @@ async function list(req, res) {
     const out = rows.map((r) => {
       const d = r.get ? r.get({ plain: true }) : r;
       const enriched = enrichLineItems(d.line_items || [], rmMap, pmMap, productMap, d.type);
-      return formatRow(r, enriched);
+      return formatRowForList(r, enriched);
     });
     res.json(out);
   } catch (err) {
