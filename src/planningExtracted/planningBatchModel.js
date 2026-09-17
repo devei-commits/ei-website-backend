@@ -30,6 +30,15 @@ PlanningBatch.init(
      * if an earlier batch on the same planning row was signed off.
      */
     bom_confirmed_at: { type: DataTypes.DATE, allowNull: true },
+    /**
+     * True for an auto-seeded placeholder representing units already fulfilled outside the normal
+     * batch pipeline (e.g. via Fast Forward) before any real planning batch existed for this line —
+     * not a real production run, so it carries no BOM lines and is created already "sent"/complete.
+     * Exists purely so batch numbering (sequence, batch_code) for the next REAL batch continues
+     * correctly instead of restarting at 1, and so "how much is already allocated" math (which sums
+     * real batch sizes) accounts for it without a separate parallel calculation.
+     */
+    is_fulfilled_placeholder: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     created_at: { type: DataTypes.DATE, allowNull: true },
     updated_at: { type: DataTypes.DATE, allowNull: true },
     deleted_at: { type: DataTypes.DATE, allowNull: true },

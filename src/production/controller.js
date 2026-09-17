@@ -517,8 +517,13 @@ async function syncBatchesFromPlanning(req, res) {
         ));
         const batchCount = Number(plan.batch_count) || Number(plan.batches_required) || 1;
 
+        // activeRowWhere() matters here: without it, a batch that was soft-deleted for this
+        // SO+sequence still counts as "already exists" below, so this sync permanently refuses to
+        // recreate it even though Planning still shows it as sent — the plan looks "sent" forever
+        // while Production has nothing live for it, with no way to reconcile except editing the DB.
         const existing = await ProductionBatch.findAll({
           where: {
+            ...activeRowWhere(),
             [Op.or]: [
               { so_no: soOrderId },
               { so_no: soOrderId.replace(/^EI-SO-?/i, 'SO-') },
@@ -570,7 +575,7 @@ async function syncBatchesFromPlanning(req, res) {
     // Repair: link production batches that have no planning_batch_id but match a sent planning batch (SO + product + batch_index).
     // Handles batches sent from Planning that didn't match in the main loop (e.g. product name/sku mismatch) or created before linking existed.
     const unlinked = await ProductionBatch.findAll({
-      where: { planning_batch_id: null },
+      where: { ...activeRowWhere(), planning_batch_id: null },
       attributes: ['id', 'so_no', 'sku', 'product_name', 'batch_index'],
     });
     let repaired = 0;
@@ -659,7 +664,22 @@ async function getBatchById(req, res) {
 
 async function createBatch(req, res) {
   try {
-    const data = {};
+    // A production batch may only exist for a batch Planning actually created and sent — this
+    // route used to build the row straight off BATCH_ALLOWED_FIELDS with no planning_batch_id in
+    // that list at all, so a caller could create a batch with no planning link whatsoever. Every
+    // legitimate creation path (syncBatchesFromPlanning, createRworkBatch, splitBatchForVessel)
+    // already sets planning_batch_id; require and validate it here too so this route can no longer
+    // produce the one kind of batch Planning has no way to see (shows "no batch yet" forever).
+    const rawPlanningBatchId = req.body.planningBatchId ?? req.body.planning_batch_id;
+    const planningBatchId = rawPlanningBatchId != null ? parseInt(rawPlanningBatchId, 10) : NaN;
+    if (Number.isNaN(planningBatchId)) {
+      return res.status(400).json({ error: 'planningBatchId is required: a production batch must be linked to an existing planning batch' });
+    }
+    const planningBatch = await PlanningBatch.findByPk(planningBatchId);
+    if (!planningBatch) {
+      return res.status(400).json({ error: 'planningBatchId does not reference an existing planning batch' });
+    }
+    const data = { planning_batch_id: planningBatchId };
     for (const k of BATCH_ALLOWED_FIELDS) {
       if (req.body[k] !== undefined) data[k] = req.body[k];
     }

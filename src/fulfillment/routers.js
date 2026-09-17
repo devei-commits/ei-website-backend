@@ -8,7 +8,7 @@ const {
   pickSplits, invoiceSplits, shipSplits, deliverSplits,
   listBatchSplits,
   getNextSoNo, getCustomers, getProducts, getClientProductPrice,
-  listTransporters, createInvoice, listInvoices,
+  listTransporters, createInvoice, fastForwardInvoice, listInvoices,
   getSoPlanningAvailability,
 } = require('./controller');
 const {
@@ -61,6 +61,7 @@ router.delete('/:id', guard, deleteOrder);
 
 router.patch('/:id/cancel', guard, cancelOrder);
 router.patch('/:id/manual-fulfill', guard, manualFulfillOrder);
+router.post('/:id/fast-forward-invoice', guard, fastForwardInvoice);
 router.patch('/:id/pick', guard, pickSplits);
 router.patch('/:id/invoice', guard, invoiceSplits);
 router.patch('/:id/ship', guard, shipSplits);

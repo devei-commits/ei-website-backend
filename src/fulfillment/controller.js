@@ -1996,6 +1996,235 @@ async function createInvoice(req, res) {
   }
 }
 
+/**
+ * POST /:id/fast-forward-invoice — catch-up for an SO the facility has already completed on the
+ * floor but no one worked through Pick → Invoice for in the tool. The caller says how much of each
+ * order line is actually done (`items: [{ itemId, qty }]`, fulfillment_order_items.id → qty) —
+ * that's the quantity force-marked FG Ready → Picked → Invoiced, capped at what's still left to
+ * invoice for that line (ordered qty minus whatever's already invoiced/shipped/delivered/closed).
+ * Skips the pick step entirely and generates the invoice immediately with placeholder details (no
+ * real transporter/AWB — those still come from a real Ship step later, same as any other invoiced
+ * order). An existing open (not-yet-invoiced) batch split absorbs the qty; a line with none gets one
+ * ad-hoc split created for it, so a line Production never touched can still be fast-forwarded.
+ *
+ * Does not create or edit any Planning row, GRN, or QC record, and never deletes a production batch
+ * — only writes fulfillment tables (+ the invoice, + Zoho if that's on). The one exception: when a
+ * line reuses an existing production-linked split, its production batch's bmr_status/bpr_status are
+ * marked the same "done" values (cleared / fg_ready) a genuinely-finished batch reaches — so Planning
+ * shows it as completed instead of stuck on Draft — but only when that batch is still untouched (no
+ * real BMR/BPR progress or dispensing); one already mid real production is left exactly as it was.
+ */
+async function fastForwardInvoice(req, res) {
+  const tx = await FulfillmentOrder.sequelize.transaction();
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) {
+      await tx.rollback();
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+
+    const requestedLines = Array.isArray(req.body?.items) ? req.body.items : [];
+    if (requestedLines.length === 0) {
+      await tx.rollback();
+      return res.status(400).json({ error: 'items (itemId + qty for at least one order line) is required' });
+    }
+
+    const order = await FulfillmentOrder.findOne({
+      where: activeRowWhere({ id }),
+      include: INCLUDE_FULL,
+      transaction: tx,
+    });
+    if (!order) {
+      await tx.rollback();
+      return res.status(404).json({ error: 'Fulfillment order not found' });
+    }
+    if (order.so_status === 'cancelled') {
+      await tx.rollback();
+      return res.status(400).json({ error: 'This sales order is cancelled — nothing to fast-forward.' });
+    }
+
+    const TERMINAL_FF_STATUSES = ['invoiced', 'shipped', 'delivered', 'closed'];
+    const itemsById = new Map((order.items || []).map((i) => [i.id, i]));
+    const targets = []; // { item, split, qty }
+
+    for (const raw of requestedLines) {
+      const itemId = parseInt(raw?.itemId, 10);
+      const qtyRequested = Math.floor(Number(raw?.qty));
+      if (Number.isNaN(itemId) || !Number.isFinite(qtyRequested) || qtyRequested <= 0) continue;
+      const item = itemsById.get(itemId);
+      if (!item) continue; // unknown / foreign-order item id — skip rather than fail the whole request
+
+      const splits = item.batchSplits || [];
+      // Already accounted for: whatever's on a split that's already invoiced (or later). Caps the
+      // entered qty so this can never invoice more than the line's ordered qty in total.
+      const alreadyDone = splits
+        .filter((s) => TERMINAL_FF_STATUSES.includes(s.ff_status))
+        .reduce((sum, s) => sum + (Number(s.picked_qty ?? s.fg_qty) || 0), 0);
+      const remaining = Math.max(0, (Number(item.ordered_qty) || 0) - alreadyDone);
+      const qty = Math.min(qtyRequested, remaining);
+      if (qty <= 0) continue;
+
+      const openSplits = splits.filter((s) => !TERMINAL_FF_STATUSES.includes(s.ff_status));
+      const split = openSplits.length > 0
+        ? openSplits[0]
+        : await FulfillmentBatchSplit.create({
+          fulfillment_order_item_id: item.id,
+          fulfillment_order_id: id,
+          production_batch_id: null,
+          planned_qty: qty,
+          fg_qty: 0,
+          ff_status: 'fg_pending',
+        }, { transaction: tx });
+      targets.push({ item, split, qty });
+    }
+
+    if (targets.length === 0) {
+      await tx.rollback();
+      return res.status(400).json({ error: 'Nothing to fast-forward — enter a quantity greater than 0 for at least one line (up to what still remains to be invoiced).' });
+    }
+
+    const invoiceNo = await allocateNextFulfillmentInvoiceNo(FulfillmentOrder.sequelize, tx);
+    const todayIso = new Date().toISOString().slice(0, 10);
+
+    let subtotal = 0;
+    let taxTotal = 0;
+    const lineItems = [];
+    for (const { item, split, qty } of targets) {
+      const rate = Number(item.unit_price ?? item.rate) || 0;
+      const amount = qty * rate;
+      const taxPct = Number(item.tax_pct) || 0;
+      const taxAmount = Math.round(amount * taxPct) / 100;
+      subtotal += amount;
+      taxTotal += taxAmount;
+      lineItems.push({
+        productName: item.product_name,
+        pack: item.pack,
+        bprNo: split.bpr_no,
+        sku: item.sku,
+        quantity: qty,
+        pickedQty: qty,
+        rate,
+        amount,
+        taxPct,
+        taxAmount,
+        lineTotal: amount + taxAmount,
+      });
+      split.set({
+        ff_status: 'invoiced',
+        invoice_no: invoiceNo,
+        picked_qty: qty,
+        fg_qty: Math.max(Number(split.fg_qty) || 0, qty),
+        // A reused split can carry a stale planned_qty from Production (e.g. a small test batch
+        // size) that has nothing to do with the qty just fast-forwarded — never show "Planned"
+        // lower than what's now actually on the invoice. Only ever grows it, never shrinks a
+        // genuinely larger real batch plan.
+        planned_qty: Math.max(Number(split.planned_qty) || 0, qty),
+      });
+      await split.save({ transaction: tx });
+    }
+    const totalValue = subtotal + taxTotal;
+    const gstPercent = subtotal > 0 ? Math.round((taxTotal / subtotal) * 10000) / 100 : 0;
+
+    const preparedBy = req.user ? (req.user.fullName || req.user.email || 'Fast Forward') : 'Fast Forward';
+    const remarksNote = 'Fast-forwarded: facility confirmed this was already completed outside the tool. '
+      + 'Qty and invoice were auto-generated — Production/Planning/GRN/QC records were not touched.';
+
+    const invoice = await FulfillmentInvoice.create({
+      invoice_no: invoiceNo,
+      fulfillment_order_id: id,
+      invoice_date: todayIso,
+      due_date: null,
+      prepared_by: preparedBy,
+      transporter_id: null,
+      transporter_name: 'Direct Dispatch',
+      lr_awb_no: null,
+      remarks: remarksNote,
+      subtotal,
+      gst_percent: gstPercent,
+      total_value: totalValue,
+      status: 'confirmed',
+      line_items: lineItems,
+    }, { transaction: tx });
+
+    order.set({
+      invoice_no: invoiceNo,
+      invoice_date: todayIso,
+      courier: order.courier || 'Direct Dispatch',
+    });
+    const allSplits = await FulfillmentBatchSplit.findAll({ where: { fulfillment_order_id: id }, transaction: tx });
+    order.set('so_status', recalculateSOStatus(allSplits));
+    await order.save({ transaction: tx });
+
+    await Order.update({ fulfillment_stage: 'invoiced' }, { where: { so_no: order.so_no }, transaction: tx });
+
+    const zoho = await syncZohoInvoiceAfterFulfillment({
+      fulfillmentOrder: order,
+      lineItemsFromBody: lineItems,
+      invoiceNo,
+      invoiceDate: todayIso,
+      dueDate: null,
+    });
+    if (zohoEnv.booksEnabled && zohoEnv.syncInvoices && !zoho.synced) {
+      const err = new Error(zoho.error || 'zoho_invoice_sync_failed');
+      err.statusCode = 502;
+      err.clientMessage = zohoInvoiceSyncRollbackMessage(zoho.error);
+      throw err;
+    }
+    if (zoho.synced && zoho.invoiceId) {
+      await invoice.update({ zoho_invoice_id: zoho.invoiceId }, { transaction: tx });
+      await order.update({ zoho_invoice_id: zoho.invoiceId }, { transaction: tx });
+    }
+
+    await tx.commit();
+
+    // A target that reused an existing production-linked split means that batch's production work
+    // is now done, from Fulfillment's side — mark it FG Ready the same way a genuinely-finished batch
+    // reaches that status, so Planning/Production screens that already read bmr_status/bpr_status
+    // show it as completed instead of stuck on "Draft" — never delete the batch itself (it's a real
+    // record). Only when the batch hasn't had any real work done on it yet (mirrors the same
+    // draft/batch_confirmed/pm_reserved safety line Planning's own batch-delete uses) — a batch
+    // already mid real production is left exactly as it is, since forcing it to fg_ready there could
+    // paper over genuine work in progress. Runs after commit, best-effort: never fails the request.
+    const BMR_SAFE_TO_COMPLETE_STATUSES = ['draft', 'batch_confirmed'];
+    const BPR_SAFE_TO_COMPLETE_STATUSES = ['draft', 'pm_reserved'];
+    const hasDispensingData = (data) => data && typeof data === 'object' && Object.keys(data).length > 0;
+    const reusedProductionBatchIds = [...new Set(
+      targets.map((t) => t.split.production_batch_id).filter(Boolean)
+    )];
+    for (const productionBatchId of reusedProductionBatchIds) {
+      try {
+        const prodBatch = await ProductionBatch.findByPk(productionBatchId);
+        if (!prodBatch) continue;
+        const isSafe =
+          BMR_SAFE_TO_COMPLETE_STATUSES.includes(prodBatch.bmr_status) &&
+          BPR_SAFE_TO_COMPLETE_STATUSES.includes(prodBatch.bpr_status) &&
+          !hasDispensingData(prodBatch.dispensing_rm) &&
+          !hasDispensingData(prodBatch.dispensing_pm);
+        if (!isSafe) {
+          console.warn(`[fastForwardInvoice] left production batch ${productionBatchId} status as-is — real production work already in progress`);
+          continue;
+        }
+        const producedQty = targets
+          .filter((t) => t.split.production_batch_id === productionBatchId)
+          .reduce((sum, t) => sum + t.qty, 0);
+        await prodBatch.update({ bmr_status: 'cleared', bpr_status: 'fg_ready', fg_yield: producedQty });
+      } catch (statusErr) {
+        console.warn('[fastForwardInvoice] could not mark linked production batch complete:', statusErr && statusErr.message ? statusErr.message : statusErr);
+      }
+    }
+
+    const refreshed = await FulfillmentOrder.findByPk(id, { include: INCLUDE_FULL });
+    res.json(formatOrder(refreshed));
+  } catch (err) {
+    if (!tx.finished) await tx.rollback();
+    console.error('fastForwardInvoice error:', err);
+    if (err && err.statusCode) {
+      return res.status(err.statusCode).json({ error: err.clientMessage || err.message || 'Zoho invoice sync failed' });
+    }
+    res.status(500).json({ error: 'Failed to fast-forward invoice' });
+  }
+}
+
 async function listInvoices(req, res) {
   try {
     const where = {};
@@ -2076,6 +2305,27 @@ async function getSoPlanningAvailability(req, res) {
       return res.json({ success: true, soNo, items: [] });
     }
     console.log('[FULFILLMENT-AVAIL] SALES_ORDER_MATCH', { soNo, salesOrderId: salesOrder.id, orderId: salesOrder.order_id });
+
+    // Units already fulfilled outside the normal batch pipeline (e.g. Fast Forward) for each product
+    // on this SO — subtracted from "Pending to plan" below so an already-fulfilled portion doesn't
+    // keep demanding a fresh batch be planned for it. Matched by product_code, the same authoritative
+    // key batchSplitSync.js uses between Production and Fulfillment.
+    const TERMINAL_FF_STATUSES_FOR_AVAIL = ['invoiced', 'shipped', 'delivered', 'closed'];
+    // Reuses INCLUDE_FULL (items via `separate: true`) rather than a hand-rolled nested include —
+    // a plain 3-level hasMany-of-hasMany join here risks inflating the fulfilledUnits sum below.
+    const fulfillmentOrderForAvail = await FulfillmentOrder.findOne({
+      where: { so_no: soNo },
+      include: INCLUDE_FULL,
+    });
+    const fulfilledUnitsByProductCode = new Map();
+    for (const item of (fulfillmentOrderForAvail && fulfillmentOrderForAvail.items) || []) {
+      const code = (item.product_code || '').trim().toLowerCase();
+      if (!code) continue;
+      const done = (item.batchSplits || [])
+        .filter((s) => TERMINAL_FF_STATUSES_FOR_AVAIL.includes(s.ff_status))
+        .reduce((sum, s) => sum + (Number(s.picked_qty ?? s.fg_qty) || 0), 0);
+      fulfilledUnitsByProductCode.set(code, (fulfilledUnitsByProductCode.get(code) || 0) + done);
+    }
 
     const planningRows = await PlanningExtracted.findAll({
       where: { sales_order_id: salesOrder.id },
@@ -2452,6 +2702,7 @@ async function getSoPlanningAvailability(req, res) {
       });
 
       const product = planPlain.product || {};
+      const fulfilledUnits = fulfilledUnitsByProductCode.get((product.product_code || '').trim().toLowerCase()) || 0;
       console.log('[FULFILLMENT-AVAIL] PLAN_RESULT', {
         soNo,
         planningExtractedId: planId,
@@ -2491,6 +2742,10 @@ async function getSoPlanningAvailability(req, res) {
         rmLineTotalCount,
         pmLineAvailableCount,
         pmLineTotalCount,
+        // Units already invoiced/shipped/delivered in Fulfillment for this product on this SO (e.g.
+        // via Fast Forward) — "Pending to plan" subtracts this so it doesn't keep demanding a batch
+        // for a portion that's already done.
+        fulfilledUnits,
         batches: batchRows,
       });
     }
@@ -2532,6 +2787,7 @@ module.exports = {
   getClientProductPrice,
   listTransporters,
   createInvoice,
+  fastForwardInvoice,
   listInvoices,
   getSoPlanningAvailability,
 };

@@ -884,11 +884,25 @@ async function validateWarehouseStockForReservation(planRow) {
   return { ok: true };
 }
 
+// listPlanningExtracted used to call this unconditionally on EVERY request — for each non-excluded
+// sales order it re-scans every line item with up to 3 sequential case-insensitive Product lookups
+// plus a BOM lookup and an existence check, so with hundreds of live SOs this alone dominated the
+// endpoint's response time (the actual JSON payload is comparatively small). It is a self-healing
+// reconciliation, not something that needs to run inline with every read, so it's now throttled to
+// run at most once per PLANNING_SYNC_THROTTLE_MS — worst case a brand-new SO takes a few seconds
+// longer to appear in Planning, in exchange for every other read in that window skipping the scan
+// entirely. `force` bypasses the throttle for callers that need the freshest state right now (e.g.
+// right after creating an SO).
+let lastPlanningExtractedSyncAt = 0;
+const PLANNING_SYNC_THROTTLE_MS = 30_000;
+
 /**
  * Ensure every sales order line (SO with items) has a planning_extracted row.
  * SOs created without the API, or before auto-create was added, may have no rows — this sync fixes that.
  */
-async function syncPlanningExtractedFromSalesOrders() {
+async function syncPlanningExtractedFromSalesOrders({ force = false } = {}) {
+  if (!force && Date.now() - lastPlanningExtractedSyncAt < PLANNING_SYNC_THROTTLE_MS) return;
+  lastPlanningExtractedSyncAt = Date.now();
   const soRows = await SalesOrder.findAll({
     attributes: ['id', 'order_id', 'order_date', 'expected_shipment_date', 'items', 'created_by', 'status'],
     order: [['id', 'ASC']],
@@ -897,7 +911,7 @@ async function syncPlanningExtractedFromSalesOrders() {
   for (const soRow of soRows) {
     const so = soRow.get ? soRow.get({ plain: true }) : soRow;
     // Draft / Cancelled SOs must not appear in Planning. Skip creation and soft-delete any planning
-    // rows created while the SO was live (this runs on every list read, so it self-heals on status change).
+    // rows created while the SO was live (this self-heals on status change each time the sync runs).
     if (isPlanningExcludedSoStatus(so.status)) {
       // Capture the planning rows BEFORE they are soft-deleted so their stock holds can be released.
       // reserved_batch_items cascades on hard delete only; these rows are merely soft-deleted, so
@@ -911,7 +925,7 @@ async function syncPlanningExtractedFromSalesOrders() {
 
       await softDeleteWhere(PlanningExtracted, { sales_order_id: so.id });
 
-      // Only touch plans that actually hold stock: this runs on every Planning list read, and
+      // Only touch plans that actually hold stock: this sync can run fairly often, and
       // releaseStockForPlanningExtracted triggers a full in-transit resync, so a blanket call per
       // excluded SO would be very expensive. In steady state this grouped query returns nothing.
       if (planIdsToRelease.length > 0) {
@@ -1117,7 +1131,7 @@ async function listPlanningExtracted(req, res) {
       const rows = await PlanningExtracted.findAll({
         where: notDeleted,
         include: [
-          { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'order_date', 'expected_shipment_date', 'status', 'form_data'], required: false },
+          { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'order_date', 'expected_shipment_date', 'status'], required: false },
           { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'], required: false },
         ],
         order: [['due_date', 'ASC'], ['id', 'ASC']],
@@ -1130,7 +1144,7 @@ async function listPlanningExtracted(req, res) {
     const rows = await PlanningExtracted.findAll({
       where: { deleted_at: { [Op.is]: null } },
       include: [
-        { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'order_date', 'expected_shipment_date', 'status', 'form_data'], required: false },
+        { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'order_date', 'expected_shipment_date', 'status'], required: false },
         { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'], required: false },
       ],
       order: [['due_date', 'ASC'], ['id', 'ASC']],
@@ -1148,7 +1162,7 @@ async function getPlanningExtractedById(req, res) {
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const row = await PlanningExtracted.findByPk(id, {
       include: [
-        { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'order_date', 'expected_shipment_date', 'status', 'form_data'] },
+        { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'order_date', 'expected_shipment_date', 'status'] },
         { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'] },
       ],
     });
@@ -1293,7 +1307,7 @@ async function updatePlanningExtracted(req, res) {
 
     const updated = await PlanningExtracted.findByPk(id, {
       include: [
-        { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'order_date', 'expected_shipment_date', 'status', 'form_data'] },
+        { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'order_date', 'expected_shipment_date', 'status'] },
         { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'] },
       ],
     });
@@ -1717,16 +1731,109 @@ async function reconcilePlanningBatchDenorm(planRow, rows) {
   }
 }
 
+/**
+ * Units already fulfilled outside the normal batch pipeline (e.g. via Fast Forward) for this
+ * planning row's product, on its own SO — matched by product_code, the same authoritative key
+ * batchSplitSync.js uses between Production and Fulfillment. Cross-module require is lazy (same
+ * pattern findUnsafeProductionBatchForRemoval already uses) to avoid a circular require at load time.
+ * @param {object} planPlain plain planning_extracted row
+ * @returns {Promise<number>}
+ */
+async function computeFulfilledUnitsForPlanningRow(planPlain) {
+  const so = await SalesOrder.findByPk(planPlain.sales_order_id, { attributes: ['order_id'] });
+  const soNo = so && (so.get ? so.get('order_id') : so.order_id);
+  if (!soNo) return 0;
+  const product = await Product.findByPk(planPlain.product_id, { attributes: ['product_code'] });
+  const productCode = String((product && (product.get ? product.get('product_code') : product.product_code)) || '')
+    .trim()
+    .toLowerCase();
+  if (!productCode) return 0;
+
+  const { FulfillmentOrder, FulfillmentOrderItem, FulfillmentBatchSplit } = require('../fulfillment/models');
+  const fulfillmentOrder = await FulfillmentOrder.findOne({
+    where: { so_no: soNo },
+    include: [{
+      model: FulfillmentOrderItem,
+      as: 'items',
+      required: false,
+      separate: true,
+      include: [{ model: FulfillmentBatchSplit, as: 'batchSplits', required: false }],
+    }],
+  });
+  if (!fulfillmentOrder) return 0;
+
+  const TERMINAL_FF_STATUSES = ['invoiced', 'shipped', 'delivered', 'closed'];
+  let total = 0;
+  for (const item of fulfillmentOrder.items || []) {
+    const code = String(item.product_code || '').trim().toLowerCase();
+    if (code !== productCode) continue;
+    total += (item.batchSplits || [])
+      .filter((s) => TERMINAL_FF_STATUSES.includes(s.ff_status))
+      .reduce((sum, s) => sum + (Number(s.picked_qty ?? s.fg_qty) || 0), 0);
+  }
+  return total;
+}
+
+/**
+ * When a planning row has zero real batches yet, but Fulfillment already shows completed units for
+ * its product on this SO (e.g. a Fast Forward whose original batch record was lost, or one that ran
+ * before any batch was ever planned) — seed a placeholder "Batch 1" for that qty. It carries no BOM
+ * (no real production ran for it) and is marked already-sent, so: (1) the next real batch created
+ * continues numbering from 2 instead of restarting at 1, and (2) "how much is already allocated"
+ * math (which sums real batch sizes via reconcilePlanningBatchDenorm/customBatches) picks it up
+ * automatically, with no separate parallel calculation to keep in sync.
+ * @returns {Promise<import('sequelize').Model[]|null>} refreshed batch rows, or null if nothing seeded
+ */
+async function seedFulfilledPlaceholderBatchIfNeeded(planRow, planningExtractedId) {
+  const planPlain = planRow.get ? planRow.get({ plain: true }) : planRow;
+  const fulfilledUnits = await computeFulfilledUnitsForPlanningRow(planPlain);
+  if (!(fulfilledUnits > 0)) return null;
+
+  const totalKg = parseFloat(String(planPlain.total_kg_display || '0').replace(/[^\d.]/g, '')) || 0;
+  const orderUnits = parseInt(String(planPlain.order_qty_display || '0').replace(/\D/g, ''), 10) || 0;
+  const kgPerUnit = orderUnits > 0 && totalKg > 0 ? totalKg / orderUnits : 0;
+  const fulfilledKg = kgPerUnit > 0 ? fulfilledUnits * kgPerUnit : 0;
+  if (!(fulfilledKg > 0.01)) return null;
+
+  await PlanningBatch.create({
+    planning_extracted_id: planningExtractedId,
+    sequence: 1,
+    batch_code: `PE-${planningExtractedId}-B1`,
+    size_kg: Math.round(fulfilledKg * 100) / 100,
+    rm_lines: [],
+    pm_lines: [],
+    is_fulfilled_placeholder: true,
+  });
+
+  const sent = Array.isArray(planPlain.sent_batch_indices) ? planPlain.sent_batch_indices.map(Number) : [];
+  if (!sent.includes(0)) {
+    await planRow.update({ sent_batch_indices: [...sent, 0].sort((a, b) => a - b) });
+  }
+
+  return PlanningBatch.findAll({
+    where: { planning_extracted_id: planningExtractedId },
+    order: [['sequence', 'ASC']],
+  });
+}
+
 async function listBatches(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     const planRow = await PlanningExtracted.findByPk(id);
     if (!planRow) return res.status(404).json({ error: 'Planning extracted not found' });
-    const rows = await PlanningBatch.findAll({
+    let rows = await PlanningBatch.findAll({
       where: { planning_extracted_id: id },
       order: [['sequence', 'ASC']],
     });
+    if (rows.length === 0) {
+      try {
+        const seeded = await seedFulfilledPlaceholderBatchIfNeeded(planRow, id);
+        if (seeded) rows = seeded;
+      } catch (seedErr) {
+        console.warn('[planningExtracted] fulfilled-placeholder batch seed failed:', seedErr && seedErr.message ? seedErr.message : seedErr);
+      }
+    }
     await reconcilePlanningBatchDenorm(planRow, rows);
     const prodBmrByPlanningBatchId = await loadProductionBmrStatusByPlanningBatchIds(
       rows.map((r) => (r.get ? r.get('id') : r.id))
@@ -1915,6 +2022,7 @@ function formatBatchRow(r, prodBmrByPlanningBatchId) {
     bomConfirmedAt: d.bom_confirmed_at != null ? serializeInstantIndia(d.bom_confirmed_at) : null,
     productionBmrStatus,
     editable,
+    isFulfilledPlaceholder: !!d.is_fulfilled_placeholder,
   };
 }
 
@@ -2395,9 +2503,14 @@ const BPR_SAFE_TO_REMOVE_STATUSES = ['draft', 'pm_reserved'];
  * reserved onward, any dispensing recorded, or FG already produced on one of its fulfillment
  * splits. Mirrors the safety line used by the one-time Planning/Production reconcile: batches
  * past draft/batch_confirmed (or with dispensing data / fg_qty) are never silently removed.
+ * @param {number} planningBatchId
+ * @param {{ skipFgCheck?: boolean }} [opts] skipFgCheck: true when the caller (Fast Forward invoicing)
+ *   is itself the one that just wrote fg_qty on the linked split — that write alone shouldn't count
+ *   as "real production happened", so it's excluded from the check. BMR/BPR status and dispensing
+ *   are always checked regardless.
  * @returns {Promise<{bmrNo: string, reason: string}|null>} the first unsafe batch found, or null.
  */
-async function findUnsafeProductionBatchForRemoval(planningBatchId) {
+async function findUnsafeProductionBatchForRemoval(planningBatchId, opts = {}) {
   const { FulfillmentBatchSplit } = require('../fulfillment/models');
   const rows = await ProductionBatch.findAll({ where: activeRowWhere({ planning_batch_id: planningBatchId }) });
   for (const row of rows) {
@@ -2412,14 +2525,117 @@ async function findUnsafeProductionBatchForRemoval(planningBatchId) {
     if (hasDispensing(p.dispensing_rm) || hasDispensing(p.dispensing_pm)) {
       return { bmrNo: p.bmr_no, reason: 'material has already been dispensed against it' };
     }
-    const fgSplit = await FulfillmentBatchSplit.findOne({
-      where: activeRowWhere({ production_batch_id: p.id, fg_qty: { [Op.gt]: 0 } }),
-    });
-    if (fgSplit) {
-      return { bmrNo: p.bmr_no, reason: 'it has already produced finished goods' };
+    if (!opts.skipFgCheck) {
+      const fgSplit = await FulfillmentBatchSplit.findOne({
+        where: activeRowWhere({ production_batch_id: p.id, fg_qty: { [Op.gt]: 0 } }),
+      });
+      if (fgSplit) {
+        return { bmrNo: p.bmr_no, reason: 'it has already produced finished goods' };
+      }
     }
   }
   return null;
+}
+
+/**
+ * Core cascade behind DELETE /:id/batches/:batchId, pulled out so Fast Forward invoicing
+ * (fulfillment module) can reuse the exact same bookkeeping when a fast-forwarded fulfillment split
+ * has "used up" a still-undone planning batch that no longer needs to be produced: hard-delete +
+ * gapless reindex of the remaining batches, remap the PI's sent/buffer indices, refresh reservations,
+ * update batch_count/custom_batches, and soft-delete any linked production batch.
+ * @param {number} planningId
+ * @param {number} batchId
+ * @param {{ skipFgCheck?: boolean }} [opts] see findUnsafeProductionBatchForRemoval.
+ * @returns {Promise<{ok: true, deletedBatchId: number, batchCount: number, batches: object[]} | {error: string, statusCode: number}>}
+ */
+async function removePlanningBatchCascade(planningId, batchId, opts = {}) {
+  const planRow = await PlanningExtracted.findByPk(planningId);
+  if (!planRow) return { error: 'Planning extracted not found', statusCode: 404 };
+  const batch = await PlanningBatch.findOne({ where: { id: batchId, planning_extracted_id: planningId } });
+  if (!batch) return { error: 'Batch not found', statusCode: 404 };
+
+  const unsafe = await findUnsafeProductionBatchForRemoval(batchId, opts);
+  if (unsafe) {
+    return {
+      error: `Cannot remove this batch — its production batch ${unsafe.bmrNo} cannot be auto-removed because ${unsafe.reason}. Handle it in Production first.`,
+      statusCode: 409,
+    };
+  }
+
+  const removedSeq = Number(batch.get ? batch.get('sequence') : batch.sequence) || 0;
+  const removedIndex = removedSeq - 1; // 0-based index used by sent/buffer arrays
+
+  await db.transaction(async (t) => {
+    await batch.destroy({ transaction: t });
+
+    // Also remove the linked production batch(es) so the deletion propagates to the Production side.
+    // Soft-delete (mirrors production's own deleteBatch) — the Production views filter to active rows.
+    await softDeleteWhere(ProductionBatch, { planning_batch_id: batchId }, { transaction: t });
+
+    // Reindex survivors to a gapless 1..N. Two-phase to avoid transient collisions on the
+    // unique(planning_extracted_id, sequence) constraint.
+    const remaining = await PlanningBatch.findAll({
+      where: { planning_extracted_id: planningId },
+      order: [['sequence', 'ASC']],
+      transaction: t,
+    });
+    for (let i = 0; i < remaining.length; i += 1) {
+      await remaining[i].update({ sequence: 100000 + i }, { transaction: t });
+    }
+    for (let i = 0; i < remaining.length; i += 1) {
+      const finalSeq = i + 1;
+      await remaining[i].update(
+        { sequence: finalSeq, batch_code: `PE-${planningId}-B${finalSeq}` },
+        { transaction: t },
+      );
+    }
+
+    // Remap 0-based sent/buffer indices: drop the removed one, shift down anything above it.
+    const remap = (raw) => {
+      const arr = Array.isArray(raw) ? raw : [];
+      return arr
+        .map((v) => Number(v))
+        .filter((n) => Number.isFinite(n) && n !== removedIndex)
+        .map((n) => (n > removedIndex ? n - 1 : n))
+        .filter((n) => n >= 0 && n < remaining.length);
+    };
+    // Rebuild the denormalized custom_batches JSON (sizes, in the new gapless order) so every reader
+    // that hydrates from the PI row — chiefly the Plan Batches modal — reflects the deletion. Without
+    // this the modal re-syncs from stale custom_batches and shows the deleted batch / blocks new ones.
+    const nextCustomBatches = remaining.map((b) => ({
+      sizeKg: Number(b.get ? b.get('size_kg') : b.size_kg) || 0,
+    }));
+    await planRow.update(
+      {
+        sent_batch_indices: remap(planRow.get ? planRow.get('sent_batch_indices') : planRow.sent_batch_indices),
+        buffer_batch_indices: remap(planRow.get ? planRow.get('buffer_batch_indices') : planRow.buffer_batch_indices),
+        batch_count: remaining.length,
+        custom_batches: nextCustomBatches.length > 0 ? nextCustomBatches : null,
+      },
+      { transaction: t },
+    );
+  });
+
+  // Reserved stock must reflect the surviving batches only.
+  try {
+    await refreshReservationsFromPlanningBatches(planningId);
+  } catch (e) {
+    console.warn('[planningExtracted] removePlanningBatchCascade refreshReservations failed:', e && e.message ? e.message : e);
+  }
+
+  const updated = await PlanningBatch.findAll({
+    where: { planning_extracted_id: planningId },
+    order: [['sequence', 'ASC']],
+  });
+  const prodBmrByPlanningBatchId = await loadProductionBmrStatusByPlanningBatchIds(
+    updated.map((r) => (r.get ? r.get('id') : r.id)),
+  );
+  return {
+    ok: true,
+    deletedBatchId: batchId,
+    batchCount: updated.length,
+    batches: updated.map((r) => formatBatchRow(r, prodBmrByPlanningBatchId)),
+  };
 }
 
 async function deleteBatch(req, res) {
@@ -2429,92 +2645,9 @@ async function deleteBatch(req, res) {
     if (Number.isNaN(planningId) || Number.isNaN(batchId)) {
       return res.status(400).json({ error: 'Invalid id or batchId' });
     }
-    const planRow = await PlanningExtracted.findByPk(planningId);
-    if (!planRow) return res.status(404).json({ error: 'Planning extracted not found' });
-    const batch = await PlanningBatch.findOne({ where: { id: batchId, planning_extracted_id: planningId } });
-    if (!batch) return res.status(404).json({ error: 'Batch not found' });
-
-    const unsafe = await findUnsafeProductionBatchForRemoval(batchId);
-    if (unsafe) {
-      return res.status(409).json({
-        error: `Cannot delete this batch — its production batch ${unsafe.bmrNo} cannot be auto-removed because ${unsafe.reason}. Handle it in Production first.`,
-      });
-    }
-
-    const removedSeq = Number(batch.get ? batch.get('sequence') : batch.sequence) || 0;
-    const removedIndex = removedSeq - 1; // 0-based index used by sent/buffer arrays
-
-    await db.transaction(async (t) => {
-      await batch.destroy({ transaction: t });
-
-      // Also remove the linked production batch(es) so the deletion propagates to the Production side.
-      // Soft-delete (mirrors production's own deleteBatch) — the Production views filter to active rows.
-      await softDeleteWhere(ProductionBatch, { planning_batch_id: batchId }, { transaction: t });
-
-      // Reindex survivors to a gapless 1..N. Two-phase to avoid transient collisions on the
-      // unique(planning_extracted_id, sequence) constraint.
-      const remaining = await PlanningBatch.findAll({
-        where: { planning_extracted_id: planningId },
-        order: [['sequence', 'ASC']],
-        transaction: t,
-      });
-      for (let i = 0; i < remaining.length; i += 1) {
-        await remaining[i].update({ sequence: 100000 + i }, { transaction: t });
-      }
-      for (let i = 0; i < remaining.length; i += 1) {
-        const finalSeq = i + 1;
-        await remaining[i].update(
-          { sequence: finalSeq, batch_code: `PE-${planningId}-B${finalSeq}` },
-          { transaction: t },
-        );
-      }
-
-      // Remap 0-based sent/buffer indices: drop the removed one, shift down anything above it.
-      const remap = (raw) => {
-        const arr = Array.isArray(raw) ? raw : [];
-        return arr
-          .map((v) => Number(v))
-          .filter((n) => Number.isFinite(n) && n !== removedIndex)
-          .map((n) => (n > removedIndex ? n - 1 : n))
-          .filter((n) => n >= 0 && n < remaining.length);
-      };
-      // Rebuild the denormalized custom_batches JSON (sizes, in the new gapless order) so every reader
-      // that hydrates from the PI row — chiefly the Plan Batches modal — reflects the deletion. Without
-      // this the modal re-syncs from stale custom_batches and shows the deleted batch / blocks new ones.
-      const nextCustomBatches = remaining.map((b) => ({
-        sizeKg: Number(b.get ? b.get('size_kg') : b.size_kg) || 0,
-      }));
-      await planRow.update(
-        {
-          sent_batch_indices: remap(planRow.get ? planRow.get('sent_batch_indices') : planRow.sent_batch_indices),
-          buffer_batch_indices: remap(planRow.get ? planRow.get('buffer_batch_indices') : planRow.buffer_batch_indices),
-          batch_count: remaining.length,
-          custom_batches: nextCustomBatches.length > 0 ? nextCustomBatches : null,
-        },
-        { transaction: t },
-      );
-    });
-
-    // Reserved stock must reflect the surviving batches only.
-    try {
-      await refreshReservationsFromPlanningBatches(planningId);
-    } catch (e) {
-      console.warn('[planningExtracted] deleteBatch refreshReservations failed:', e && e.message ? e.message : e);
-    }
-
-    const updated = await PlanningBatch.findAll({
-      where: { planning_extracted_id: planningId },
-      order: [['sequence', 'ASC']],
-    });
-    const prodBmrByPlanningBatchId = await loadProductionBmrStatusByPlanningBatchIds(
-      updated.map((r) => (r.get ? r.get('id') : r.id)),
-    );
-    res.json({
-      ok: true,
-      deletedBatchId: batchId,
-      batchCount: updated.length,
-      batches: updated.map((r) => formatBatchRow(r, prodBmrByPlanningBatchId)),
-    });
+    const result = await removePlanningBatchCascade(planningId, batchId);
+    if (result.error) return res.status(result.statusCode).json({ error: result.error });
+    res.json(result);
   } catch (err) {
     console.error('deleteBatch error', err);
     res.status(500).json({ error: 'Failed to delete batch' });
@@ -4099,6 +4232,7 @@ module.exports = {
   listBatches,
   getBatchById,
   deleteBatch,
+  removePlanningBatchCascade,
   createOrUpdateBatches,
   addOneBatchFromMaster,
   addRworkBatch,
