@@ -2046,6 +2046,11 @@ async function fastForwardInvoice(req, res) {
     const TERMINAL_FF_STATUSES = ['invoiced', 'shipped', 'delivered', 'closed'];
     const itemsById = new Map((order.items || []).map((i) => [i.id, i]));
     const targets = []; // { item, split, qty }
+    // The facility can run more batches than the SO originally asked for and ship/invoice
+    // everything actually produced — the SO's ordered_qty is NOT a hard invoicing ceiling here.
+    // Each batch (split) caps itself, by its own remaining production capacity; a split already
+    // used earlier in this same request can't be double-spent.
+    const usedSplitIds = new Set();
 
     for (const raw of requestedLines) {
       const itemId = parseInt(raw?.itemId, 10);
@@ -2055,26 +2060,50 @@ async function fastForwardInvoice(req, res) {
       if (!item) continue; // unknown / foreign-order item id — skip rather than fail the whole request
 
       const splits = item.batchSplits || [];
-      // Already accounted for: whatever's on a split that's already invoiced (or later). Caps the
-      // entered qty so this can never invoice more than the line's ordered qty in total.
-      const alreadyDone = splits
-        .filter((s) => TERMINAL_FF_STATUSES.includes(s.ff_status))
-        .reduce((sum, s) => sum + (Number(s.picked_qty ?? s.fg_qty) || 0), 0);
-      const remaining = Math.max(0, (Number(item.ordered_qty) || 0) - alreadyDone);
-      const qty = Math.min(qtyRequested, remaining);
-      if (qty <= 0) continue;
 
-      const openSplits = splits.filter((s) => !TERMINAL_FF_STATUSES.includes(s.ff_status));
-      const split = openSplits.length > 0
-        ? openSplits[0]
-        : await FulfillmentBatchSplit.create({
+      // A split still has room to fast-forward into whenever its own batch has un-invoiced
+      // production left, regardless of ff_status — a split can already be 'invoiced' for a partial
+      // qty (e.g. 204 of a 258-unit batch already invoiced) while 54 units of that SAME batch are
+      // still un-produced/un-invoiced. Only an unlinked (no real production batch) split has no
+      // numeric ceiling of its own, and stops being reusable once it's been through a terminal
+      // status once (nothing more to top up on a one-off manual entry).
+      const splitCapacity = (s) => {
+        if (s.production_batch_id != null) {
+          const planned = Number(s.planned_qty) || 0;
+          const done = Math.max(Number(s.fg_qty) || 0, Number(s.picked_qty) || 0);
+          return Math.max(0, planned - done);
+        }
+        return TERMINAL_FF_STATUSES.includes(s.ff_status) ? 0 : Infinity;
+      };
+      const eligibleSplits = splits.filter((s) => splitCapacity(s) > 0 && !usedSplitIds.has(s.id));
+      // The UI shows every batch with remaining capacity as its own row so the user picks which
+      // real batch (not e.g. a buffer/rework one) the qty belongs to — trust that explicit choice
+      // over guessing. requestedSplitId is required whenever the item has an eligible split to pick
+      // from; only an item with none yet (brand new, no batch linked) falls back to a placeholder.
+      const requestedSplitId = raw?.splitId != null ? parseInt(raw.splitId, 10) : null;
+      let split;
+      if (requestedSplitId != null && !Number.isNaN(requestedSplitId)) {
+        split = eligibleSplits.find((s) => s.id === requestedSplitId);
+        if (!split) continue; // no remaining capacity / doesn't belong to this item — skip rather than mistarget
+      } else if (eligibleSplits.length > 0) {
+        split = eligibleSplits[0];
+      } else {
+        split = await FulfillmentBatchSplit.create({
           fulfillment_order_item_id: item.id,
           fulfillment_order_id: id,
           production_batch_id: null,
-          planned_qty: qty,
+          planned_qty: 0,
           fg_qty: 0,
           ff_status: 'fg_pending',
         }, { transaction: tx });
+      }
+
+      // Cap by this split's own remaining production capacity — never let a fast-forward exceed
+      // what that specific batch actually has left to make (no order-level ceiling above that).
+      const qty = Math.min(qtyRequested, splitCapacity(split));
+      if (qty <= 0) continue;
+      if (split.id != null) usedSplitIds.add(split.id);
+
       targets.push({ item, split, qty });
     }
 
@@ -2109,16 +2138,23 @@ async function fastForwardInvoice(req, res) {
         taxAmount,
         lineTotal: amount + taxAmount,
       });
+      // Accumulate onto whatever this split already had picked/invoiced — a split that's already
+      // 'invoiced' for a first partial qty (e.g. 204 of 258) can still be topped up for the rest
+      // (54 more) via a later Fast Forward; overwriting picked_qty here would silently erase that
+      // earlier qty. invoice_no moves to the newest invoice (same as every other invoicing path in
+      // this codebase — a split only ever points at its latest invoice); the original invoice
+      // itself is untouched and stays fully intact in fulfillment_invoices.
+      const newPickedQty = (Number(split.picked_qty) || 0) + qty;
       split.set({
         ff_status: 'invoiced',
         invoice_no: invoiceNo,
-        picked_qty: qty,
-        fg_qty: Math.max(Number(split.fg_qty) || 0, qty),
+        picked_qty: newPickedQty,
+        fg_qty: Math.max(Number(split.fg_qty) || 0, newPickedQty),
         // A reused split can carry a stale planned_qty from Production (e.g. a small test batch
         // size) that has nothing to do with the qty just fast-forwarded — never show "Planned"
         // lower than what's now actually on the invoice. Only ever grows it, never shrinks a
         // genuinely larger real batch plan.
-        planned_qty: Math.max(Number(split.planned_qty) || 0, qty),
+        planned_qty: Math.max(Number(split.planned_qty) || 0, newPickedQty),
       });
       await split.save({ transaction: tx });
     }

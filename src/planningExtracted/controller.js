@@ -1105,6 +1105,187 @@ async function syncPlanningExtractedFromSalesOrders({ force = false } = {}) {
   }
 }
 
+/** ── PIs Extracted list: search / status-bucket / date-range / sort helpers ──────────────────
+ * Mirror the client-side logic that used to run in Planning.tsx over the full bulk-fetched list
+ * (pisSearchIndex, filteredPisOrders, sortValueForPisOrder, buildPisPlanStatusView /
+ * pisPlanStatusSortValue) so the paginated endpoint can filter/sort/paginate server-side instead
+ * of shipping every row to the browser just to slice 20-100 of them out.
+ */
+
+function pisParseUnitCount(value) {
+  if (typeof value === 'number') return Math.max(0, Math.round(value));
+  const n = parseInt(String(value ?? '').replace(/[^\d.-]/g, ''), 10);
+  return Number.isFinite(n) ? Math.max(0, n) : 0;
+}
+
+function pisParseKgCount(value) {
+  if (typeof value === 'number') return Math.max(0, value);
+  const n = parseFloat(String(value ?? '').replace(/[^\d.-]/g, ''));
+  return Number.isFinite(n) ? Math.max(0, n) : 0;
+}
+
+function pisBatchUnitsFromSize(formattedRow, sizeKg) {
+  const orderUnits = pisParseUnitCount(formattedRow.orderQty);
+  const totalKg = pisParseKgCount(formattedRow.totalKg);
+  if (orderUnits <= 0 || totalKg <= 0) return 0;
+  const kgPerUnit = totalKg / orderUnits;
+  const kg = Number(sizeKg) || 0;
+  if (kg <= 0 || kgPerUnit <= 0) return 0;
+  return Math.max(0, Math.round(kg / kgPerUnit));
+}
+
+/**
+ * Numeric "Plan Status" sort value — mirrors pisPlanStatusSortValue(buildPisPlanStatusView(...))
+ * on the client. Uses only sent_batch_indices/custom_batches (already on the planning_extracted
+ * row), not the live planning_batches sizes or production stage — those only affect the *label*
+ * shown per batch (e.g. "PRODUCTION" vs "PROCUREMENT"), not this ordering value, so this is a
+ * faithful, join-free replica good enough for server-side ordering.
+ */
+function pisPlanStatusSortValueForRow(formattedRow) {
+  const orderUnits = pisParseUnitCount(formattedRow.orderQty);
+  const customBatches = Array.isArray(formattedRow.customBatches) ? formattedRow.customBatches : [];
+  const sentIdx = new Set((formattedRow.sentBatchIndices ?? []).map(Number));
+  const sentUnits = customBatches
+    .map((cb, idx) => ({ sizeKg: Number(cb?.sizeKg) || 0, sent: sentIdx.has(idx) }))
+    .filter((b) => b.sent)
+    .map((b) => pisBatchUnitsFromSize(formattedRow, b.sizeKg));
+
+  if (sentUnits.length === 0) return -1; // 'pending' — no batch sent yet
+
+  const plannedUnits = sentUnits.reduce((s, u) => s + u, 0);
+  const underCoveredUnits = Math.max(0, orderUnits - plannedUnits);
+  const coveredSum = sentUnits.reduce(
+    (s, u) => s + (orderUnits > 0 ? Math.min(100, Math.round((u / orderUnits) * 100)) : 0),
+    0
+  );
+  return underCoveredUnits > 0 ? Math.min(99, coveredSum) : coveredSum;
+}
+
+function pisMatchesStatusBucket(formattedRow, remainingUnits, status) {
+  if (!status || status === 'All') return true;
+  if (status === 'Prod Released') return formattedRow.bomStatus === 'Production Released';
+  if (status === 'In Progress') return formattedRow.bomStatus === 'In Progress';
+  if (status === 'Planned') return formattedRow.bomStatus === 'Planned';
+  if (status === 'Not Planned') return remainingUnits > 0 && (Number(formattedRow.batchCount) || 0) === 0;
+  return true;
+}
+
+function pisParseCalendarDateInput(value) {
+  const s = String(value ?? '').trim();
+  if (!s) return null;
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const d = iso
+    ? new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]))
+    : new Date(s);
+  if (Number.isNaN(d.getTime())) return null;
+  return iso ? d : new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function pisParseRecordCalendarDate(value) {
+  if (value == null || value === '') return null;
+  const d = new Date(String(value));
+  if (Number.isNaN(d.getTime())) return null;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function pisDayStartMs(d) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+/** Mirrors matchesDateRangeFilter in src/utils/dateRangeFilter.ts (from/to are YYYY-MM-DD). */
+function pisMatchesDateRange(recordDate, from, to) {
+  const f = String(from ?? '').trim();
+  const t = String(to ?? '').trim();
+  if (!f && !t) return true;
+  const rec = pisParseRecordCalendarDate(recordDate);
+  if (!rec) return false;
+  const recMs = pisDayStartMs(rec);
+  const fromD = pisParseCalendarDateInput(f);
+  const toD = pisParseCalendarDateInput(t);
+  if (fromD && !toD) return recMs >= pisDayStartMs(fromD);
+  if (!fromD && toD) return recMs <= pisDayStartMs(toD);
+  if (fromD && toD) {
+    const lo = Math.min(pisDayStartMs(fromD), pisDayStartMs(toD));
+    const hi = Math.max(pisDayStartMs(fromD), pisDayStartMs(toD));
+    return recMs >= lo && recMs <= hi;
+  }
+  return true;
+}
+
+function pisSortValueForRow(formattedRow, sortBy) {
+  switch (sortBy) {
+    case 'soDate':
+      return formattedRow.orderDate ? new Date(formattedRow.orderDate).getTime() : 0;
+    case 'soNo':
+      return formattedRow.soNumber || '';
+    case 'client':
+      return formattedRow.customerName || '';
+    case 'productCode':
+      return formattedRow.productCode || '';
+    case 'productName':
+      return formattedRow.productName || '';
+    case 'ordQty':
+      return pisParseUnitCount(formattedRow.orderQty);
+    case 'planStatus':
+      return pisPlanStatusSortValueForRow(formattedRow);
+    case 'planningSla':
+      return Number(formattedRow.planningSla?.elapsedHours) || 0;
+    default:
+      return '';
+  }
+}
+
+function pisCompareSortValues(a, b, dir) {
+  let cmp;
+  if (typeof a === 'number' && typeof b === 'number') cmp = a - b;
+  else cmp = String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
+  return dir === 'desc' ? -cmp : cmp;
+}
+
+/** Same tie-break as the client's default order: Plan Status ASC, then SO Date DESC, then id. */
+function pisSortRows(rows, sortBy, sortDir) {
+  const sorted = [...rows];
+  if (!sortBy) {
+    sorted.sort((a, b) => {
+      const cmpStatus = pisCompareSortValues(
+        pisPlanStatusSortValueForRow(a),
+        pisPlanStatusSortValueForRow(b),
+        'asc'
+      );
+      if (cmpStatus !== 0) return cmpStatus;
+      const cmpDate = pisCompareSortValues(
+        a.orderDate ? new Date(a.orderDate).getTime() : 0,
+        b.orderDate ? new Date(b.orderDate).getTime() : 0,
+        'desc'
+      );
+      if (cmpDate !== 0) return cmpDate;
+      return String(a.id).localeCompare(String(b.id), undefined, { numeric: true, sensitivity: 'base' });
+    });
+    return sorted;
+  }
+  sorted.sort((a, b) => {
+    const cmp = pisCompareSortValues(pisSortValueForRow(a, sortBy), pisSortValueForRow(b, sortBy), sortDir);
+    if (cmp !== 0) return cmp;
+    return String(a.id).localeCompare(String(b.id), undefined, { numeric: true, sensitivity: 'base' });
+  });
+  return sorted;
+}
+
+/** Same aggregate KPIs Planning.tsx's tabStats memo used to compute from the full bulk-fetched
+ *  list — always over the FULL set (search/status/date filters never narrowed these cards). */
+function pisComputeStats(formattedRows) {
+  const soKey = (r) => String(r.soNumber ?? '').trim().toUpperCase();
+  const isBomConfirmed = (r) => r.bomConfirmedAt != null;
+  const distinctSOs = new Set(formattedRows.map(soKey).filter(Boolean)).size;
+  const totalPIs = formattedRows.length;
+  const batchesRequired = formattedRows.reduce((s, r) => s + (r.batchesRequired ?? 0), 0);
+  const bomsConfirmed = formattedRows.filter(isBomConfirmed).length;
+  const notPlanned = new Set(
+    formattedRows.filter((r) => !isBomConfirmed(r)).map(soKey).filter(Boolean)
+  ).size;
+  return { distinctSOs, totalPIs, batchesRequired, bomsConfirmed, notPlanned };
+}
+
 async function listPlanningExtracted(req, res) {
   try {
     await syncPlanningExtractedFromSalesOrders();
@@ -1118,6 +1299,13 @@ async function listPlanningExtracted(req, res) {
       return Number.isNaN(n) ? null : n;
     };
 
+    // Hide soft-deleted planning rows (e.g. those removed when their SO went Draft/Cancelled).
+    const notDeleted = { deleted_at: { [Op.is]: null } };
+    const includes = [
+      { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'order_date', 'expected_shipment_date', 'status'], required: false },
+      { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'], required: false },
+    ];
+
     if (wantsPagination) {
       const limit = limitQ != null ? normalizeInt(limitQ) : 20;
       const offset = offsetQ != null ? normalizeInt(offsetQ) : 0;
@@ -1125,28 +1313,59 @@ async function listPlanningExtracted(req, res) {
         return res.status(400).json({ error: 'Invalid pagination params (limit must be > 0, offset must be >= 0)' });
       }
 
-      // Hide soft-deleted planning rows (e.g. those removed when their SO went Draft/Cancelled).
-      const notDeleted = { deleted_at: { [Op.is]: null } };
-      const total = await PlanningExtracted.count({ where: notDeleted });
       const rows = await PlanningExtracted.findAll({
         where: notDeleted,
-        include: [
-          { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'order_date', 'expected_shipment_date', 'status'], required: false },
-          { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'], required: false },
-        ],
+        include: includes,
         order: [['due_date', 'ASC'], ['id', 'ASC']],
+      });
+
+      // Format once, keep remainingUnits alongside (needed for the "Not Planned" bucket, mirrors
+      // formatRow's own SLA computation) without re-deriving it from the camelCase response shape.
+      const withRemaining = rows.map((row) => {
+        const d = row.get ? row.get({ plain: true }) : row;
+        const { remainingUnits } = getCreatedAndRemainingUnitsFromPlanningRow(d);
+        return { formatted: formatRow(row), remainingUnits };
+      });
+
+      const stats = pisComputeStats(withRemaining.map((r) => r.formatted));
+
+      const search = String(req.query.search ?? '').trim().toLowerCase();
+      const status = String(req.query.status ?? 'All');
+      const from = String(req.query.from ?? '');
+      const to = String(req.query.to ?? '');
+
+      let filtered = withRemaining;
+      if (from || to) {
+        filtered = filtered.filter((r) => pisMatchesDateRange(r.formatted.orderDate, from, to));
+      }
+      if (status && status !== 'All') {
+        filtered = filtered.filter((r) => pisMatchesStatusBucket(r.formatted, r.remainingUnits, status));
+      }
+      if (search) {
+        filtered = filtered.filter((r) => {
+          const f = r.formatted;
+          return `${f.productName || ''} ${f.productCode || ''} ${f.soNumber || ''} ${f.customerName || ''}`
+            .toLowerCase()
+            .includes(search);
+        });
+      }
+
+      const sortBy = req.query.sortBy ? String(req.query.sortBy) : null;
+      const sortDir = req.query.sortDir === 'desc' ? 'desc' : 'asc';
+      const sortedFormatted = pisSortRows(filtered.map((r) => r.formatted), sortBy, sortDir);
+
+      return res.json({
+        rows: sortedFormatted.slice(offset, offset + limit),
+        total: sortedFormatted.length,
         limit,
         offset,
+        stats,
       });
-      return res.json({ rows: rows.map(formatRow), total, limit, offset });
     }
 
     const rows = await PlanningExtracted.findAll({
-      where: { deleted_at: { [Op.is]: null } },
-      include: [
-        { model: SalesOrder, as: 'salesOrder', attributes: ['id', 'order_id', 'customer_name', 'order_date', 'expected_shipment_date', 'status'], required: false },
-        { model: Product, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'lead_time_days'], required: false },
-      ],
+      where: notDeleted,
+      include: includes,
       order: [['due_date', 'ASC'], ['id', 'ASC']],
     });
     res.json(rows.map(formatRow));
@@ -1732,6 +1951,56 @@ async function reconcilePlanningBatchDenorm(planRow, rows) {
 }
 
 /**
+ * Planning batch ids whose production batch is fully fulfilled (every fulfillment split against it
+ * has reached a terminal ff_status) — these no longer need RM/PM tracking in Items Involved, since
+ * their materials were already consumed and the goods are invoiced/shipped/delivered/closed.
+ * Cross-module require is lazy (same pattern computeFulfilledUnitsForPlanningRow uses) to avoid a
+ * circular require at load time.
+ * @param {Array<number>} planningBatchIds
+ * @returns {Promise<Set<number>>}
+ */
+async function getFulfilledPlanningBatchIdSet(planningBatchIds) {
+  const ids = [...new Set(planningBatchIds.filter((v) => v != null).map((v) => Number(v)))];
+  if (ids.length === 0) return new Set();
+
+  const prodBatches = await ProductionBatch.findAll({
+    where: { planning_batch_id: { [Op.in]: ids } },
+    attributes: ['id', 'planning_batch_id'],
+  });
+  if (prodBatches.length === 0) return new Set();
+
+  const planningIdByProdId = new Map();
+  const prodIds = [];
+  for (const pb of prodBatches) {
+    const prodId = Number(pb.id);
+    planningIdByProdId.set(prodId, Number(pb.planning_batch_id));
+    prodIds.push(prodId);
+  }
+
+  const { FulfillmentBatchSplit } = require('../fulfillment/models');
+  const splits = await FulfillmentBatchSplit.findAll({
+    where: { production_batch_id: { [Op.in]: prodIds } },
+    attributes: ['production_batch_id', 'ff_status'],
+  });
+  const statusesByProdId = new Map();
+  for (const s of splits) {
+    const prodId = Number(s.production_batch_id);
+    if (!statusesByProdId.has(prodId)) statusesByProdId.set(prodId, []);
+    statusesByProdId.get(prodId).push(s.ff_status);
+  }
+
+  const TERMINAL_FF_STATUSES = ['invoiced', 'shipped', 'delivered', 'closed'];
+  const fulfilledPlanningBatchIds = new Set();
+  for (const [prodId, statuses] of statusesByProdId) {
+    if (statuses.length > 0 && statuses.every((st) => TERMINAL_FF_STATUSES.includes(st))) {
+      const planningId = planningIdByProdId.get(prodId);
+      if (planningId != null) fulfilledPlanningBatchIds.add(planningId);
+    }
+  }
+  return fulfilledPlanningBatchIds;
+}
+
+/**
  * Units already fulfilled outside the normal batch pipeline (e.g. via Fast Forward) for this
  * planning row's product, on its own SO — matched by product_code, the same authoritative key
  * batchSplitSync.js uses between Production and Fulfillment. Cross-module require is lazy (same
@@ -1914,13 +2183,23 @@ async function createOrUpdateBatches(req, res) {
       const existingRow = existing[i];
       if (existingRow) {
         const existingId = existingRow.get ? existingRow.get('id') : existingRow.id;
-        try {
-          await assertPlanningBatchEditable(existingId);
-        } catch (lockErr) {
-          if (lockErr.status === 403) {
-            return res.status(403).json({ error: lockErr.message, code: lockErr.code || 'BATCH_LOCKED_BY_PRODUCTION' });
+        const existingBatchCode = existingRow.get ? existingRow.get('batch_code') : existingRow.batch_code;
+        const existingSizeKg = existingRow.get ? existingRow.get('size_kg') : existingRow.size_kg;
+        // The frontend always resends every batch on the row, not just the one it's actually
+        // touching (e.g. adding a new sibling batch resends the existing ones unchanged) — only
+        // assert the Production lock when THIS row's own values would actually change, so a
+        // batch Production has already cleared doesn't block work on a different batch next to it.
+        const willChangeCode = existingBatchCode !== batchCode;
+        const willChangeSize = sizeKg != null && Number(existingSizeKg) !== sizeKg;
+        if (willChangeCode || willChangeSize) {
+          try {
+            await assertPlanningBatchEditable(existingId);
+          } catch (lockErr) {
+            if (lockErr.status === 403) {
+              return res.status(403).json({ error: lockErr.message, code: lockErr.code || 'BATCH_LOCKED_BY_PRODUCTION' });
+            }
+            throw lockErr;
           }
-          throw lockErr;
         }
         existingRow.batch_code = batchCode;
         if (sizeKg != null) existingRow.size_kg = sizeKg;
@@ -2852,6 +3131,13 @@ async function getItemsInvolved(req, res) {
       order: [['planning_extracted_id', 'ASC'], ['sequence', 'ASC']],
     });
 
+    // Fully fulfilled batches (invoiced/shipped/delivered/closed) are done — their materials were
+    // already consumed, so they no longer contribute demand or false shortages here.
+    const fulfilledPlanningBatchIds = await getFulfilledPlanningBatchIdSet(batches.map((b) => b.id));
+    const unfulfilledBatches = fulfilledPlanningBatchIds.size > 0
+      ? batches.filter((b) => !fulfilledPlanningBatchIds.has(Number(b.id)))
+      : batches;
+
     const batchesByPlanId = new Map();
     const rmCodes = new Set();
     const pmCodes = new Set();
@@ -2864,7 +3150,7 @@ async function getItemsInvolved(req, res) {
         if (p.code) pmCodes.add(p.code);
       }
     }
-    for (const b of batches) {
+    for (const b of unfulfilledBatches) {
       const plain = b.get ? b.get({ plain: true }) : b;
       const pid = plain.planning_extracted_id;
       if (!batchesByPlanId.has(pid)) batchesByPlanId.set(pid, []);
@@ -3699,7 +3985,13 @@ async function getItemsInvolvedByPlanningId(req, res) {
     pmIds.push(...pmReq.keys());
 
     const planBatchesList = await PlanningBatch.findAll({ where: { planning_extracted_id: id }, order: [['sequence', 'ASC']] });
-    const planBatchesPlain = planBatchesList.map((b) => (b.get ? b.get({ plain: true }) : b));
+    const planBatchesAllPlain = planBatchesList.map((b) => (b.get ? b.get({ plain: true }) : b));
+    // Fully fulfilled batches (invoiced/shipped/delivered/closed) are done — their materials were
+    // already consumed, so they no longer contribute demand or false shortages here.
+    const fulfilledPlanningBatchIds = await getFulfilledPlanningBatchIdSet(planBatchesAllPlain.map((b) => b.id));
+    const planBatchesPlain = fulfilledPlanningBatchIds.size > 0
+      ? planBatchesAllPlain.filter((b) => !fulfilledPlanningBatchIds.has(Number(b.id)))
+      : planBatchesAllPlain;
     const planBatchesSent = filterPlanningBatchesSentToProduction(plain, planBatchesPlain);
     // Requirement follows what has been RELEASED. See releasedRequirementFraction.
     const releasedFraction = releasedRequirementFraction(plain, planBatchesSent);
