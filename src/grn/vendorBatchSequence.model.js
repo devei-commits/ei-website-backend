@@ -2,9 +2,8 @@
  * Single-row-per-prefix atomic counter backing system-generated Vendor Batch Nos
  * (format B126-#####) pre-filled per batch row in the GRN "Batch Details" step.
  *
- * Table created by the schema patch in src/db/ensureVendorBatchSequenceTable.js (no
- * db.sync({ alter: true }) — schema is patch-driven). See allocateNextVendorBatchNos in
- * src/grn/controller.js for how this row is incremented atomically.
+ * See allocateNextVendorBatchNos in src/grn/controller.js for how this row is incremented
+ * atomically.
  */
 const { DataTypes, Model } = require('sequelize');
 const db = require('../../db');

@@ -82,15 +82,10 @@ function grnCompletionBlockers(plain) {
   const rackCode = String(p.location_prefix || '').trim();
   if (!rackCode) {
     blockers.push('Location prefix (rack code) is required');
-  } else if (!steps.includes('Rack Assigned') && rackCode.toUpperCase() === 'DEFAULT') {
-    // A rack code alone isn't proof Assign Rack actually ran — 'DEFAULT' is the auto-filled
-    // placeholder a GRN carries before racking, and without this check 'Complete GRN' could finish
-    // a GRN that was never really racked. Once status flipped to 'GRN Complete' the row had no way
-    // back to Assign Rack at all (GRN-2026-0259: Rack-DEFAULT, no 'Rack Assigned' stamp, no
-    // put-away photos, stuck showing only GRN Copy forever). Mirrors the frontend's
-    // isInboundGrnRacked, including its exception for a real, deliberately-named "DEFAULT" rack —
-    // once Assign Rack has actually run (the stamp is present) any rack code is accepted.
-    blockers.push('Rack must be assigned via Assign Rack, not left on the default placeholder');
+  } else if (!steps.includes('Rack Assigned')) {
+    // A rack code alone is not proof that Assign Rack actually ran. Completion must follow the
+    // explicit put-away step for every rack, including named and custom racks.
+    blockers.push('Rack must be assigned via Assign Rack before GRN completion');
   }
   if (!String(p.location_zone || '').trim()) blockers.push('Storage zone is required');
   return blockers;

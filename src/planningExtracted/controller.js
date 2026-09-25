@@ -2566,11 +2566,26 @@ async function removePlanningBatchCascade(planningId, batchId, opts = {}) {
   const removedIndex = removedSeq - 1; // 0-based index used by sent/buffer arrays
 
   await db.transaction(async (t) => {
+    // Captured BEFORE destroy(): production_batches.planning_batch_id has ON DELETE SET NULL, so the
+    // instant the planning batch row is destroyed below, Postgres nulls this FK on every linked
+    // production batch — in the SAME transaction, so a soft-delete keyed on planning_batch_id = batchId
+    // run afterward matches nothing and the production batch is left behind, active and orphaned
+    // (exactly the state revive-planning-batches.js's report warns about). Match by production_batches.id
+    // instead, using ids resolved while the FK still points at the batch being deleted.
+    const linkedProdBatches = await ProductionBatch.findAll({
+      where: activeRowWhere({ planning_batch_id: batchId }),
+      attributes: ['id'],
+      transaction: t,
+    });
+    const linkedProdBatchIds = linkedProdBatches.map((r) => (r.get ? r.get('id') : r.id));
+
     await batch.destroy({ transaction: t });
 
     // Also remove the linked production batch(es) so the deletion propagates to the Production side.
     // Soft-delete (mirrors production's own deleteBatch) — the Production views filter to active rows.
-    await softDeleteWhere(ProductionBatch, { planning_batch_id: batchId }, { transaction: t });
+    if (linkedProdBatchIds.length > 0) {
+      await softDeleteWhere(ProductionBatch, { id: linkedProdBatchIds }, { transaction: t });
+    }
 
     // Reindex survivors to a gapless 1..N. Two-phase to avoid transient collisions on the
     // unique(planning_extracted_id, sequence) constraint.
