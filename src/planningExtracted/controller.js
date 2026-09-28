@@ -1804,10 +1804,11 @@ async function listAllBatches(req, res) {
       const sentIndices = Array.isArray(plan.sent_batch_indices) ? plan.sent_batch_indices : [];
       // Type-safe sent check (handles JSON arrays containing "1" and 1 consistently).
       const sent = isBatchIndexSent(sentIndices, (Number(d.sequence) || 0) - 1);
-      const productionBmrStatus = prodBmrByPlanningBatchId.has(d.id)
+      const prodState = prodBmrByPlanningBatchId.has(d.id)
         ? prodBmrByPlanningBatchId.get(d.id)
         : null;
-      const editable = isPlanningBatchEditableByProduction(productionBmrStatus);
+      const productionBmrStatus = prodState?.bmr_status || null;
+      const editable = isPlanningBatchEditableByProduction(prodState);
       return {
         id: d.id,
         planningExtractedId: d.planning_extracted_id,
@@ -2134,13 +2135,20 @@ async function createOrUpdateBatches(req, res) {
 
     // Two invariants the bulk save previously had no opinion on, and which together let a 200 KG
     // order end up with a 400 kg plan whose already-released batch had been resized under it:
-    //   1. a batch that is already sent to production is fixed at the size its BMR was cut for;
+    //   1. a sent batch whose dispensing tray is generated is fixed at the size it was dispensed for
+    //      (before that, a sent batch may still be resized — Production's batch_size follows below);
     //   2. the plan as a whole cannot allocate more than the order, buffer batches excepted.
+    const existingProdState = await loadProductionBmrStatusByPlanningBatchIds(
+      existing.map((r) => (r.get ? r.get('id') : r.id))
+    );
     try {
       const sentRaw = planRow.get ? planRow.get('sent_batch_indices') : planRow.sent_batch_indices;
       const bufferRaw = planRow.get ? planRow.get('buffer_batch_indices') : planRow.buffer_batch_indices;
       const totalKgDisplay = planRow.get ? planRow.get('total_kg_display') : planRow.total_kg_display;
-      assertSentBatchSizesUnchanged(batches, existing, sentRaw);
+      assertSentBatchSizesUnchanged(batches, existing, sentRaw, (row) => {
+        const rowId = Number(row.get ? row.get('id') : row.id);
+        return !isPlanningBatchEditableByProduction(existingProdState.get(rowId) || null);
+      });
       assertBatchPlanWithinOrder(batches, totalKgDisplay, bufferRaw);
     } catch (guardErr) {
       if (guardErr.status) {
@@ -2211,6 +2219,7 @@ async function createOrUpdateBatches(req, res) {
         if (!hasRm) existingRow.rm_lines = bomCopy.rmLines;
         if (!hasPm) existingRow.pm_lines = bomCopy.pmLines;
         await existingRow.save();
+        if (willChangeSize) await syncProductionBatchSizeFromPlanningBatch(existingId, sizeKg);
       } else {
         await PlanningBatch.create({
           planning_extracted_id: id,
@@ -2285,11 +2294,12 @@ async function createOrUpdateBatches(req, res) {
 
 function formatBatchRow(r, prodBmrByPlanningBatchId) {
   const d = r.get ? r.get({ plain: true }) : r;
-  const productionBmrStatus =
+  const prodState =
     prodBmrByPlanningBatchId && prodBmrByPlanningBatchId.has(d.id)
       ? prodBmrByPlanningBatchId.get(d.id)
       : null;
-  const editable = isPlanningBatchEditableByProduction(productionBmrStatus);
+  const productionBmrStatus = prodState?.bmr_status || null;
+  const editable = isPlanningBatchEditableByProduction(prodState);
   return {
     id: d.id,
     planningExtractedId: d.planning_extracted_id,
@@ -2305,33 +2315,44 @@ function formatBatchRow(r, prodBmrByPlanningBatchId) {
   };
 }
 
-/** Map planning_batches.id → production_batches.bmr_status (when linked). */
+/** Production-batch fields that decide the Planning edit lock (see planningBatchEditLock.js). */
+const PROD_EDIT_LOCK_ATTRIBUTES = ['bmr_status', 'bpr_status', 'dispensing_rm', 'dispensing_pm'];
+
+/**
+ * Map planning_batches.id → linked production batch lock state
+ * `{ bmr_status, bpr_status, dispensing_rm, dispensing_pm }` (when linked).
+ */
 async function loadProductionBmrStatusByPlanningBatchIds(batchIds) {
   const ids = [...new Set((batchIds || []).map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0))];
   const map = new Map();
   if (ids.length === 0) return map;
   const prodRows = await ProductionBatch.findAll({
-    where: { planning_batch_id: { [Op.in]: ids } },
-    attributes: ['planning_batch_id', 'bmr_status'],
+    where: activeRowWhere({ planning_batch_id: { [Op.in]: ids } }),
+    attributes: ['planning_batch_id', ...PROD_EDIT_LOCK_ATTRIBUTES],
   });
   for (const row of prodRows) {
     const d = row.get ? row.get({ plain: true }) : row;
     if (d.planning_batch_id != null) {
-      map.set(Number(d.planning_batch_id), d.bmr_status || null);
+      map.set(Number(d.planning_batch_id), {
+        bmr_status: d.bmr_status || null,
+        bpr_status: d.bpr_status || null,
+        dispensing_rm: d.dispensing_rm || null,
+        dispensing_pm: d.dispensing_pm || null,
+      });
     }
   }
   return map;
 }
 
+/** Throws 403 once the batch's dispensing tray is generated in Production. */
 async function assertPlanningBatchEditable(batchId) {
   const prod = await ProductionBatch.findOne({
-    where: { planning_batch_id: batchId },
-    attributes: ['bmr_status'],
+    where: activeRowWhere({ planning_batch_id: batchId }),
+    attributes: PROD_EDIT_LOCK_ATTRIBUTES,
   });
   if (!prod) return null;
-  const bmr = prod.get ? prod.get('bmr_status') : prod.bmr_status;
-  if (!isPlanningBatchEditableByProduction(bmr)) {
-    const err = new Error(planningBatchEditLockReason(bmr));
+  if (!isPlanningBatchEditableByProduction(prod)) {
+    const err = new Error(planningBatchEditLockReason(prod));
     err.status = 403;
     err.code = 'BATCH_LOCKED_BY_PRODUCTION';
     throw err;
@@ -2339,18 +2360,17 @@ async function assertPlanningBatchEditable(batchId) {
   return null;
 }
 
-/** When Planning updates size_kg on a sent batch, mirror to linked Production row if BMR is still draft. */
+/** When Planning updates size_kg on a sent batch, mirror to linked Production row until its dispensing tray is generated. */
 async function syncProductionBatchSizeFromPlanningBatch(planningBatchId, sizeKg) {
   const id = Number(planningBatchId);
   const kg = Number(sizeKg);
   if (!Number.isFinite(id) || id <= 0 || !Number.isFinite(kg) || kg < 0) return;
   const prod = await ProductionBatch.findOne({
-    where: { planning_batch_id: id },
-    attributes: ['id', 'bmr_status', 'batch_size'],
+    where: activeRowWhere({ planning_batch_id: id }),
+    attributes: ['id', 'batch_size', ...PROD_EDIT_LOCK_ATTRIBUTES],
   });
   if (!prod) return;
-  const bmr = prod.get ? prod.get('bmr_status') : prod.bmr_status;
-  if (!isPlanningBatchEditableByProduction(bmr)) return;
+  if (!isPlanningBatchEditableByProduction(prod)) return;
   const rounded = Math.round(kg);
   const current = Number(prod.get ? prod.get('batch_size') : prod.batch_size);
   if (Number.isFinite(current) && current === rounded) return;
@@ -2723,6 +2743,28 @@ async function updateBatch(req, res) {
     if (body.sizeKg !== undefined) {
       const n = Number(body.sizeKg);
       batch.size_kg = Number.isFinite(n) && n >= 0 ? n : null;
+      // Same over-order ceiling as the bulk save — resizing one batch must not push the plan past the SO.
+      const planRow = await PlanningExtracted.findByPk(planningId, {
+        attributes: ['id', 'total_kg_display', 'buffer_batch_indices'],
+      });
+      if (planRow) {
+        const siblings = await PlanningBatch.findAll({
+          where: { planning_extracted_id: planningId },
+          attributes: ['id', 'size_kg'],
+          order: [['sequence', 'ASC']],
+        });
+        const sizes = siblings.map((s) => ({
+          sizeKg: Number(s.id) === batchId ? batch.size_kg : Number(s.size_kg),
+        }));
+        try {
+          assertBatchPlanWithinOrder(sizes, planRow.total_kg_display, planRow.buffer_batch_indices);
+        } catch (guardErr) {
+          if (guardErr.status) {
+            return res.status(guardErr.status).json({ error: guardErr.message, code: guardErr.code });
+          }
+          throw guardErr;
+        }
+      }
     }
     if (body.batchCode != null && String(body.batchCode).trim()) {
       batch.batch_code = String(body.batchCode).trim().slice(0, 64);

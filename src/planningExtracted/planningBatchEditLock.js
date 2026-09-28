@@ -1,18 +1,65 @@
 /**
- * Planning batch edits are allowed until Production confirms the linked BMR
- * (`bmr_status` advances past `draft`). After confirmation, quantities are fixed.
+ * Planning batch edits (size and BOM) are allowed until the batch's dispensing tray is generated in
+ * Production. Sending a batch to Production, confirming the BMR and reserving stock do NOT lock it:
+ * reservation coverage is recomputed from the live batch size, so a resize before dispensing just
+ * changes what still has to be reserved.
+ *
+ * "On the dispensing tray" mirrors the Production UI's `isBatchOnDispensingTray`
+ * (EI-Admin-Dashboard/src/lib/batchDispensingStatus.ts) — keep the two in sync.
  */
+const BMR_ON_DISPENSING_TRAY = ['rm_connected', 'dispensing', 'in_production', 'bulk_qc', 'qc_failed', 'cleared'];
+const BPR_ON_DISPENSING_TRAY = ['pm_connected', 'pm_dispensing', 'scheduled', 'filling', 'fill_qc', 'packaging', 'pack_qc', 'fg_ready'];
 
-function isPlanningBatchEditableByProduction(bmrStatus) {
-  const status = String(bmrStatus ?? '').trim().toLowerCase();
-  if (!status) return true;
-  return status === 'draft';
+function normStatus(v) {
+  return String(v ?? '').trim().toLowerCase();
 }
 
-function planningBatchEditLockReason(bmrStatus) {
-  if (isPlanningBatchEditableByProduction(bmrStatus)) return null;
-  const label = String(bmrStatus ?? '').trim() || 'confirmed';
-  return `Batch is confirmed by Production (${label}) and can no longer be edited.`;
+/**
+ * Normalise the linked production batch to `{ bmr_status, bpr_status, dispensing_rm, dispensing_pm }`.
+ * Accepts a production row / plain object, or a bare BMR status string.
+ */
+function productionLockState(prod) {
+  if (prod == null) return null;
+  if (typeof prod !== 'object') {
+    return { bmr_status: prod, bpr_status: null, dispensing_rm: null, dispensing_pm: null };
+  }
+  const d = typeof prod.get === 'function' ? prod.get({ plain: true }) : prod;
+  return {
+    bmr_status: d.bmr_status ?? null,
+    bpr_status: d.bpr_status ?? null,
+    dispensing_rm: d.dispensing_rm ?? null,
+    dispensing_pm: d.dispensing_pm ?? null,
+  };
+}
+
+function isProductionBatchOnDispensingTray(prod) {
+  const s = productionLockState(prod);
+  if (!s) return false;
+  const rmCount = Array.isArray(s.dispensing_rm) ? s.dispensing_rm.length : 0;
+  const pmCount = Array.isArray(s.dispensing_pm) ? s.dispensing_pm.length : 0;
+  if (rmCount > 0 || pmCount > 0) return true;
+  return BMR_ON_DISPENSING_TRAY.includes(normStatus(s.bmr_status))
+    || BPR_ON_DISPENSING_TRAY.includes(normStatus(s.bpr_status));
+}
+
+/** @param prod linked production batch row (or its BMR status string); null when not sent yet. */
+function isPlanningBatchEditableByProduction(prod) {
+  return !isProductionBatchOnDispensingTray(prod);
+}
+
+function planningBatchEditLockReason(prod) {
+  if (isPlanningBatchEditableByProduction(prod)) return null;
+  const label = String(productionLockState(prod)?.bmr_status ?? '').trim() || 'dispensing';
+  return `Batch dispensing tray is already generated in Production (${label}) and it can no longer be edited.`;
+}
+
+/**
+ * Production has confirmed the BMR (advanced past `draft`). SO cancellation uses this — it must not
+ * silently drop a batch Production has committed to, a stricter bar than Planning's edit lock.
+ */
+function isProductionBatchConfirmed(bmrStatus) {
+  const status = normStatus(bmrStatus);
+  return Boolean(status) && status !== 'draft';
 }
 
 /**
@@ -64,23 +111,23 @@ function indexSet(raw) {
 }
 
 /**
- * A batch that has been sent to production is a commitment: sending it created the BMR at that
- * size, and the floor is making that amount. Its size must not drift afterwards.
- *
- * The BMR-status lock alone does not cover this — a freshly sent batch sits at `bmr_status: 'draft'`
- * until Production confirms it, and `isPlanningBatchEditableByProduction('draft')` is true. That gap
- * is what let a released 100 kg batch be silently rewritten to 200 kg by a bulk save.
+ * A sent batch whose dispensing tray is generated is a commitment: material has been connected or
+ * dispensed for that size, so its size must not drift afterwards. Before that point a sent batch may
+ * be resized — the caller re-syncs Production's batch_size.
  *
  * @param {Array} batches   incoming payload, positional (index 0 = sequence 1)
  * @param {Array} existing  current planning_batches rows, ordered by sequence
  * @param {*} sentRaw       PI.sent_batch_indices (0-based)
+ * @param {(row: any, index: number) => boolean} [isLocked]  whether that sent row is past the
+ *   dispensing-tray lock. Omitted → every sent batch is treated as locked.
  */
-function assertSentBatchSizesUnchanged(batches, existing, sentRaw) {
+function assertSentBatchSizesUnchanged(batches, existing, sentRaw, isLocked) {
   const sent = indexSet(sentRaw);
   if (sent.size === 0) return;
   for (let i = 0; i < (existing || []).length; i += 1) {
     if (!sent.has(i)) continue;
     const row = existing[i];
+    if (typeof isLocked === 'function' && !isLocked(row, i)) continue;
     const currentSize = Number(row?.get ? row.get('size_kg') : row?.size_kg);
     if (!Number.isFinite(currentSize)) continue;
     const incoming = batches && batches[i] ? payloadSizeKg(batches[i]) : null;
@@ -88,7 +135,7 @@ function assertSentBatchSizesUnchanged(batches, existing, sentRaw) {
     if (Math.abs(incoming - currentSize) <= SIZE_EPS) continue;
     const code = (row?.get ? row.get('batch_code') : row?.batch_code) || `batch ${i + 1}`;
     const err = new Error(
-      `${code} is already sent to production at ${currentSize} kg and its size can no longer be changed.`
+      `${code} already has its dispensing tray generated at ${currentSize} kg and its size can no longer be changed.`
     );
     err.status = 409;
     err.code = 'SENT_BATCH_SIZE_LOCKED';
@@ -134,6 +181,8 @@ function assertBatchPlanWithinOrder(batches, totalKgDisplay, bufferRaw) {
 
 module.exports = {
   isPlanningBatchEditableByProduction,
+  isProductionBatchOnDispensingTray,
+  isProductionBatchConfirmed,
   planningBatchEditLockReason,
   validateUpdateOnlyBatchPayload,
   assertSentBatchSizesUnchanged,

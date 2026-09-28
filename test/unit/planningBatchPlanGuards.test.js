@@ -85,6 +85,21 @@ describe('assertSentBatchSizesUnchanged', () => {
     expect(err.code).toBe('SENT_BATCH_SIZE_LOCKED');
   });
 
+  it('allows resizing a sent batch whose dispensing tray is not generated yet', () => {
+    const isLocked = () => false;
+    expect(() =>
+      assertSentBatchSizesUnchanged([{ sizeKg: 80 }, { sizeKg: 100 }], existing, [0], isLocked)
+    ).not.toThrow();
+  });
+
+  it('still rejects resizing a sent batch already on the dispensing tray', () => {
+    const isLocked = (_row, i) => i === 0;
+    const err = thrown(() =>
+      assertSentBatchSizesUnchanged([{ sizeKg: 80 }, { sizeKg: 100 }], existing, [0, 1], isLocked)
+    );
+    expect(err.code).toBe('SENT_BATCH_SIZE_LOCKED');
+  });
+
   it('ignores a payload entry that omits the size (partial save)', () => {
     expect(() => assertSentBatchSizesUnchanged([{}], existing, [0])).not.toThrow();
   });

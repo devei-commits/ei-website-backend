@@ -1120,7 +1120,7 @@ async function findConfirmedProductionBatchBlockingCancel(salesOrderId) {
   if (!salesOrderId) return null;
   const PlanningExtracted = require('../planningExtracted/models');
   const PlanningBatch = require('../planningExtracted/planningBatchModel');
-  const { isPlanningBatchEditableByProduction } = require('../planningExtracted/planningBatchEditLock');
+  const { isProductionBatchConfirmed } = require('../planningExtracted/planningBatchEditLock');
 
   const planningRows = await PlanningExtracted.findAll({
     where: { sales_order_id: salesOrderId },
@@ -1153,7 +1153,7 @@ async function findConfirmedProductionBatchBlockingCancel(salesOrderId) {
   });
   for (const row of prodRows) {
     const d = row.get ? row.get({ plain: true }) : row;
-    if (isPlanningBatchEditableByProduction(d.bmr_status)) continue;
+    if (!isProductionBatchConfirmed(d.bmr_status)) continue;
     const meta = batchMetaById.get(d.planning_batch_id) || {};
     return { ...meta, bmrNo: d.bmr_no || null, bmrStatus: d.bmr_status || null };
   }
