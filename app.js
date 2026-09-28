@@ -54,32 +54,12 @@ const cors = require('cors');
 dotenv.config();
 
 require('./src/leadTime/leadTimeStatModel'); // §10 lead-time stats cache — table auto-syncs
-const { dropDuplicateConstraints } = require('./src/db/dropDuplicateConstraints');
-// Schema is patch-driven: `ensure*` column/table patches below are idempotent
-// (ADD COLUMN/CREATE TABLE IF NOT EXISTS) and safe to run on every boot — required so a fresh
-// dev DB, a restored backup, or prod all converge on the same schema the models expect.
-// 2026-09-02: restored 10 of these after commit 2a7b90b deleted them assuming they'd already
-// been applied everywhere — that DB drifted (see mrn_id 42703 incident) and several never had
-// been applied. Keep adding entries here whenever a model gains a column; never delete one.
-const { ensureLeadTimeStatsTable } = require('./src/leadTime/ensureLeadTimeStatsTable');
-const { ensurePurchaseOrderWorkflowColumns } = require('./src/purchaseOrders/ensurePurchaseOrderWorkflowColumns');
-const { ensureProcurementRequestColumns } = require('./src/procurementRequests/ensureProcurementRequestColumns');
-const { ensureQuotationAskColumns } = require('./src/planningQuotationAsks/ensureQuotationAskColumns');
-const { ensureWarehousePacksTable } = require('./src/warehousePacks/ensureWarehousePacksTable');
-const { ensureQualitySpecRulesTable } = require('./src/qualitySpecRules/ensureQualitySpecRulesTable');
-const { ensureTechnicalSpecRulesTable } = require('./src/technicalSpecRules/ensureTechnicalSpecRulesTable');
-const { ensureBomIsKitColumn } = require('./src/bom/ensureBomIsKitColumn');
-const { ensureProductionBatchColumns } = require('./src/production/ensureProductionBatchColumns');
-const { ensureUniversalSwapColumns } = require('./src/universalSwap/ensureUniversalSwapColumns');
 const warehousePacksRouters = require('./src/warehousePacks/routers');
 require('./src/customizationPackaging/models');
 const customizationPackagingAdminRouter = require('./src/customizationPackaging/routers');
 const { listPublicCustomizationPackaging } = require('./src/customizationPackaging/controller');
-const { ensureCustomizationPackagingPresets } = require('./src/customizationPackaging/ensureCustomizationPackagingPresets');
 require('./src/quotations/models');
-const { seedQuotationDefaults } = require('./src/quotations/seedQuotationDefaults');
 const quotationRouters = require('./src/quotations/routers');
-const { ensureTreasuryDefaults } = require('./src/treasury/ensureTreasuryDefaults');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -223,23 +203,10 @@ app.use((req, res) => {
 const { registerActiveReadScopes } = require('./src/lib/registerActiveReadScopes');
 registerActiveReadScopes(db);
 
-function isManagedProductionDatabase() {
-    if (process.env.NODE_ENV === 'production') return true;
-    const databaseUrl = process.env.DATABASE_URL || '';
-    return databaseUrl.includes('rds.amazonaws.com');
-}
-
-function shouldRunSyncAlter() {
-    const override = String(process.env.DB_SYNC_ALTER || '').toLowerCase();
-    if (override === 'true' || override === '1') return true;
-    if (override === 'false' || override === '0') return false;
-    return !isManagedProductionDatabase();
-}
-
 if (process.env.NODE_ENV !== 'test') {
-    // SKIP_DB_BOOTSTRAP=true → connect and serve ONLY; run no sync({alter}) and no seeders.
+    // SKIP_DB_BOOTSTRAP=true → connect and serve ONLY; skip the lead-time stats recompute (which writes).
     // Use this when pointing a local/dev app at a database you must not mutate (e.g. production
-    // over a tunnel). Default (unset/false) keeps normal dev boot behaviour (sync + seed).
+    // over a tunnel).
     const skipDbBootstrap = String(process.env.SKIP_DB_BOOTSTRAP || '').toLowerCase() === 'true';
     // eslint-disable-next-line no-inner-declarations
     function scheduleLeadTimeStatsRecompute() {
@@ -258,37 +225,7 @@ if (process.env.NODE_ENV !== 'test') {
     db.authenticate()
         .then(async () => {
             if (skipDbBootstrap) {
-                console.log('[startup] SKIP_DB_BOOTSTRAP=true — skipping sync and seeders (read/serve only).');
-            } else if (!isManagedProductionDatabase()) {
-                // Schema is patch-driven now (no db.sync alter). Every ensure* below is
-                // idempotent and re-run on each boot; see the require block above for why.
-                await ensureCustomizationPackagingPresets();
-                await seedQuotationDefaults();
-                await ensureTreasuryDefaults();
-                await dropDuplicateConstraints();
-                await ensureLeadTimeStatsTable();
-                await ensurePurchaseOrderWorkflowColumns();
-                await ensureProcurementRequestColumns();
-                await ensureQuotationAskColumns();
-                await ensureWarehousePacksTable();
-                await ensureQualitySpecRulesTable();
-                await ensureTechnicalSpecRulesTable();
-                await ensureBomIsKitColumn();
-                await ensureProductionBatchColumns();
-                await ensureUniversalSwapColumns();
-            } else {
-                await ensureTreasuryDefaults();
-                await dropDuplicateConstraints();
-                await ensureLeadTimeStatsTable();
-                await ensurePurchaseOrderWorkflowColumns();
-                await ensureProcurementRequestColumns();
-                await ensureQuotationAskColumns();
-                await ensureWarehousePacksTable();
-                await ensureQualitySpecRulesTable();
-                await ensureTechnicalSpecRulesTable();
-                await ensureBomIsKitColumn();
-                await ensureProductionBatchColumns();
-                await ensureUniversalSwapColumns();
+                console.log('[startup] SKIP_DB_BOOTSTRAP=true — skipping lead-time recompute (read/serve only).');
             }
             app.listen(port, '0.0.0.0', () => {
                 console.log(`Server is running on port ${port}`);

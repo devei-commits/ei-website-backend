@@ -14,6 +14,7 @@ const { FulfillmentBatchSplit } = require('./models');
 const PlanningBatch = require('../planningExtracted/planningBatchModel');
 const PlanningExtracted = require('../planningExtracted/models');
 const { Product } = require('../products/models');
+const { softDeleteWhere } = require('../lib/softDelete');
 
 /**
  * FG units produced for a batch (from QC yields). Matches production applyBprFgReadyToInventory logic.
@@ -143,6 +144,62 @@ async function loadProductionBatchesBySoNo(soNos) {
 }
 
 /**
+ * Splits whose production batch was deleted (Planning batch removal, batch-count reduction, SO
+ * cancellation, or Production's own delete — all soft-delete the batch without touching the split)
+ * would otherwise keep showing that batch on the SO forever. Unlink them: a line's last split falls
+ * back to the pre-planning placeholder (production_batch_id null, full ordered qty); any other split
+ * is soft-deleted. Splits that already produced FG or moved past fg_ready are left alone.
+ * Mutates each item's in-memory `batchSplits` so the rest of the sync sees the unlinked state.
+ * @param {object[]} items plain order items with `batchSplits`
+ * @param {object[]} prodBatches active production batches for the SO
+ * @returns {Promise<boolean>} true when any split was written
+ */
+async function unlinkSplitsOfDeletedBatches(items, prodBatches) {
+  const liveIds = new Set(prodBatches.map((pb) => (pb.get ? pb.get('id') : pb.id)));
+  const candidateIds = [...new Set(items.flatMap((it) => (it.batchSplits || [])
+    .map((s) => s.production_batch_id)
+    .filter((bid) => bid && !liveIds.has(bid))))];
+  if (!candidateIds.length) return false;
+
+  // A linked batch can sit under a different so_no than this SO; only treat it as gone when it is
+  // missing from the active (default-scoped) table altogether.
+  const stillActive = await ProductionBatch.findAll({ where: { id: { [Op.in]: candidateIds } }, attributes: ['id'] });
+  const activeIds = new Set(stillActive.map((r) => r.id));
+  const deletedIds = new Set(candidateIds.filter((bid) => !activeIds.has(bid)));
+  if (!deletedIds.size) return false;
+
+  let changed = false;
+  for (const item of items) {
+    const splits = item.batchSplits || [];
+    const stale = splits.filter((s) => deletedIds.has(s.production_batch_id)
+      && !TERMINAL_FF_STATUSES.includes(s.ff_status)
+      && !(Number(s.fg_qty) > 0));
+    if (!stale.length) continue;
+    const keepsOther = splits.some((s) => !stale.includes(s));
+    const [first, ...rest] = stale;
+    const toDelete = keepsOther ? stale : rest;
+    for (const s of toDelete) {
+      await softDeleteWhere(FulfillmentBatchSplit, { id: s.id });
+    }
+    if (!keepsOther) {
+      const placeholder = {
+        production_batch_id: null,
+        bmr_no: null,
+        bpr_no: null,
+        planned_qty: Number(item.ordered_qty) || 0,
+        fg_qty: 0,
+        ff_status: 'fg_pending',
+      };
+      await FulfillmentBatchSplit.update(placeholder, { where: { id: first.id } });
+      Object.assign(first, placeholder);
+    }
+    item.batchSplits = splits.filter((s) => !toDelete.includes(s));
+    changed = true;
+  }
+  return changed;
+}
+
+/**
  * Ensure fulfillment has a batch split for every production batch linked to this SO (from Planning).
  * So the SO detail shows all batches and which are FG ready.
  * @param {object} orderRow fulfillment order (with `items` + `batchSplits` included)
@@ -162,10 +219,10 @@ async function syncOrderSplitsFromProduction(orderRow, preloadedBatchesBySoNo = 
   const prodBatches = preloadedBatchesBySoNo
     ? (preloadedBatchesBySoNo.get(soNo) || [])
     : await loadProductionBatchesBySoNo([soNo]).then((m) => m.get(soNo) || []);
-  if (!prodBatches.length) return false;
 
   // Tracks whether any row was actually written, so callers can skip a re-fetch when nothing changed.
-  let changed = false;
+  let changed = await unlinkSplitsOfDeletedBatches(items, prodBatches);
+  if (!prodBatches.length) return changed;
 
   for (const item of items) {
     const itemSku = (item.sku || '').trim().toLowerCase();

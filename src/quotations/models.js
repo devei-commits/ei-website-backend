@@ -1,7 +1,5 @@
 /**
- * Quotation engine models. All tables auto-create via `db.sync({ alter: true })`
- * on boot (see app.js). Baseline rows are seeded idempotently by
- * seedQuotationDefaults.js.
+ * Quotation engine models.
  *
  * Soft-delete vs hard-delete decision:
  *   - quote_grades / saved_quotes carry lifecycle_status + deleted_at so the
