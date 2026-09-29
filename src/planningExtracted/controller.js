@@ -49,6 +49,7 @@ const {
 } = require('../lib/indiaTime');
 const { softDeleteWhere, activeRowWhere } = require('../lib/softDelete');
 const { ProductionBatch } = require('../production/models');
+const { syncProductionOrderQtyForPlanningLine } = require('./syncProductionOrderQty');
 
 /** SO statuses that must NOT surface in Planning → PIS Extracted (case-insensitive). */
 const PLANNING_EXCLUDED_SO_STATUSES = new Set(['draft', 'cancelled', 'canceled', 'void']);
@@ -1074,6 +1075,7 @@ async function syncPlanningExtractedFromSalesOrders({ force = false } = {}) {
           approved_by: so.created_by || null,
           ...restore,
         });
+        await syncProductionOrderQtyForPlanningLine(existingPlain.id, existingPlain.order_qty_display, orderQty);
       } else {
         targetPlanRow = await PlanningExtracted.create({
           sales_order_id: so.id,
@@ -1400,6 +1402,7 @@ async function updatePlanningExtracted(req, res) {
     const row = await PlanningExtracted.findByPk(id);
     if (!row) return res.status(404).json({ error: 'Planning extracted not found' });
     const prevBomConfirmedAt = row.get ? row.get('bom_confirmed_at') : row.bom_confirmed_at;
+    const prevOrderQtyDisplay = row.get ? row.get('order_qty_display') : row.order_qty_display;
     const body = req.body || {};
     const camelToSnake = {
       orderQty: 'order_qty_display', totalKg: 'total_kg_display', orderDate: 'order_date', dueDate: 'due_date',
@@ -1473,6 +1476,7 @@ async function updatePlanningExtracted(req, res) {
     }
 
     await row.save();
+    await syncProductionOrderQtyForPlanningLine(id, prevOrderQtyDisplay, row.get('order_qty_display'));
 
     // When BOM is confirmed, ensure each rm_lines[].specific_gravity is set for vessel-volume math.
     // Preserve per-line SG when already present; only fill missing lines from BOM-level SG.

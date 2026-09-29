@@ -53,14 +53,18 @@ function parseKgDisplay(v) {
  * the pack qty it's actually planned to yield (see computeBatchPlannedPacks below) — batch_size
  * alone is a different unit than the pack-count "Planned" column, and total_batches doesn't reliably
  * say what fraction of the order this one batch covers (only how many batches exist so far).
+ * The line's order_qty_display is resolved too: production_batches.order_qty is a snapshot taken
+ * when the batch was sent, so an SO quantity edit afterwards (e.g. 9,613 -> 8,413) leaves it stale
+ * while planning_extracted — what the Planning "Planned Qty" column reads — has the live figure.
  * @param {object[]} prodBatchPlains plain production_batches rows (each with planning_batch_id)
- * @returns {Promise<{ codeByBatchId: Map<number, string>, totalKgByBatchId: Map<number, number> }>}
+ * @returns {Promise<{ codeByBatchId: Map<number, string>, totalKgByBatchId: Map<number, number>, orderUnitsByBatchId: Map<number, number> }>}
  */
 async function resolvePlanningLinksByProductionBatchId(prodBatchPlains) {
   const codeByBatchId = new Map();
   const totalKgByBatchId = new Map();
+  const orderUnitsByBatchId = new Map();
   const planningBatchIds = [...new Set(prodBatchPlains.map((pb) => pb.planning_batch_id).filter(Boolean))];
-  if (!planningBatchIds.length) return { codeByBatchId, totalKgByBatchId };
+  if (!planningBatchIds.length) return { codeByBatchId, totalKgByBatchId, orderUnitsByBatchId };
 
   const planBatches = await PlanningBatch.findAll({
     where: { id: { [Op.in]: planningBatchIds } },
@@ -70,10 +74,11 @@ async function resolvePlanningLinksByProductionBatchId(prodBatchPlains) {
 
   const peIds = [...new Set([...peIdByPlanBatchId.values()])];
   const pes = peIds.length
-    ? await PlanningExtracted.findAll({ where: { id: { [Op.in]: peIds } }, attributes: ['id', 'product_id', 'total_kg_display'] })
+    ? await PlanningExtracted.findAll({ where: { id: { [Op.in]: peIds } }, attributes: ['id', 'product_id', 'total_kg_display', 'order_qty_display'] })
     : [];
   const productIdByPeId = new Map(pes.map((pe) => [pe.id, pe.product_id]).filter(([, pid]) => pid != null));
   const totalKgByPeId = new Map(pes.map((pe) => [pe.id, parseKgDisplay(pe.total_kg_display)]));
+  const orderUnitsByPeId = new Map(pes.map((pe) => [pe.id, parseKgDisplay(pe.order_qty_display)]));
 
   const productIds = [...new Set([...productIdByPeId.values()])];
   const products = productIds.length
@@ -90,8 +95,10 @@ async function resolvePlanningLinksByProductionBatchId(prodBatchPlains) {
     if (code) codeByBatchId.set(pb.id, code);
     const totalKg = totalKgByPeId.get(peId);
     if (totalKg > 0) totalKgByBatchId.set(pb.id, totalKg);
+    const orderUnits = orderUnitsByPeId.get(peId);
+    if (orderUnits > 0) orderUnitsByBatchId.set(pb.id, orderUnits);
   }
-  return { codeByBatchId, totalKgByBatchId };
+  return { codeByBatchId, totalKgByBatchId, orderUnitsByBatchId };
 }
 
 /**
@@ -106,7 +113,9 @@ async function resolvePlanningLinksByProductionBatchId(prodBatchPlains) {
  * @returns {number}
  */
 function computeBatchPlannedPacks(plain) {
-  const orderUnits = Number(plain.order_qty) || 0;
+  // total_kg and order units must come from the same (live) planning line — pairing the planning
+  // total_kg with the batch's stale order_qty snapshot inflated 100 KG / 8,413 units to 9,613.
+  const orderUnits = Number(plain.resolved_order_units) || Number(plain.order_qty) || 0;
   const totalKg = Number(plain.resolved_total_kg) || 0;
   const sizeKg = Number(plain.batch_size) || 0;
   if (orderUnits > 0 && totalKg > 0 && sizeKg > 0) {
@@ -133,10 +142,11 @@ async function loadProductionBatchesBySoNo(soNos) {
     order: [['batch_index', 'ASC'], ['id', 'ASC']],
   });
   const plains = rows.map((r) => (r.get ? r.get({ plain: true }) : r));
-  const { codeByBatchId, totalKgByBatchId } = await resolvePlanningLinksByProductionBatchId(plains);
+  const { codeByBatchId, totalKgByBatchId, orderUnitsByBatchId } = await resolvePlanningLinksByProductionBatchId(plains);
   for (const plain of plains) {
     plain.resolved_product_code = codeByBatchId.get(plain.id) || null;
     plain.resolved_total_kg = totalKgByBatchId.get(plain.id) || null;
+    plain.resolved_order_units = orderUnitsByBatchId.get(plain.id) || null;
     if (!map.has(plain.so_no)) map.set(plain.so_no, []);
     map.get(plain.so_no).push(plain);
   }
