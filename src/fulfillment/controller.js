@@ -2325,7 +2325,7 @@ async function getSoPlanningAvailability(req, res) {
   try {
     const soNo = String(req.query.so_no || '').trim();
     if (!soNo) return res.status(400).json({ error: 'so_no is required' });
-    console.log('[FULFILLMENT-AVAIL] START', { soNo });
+    //console.log('[FULFILLMENT-AVAIL] START', { soNo });
 
     const PlanningExtracted = require('../planningExtracted/models');
     const PlanningBatch = require('../planningExtracted/planningBatchModel');
@@ -2337,10 +2337,10 @@ async function getSoPlanningAvailability(req, res) {
       attributes: ['id', 'order_id'],
     });
     if (!salesOrder) {
-      console.log('[FULFILLMENT-AVAIL] NO_SALES_ORDER_MATCH', { soNo });
+      //console.log('[FULFILLMENT-AVAIL] NO_SALES_ORDER_MATCH', { soNo });
       return res.json({ success: true, soNo, items: [] });
     }
-    console.log('[FULFILLMENT-AVAIL] SALES_ORDER_MATCH', { soNo, salesOrderId: salesOrder.id, orderId: salesOrder.order_id });
+    //console.log('[FULFILLMENT-AVAIL] SALES_ORDER_MATCH', { soNo, salesOrderId: salesOrder.id, orderId: salesOrder.order_id });
 
     // Units already fulfilled outside the normal batch pipeline (e.g. Fast Forward) for each product
     // on this SO — subtracted from "Pending to plan" below so an already-fulfilled portion doesn't
@@ -2370,11 +2370,11 @@ async function getSoPlanningAvailability(req, res) {
         { model: ProductModel, as: 'product', attributes: ['product_id', 'product_name', 'product_code', 'zoho_sku_code'] },
       ],
     });
-    console.log('[FULFILLMENT-AVAIL] PLANNING_ROWS', {
-      soNo,
-      planningRowCount: planningRows.length,
-      planningRowIds: planningRows.map((r) => (r.get ? r.get('id') : r.id)),
-    });
+    // console.log('[FULFILLMENT-AVAIL] PLANNING_ROWS', {
+    //   soNo,
+    //   planningRowCount: planningRows.length,
+    //   planningRowIds: planningRows.map((r) => (r.get ? r.get('id') : r.id)),
+    // });
 
     const items = [];
 
@@ -2390,13 +2390,13 @@ async function getSoPlanningAvailability(req, res) {
         order: [['sequence', 'ASC']],
         attributes: ['id', 'sequence', 'size_kg', 'rm_lines', 'pm_lines', 'batch_code'],
       });
-      console.log('[FULFILLMENT-AVAIL] PLAN_BATCHES', {
-        soNo,
-        planningExtractedId: planId,
-        totalBatchesConfigured: totalBatches,
-        planningBatchCount: planningBatches.length,
-        sentIndices,
-      });
+      //console.log('[FULFILLMENT-AVAIL] PLAN_BATCHES', {
+      //   soNo,
+      //   planningExtractedId: planId,
+      //   totalBatchesConfigured: totalBatches,
+      //   planningBatchCount: planningBatches.length,
+      //   sentIndices,
+      // });
 
       const effectiveTotalBatches = totalBatches > 0 ? totalBatches : planningBatches.length;
       const sentCount = planningBatches.filter((b) => sentIndices.includes((b.sequence ?? 1) - 1)).length;
@@ -2463,16 +2463,16 @@ async function getSoPlanningAvailability(req, res) {
         })
         : [];
       const pmList = [...pmListById, ...pmListByCode, ...pmListByDesc].filter((v, i, arr) => arr.findIndex((x) => x.id === v.id) === i);
-      console.log('[FULFILLMENT-AVAIL] REQUIRED_ITEMS', {
-        soNo,
-        planningExtractedId: planId,
-        requiredRmIds: [...requiredRmIds],
-        requiredRmCodes: [...requiredRmCodes],
-        resolvedRmIds: rmList.map((r) => (r.get ? r.get('id') : r.id)),
-        requiredPmIds: [...requiredPmIds],
-        requiredPmCodes: [...requiredPmCodes],
-        resolvedPmIds: pmList.map((p) => (p.get ? p.get('id') : p.id)),
-      });
+      //console.log('[FULFILLMENT-AVAIL] REQUIRED_ITEMS', {
+      //   soNo,
+      //   planningExtractedId: planId,
+      //   requiredRmIds: [...requiredRmIds],
+      //   requiredRmCodes: [...requiredRmCodes],
+      //   resolvedRmIds: rmList.map((r) => (r.get ? r.get('id') : r.id)),
+      //   requiredPmIds: [...requiredPmIds],
+      //   requiredPmCodes: [...requiredPmCodes],
+      //   resolvedPmIds: pmList.map((p) => (p.get ? p.get('id') : p.id)),
+      // });
 
       const rmCodeToId = new Map(rmList.map((r) => {
         const d = r.get ? r.get({ plain: true }) : r;
@@ -2512,12 +2512,12 @@ async function getSoPlanningAvailability(req, res) {
         const avail = Number(d.stock_in_hand ?? 0) - Number(d.reserved ?? 0);
         pmAvailableById[d.pack_material_id] = Math.max(0, avail);
       });
-      console.log('[FULFILLMENT-AVAIL] INVENTORY_AVAILABLE', {
-        soNo,
-        planningExtractedId: planId,
-        rmAvailableById,
-        pmAvailableById,
-      });
+      //console.log('[FULFILLMENT-AVAIL] INVENTORY_AVAILABLE', {
+      //   soNo,
+      //   planningExtractedId: planId,
+      //   rmAvailableById,
+      //   pmAvailableById,
+      // });
 
       // Production batches linked to planning rows (for reserve + BMR/BPR fulfilled overrides).
       const planningBatchIds = planningBatches.map((b) => (b.get ? b.get({ plain: true }).id : b.id));
@@ -2739,32 +2739,32 @@ async function getSoPlanningAvailability(req, res) {
 
       const product = planPlain.product || {};
       const fulfilledUnits = fulfilledUnitsByProductCode.get((product.product_code || '').trim().toLowerCase()) || 0;
-      console.log('[FULFILLMENT-AVAIL] PLAN_RESULT', {
-        soNo,
-        planningExtractedId: planId,
-        productName: product.product_name || '',
-        sku: product.zoho_sku_code || product.product_code || '',
-        effectiveTotalBatches,
-        sentCount,
-        rmStartableCount,
-        rmStartedCount,
-        pmStartableCount,
-        pmStartedCount,
-        rmLineAvailableCount,
-        rmLineTotalCount,
-        pmLineAvailableCount,
-        pmLineTotalCount,
-        batchRows: batchRows.map((b) => ({
-          sequence: b.sequence,
-          sent: b.sent,
-          rmStartable: b.rmStartable,
-          pmStartable: b.pmStartable,
-          rmNeededTotalKg: b.rmNeededTotalKg,
-          rmRequestedTotalKg: b.rmRequestedTotalKg,
-          pmNeededTotalUnits: b.pmNeededTotalUnits,
-          pmRequestedTotalUnits: b.pmRequestedTotalUnits,
-        })),
-      });
+      // console.log('[FULFILLMENT-AVAIL] PLAN_RESULT', {
+      //   soNo,
+      //   planningExtractedId: planId,
+      //   productName: product.product_name || '',
+      //   sku: product.zoho_sku_code || product.product_code || '',
+      //   effectiveTotalBatches,
+      //   sentCount,
+      //   rmStartableCount,
+      //   rmStartedCount,
+      //   pmStartableCount,
+      //   pmStartedCount,
+      //   rmLineAvailableCount,
+      //   rmLineTotalCount,
+      //   pmLineAvailableCount,
+      //   pmLineTotalCount,
+      //   batchRows: batchRows.map((b) => ({
+      //     sequence: b.sequence,
+      //     sent: b.sent,
+      //     rmStartable: b.rmStartable,
+      //     pmStartable: b.pmStartable,
+      //     rmNeededTotalKg: b.rmNeededTotalKg,
+      //     rmRequestedTotalKg: b.rmRequestedTotalKg,
+      //     pmNeededTotalUnits: b.pmNeededTotalUnits,
+      //     pmRequestedTotalUnits: b.pmRequestedTotalUnits,
+      //   })),
+      // });
       items.push({
         productName: product.product_name || '',
         sku: product.zoho_sku_code || product.product_code || '',
@@ -2786,17 +2786,17 @@ async function getSoPlanningAvailability(req, res) {
       });
     }
 
-    console.log('[FULFILLMENT-AVAIL] END', {
-      soNo,
-      itemCount: items.length,
-      items: items.map((i) => ({
-        productName: i.productName,
-        sku: i.sku,
-        totalBatches: i.totalBatches,
-        rmStartableCount: i.rmStartableCount,
-        pmStartableCount: i.pmStartableCount,
-      })),
-    });
+    // console.log('[FULFILLMENT-AVAIL] END', {
+    //   soNo,
+    //   itemCount: items.length,
+    //   items: items.map((i) => ({
+    //     productName: i.productName,
+    //     sku: i.sku,
+    //     totalBatches: i.totalBatches,
+    //     rmStartableCount: i.rmStartableCount,
+    //     pmStartableCount: i.pmStartableCount,
+    //   })),
+    // });
     res.json({ success: true, soNo, items });
   } catch (err) {
     console.error('getSoPlanningAvailability error:', err);
