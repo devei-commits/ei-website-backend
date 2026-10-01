@@ -361,6 +361,29 @@ function normalizePmLines(lines) {
   return Array.isArray(lines) ? lines.map((line) => normalizePmLine(line)) : [];
 }
 
+/** No packaging item is consumed more than this many times per finished unit. */
+const MAX_PM_QTY_PER_UNIT = 1000;
+
+/**
+ * Reject PM lines whose qty_per_unit is really an order TOTAL typed into the per-unit field —
+ * SO-00110 saved the bottle as 10,000/unit on a 10,000-unit order (10 crore bottles), SO-00347 its
+ * shippers as 3,076/unit on a 3,076-unit order. A value at or above the whole order qty, or above
+ * MAX_PM_QTY_PER_UNIT, cannot be per-unit.
+ * @returns {string|null} error message, or null when every line is plausible
+ */
+function findImplausiblePmQtyPerUnit(pmLines, orderQtyDisplay) {
+  const orderUnits = parseFloat(String(orderQtyDisplay ?? '').replace(/[^\d.]/g, '')) || 0;
+  for (const line of pmLines || []) {
+    const qpu = Number(line.qty_per_unit);
+    if (!Number.isFinite(qpu)) continue;
+    if (qpu > MAX_PM_QTY_PER_UNIT || (orderUnits > 1 && qpu >= orderUnits)) {
+      const label = line.pm_code || line.description || 'PM line';
+      return `${label}: qty per unit ${qpu} looks like a total for the order (${orderUnits} units), not a per-unit quantity. Enter the quantity used per finished unit (e.g. 1 bottle per unit).`;
+    }
+  }
+  return null;
+}
+
 /**
  * Sync PI-level material snapshot from BOM lines so Items Involved required math
  * stays aligned with the latest BOM editor save.
@@ -1573,6 +1596,8 @@ async function putBomOverride(req, res) {
     const body = req.body || {};
     const rmLines = normalizeRmLines(Array.isArray(body.rmLines) ? body.rmLines : []);
     const pmLines = normalizePmLines(Array.isArray(body.pmLines) ? body.pmLines : []);
+    const pmQtyError = findImplausiblePmQtyPerUnit(pmLines, planRow.get('order_qty_display'));
+    if (pmQtyError) return res.status(400).json({ error: pmQtyError });
 
     const [override] = await PlanningBomOverride.findOrCreate({
       where: { planning_extracted_id: id },
@@ -2742,7 +2767,13 @@ async function updateBatch(req, res) {
     // lines as they were checked, so it must be re-done rather than silently carried over.
     const bomEdited = Array.isArray(body.rmLines) || Array.isArray(body.pmLines);
     if (Array.isArray(body.rmLines)) batch.rm_lines = normalizeRmLines(body.rmLines);
-    if (Array.isArray(body.pmLines)) batch.pm_lines = normalizePmLines(body.pmLines);
+    if (Array.isArray(body.pmLines)) {
+      const pmLines = normalizePmLines(body.pmLines);
+      const plan = await PlanningExtracted.findByPk(planningId, { attributes: ['id', 'order_qty_display'] });
+      const pmQtyError = findImplausiblePmQtyPerUnit(pmLines, plan && plan.get('order_qty_display'));
+      if (pmQtyError) return res.status(400).json({ error: pmQtyError });
+      batch.pm_lines = pmLines;
+    }
     if (bomEdited && body.bomConfirmedAt === undefined) batch.bom_confirmed_at = null;
     if (body.sizeKg !== undefined) {
       const n = Number(body.sizeKg);
@@ -3346,7 +3377,11 @@ async function getItemsInvolved(req, res) {
       }
 
       // Batch-driven Total Req: once batches exist, sum EACH batch's own saved rm_lines/pm_lines
-      // (sent AND draft) instead of one PI-level BOM snapshot × releasedFraction. Different batches
+      // instead of one PI-level BOM snapshot × releasedFraction — counting only batches SENT to
+      // production, the same set as the Batches count and the "Batches using <item>" drill-down.
+      // Summing drafts too made Total Req disagree with both (5P00052: 1,281.53 vs 949 — an unsent
+      // PE-3705-B1 added 333.33); a draft row can be the auto-seeded next batch, not a commitment.
+      // Different batches
       // on the same PI can carry different confirmed formulas — a per-batch Swap only edits that
       // batch's own rm_lines, so a single snapshot can only ever reflect one of them and silently
       // zeroes out whatever material another batch actually uses instead (see PE-3685: B-01 uses
@@ -3357,7 +3392,7 @@ async function getItemsInvolved(req, res) {
       const batchGrossRm = new Map();
       const batchGrossPm = new Map();
       if (hasBatchesForPlan) {
-        for (const bp of planBatchesPlain) {
+        for (const bp of planBatchesSent) {
           accumulatePlannedBatchIntoQtyMaps(bp, plain, rmByCode, rmByName, pmByCode, pmByName, batchGrossRm, batchGrossPm, subBomMap);
         }
       }

@@ -14,7 +14,10 @@ const { FulfillmentBatchSplit } = require('./models');
 const PlanningBatch = require('../planningExtracted/planningBatchModel');
 const PlanningExtracted = require('../planningExtracted/models');
 const { Product } = require('../products/models');
-const { softDeleteWhere } = require('../lib/softDelete');
+const SalesOrder = require('../salesOrders/models');
+const { softDeleteWhere, activeRowWhere } = require('../lib/softDelete');
+
+const norm = (v) => String(v ?? '').trim().toLowerCase();
 
 /**
  * FG units produced for a batch (from QC yields). Matches production applyBprFgReadyToInventory logic.
@@ -43,81 +46,18 @@ function parseKgDisplay(v) {
 }
 
 /**
- * Resolve each production batch's Planning PR product_code AND the planning line's total_kg_display
- * (planning_batch_id -> planning_batches -> planning_extracted -> products.product_code /
- * total_kg_display) in one pass, since both need the same join chain. product_code is the
- * authoritative link between a production batch and the SO line it fulfills — a batch's own `sku`
- * is `products.zoho_sku_code`, which can be blank pre-Zoho-sync or simply differ from the SO line's
- * cached product_code, so it is only a fallback for matching, never the primary key. total_kg is
- * the whole line's total bulk kg requirement, needed to convert a batch's own `batch_size` (kg) into
- * the pack qty it's actually planned to yield (see computeBatchPlannedPacks below) — batch_size
- * alone is a different unit than the pack-count "Planned" column, and total_batches doesn't reliably
- * say what fraction of the order this one batch covers (only how many batches exist so far).
- * The line's order_qty_display is resolved too: production_batches.order_qty is a snapshot taken
- * when the batch was sent, so an SO quantity edit afterwards (e.g. 9,613 -> 8,413) leaves it stale
- * while planning_extracted — what the Planning "Planned Qty" column reads — has the live figure.
- * @param {object[]} prodBatchPlains plain production_batches rows (each with planning_batch_id)
- * @returns {Promise<{ codeByBatchId: Map<number, string>, totalKgByBatchId: Map<number, number>, orderUnitsByBatchId: Map<number, number> }>}
- */
-async function resolvePlanningLinksByProductionBatchId(prodBatchPlains) {
-  const codeByBatchId = new Map();
-  const totalKgByBatchId = new Map();
-  const orderUnitsByBatchId = new Map();
-  const planningBatchIds = [...new Set(prodBatchPlains.map((pb) => pb.planning_batch_id).filter(Boolean))];
-  if (!planningBatchIds.length) return { codeByBatchId, totalKgByBatchId, orderUnitsByBatchId };
-
-  const planBatches = await PlanningBatch.findAll({
-    where: { id: { [Op.in]: planningBatchIds } },
-    attributes: ['id', 'planning_extracted_id'],
-  });
-  const peIdByPlanBatchId = new Map(planBatches.map((b) => [b.id, b.planning_extracted_id]).filter(([, peId]) => peId != null));
-
-  const peIds = [...new Set([...peIdByPlanBatchId.values()])];
-  const pes = peIds.length
-    ? await PlanningExtracted.findAll({ where: { id: { [Op.in]: peIds } }, attributes: ['id', 'product_id', 'total_kg_display', 'order_qty_display'] })
-    : [];
-  const productIdByPeId = new Map(pes.map((pe) => [pe.id, pe.product_id]).filter(([, pid]) => pid != null));
-  const totalKgByPeId = new Map(pes.map((pe) => [pe.id, parseKgDisplay(pe.total_kg_display)]));
-  const orderUnitsByPeId = new Map(pes.map((pe) => [pe.id, parseKgDisplay(pe.order_qty_display)]));
-
-  const productIds = [...new Set([...productIdByPeId.values()])];
-  const products = productIds.length
-    ? await Product.findAll({ where: { product_id: { [Op.in]: productIds } }, attributes: ['product_id', 'product_code'] })
-    : [];
-  const codeByProductId = new Map(products.map((p) => [p.product_id, p.product_code]).filter(([, code]) => code));
-
-  for (const pb of prodBatchPlains) {
-    if (!pb.planning_batch_id) continue;
-    const peId = peIdByPlanBatchId.get(pb.planning_batch_id);
-    if (peId == null) continue;
-    const productId = productIdByPeId.get(peId);
-    const code = productId != null ? codeByProductId.get(productId) : null;
-    if (code) codeByBatchId.set(pb.id, code);
-    const totalKg = totalKgByPeId.get(peId);
-    if (totalKg > 0) totalKgByBatchId.set(pb.id, totalKg);
-    const orderUnits = orderUnitsByPeId.get(peId);
-    if (orderUnits > 0) orderUnitsByBatchId.set(pb.id, orderUnits);
-  }
-  return { codeByBatchId, totalKgByBatchId, orderUnitsByBatchId };
-}
-
-/**
- * Pack qty a batch is actually planned to yield. Authoritative source: this batch's own bulk
- * `batch_size` (kg) converted through the line's kg-per-unit ratio (total_kg / order_qty) — the same
- * math the Planning "Batches" table uses for its "Planned Qty" column (batchUnitsFromSize). Only
- * when that ratio can't be resolved (e.g. a batch created outside Planning, so there's no linked
- * planning_extracted to read total_kg from) does this fall back to splitting order_qty evenly across
- * total_batches, and finally to the raw batch_size — both of which can be wrong when a batch covers
- * something other than an even 1/total_batches share of the order.
- * @param {object} plain production_batches row, annotated with resolved_total_kg
+ * Pack qty a batch is planned to yield — the same math as the Planning "Batches" table's "Planned
+ * Qty" column (batchUnitsFromSize): the PLANNING batch's size_kg through the planning line's
+ * kg-per-unit ratio (total_kg / order_qty). All three come from Planning, the source of truth;
+ * production_batches.batch_size / order_qty are snapshots taken at send time and can be stale
+ * (e.g. an SO qty edit left 100 KG / 8,413 units showing as 9,613). They are only fallbacks.
+ * @param {object} plain production_batches row, annotated by loadProductionBatchesBySoNo
  * @returns {number}
  */
 function computeBatchPlannedPacks(plain) {
-  // total_kg and order units must come from the same (live) planning line — pairing the planning
-  // total_kg with the batch's stale order_qty snapshot inflated 100 KG / 8,413 units to 9,613.
   const orderUnits = Number(plain.resolved_order_units) || Number(plain.order_qty) || 0;
   const totalKg = Number(plain.resolved_total_kg) || 0;
-  const sizeKg = Number(plain.batch_size) || 0;
+  const sizeKg = Number(plain.resolved_size_kg) || Number(plain.batch_size) || 0;
   if (orderUnits > 0 && totalKg > 0 && sizeKg > 0) {
     const kgPerUnit = totalKg / orderUnits;
     if (kgPerUnit > 0) return Math.max(0, Math.round(sizeKg / kgPerUnit));
@@ -126,9 +66,17 @@ function computeBatchPlannedPacks(plain) {
 }
 
 /**
- * Load production batches for many SOs in one query, grouped by so_no. Lets the list endpoint sync
- * N orders without running N separate batch queries. Each returned row is annotated with
- * `resolved_product_code` and `resolved_total_kg` (see resolvePlanningLinksByProductionBatchId).
+ * Load the production batches that belong to each SO — resolved THROUGH PLANNING, which is the
+ * single source of truth: sales_orders -> active planning_extracted lines -> planning_batches ->
+ * the production batch sent for each planning batch. Grouped by so_no, one pass for many SOs.
+ *
+ * Reading production_batches by so_no instead surfaced batches Planning no longer has: stale
+ * leftovers still carrying the SO number, and batches linked to the wrong planning line (SO-00032:
+ * a KIT batch pointing at the non-KIT line's planning batch showed on both lines).
+ *
+ * Exactly one production batch is kept per planning batch — the one whose sku is the planning
+ * line's product (or blank); extra/mismatched ones are ignored. Each kept row is annotated with the
+ * planning line's product code/name, total kg, order units, and the planning batch's size_kg.
  * @param {string[]} soNos
  * @returns {Promise<Map<string, object[]>>}
  */
@@ -136,52 +84,108 @@ async function loadProductionBatchesBySoNo(soNos) {
   const map = new Map();
   const unique = [...new Set((soNos || []).filter(Boolean))];
   if (!unique.length) return map;
-  const rows = await ProductionBatch.findAll({
-    where: { so_no: { [Op.in]: unique } },
-    attributes: PRODUCTION_BATCH_SYNC_ATTRS,
-    order: [['batch_index', 'ASC'], ['id', 'ASC']],
+
+  const sos = await SalesOrder.findAll({ where: activeRowWhere({ order_id: { [Op.in]: unique } }), attributes: ['id', 'order_id'] });
+  if (!sos.length) return map;
+  const soNoBySoId = new Map(sos.map((s) => [s.id, s.order_id]));
+  // Every resolved SO gets an entry, even with no batches: "Planning has nothing" is an answer
+  // (its splits get unlinked), distinct from "SO unknown" (no entry — left untouched).
+  for (const soNo of soNoBySoId.values()) map.set(soNo, []);
+
+  const pes = await PlanningExtracted.findAll({
+    where: activeRowWhere({ sales_order_id: { [Op.in]: [...soNoBySoId.keys()] } }),
+    attributes: ['id', 'sales_order_id', 'product_id', 'total_kg_display', 'order_qty_display'],
+    include: [{ model: Product, as: 'product', attributes: ['product_code', 'zoho_sku_code', 'product_name'], required: false }],
   });
-  const plains = rows.map((r) => (r.get ? r.get({ plain: true }) : r));
-  const { codeByBatchId, totalKgByBatchId, orderUnitsByBatchId } = await resolvePlanningLinksByProductionBatchId(plains);
-  for (const plain of plains) {
-    plain.resolved_product_code = codeByBatchId.get(plain.id) || null;
-    plain.resolved_total_kg = totalKgByBatchId.get(plain.id) || null;
-    plain.resolved_order_units = orderUnitsByBatchId.get(plain.id) || null;
-    if (!map.has(plain.so_no)) map.set(plain.so_no, []);
-    map.get(plain.so_no).push(plain);
+  if (!pes.length) return map;
+  const peById = new Map(pes.map((pe) => [pe.id, pe.get({ plain: true })]));
+
+  const planBatches = await PlanningBatch.findAll({
+    where: { planning_extracted_id: { [Op.in]: [...peById.keys()] } },
+    attributes: ['id', 'planning_extracted_id', 'sequence', 'size_kg'],
+    order: [['planning_extracted_id', 'ASC'], ['sequence', 'ASC']],
+  });
+  if (!planBatches.length) return map;
+
+  const prodRows = await ProductionBatch.findAll({
+    where: activeRowWhere({ planning_batch_id: { [Op.in]: planBatches.map((b) => b.id) } }),
+    attributes: PRODUCTION_BATCH_SYNC_ATTRS,
+    order: [['id', 'ASC']],
+  });
+  const prodByPlanBatchId = new Map();
+  for (const r of prodRows) {
+    const plain = r.get({ plain: true });
+    if (!prodByPlanBatchId.has(plain.planning_batch_id)) prodByPlanBatchId.set(plain.planning_batch_id, []);
+    prodByPlanBatchId.get(plain.planning_batch_id).push(plain);
+  }
+
+  for (const plb of planBatches) {
+    const pe = peById.get(plb.planning_extracted_id);
+    const product = pe.product || {};
+    const lineCodes = new Set([norm(product.product_code), norm(product.zoho_sku_code)].filter(Boolean));
+    // Of the batches sent for this planning batch, the real one is the line's product and the size
+    // Planning set; older re-sends are left behind at other sizes (SO-00085: 97 kg vs 420 kg for a
+    // 97.2 kg plan). Ties go to the oldest.
+    const planKg = Number(plb.size_kg) || 0;
+    const chosen = (prodByPlanBatchId.get(plb.id) || [])
+      .filter((pb) => !norm(pb.sku) || !lineCodes.size || lineCodes.has(norm(pb.sku)))
+      .sort((a, b) => Math.abs((Number(a.batch_size) || 0) - planKg) - Math.abs((Number(b.batch_size) || 0) - planKg) || a.id - b.id)[0];
+    if (!chosen) continue;
+    chosen.resolved_product_code = product.product_code || product.zoho_sku_code || null;
+    chosen.resolved_product_name = product.product_name || null;
+    chosen.resolved_total_kg = parseKgDisplay(pe.total_kg_display) || null;
+    chosen.resolved_order_units = parseKgDisplay(pe.order_qty_display) || null;
+    chosen.resolved_size_kg = plb.size_kg != null ? Number(plb.size_kg) || null : null;
+    const soNo = soNoBySoId.get(pe.sales_order_id);
+    if (!map.has(soNo)) map.set(soNo, []);
+    map.get(soNo).push(chosen);
   }
   return map;
 }
 
 /**
- * Splits whose production batch was deleted (Planning batch removal, batch-count reduction, SO
- * cancellation, or Production's own delete — all soft-delete the batch without touching the split)
- * would otherwise keep showing that batch on the SO forever. Unlink them: a line's last split falls
- * back to the pre-planning placeholder (production_batch_id null, full ordered qty); any other split
- * is soft-deleted. Splits that already produced FG or moved past fg_ready are left alone.
- * Mutates each item's in-memory `batchSplits` so the rest of the sync sees the unlinked state.
+ * Splits linked to a production batch that Planning no longer backs — deleted batches, stale
+ * leftovers still carrying the SO number, extra batches pointing at a planning batch that already
+ * has its own — are unlinked. Planning is the source of truth: `prodBatches` is exactly the set of
+ * batches Planning resolves for this SO (see loadProductionBatchesBySoNo).
  * @param {object[]} items plain order items with `batchSplits`
- * @param {object[]} prodBatches active production batches for the SO
+ * @param {object[]} prodBatches the SO's planning-backed production batches
  * @returns {Promise<boolean>} true when any split was written
  */
-async function unlinkSplitsOfDeletedBatches(items, prodBatches) {
-  const liveIds = new Set(prodBatches.map((pb) => (pb.get ? pb.get('id') : pb.id)));
-  const candidateIds = [...new Set(items.flatMap((it) => (it.batchSplits || [])
-    .map((s) => s.production_batch_id)
-    .filter((bid) => bid && !liveIds.has(bid))))];
-  if (!candidateIds.length) return false;
+async function unlinkSplitsNotBackedByPlanning(items, prodBatches) {
+  const validIds = new Set(prodBatches.map((pb) => pb.id));
+  return unlinkStaleSplits(items, (s) => Boolean(s.production_batch_id) && !validIds.has(s.production_batch_id));
+}
 
-  // A linked batch can sit under a different so_no than this SO; only treat it as gone when it is
-  // missing from the active (default-scoped) table altogether.
-  const stillActive = await ProductionBatch.findAll({ where: { id: { [Op.in]: candidateIds } }, attributes: ['id'] });
-  const activeIds = new Set(stillActive.map((r) => r.id));
-  const deletedIds = new Set(candidateIds.filter((bid) => !activeIds.has(bid)));
-  if (!deletedIds.size) return false;
+/**
+ * The same production batch linked more than once on one line (concurrent syncs created four
+ * splits for one batch on SO-00032 within a second) — keep the oldest, unlink the rest.
+ * @returns {Promise<boolean>} true when any split was written
+ */
+async function unlinkDuplicateSplits(items) {
+  const seenByItem = new Map();
+  return unlinkStaleSplits(items, (s, item) => {
+    if (!s.production_batch_id) return false;
+    if (!seenByItem.has(item.id)) seenByItem.set(item.id, new Set());
+    const seen = seenByItem.get(item.id);
+    if (seen.has(s.production_batch_id)) return true;
+    seen.add(s.production_batch_id);
+    return false;
+  });
+}
 
+/**
+ * Shared unlink step: for each item, splits matching `isStale` (and not yet producing FG or past
+ * fg_ready) are unlinked — the line's last split falls back to the pre-planning placeholder
+ * (production_batch_id null, full ordered qty); any other is soft-deleted.
+ * Mutates each item's in-memory `batchSplits` so the rest of the sync sees the unlinked state.
+ * @returns {Promise<boolean>} true when any split was written
+ */
+async function unlinkStaleSplits(items, isStale) {
   let changed = false;
   for (const item of items) {
     const splits = item.batchSplits || [];
-    const stale = splits.filter((s) => deletedIds.has(s.production_batch_id)
+    const stale = splits.filter((s) => isStale(s, item)
       && !TERMINAL_FF_STATUSES.includes(s.ff_status)
       && !(Number(s.fg_qty) > 0));
     if (!stale.length) continue;
@@ -210,6 +214,37 @@ async function unlinkSplitsOfDeletedBatches(items, prodBatches) {
 }
 
 /**
+ * Does this production batch belong to this SO line? Decided by the PLANNING line's product, never
+ * the batch's own sku/name (SO-00032: a KIT-sku batch linked to the non-KIT planning line matched
+ * both SO lines). The item's code is its product_code, or its sku — for imported lines the sku IS
+ * the PR code and product_code is null. Names are compared only when the item has no code, and only
+ * exactly: a "contains" match tied "…MASK 10 GM" batches to the "…MASK 10 GM(KIT)" line (SO-00247).
+ */
+function batchMatchesItem(pb, item) {
+  const planCode = norm(pb.resolved_product_code);
+  const itemCodes = [norm(item.product_code), norm(item.sku)].filter(Boolean);
+  if (itemCodes.length && planCode) return itemCodes.includes(planCode);
+  const itemName = norm(item.product_name);
+  const planName = norm(pb.resolved_product_name);
+  return Boolean(itemName && planName && itemName === planName);
+}
+
+/**
+ * Splits linked to a live production batch of a DIFFERENT product (left over from the old loose
+ * name match, or a product swapped on the SO) are unlinked the same way as deleted-batch splits:
+ * the line's last split becomes the pre-planning placeholder, any other is soft-deleted. Splits
+ * that already produced FG or moved past fg_ready are left alone.
+ * @returns {Promise<boolean>} true when any split was written
+ */
+async function unlinkSplitsOfMismatchedBatches(items, prodBatches) {
+  const batchById = new Map(prodBatches.map((pb) => [pb.id, pb]));
+  return unlinkStaleSplits(items, (s, item) => {
+    const pb = s.production_batch_id ? batchById.get(s.production_batch_id) : null;
+    return Boolean(pb) && !batchMatchesItem(pb, item);
+  });
+}
+
+/**
  * Ensure fulfillment has a batch split for every production batch linked to this SO (from Planning).
  * So the SO detail shows all batches and which are FG ready.
  * @param {object} orderRow fulfillment order (with `items` + `batchSplits` included)
@@ -226,27 +261,20 @@ async function syncOrderSplitsFromProduction(orderRow, preloadedBatchesBySoNo = 
 
   // On the list endpoint the caller pre-loads every SO's batches in one query (see loadProductionBatchesBySoNo)
   // so this stays a single query per request instead of one per order.
-  const prodBatches = preloadedBatchesBySoNo
-    ? (preloadedBatchesBySoNo.get(soNo) || [])
-    : await loadProductionBatchesBySoNo([soNo]).then((m) => m.get(soNo) || []);
+  const batchesBySoNo = preloadedBatchesBySoNo || await loadProductionBatchesBySoNo([soNo]);
+  // Only an SO that resolves to a sales order is judged against Planning. One that doesn't (so_no
+  // with no sales_orders row) has no planning view at all, and must not have every split unlinked.
+  if (!batchesBySoNo.has(soNo)) return false;
+  const prodBatches = batchesBySoNo.get(soNo);
 
   // Tracks whether any row was actually written, so callers can skip a re-fetch when nothing changed.
-  let changed = await unlinkSplitsOfDeletedBatches(items, prodBatches);
+  let changed = await unlinkSplitsNotBackedByPlanning(items, prodBatches);
+  changed = (await unlinkSplitsOfMismatchedBatches(items, prodBatches)) || changed;
+  changed = (await unlinkDuplicateSplits(items)) || changed;
   if (!prodBatches.length) return changed;
 
   for (const item of items) {
-    const itemSku = (item.sku || '').trim().toLowerCase();
-    const itemProductCode = (item.product_code || '').trim().toLowerCase();
-    const itemProductName = (item.product_name || '').trim().toLowerCase();
-    const matchingBatches = prodBatches.filter((pb) => {
-      // Authoritative: same Planning PR product_code. Only when both sides have one — a batch with
-      // no planning_batch_id (created outside Planning) falls through to the sku/name match below.
-      const pbCode = (pb.resolved_product_code || '').trim().toLowerCase();
-      if (itemProductCode && pbCode) return itemProductCode === pbCode;
-      const pbSku = (pb.sku || '').trim().toLowerCase();
-      const pbName = (pb.product_name || '').trim().toLowerCase();
-      return (itemSku && pbSku && itemSku === pbSku) || (itemProductName && pbName && (itemProductName === pbName || itemProductName.includes(pbName) || pbName.includes(itemProductName)));
-    });
+    const matchingBatches = prodBatches.filter((pb) => batchMatchesItem(pb, item));
 
     // Used to avoid creating a 2nd split for the same production batch.
     const existingSplitBatchIds = new Set((item.batchSplits || []).map((s) => s.production_batch_id).filter(Boolean));
