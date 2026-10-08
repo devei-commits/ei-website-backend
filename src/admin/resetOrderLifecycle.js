@@ -7,7 +7,7 @@
  * fulfillment → MRN/MTR → reservations → website orders/payments → client hub
  * orders → WH movement history & rack placements → in-transit / SIH counters.
  */
-const db = require('../../db');
+const db = require('../../db')
 const SalesOrder = require('../salesOrders/models');
 const PlanningExtracted = require('../planningExtracted/models');
 const PlanningBatch = require('../planningExtracted/planningBatchModel');
