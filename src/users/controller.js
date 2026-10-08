@@ -467,6 +467,7 @@ const getMe = async (req, res) => {
           ],
         }
       ],
+      log: console.log,
     });
 
     if (!user) {

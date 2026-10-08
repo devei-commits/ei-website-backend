@@ -532,8 +532,13 @@ async function syncBatchesFromPlanning(req, res) {
             batch_index: sequence,
           },
         });
+        // A batch already linked to a DIFFERENT planning batch is not this one's, even with the same
+        // SO + sequence + sku — counting it blocked this planning batch from ever getting a production
+        // batch (SO-00032: a stale KIT batch on the non-KIT line's planning batch left the KIT
+        // line's own PE-3255-B1 stuck on "Awaiting sync").
         const match = existing.find((b) => {
           const d = b.get ? b.get({ plain: true }) : b;
+          if (d.planning_batch_id && d.planning_batch_id !== planningBatch.id) return false;
           return (productSku && d.sku === productSku) || (productName && d.product_name === productName);
         });
         if (match) {
