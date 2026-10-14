@@ -20,6 +20,7 @@ const {
   buildZohoColumnOverlayFromXlsx,
 } = require('../vendorClient/vendorClientExcelParseUtils');
 const { invalidateForModule } = require('../cache/invalidateCacheForModule');
+const { activeRowWhere, LIFECYCLE_ACTIVE } = require('../lib/softDelete');
 const {
   toDateOnly,
   mapZohoSoStatus,
@@ -1181,10 +1182,36 @@ async function extractOpenSoWorkbookFromBuffer(buffer) {
   return { format: 'open_so_split', headers, lines };
 }
 
-async function findByZohoSalesorderId(zohoId) {
+function isCancelledSoStatus(status) {
+  const s = String(status || '').trim().toLowerCase();
+  return s === 'cancelled' || s === 'canceled';
+}
+
+/**
+ * Re-imports match only LIVE sales orders: not soft-deleted and not cancelled. A removed/cancelled SO
+ * is kept as history and the re-uploaded SO becomes a new row (otherwise the import updates the hidden
+ * row and the SO never reappears on the dashboard).
+ * @param {{ includeCancelled?: boolean }} [opts] — true also matches cancelled rows (still never soft-deleted).
+ */
+function liveSalesOrderWhere(extra = {}, opts = {}) {
+  if (opts.includeCancelled) return activeRowWhere(extra);
+  return activeRowWhere({
+    ...extra,
+    [Op.or]: [
+      { status: { [Op.is]: null } },
+      db.where(db.fn('lower', db.col('status')), { [Op.notIn]: ['cancelled', 'canceled'] }),
+    ],
+  });
+}
+
+async function findByZohoSalesorderId(zohoId, opts = {}) {
   if (!zohoId) return null;
   const [found] = await db.query(
-    `SELECT id FROM sales_orders WHERE (form_data->>'zohoSalesorderId') = :zid LIMIT 1`,
+    `SELECT id FROM sales_orders
+      WHERE (form_data->>'zohoSalesorderId') = :zid
+        AND deleted_at IS NULL AND lifecycle_status = 'active'
+        ${opts.includeCancelled ? '' : `AND COALESCE(lower(status), '') NOT IN ('cancelled', 'canceled')`}
+      ORDER BY id DESC LIMIT 1`,
     { replacements: { zid: zohoId } }
   );
   const id = found && found[0] && found[0].id;
@@ -1215,7 +1242,8 @@ async function allocateUniqueOrderId(preferredOrderId, zohoId, selfId) {
   let candidate = preferredOrderId;
   let n = 0;
   for (let guard = 0; guard < 5000; guard += 1) {
-    const other = await SalesOrder.findOne({ where: { order_id: candidate } });
+    // Removed/cancelled SOs don't reserve their number — a re-imported SO 391 gets a new row as "391".
+    const other = await SalesOrder.findOne({ where: liveSalesOrderWhere({ order_id: candidate }) });
     if (!other) return candidate;
     const plain = other.get ? other.get({ plain: true }) : other;
     const otherZoho =
@@ -1346,8 +1374,14 @@ function mapSoItemsToFulfillmentItems(itemsInput) {
   });
 }
 
+/** Same mapping as fulfillment Edit SO → Update SO Status. */
+const SO_STATUS_TO_COMMERCIAL = {
+  draft: 'draft', approved: 'approved', confirmed: 'received',
+  closed: 'closed', cancelled: 'cancelled', canceled: 'cancelled',
+};
+
 async function upsertFulfillmentFromSalesOrderPayload(salesOrderRow, payload, opts = {}) {
-  const replaceItems = opts.replaceItems === true;
+  let replaceItems = opts.replaceItems === true;
   if (!salesOrderRow || !payload?.order_id) return;
   const patch = buildFulfillmentOrderPatchFromSalesPayload(payload, salesOrderRow.id);
   const soNo = String(patch.so_no || '').trim();
@@ -1358,11 +1392,28 @@ async function upsertFulfillmentFromSalesOrderPayload(salesOrderRow, payload, op
     ff = await FulfillmentOrder.findOne({ where: { so_no: soNo } });
   }
 
+  // so_no is UNIQUE on fulfillment_orders, so a re-imported SO (new row after the old one was
+  // removed/cancelled) takes over the old SO's fulfillment record: clear the cancel/delete state
+  // (the dashboard hides commercial_status/so_status 'cancelled') and replace its lines.
+  const takenOver = !!ff && ff.sales_order_id != null && ff.sales_order_id !== salesOrderRow.id;
+
   if (ff) {
-    await ff.update(patch);
+    await ff.update(
+      takenOver
+        ? {
+          ...patch,
+          deleted_at: null,
+          lifecycle_status: LIFECYCLE_ACTIVE,
+          commercial_status: SO_STATUS_TO_COMMERCIAL[String(payload.status || '').trim().toLowerCase()] || 'received',
+          manual_status_override: false,
+          on_hold_previous_status: null,
+        }
+        : patch
+    );
   } else {
     ff = await FulfillmentOrder.create(patch);
   }
+  if (takenOver) replaceItems = true;
 
   const existingItemCount = await FulfillmentOrderItem.count({
     where: { fulfillment_order_id: ff.id },
@@ -1420,9 +1471,15 @@ async function executeOpenSoHeadersImportRows(importRows, opts = {}) {
           ? String(payload.form_data.zohoSalesorderId)
           : '';
 
-      let existing = zohoId ? await findByZohoSalesorderId(zohoId) : null;
+      // A cancelled Excel row updates the cancelled SO in place, so re-uploading it doesn't spawn a
+      // new row every time; any other row skips cancelled SOs and is created fresh.
+      const lookupOpts = { includeCancelled: isCancelledSoStatus(payload.status) };
+      let existing = zohoId ? await findByZohoSalesorderId(zohoId, lookupOpts) : null;
       if (!existing && payload.order_id) {
-        existing = await SalesOrder.findOne({ where: { order_id: payload.order_id } });
+        existing = await SalesOrder.findOne({
+          where: liveSalesOrderWhere({ order_id: payload.order_id }, lookupOpts),
+          order: [['id', 'DESC']],
+        });
       }
 
       payload.order_id = await allocateUniqueOrderId(
