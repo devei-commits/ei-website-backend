@@ -1188,6 +1188,19 @@ function isCancelledSoStatus(status) {
 }
 
 /**
+ * SQL: the sales order (column ref `idCol`/`statusCol`) is cancelled. Mirrors the SO dashboard, which
+ * hides an SO when its fulfillment row is cancelled or soft-deleted — cancelling from the dashboard
+ * marks the fulfillment row, and sales_orders.status alone may still say "Approved".
+ */
+function cancelledSoSql(idCol, statusCol) {
+  return `(COALESCE(lower(${statusCol}), '') IN ('cancelled', 'canceled')
+    OR EXISTS (SELECT 1 FROM fulfillment_orders ff
+      WHERE ff.sales_order_id = ${idCol}
+        AND (ff.commercial_status = 'cancelled' OR ff.so_status = 'cancelled'
+          OR ff.deleted_at IS NOT NULL OR ff.lifecycle_status = 'deleted')))`;
+}
+
+/**
  * Re-imports match only LIVE sales orders: not soft-deleted and not cancelled. A removed/cancelled SO
  * is kept as history and the re-uploaded SO becomes a new row (otherwise the import updates the hidden
  * row and the SO never reappears on the dashboard).
@@ -1197,21 +1210,18 @@ function liveSalesOrderWhere(extra = {}, opts = {}) {
   if (opts.includeCancelled) return activeRowWhere(extra);
   return activeRowWhere({
     ...extra,
-    [Op.or]: [
-      { status: { [Op.is]: null } },
-      db.where(db.fn('lower', db.col('status')), { [Op.notIn]: ['cancelled', 'canceled'] }),
-    ],
+    [Op.and]: [db.literal(`NOT ${cancelledSoSql('"SalesOrder"."id"', '"SalesOrder"."status"')}`)],
   });
 }
 
 async function findByZohoSalesorderId(zohoId, opts = {}) {
   if (!zohoId) return null;
   const [found] = await db.query(
-    `SELECT id FROM sales_orders
-      WHERE (form_data->>'zohoSalesorderId') = :zid
-        AND deleted_at IS NULL AND lifecycle_status = 'active'
-        ${opts.includeCancelled ? '' : `AND COALESCE(lower(status), '') NOT IN ('cancelled', 'canceled')`}
-      ORDER BY id DESC LIMIT 1`,
+    `SELECT so.id FROM sales_orders so
+      WHERE (so.form_data->>'zohoSalesorderId') = :zid
+        AND so.deleted_at IS NULL AND so.lifecycle_status = 'active'
+        ${opts.includeCancelled ? '' : `AND NOT ${cancelledSoSql('so.id', 'so.status')}`}
+      ORDER BY so.id DESC LIMIT 1`,
     { replacements: { zid: zohoId } }
   );
   const id = found && found[0] && found[0].id;
